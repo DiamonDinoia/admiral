@@ -1,0 +1,25 @@
+### on1 f64
+rc=0  15313946550,,cpu_core/cycles/,4492580633,100.00,, 42499830629,,cpu_core/instructions/,4492580633,100.00,, 
+### off1 f64
+rc=0  15943439416,,cpu_core/cycles/,4570533275,100.00,, 44628242272,,cpu_core/instructions/,4570533275,100.00,, 
+### on2 f64
+rc=0  16452926211,,cpu_core/cycles/,4574541607,100.00,, 45702099809,,cpu_core/instructions/,4574541607,100.00,, 
+### off2 f64
+rc=0  16137655776,,cpu_core/cycles/,4485425491,100.00,, 45007981046,,cpu_core/instructions/,4485425491,100.00,, 
+### on3 f64
+rc=0  16325375031,,cpu_core/cycles/,4480815917,100.00,, 45045186686,,cpu_core/instructions/,4480815917,100.00,, 
+### off3 f64
+rc=0  16240580332,,cpu_core/cycles/,4439532723,100.00,, 45326886145,,cpu_core/instructions/,4439532723,100.00,, 
+### on1 f32
+rc=0  16708720634,,cpu_core/cycles/,4563546240,100.00,, 51188749135,,cpu_core/instructions/,4563546240,100.00,, 
+### off1 f32
+rc=0  17252774671,,cpu_core/cycles/,4692309209,100.00,, 52764082888,,cpu_core/instructions/,4692309209,100.00,, 
+### on2 f32
+rc=0  16670086081,,cpu_core/cycles/,4528519386,100.00,, 51035309646,,cpu_core/instructions/,4528519386,100.00,, 
+### off2 f32
+rc=0  16763095933,,cpu_core/cycles/,4548933630,100.00,, 51312338389,,cpu_core/instructions/,4548933630,100.00,, 
+### on3 f32
+rc=0  16430138679,,cpu_core/cycles/,4597325533,100.00,, 50319322251,,cpu_core/instructions/,4597325533,100.00,, 
+### off3 f32
+rc=0  16385345805,,cpu_core/cycles/,4449327242,100.00,, 49971397367,,cpu_core/instructions/,4449327242,100.00,, 
+ALL-DONE

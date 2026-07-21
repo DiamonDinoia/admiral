@@ -1,0 +1,20 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 44K of event 'cpu_core/cycles/u'
+# Event count (approx.): 38277207166
+#
+# Overhead  Command      Shared Object         Symbol                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            
+# ........  ...........  ....................  ..................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................
+#
+    58.68%  ours_perf_g  ours_perf_g           [.] void fft::detail::dif_pass_fused2<double, true, 4, 4>(double const*, double const*, double*, double*, unsigned long, unsigned long, double const*, double const*, double const*, double const*)
+    14.56%  ours_perf_g  ours_perf_g           [.] void fft::detail::dif_pass_last<double, true, 8, false>(double const*, double const*, std::complex<double>*, unsigned long, unsigned long, double const*, double const*, double) [clone .isra.0]
+    14.51%  ours_perf_g  ours_perf_g           [.] void fft::detail::dif_pass<double, true, 4>(double const*, double const*, double*, double*, unsigned long, unsigned long, double const*, double const*)
+    12.06%  ours_perf_g  ours_perf_g           [.] void fft::detail::dif_pass_first<double, true, 4>(std::complex<double> const*, double*, double*, unsigned long, unsigned long, double const*, double const*)
+
+
+#
+# (Tip: To show IPC for sampling periods use perf record -e '{cycles,instructions}:S' and then browse context)
+#

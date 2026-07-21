@@ -1,0 +1,16 @@
+=== --factors-ab=4-4-4-8-8-8:4-4-4-4-4-4-8 --prec=f64 --rounds=15 ===
+ABCMP size=32768 prec=f64 m=cyc A=[4-4-4-8-8-8] B=[4-4-4-4-4-4-8] | fwd A/B= 0.933 (A/ducc=0.930 B/ducc=0.996) | rt A/B= 0.955 | rounds=15x2 spread=2.1%  <== A faster (robust)
+rc=0
+=== --factors-ab=4-4-4-8-8-8:4-4-4-4-4-4-8 --prec=f32 --rounds=15 ===
+ABCMP size=32768 prec=f32 m=cyc A=[4-4-4-8-8-8] B=[4-4-4-4-4-4-8] | fwd A/B= 0.939 (A/ducc=0.715 B/ducc=0.762) | rt A/B= 0.944 | rounds=15x2 spread=2.0%  <== A faster (robust)
+rc=0
+=== --factors-ab=8-8-4-8:4-4-4-4-8 --prec=f64 --rounds=15 ===
+ABCMP size= 2048 prec=f64 m=cyc A=[8-8-4-8] B=[4-4-4-4-8] | fwd A/B= 0.944 (A/ducc=0.916 B/ducc=0.970) | rt A/B= 0.938 | rounds=15x2 spread=2.6%  <== A faster (robust)
+rc=0
+=== --factors-ab=8-8-4-8:4-4-4-4-8 --prec=f32 --rounds=15 ===
+ABCMP size= 2048 prec=f32 m=cyc A=[8-8-4-8] B=[4-4-4-4-8] | fwd A/B= 0.941 (A/ducc=0.696 B/ducc=0.740) | rt A/B= 0.952 | rounds=15x2 spread=2.6%  <== A faster (robust)
+rc=0
+=== --factors-ab=8-8-8-8:4-4-4-8-8 --prec=f32 --rounds=15 ===
+ABCMP size= 4096 prec=f32 m=cyc A=[8-8-8-8] B=[4-4-4-8-8] | fwd A/B= 0.904 (A/ducc=0.653 B/ducc=0.722) | rt A/B= 0.906 | rounds=15x2 spread=1.6%  <== A faster (robust)
+rc=0
+ALL-DONE

@@ -1,0 +1,8 @@
+FFTWAB size=  8192 prec=f64 m=tsc fft/fftw fwd=0.883 rt=0.835 spread=4.3%/5.9% rounds=15  <== WIN
+FFTWAB size= 16384 prec=f64 m=tsc fft/fftw fwd=0.923 rt=0.872 spread=5.5%/5.8% rounds=15  <== WIN
+FFTWAB size= 32768 prec=f64 m=tsc fft/fftw fwd=1.227 rt=1.189 spread=9.0%/11.5% rounds=15
+FFTWAB size= 65536 prec=f64 m=tsc fft/fftw fwd=1.195 rt=1.126 spread=5.2%/6.1% rounds=15
+FFTWAB size=  8192 prec=f32 m=tsc fft/fftw fwd=0.808 rt=0.741 spread=7.1%/5.0% rounds=15  <== WIN
+FFTWAB size= 16384 prec=f32 m=tsc fft/fftw fwd=0.754 rt=0.701 spread=6.7%/5.3% rounds=15  <== WIN
+FFTWAB size= 32768 prec=f32 m=tsc fft/fftw fwd=1.072 rt=1.014 spread=5.5%/4.3% rounds=15
+FFTWAB size= 65536 prec=f32 m=tsc fft/fftw fwd=1.077 rt=1.041 spread=2.6%/2.7% rounds=15

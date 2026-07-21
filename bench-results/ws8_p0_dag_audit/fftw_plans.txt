@@ -1,0 +1,73 @@
+=== f64 N=60 ===
+fftw fftw-3.3.10-sse2-avx-avx2-avx2_128 N=60
+(dft-ct-dit/10
+  (dftw-direct-10/72 "t2fv_10_avx")
+  (dft-direct-6-x10 "n2fv_6_avx"))
+=== f64 N=120 ===
+fftw fftw-3.3.10-sse2-avx-avx2-avx2_128 N=120
+(dft-ct-dit/10
+  (dftw-direct-10/72 "t2fv_10_avx")
+  (dft-direct-12-x10 "n2fv_12_avx"))
+=== f64 N=256 ===
+fftw fftw-3.3.10-sse2-avx-avx2-avx2_128 N=256
+(dft-ct-dit/8
+  (dftw-direct-8/56 "t2fv_8_avx")
+  (dft-direct-32-x8 "n2fv_32_avx"))
+=== f64 N=512 ===
+fftw fftw-3.3.10-sse2-avx-avx2-avx2_128 N=512
+(dft-ct-dit/8
+  (dftw-direct-8/56 "t2fv_8_avx")
+  (dft-direct-64-x8 "n2fv_64_avx"))
+=== f64 N=1024 ===
+fftw fftw-3.3.10-sse2-avx-avx2-avx2_128 N=1024
+(dft-ct-dit/32
+  (dftw-direct-32/124 "t1fv_32_avx")
+  (dft-direct-32-x32 "n2fv_32_avx"))
+=== f64 N=2048 ===
+fftw fftw-3.3.10-sse2-avx-avx2-avx2_128 N=2048
+(dft-ct-dit/32
+  (dftw-direct-32/124 "t1fv_32_avx2")
+  (dft-direct-64-x32 "n2fv_64_avx2"))
+=== f64 N=4096 ===
+fftw fftw-3.3.10-sse2-avx-avx2-avx2_128 N=4096
+(dft-ct-dit/8
+  (dftw-direct-8/56 "t2fv_8_avx")
+  (dft-vrank>=1-x8/1
+    (dft-ct-dit/8
+      (dftw-direct-8/56 "t2fv_8_avx")
+      (dft-direct-64-x8 "n1fv_64_avx"))))
+=== f32 N=60 ===
+fftwf fftw-3.3.10-sse2-avx-avx2-avx2_128 N=60
+(dft-ct-dit/15
+  (dftw-direct-15/112 "t1fv_15_avx2")
+  (dft-direct-4-x15 "n1fv_4_avx2_128"))
+=== f32 N=120 ===
+fftwf fftw-3.3.10-sse2-avx-avx2-avx2_128 N=120
+(dft-ct-dit/10
+  (dftw-direct-10/144 "t2fv_10_avx")
+  (dft-direct-12-x10 "n2fv_12_sse2"))
+=== f32 N=256 ===
+fftwf fftw-3.3.10-sse2-avx-avx2-avx2_128 N=256
+(dft-ct-dit/32
+  (dftw-direct-32/496 "t2fv_32_avx")
+  (dft-direct-8-x32 "n2fv_8_avx"))
+=== f32 N=512 ===
+fftwf fftw-3.3.10-sse2-avx-avx2-avx2_128 N=512
+(dft-ct-dit/8
+  (dftw-direct-8/112 "t2fv_8_avx")
+  (dft-direct-64-x8 "n2fv_64_avx"))
+=== f32 N=1024 ===
+fftwf fftw-3.3.10-sse2-avx-avx2-avx2_128 N=1024
+(dft-ct-dit/16
+  (dftw-direct-16/240 "t2fv_16_avx")
+  (dft-direct-64-x16 "n2fv_64_avx"))
+=== f32 N=2048 ===
+fftwf fftw-3.3.10-sse2-avx-avx2-avx2_128 N=2048
+(dft-ct-dit/32
+  (dftw-direct-32/248 "t1fv_32_avx2")
+  (dft-direct-64-x32 "n2fv_64_avx"))
+=== f32 N=4096 ===
+fftwf fftw-3.3.10-sse2-avx-avx2-avx2_128 N=4096
+(dft-ct-dit/64
+  (dftw-direct-64/504 "t1fv_64_avx2")
+  (dft-direct-64-x64 "n2fv_64_avx"))

@@ -1,0 +1,18 @@
+== N=8192 prec=d reps=200000 ==
+ours cpu_core/mem_inst_retired.all_loads/ 72464/xf
+ours cpu_core/mem_inst_retired.all_stores/ 36428/xf
+ours cpu_core/mem_load_retired.l2_miss/ 1/xf
+ours cpu_core/mem_load_retired.l3_miss/ 0/xf
+fftw cpu_core/mem_inst_retired.all_loads/ 75319/xf
+fftw cpu_core/mem_inst_retired.all_stores/ 24075/xf
+fftw cpu_core/mem_load_retired.l2_miss/ 1/xf
+fftw cpu_core/mem_load_retired.l3_miss/ 0/xf
+== N=32768 prec=d reps=50000 ==
+ours cpu_core/mem_inst_retired.all_loads/ 356414/xf
+ours cpu_core/mem_inst_retired.all_stores/ 163849/xf
+ours cpu_core/mem_load_retired.l2_miss/ 97/xf
+ours cpu_core/mem_load_retired.l3_miss/ 1/xf
+fftw cpu_core/mem_inst_retired.all_loads/ 341435/xf
+fftw cpu_core/mem_inst_retired.all_stores/ 126939/xf
+fftw cpu_core/mem_load_retired.l2_miss/ 175/xf
+fftw cpu_core/mem_load_retired.l3_miss/ 0/xf

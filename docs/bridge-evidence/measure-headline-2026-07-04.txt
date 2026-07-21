@@ -1,0 +1,15 @@
+=== band-B f64 MEASURE ===
+FFTWAB size=  8192 prec=f64 m=tsc fft/fftw fwd=1.631 rt=1.578 spread=13.6%/19.7% rounds=15
+FFTWAB size= 16384 prec=f64 m=tsc fft/fftw fwd=1.459 rt=1.365 spread=21.4%/8.2% rounds=15
+FFTWAB size= 32768 prec=f64 m=tsc fft/fftw fwd=1.356 rt=1.298 spread=12.1%/10.5% rounds=15
+FFTWAB size= 65536 prec=f64 m=tsc fft/fftw fwd=1.306 rt=1.246 spread=5.8%/5.8% rounds=15
+rc=0
+=== band-B f32 MEASURE ===
+FFTWAB size=  8192 prec=f32 m=tsc fft/fftw fwd=1.556 rt=1.551 spread=10.7%/10.6% rounds=15
+FFTWAB size= 16384 prec=f32 m=tsc fft/fftw fwd=1.487 rt=1.407 spread=8.1%/2.5% rounds=15
+FFTWAB size= 32768 prec=f32 m=tsc fft/fftw fwd=1.768 rt=1.825 spread=8.2%/7.6% rounds=15
+FFTWAB size= 65536 prec=f32 m=tsc fft/fftw fwd=1.475 rt=1.455 spread=7.3%/13.4% rounds=15
+rc=0
+=== 262144 MEASURE ===
+rc=124
+ALL-DONE

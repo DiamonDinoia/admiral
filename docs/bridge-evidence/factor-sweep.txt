@@ -1,0 +1,7 @@
+ABCMP size= 8192 prec=f64 m=cyc A=[4-4-4-4-4-8] B=[4-4-8-8-8] | fwd A/B= 1.006 (A/ducc=1.108 B/ducc=1.102) | rt A/B= 0.954 | rounds=15x2 spread=5.8%  <== tie (within noise)
+ABCMP size=16384 prec=f64 m=cyc A=[4-4-4-4-8-8] B=[4-8-8-8-8] | fwd A/B= 1.020 (A/ducc=0.948 B/ducc=0.930) | rt A/B= 1.012 | rounds=15x2 spread=2.1%  <== tie (within noise)
+ABCMP size=32768 prec=f64 m=cyc A=[4-4-4-4-4-4-8] B=[8-8-8-8-8] | fwd A/B= 1.047 (A/ducc=0.973 B/ducc=0.930) | rt A/B= 1.044 | rounds=15x2 spread=2.4%  <== tie (within noise)
+ABCMP size=32768 prec=f64 m=cyc A=[4-4-4-4-4-4-8] B=[4-4-4-8-8-8] | fwd A/B= 1.074 (A/ducc=1.222 B/ducc=1.138) | rt A/B= 1.068 | rounds=15x2 spread=1.8%  <== B faster (robust)
+ABCMP size=65536 prec=f64 m=cyc A=[4-4-4-4-4-8-8] B=[4-4-8-8-8-8] | fwd A/B= 0.943 (A/ducc=0.866 B/ducc=0.919) | rt A/B= 0.962 | rounds=15x2 spread=1.7%  <== A faster (robust)
+ABCMP size= 8192 prec=f32 m=cyc A=[4-4-4-4-4-8] B=[4-4-8-8-8] | fwd A/B= 0.864 (A/ducc=0.910 B/ducc=1.054) | rt A/B= 0.865 | rounds=15x2 spread=1.8%  <== A faster (robust)
+ABCMP size=16384 prec=f32 m=cyc A=[4-4-4-4-8-8] B=[4-8-8-8-8] | fwd A/B= 0.882 (A/ducc=0.976 B/ducc=1.106) | rt A/B= 0.872 | rounds=15x2 spread=4.3%  <== A faster (robust)

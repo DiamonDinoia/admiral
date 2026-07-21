@@ -1,0 +1,22 @@
+t2fv_10_avx            total= 160 fma= 19 mul= 13 addsub= 32 mov/shuf= 67 logic= 5
+n2fv_6_avx             total=  87 fma=  2 mul=  2 addsub= 16 mov/shuf= 40 logic= 3
+n2fv_12_avx            total= 157 fma=  8 mul=  2 addsub= 40 mov/shuf= 75 logic= 7
+t2fv_8_avx             total= 114 fma= 11 mul=  7 addsub= 22 mov/shuf= 48 logic= 3
+n2fv_32_avx            total= 476 fma= 68 mul=  0 addsub=118 mov/shuf=248 logic=17
+n2fv_64_avx            total=1100 fma=196 mul=  0 addsub=260 mov/shuf=585 logic=33
+t1fv_32_avx            total= 682 fma= 99 mul= 31 addsub=118 mov/shuf=364 logic=47
+t1fv_32_avx2           total= 641 fma= 99 mul= 31 addsub=118 mov/shuf=353 logic=16
+n2fv_64_avx2           total=1139 fma=196 mul=  0 addsub=260 mov/shuf=625 logic=33
+n1fv_64_avx            total=1382 fma=196 mul=  0 addsub=260 mov/shuf=739 logic=32
+--- f32 ---
+t1fv_15_avx2           total= 297 fma= 42 mul= 21 addsub= 50 mov/shuf=154 logic= 8
+n1fv_4_avx2_128        total=  72 fma=  0 mul=  0 addsub=  8 mov/shuf= 35 logic= 1
+t2fv_10_avx            total= 160 fma= 19 mul= 13 addsub= 32 mov/shuf= 67 logic= 5
+n2fv_12_sse2           total= 174 fma=  8 mul=  2 addsub= 40 mov/shuf= 81 logic= 5
+t2fv_32_avx            total= 564 fma= 99 mul= 31 addsub=118 mov/shuf=277 logic=16
+n2fv_8_avx             total= 123 fma=  4 mul=  0 addsub= 22 mov/shuf= 58 logic= 4
+t2fv_8_avx             total= 114 fma= 11 mul=  7 addsub= 22 mov/shuf= 48 logic= 3
+n2fv_64_avx            total=1210 fma=196 mul=  0 addsub=260 mov/shuf=683 logic=33
+t2fv_16_avx            total= 251 fma= 35 mul= 15 addsub= 52 mov/shuf=117 logic= 8
+t1fv_32_avx2           total= 638 fma= 99 mul= 31 addsub=118 mov/shuf=351 logic=16
+t1fv_64_avx2           total=1449 fma=259 mul= 63 addsub=260 mov/shuf=811 logic=32

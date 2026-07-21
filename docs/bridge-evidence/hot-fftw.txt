@@ -1,0 +1,18 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 28K of event 'cpu_core/cycles/u'
+# Event count (approx.): 24913885053
+#
+# Overhead  Command      Shared Object         Symbol                          
+# ........  ...........  ....................  ................................
+#
+     9.70%  fftw_perf_g  libc.so.6             [.] __memmove_avx_unaligned_erms
+     2.39%  fftw_perf_g  libfftw3.so.3.7.11    [.] 0x000000000019522a
+
+
+#
+# (Tip: To show IPC for sampling periods use perf record -e '{cycles,instructions}:S' and then browse context)
+#

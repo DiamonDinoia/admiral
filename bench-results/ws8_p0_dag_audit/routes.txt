@@ -1,0 +1,48 @@
+### v2 f64 ###
+N,prec,planner_route,split,model_best_route,opt_split,cod,dif,fs,rader,blue,flag
+60,f64,iterative_dif,-,iterative_dif,-,501,337,1028,inf,1371,
+120,f64,iterative_dif,-,iterative_dif,-,inf,787,1973,inf,3133,
+256,f64,iterative_dif,-,iterative_dif,-,inf,1946,3831,inf,7050,
+512,f64,iterative_dif,-,iterative_dif,-,inf,4378,9170,inf,15667,
+1024,f64,iterative_dif,-,iterative_dif,-,inf,9728,16879,inf,34468,
+2048,f64,iterative_dif,-,iterative_dif,-,inf,21402,35986,inf,75203,
+### v2 f32 ###
+N,prec,planner_route,split,model_best_route,opt_split,cod,dif,fs,rader,blue,flag
+60,f32,iterative_dif,-,iterative_dif,-,501,337,1028,inf,1371,
+120,f32,iterative_dif,-,iterative_dif,-,inf,787,1973,inf,3133,
+256,f32,iterative_dif,-,iterative_dif,-,inf,1946,3831,inf,7050,
+512,f32,iterative_dif,-,iterative_dif,-,inf,4378,9170,inf,15667,
+1024,f32,iterative_dif,-,iterative_dif,-,inf,9728,16879,inf,34468,
+2048,f32,iterative_dif,-,iterative_dif,-,inf,21402,35986,inf,75203,
+### v3 f64 ###
+N,prec,planner_route,split,model_best_route,opt_split,cod,dif,fs,rader,blue,flag
+60,f64,iterative_dif,-,iterative_dif,-,501,337,1028,inf,1371,
+120,f64,iterative_dif,-,iterative_dif,-,inf,787,1973,inf,3133,
+256,f64,iterative_dif,-,iterative_dif,-,inf,1946,3831,inf,7050,
+512,f64,iterative_dif,-,iterative_dif,-,inf,4378,9170,inf,15667,
+1024,f64,iterative_dif,-,iterative_dif,-,inf,9728,16879,inf,34468,
+2048,f64,iterative_dif,-,iterative_dif,-,inf,21402,35986,inf,75203,
+### v3 f32 ###
+N,prec,planner_route,split,model_best_route,opt_split,cod,dif,fs,rader,blue,flag
+60,f32,iterative_dif,-,iterative_dif,-,501,337,1028,inf,1371,
+120,f32,iterative_dif,-,iterative_dif,-,inf,787,1973,inf,3133,
+256,f32,four_step_batched,-,iterative_dif,-,inf,1946,3831,inf,7050,MISMATCH
+512,f32,four_step_batched,-,iterative_dif,-,inf,4378,9170,inf,15667,MISMATCH
+1024,f32,iterative_dif,-,iterative_dif,-,inf,9728,16879,inf,34468,
+2048,f32,iterative_dif,-,iterative_dif,-,inf,21402,35986,inf,75203,
+### v4 f64 ###
+N,prec,planner_route,split,model_best_route,opt_split,cod,dif,fs,rader,blue,flag
+60,f64,good_thomas,-,iterative_dif,-,501,337,1028,inf,1371,MISMATCH
+120,f64,iterative_dif,-,iterative_dif,-,inf,787,1973,inf,3133,
+256,f64,iterative_dif,-,iterative_dif,-,inf,1946,3831,inf,7050,
+512,f64,iterative_dif,-,iterative_dif,-,inf,4378,9170,inf,15667,
+1024,f64,iterative_dif,-,iterative_dif,-,inf,9728,16879,inf,34468,
+2048,f64,iterative_dif,-,iterative_dif,-,inf,21402,35986,inf,75203,
+### v4 f32 ###
+N,prec,planner_route,split,model_best_route,opt_split,cod,dif,fs,rader,blue,flag
+60,f32,good_thomas,-,iterative_dif,-,501,337,1028,inf,1371,MISMATCH
+120,f32,iterative_dif,-,iterative_dif,-,inf,787,1973,inf,3133,
+256,f32,iterative_dif,-,iterative_dif,-,inf,1946,3831,inf,7050,
+512,f32,iterative_dif,-,iterative_dif,-,inf,4378,9170,inf,15667,
+1024,f32,iterative_dif,-,iterative_dif,-,inf,9728,16879,inf,34468,
+2048,f32,iterative_dif,-,iterative_dif,-,inf,21402,35986,inf,75203,

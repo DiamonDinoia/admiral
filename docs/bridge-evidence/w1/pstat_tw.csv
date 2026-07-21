@@ -1,0 +1,7 @@
+# started on Sat Jul  4 13:54:32 2026
+
+1304170203122,,cpu_core/instructions/,94994513548,100.00,,
+387980868734,,cpu_core/cycles/,94994513548,100.00,,
+293022933,,cpu_core/l2_rqsts.miss/,94994513548,100.00,,
+121547,,cpu_core/LLC-load-misses/,94994513548,100.00,,
+405305470,,cpu_core/L1-dcache-load-misses/,94994513548,100.00,,

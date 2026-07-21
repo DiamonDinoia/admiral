@@ -1,0 +1,268 @@
+BASECOST size= 2 prec=f64 form=codelet cyc= 20.2 ns= 6.5
+BASECOST size= 2 prec=f64 form=iterative_dif cyc= 47.9 ns= 15.5
+BASECOST size= 3 prec=f64 form=codelet cyc= 20.4 ns= 6.6
+BASECOST size= 3 prec=f64 form=iterative_dif cyc= 53.7 ns= 17.4
+BASECOST size= 4 prec=f64 form=codelet cyc= 20.1 ns= 6.5
+BASECOST size= 4 prec=f64 form=iterative_dif cyc= 68.5 ns= 22.2
+BASECOST size= 5 prec=f64 form=codelet cyc= 22.2 ns= 7.2
+BASECOST size= 5 prec=f64 form=iterative_dif cyc= 74.1 ns= 24.0
+BASECOST size= 6 prec=f64 form=codelet cyc= 24.6 ns= 8.0
+BASECOST size= 6 prec=f64 form=iterative_dif cyc= 85.2 ns= 27.6
+BASECOST size= 7 prec=f64 form=codelet cyc= 82.8 ns= 26.8
+BASECOST size= 7 prec=f64 form=iterative_dif cyc= 94.8 ns= 30.7
+BASECOST size= 8 prec=f64 form=codelet cyc= 21.6 ns= 7.0
+BASECOST size= 8 prec=f64 form=iterative_dif cyc= 120.5 ns= 39.0
+BASECOST size= 9 prec=f64 form=codelet cyc= 43.3 ns= 14.0
+BASECOST size= 9 prec=f64 form=iterative_dif cyc= 96.1 ns= 31.1
+BASECOST size= 11 prec=f64 form=codelet cyc= 136.0 ns= 44.0
+BASECOST size= 11 prec=f64 form=iterative_dif cyc= 156.3 ns= 50.5
+BASECOST-VERIFY-FAIL size= 13 prec=f64 form=iterative_dif l2=0.9
+BASECOST size= 13 prec=f64 form=codelet cyc= 169.9 ns= 54.9
+BASECOST size= 14 prec=f64 form=codelet cyc= 130.3 ns= 42.1
+BASECOST size= 14 prec=f64 form=iterative_dif cyc= 136.9 ns= 44.2
+BASECOST size= 16 prec=f64 form=codelet cyc= 128.6 ns= 41.6
+BASECOST size= 16 prec=f64 form=iterative_dif cyc= 103.2 ns= 33.4
+BASECOST-VERIFY-FAIL size= 17 prec=f64 form=iterative_dif l2=0.9
+BASECOST size= 17 prec=f64 form=codelet cyc= 169.5 ns= 54.9
+BASECOST size= 18 prec=f64 form=codelet cyc= 139.5 ns= 45.1
+BASECOST size= 18 prec=f64 form=iterative_dif cyc= 192.7 ns= 62.3
+BASECOST-VERIFY-FAIL size= 19 prec=f64 form=iterative_dif l2=1
+BASECOST size= 19 prec=f64 form=codelet cyc= 302.0 ns= 97.7
+BASECOST size= 21 prec=f64 form=codelet cyc= 241.9 ns= 78.3
+BASECOST size= 21 prec=f64 form=iterative_dif cyc= 133.7 ns= 43.3
+BASECOST size= 22 prec=f64 form=codelet cyc= 195.1 ns= 63.1
+BASECOST size= 22 prec=f64 form=iterative_dif cyc= 240.2 ns= 77.7
+BASECOST-VERIFY-FAIL size= 23 prec=f64 form=iterative_dif l2=1
+BASECOST size= 23 prec=f64 form=codelet cyc= 475.8 ns= 154.0
+BASECOST size= 25 prec=f64 form=codelet cyc= 193.2 ns= 62.5
+BASECOST size= 25 prec=f64 form=iterative_dif cyc= 180.2 ns= 58.3
+BASECOST-VERIFY-FAIL size= 26 prec=f64 form=iterative_dif l2=1
+BASECOST size= 26 prec=f64 form=codelet cyc= 274.3 ns= 88.7
+BASECOST size= 27 prec=f64 form=codelet cyc= 186.9 ns= 60.4
+BASECOST size= 27 prec=f64 form=iterative_dif cyc= 227.9 ns= 73.7
+BASECOST size= 28 prec=f64 form=codelet cyc= 168.8 ns= 54.6
+BASECOST size= 28 prec=f64 form=iterative_dif cyc= 154.8 ns= 50.1
+BASECOST-VERIFY-FAIL size= 29 prec=f64 form=iterative_dif l2=1
+BASECOST size= 29 prec=f64 form=codelet cyc= 342.7 ns= 110.8
+BASECOST-VERIFY-FAIL size= 31 prec=f64 form=iterative_dif l2=1
+BASECOST size= 31 prec=f64 form=codelet cyc= 465.1 ns= 150.4
+BASECOST size= 32 prec=f64 form=codelet cyc= 196.9 ns= 63.7
+BASECOST size= 32 prec=f64 form=iterative_dif cyc= 143.8 ns= 46.5
+BASECOST size= 33 prec=f64 form=codelet cyc= 264.7 ns= 85.6
+BASECOST size= 33 prec=f64 form=iterative_dif cyc= 319.7 ns= 103.4
+BASECOST-VERIFY-FAIL size= 34 prec=f64 form=iterative_dif l2=1
+BASECOST size= 34 prec=f64 form=codelet cyc= 380.1 ns= 122.9
+BASECOST size= 35 prec=f64 form=codelet cyc= 397.3 ns= 128.5
+BASECOST size= 35 prec=f64 form=iterative_dif cyc= 212.0 ns= 68.6
+BASECOST size= 36 prec=f64 form=codelet cyc= 208.5 ns= 67.4
+BASECOST size= 36 prec=f64 form=iterative_dif cyc= 180.0 ns= 58.2
+BASECOST-VERIFY-FAIL size= 37 prec=f64 form=iterative_dif l2=1
+BASECOST size= 37 prec=f64 form=codelet cyc= 412.3 ns= 133.4
+BASECOST-VERIFY-FAIL size= 38 prec=f64 form=iterative_dif l2=1
+BASECOST size= 38 prec=f64 form=codelet cyc= 465.4 ns= 150.5
+BASECOST-VERIFY-FAIL size= 39 prec=f64 form=iterative_dif l2=1
+BASECOST size= 39 prec=f64 form=codelet cyc= 358.5 ns= 115.9
+BASECOST size= 40 prec=f64 form=codelet cyc= 358.5 ns= 116.0
+BASECOST size= 40 prec=f64 form=iterative_dif cyc= 185.9 ns= 60.1
+BASECOST-VERIFY-FAIL size= 41 prec=f64 form=iterative_dif l2=1
+BASECOST size= 41 prec=f64 form=codelet cyc= 748.9 ns= 242.2
+BASECOST size= 42 prec=f64 form=codelet cyc= 337.3 ns= 109.2
+BASECOST size= 42 prec=f64 form=iterative_dif cyc= 265.2 ns= 85.8
+BASECOST-VERIFY-FAIL size= 43 prec=f64 form=iterative_dif l2=1
+BASECOST size= 43 prec=f64 form=codelet cyc= 735.6 ns= 237.9
+BASECOST size= 44 prec=f64 form=codelet cyc= 287.4 ns= 93.0
+BASECOST size= 44 prec=f64 form=iterative_dif cyc= 279.2 ns= 90.3
+BASECOST size= 45 prec=f64 form=codelet cyc= 287.3 ns= 92.9
+BASECOST size= 45 prec=f64 form=iterative_dif cyc= 280.4 ns= 90.7
+BASECOST-VERIFY-FAIL size= 46 prec=f64 form=iterative_dif l2=1
+BASECOST size= 46 prec=f64 form=codelet cyc= 589.1 ns= 190.5
+BASECOST-VERIFY-FAIL size= 47 prec=f64 form=iterative_dif l2=1
+BASECOST size= 47 prec=f64 form=codelet cyc= 1314.3 ns= 425.4
+BASECOST size= 48 prec=f64 form=codelet cyc= 388.0 ns= 125.5
+BASECOST size= 48 prec=f64 form=iterative_dif cyc= 242.6 ns= 78.4
+BASECOST size= 49 prec=f64 form=codelet cyc= 550.5 ns= 178.0
+BASECOST size= 49 prec=f64 form=iterative_dif cyc= 282.1 ns= 91.3
+BASECOST size= 50 prec=f64 form=codelet cyc= 382.8 ns= 123.8
+BASECOST size= 50 prec=f64 form=iterative_dif cyc= 320.2 ns= 103.6
+BASECOST-VERIFY-FAIL size= 51 prec=f64 form=iterative_dif l2=1
+BASECOST size= 51 prec=f64 form=codelet cyc= 421.5 ns= 136.3
+BASECOST-VERIFY-FAIL size= 52 prec=f64 form=iterative_dif l2=1
+BASECOST size= 52 prec=f64 form=codelet cyc= 371.9 ns= 120.5
+BASECOST-VERIFY-FAIL size= 53 prec=f64 form=iterative_dif l2=1
+BASECOST size= 53 prec=f64 form=codelet cyc= 863.5 ns= 279.4
+BASECOST size= 54 prec=f64 form=codelet cyc= 413.5 ns= 133.7
+BASECOST size= 54 prec=f64 form=iterative_dif cyc= 462.1 ns= 149.6
+BASECOST size= 55 prec=f64 form=codelet cyc= 705.8 ns= 228.3
+BASECOST size= 55 prec=f64 form=iterative_dif cyc= 316.9 ns= 102.5
+BASECOST size= 56 prec=f64 form=codelet cyc= 660.8 ns= 213.7
+BASECOST size= 56 prec=f64 form=iterative_dif cyc= 264.7 ns= 85.6
+BASECOST-VERIFY-FAIL size= 57 prec=f64 form=iterative_dif l2=1
+BASECOST size= 57 prec=f64 form=codelet cyc= 537.0 ns= 173.8
+BASECOST-VERIFY-FAIL size= 58 prec=f64 form=iterative_dif l2=1
+BASECOST size= 58 prec=f64 form=codelet cyc= 670.9 ns= 217.0
+BASECOST-VERIFY-FAIL size= 59 prec=f64 form=iterative_dif l2=1
+BASECOST size= 59 prec=f64 form=codelet cyc= 1553.4 ns= 502.7
+BASECOST size= 60 prec=f64 form=codelet cyc= 319.6 ns= 103.4
+BASECOST size= 60 prec=f64 form=iterative_dif cyc= 274.0 ns= 88.6
+BASECOST-VERIFY-FAIL size= 61 prec=f64 form=iterative_dif l2=1
+BASECOST size= 61 prec=f64 form=codelet cyc= 749.9 ns= 242.6
+BASECOST-VERIFY-FAIL size= 62 prec=f64 form=iterative_dif l2=1
+BASECOST size= 62 prec=f64 form=codelet cyc= 789.4 ns= 255.3
+BASECOST size= 63 prec=f64 form=codelet cyc= 396.3 ns= 128.2
+BASECOST size= 63 prec=f64 form=iterative_dif cyc= 332.7 ns= 107.6
+BASECOST size= 64 prec=f64 form=codelet cyc= 298.6 ns= 96.8
+BASECOST size= 64 prec=f64 form=iterative_dif cyc= 272.5 ns= 88.2
+BASECOST size= 120 prec=f64 form=codelet cyc= 1028.4 ns= 332.7
+BASECOST size= 120 prec=f64 form=iterative_dif cyc= 583.0 ns= 188.6
+BASECOST size= 2 prec=f32 form=codelet cyc= 18.9 ns= 6.1
+BASECOST size= 2 prec=f32 form=iterative_dif cyc= 37.3 ns= 12.1
+BASECOST size= 3 prec=f32 form=codelet cyc= 19.4 ns= 6.3
+BASECOST size= 3 prec=f32 form=iterative_dif cyc= 54.4 ns= 17.6
+BASECOST size= 4 prec=f32 form=codelet cyc= 19.6 ns= 6.3
+BASECOST size= 4 prec=f32 form=iterative_dif cyc= 60.8 ns= 19.7
+BASECOST size= 5 prec=f32 form=codelet cyc= 20.2 ns= 6.5
+BASECOST size= 5 prec=f32 form=iterative_dif cyc= 70.4 ns= 22.8
+BASECOST size= 6 prec=f32 form=codelet cyc= 22.3 ns= 7.2
+BASECOST size= 6 prec=f32 form=iterative_dif cyc= 60.5 ns= 19.6
+BASECOST size= 7 prec=f32 form=codelet cyc= 75.9 ns= 24.6
+BASECOST size= 7 prec=f32 form=iterative_dif cyc= 94.5 ns= 30.6
+BASECOST size= 8 prec=f32 form=codelet cyc= 25.2 ns= 8.2
+BASECOST size= 8 prec=f32 form=iterative_dif cyc= 113.4 ns= 36.7
+BASECOST size= 9 prec=f32 form=codelet cyc= 60.6 ns= 19.6
+BASECOST size= 9 prec=f32 form=iterative_dif cyc= 86.7 ns= 28.0
+BASECOST size= 11 prec=f32 form=codelet cyc= 135.6 ns= 43.9
+BASECOST size= 11 prec=f32 form=iterative_dif cyc= 161.5 ns= 52.2
+BASECOST-VERIFY-FAIL size= 13 prec=f32 form=iterative_dif l2=1
+BASECOST size= 13 prec=f32 form=codelet cyc= 165.4 ns= 53.5
+BASECOST size= 14 prec=f32 form=codelet cyc= 155.5 ns= 50.3
+BASECOST size= 14 prec=f32 form=iterative_dif cyc= 111.1 ns= 35.9
+BASECOST size= 16 prec=f32 form=codelet cyc= 57.3 ns= 18.5
+BASECOST size= 16 prec=f32 form=iterative_dif cyc= 81.2 ns= 26.2
+BASECOST-VERIFY-FAIL size= 17 prec=f32 form=iterative_dif l2=1
+BASECOST size= 17 prec=f32 form=codelet cyc= 161.0 ns= 52.1
+BASECOST size= 18 prec=f32 form=codelet cyc= 147.9 ns= 47.9
+BASECOST size= 18 prec=f32 form=iterative_dif cyc= 162.8 ns= 52.7
+BASECOST-VERIFY-FAIL size= 19 prec=f32 form=iterative_dif l2=1
+BASECOST size= 19 prec=f32 form=codelet cyc= 366.4 ns= 118.5
+BASECOST size= 21 prec=f32 form=codelet cyc= 136.9 ns= 44.3
+BASECOST size= 21 prec=f32 form=iterative_dif cyc= 154.0 ns= 49.8
+BASECOST size= 22 prec=f32 form=codelet cyc= 267.1 ns= 86.4
+BASECOST size= 22 prec=f32 form=iterative_dif cyc= 153.0 ns= 49.5
+BASECOST-VERIFY-FAIL size= 23 prec=f32 form=iterative_dif l2=1
+BASECOST size= 23 prec=f32 form=codelet cyc= 607.8 ns= 196.6
+BASECOST size= 25 prec=f32 form=codelet cyc= 216.8 ns= 70.1
+BASECOST size= 25 prec=f32 form=iterative_dif cyc= 166.7 ns= 53.9
+BASECOST-VERIFY-FAIL size= 26 prec=f32 form=iterative_dif l2=1
+BASECOST size= 26 prec=f32 form=codelet cyc= 313.1 ns= 101.3
+BASECOST size= 27 prec=f32 form=codelet cyc= 162.3 ns= 52.5
+BASECOST size= 27 prec=f32 form=iterative_dif cyc= 211.1 ns= 68.3
+BASECOST size= 28 prec=f32 form=codelet cyc= 153.7 ns= 49.7
+BASECOST size= 28 prec=f32 form=iterative_dif cyc= 173.0 ns= 56.0
+BASECOST-VERIFY-FAIL size= 29 prec=f32 form=iterative_dif l2=1
+BASECOST size= 29 prec=f32 form=codelet cyc= 340.0 ns= 110.0
+BASECOST-VERIFY-FAIL size= 31 prec=f32 form=iterative_dif l2=1
+BASECOST size= 31 prec=f32 form=codelet cyc= 571.9 ns= 184.9
+BASECOST size= 32 prec=f32 form=codelet cyc= 177.3 ns= 57.7
+BASECOST size= 32 prec=f32 form=iterative_dif cyc= 124.3 ns= 40.2
+BASECOST size= 33 prec=f32 form=codelet cyc= 246.3 ns= 79.6
+BASECOST size= 33 prec=f32 form=iterative_dif cyc= 176.8 ns= 57.2
+BASECOST-VERIFY-FAIL size= 34 prec=f32 form=iterative_dif l2=1
+BASECOST size= 34 prec=f32 form=codelet cyc= 325.6 ns= 105.3
+BASECOST size= 35 prec=f32 form=codelet cyc= 208.5 ns= 67.5
+BASECOST size= 35 prec=f32 form=iterative_dif cyc= 218.0 ns= 70.6
+BASECOST size= 36 prec=f32 form=codelet cyc= 187.6 ns= 60.7
+BASECOST size= 36 prec=f32 form=iterative_dif cyc= 251.1 ns= 81.2
+BASECOST-VERIFY-FAIL size= 37 prec=f32 form=iterative_dif l2=1
+BASECOST size= 37 prec=f32 form=codelet cyc= 386.1 ns= 124.9
+BASECOST-VERIFY-FAIL size= 38 prec=f32 form=iterative_dif l2=1
+BASECOST size= 38 prec=f32 form=codelet cyc= 775.8 ns= 250.9
+BASECOST-VERIFY-FAIL size= 39 prec=f32 form=iterative_dif l2=1
+BASECOST size= 39 prec=f32 form=codelet cyc= 273.6 ns= 88.5
+BASECOST size= 40 prec=f32 form=codelet cyc= 214.5 ns= 69.3
+BASECOST size= 40 prec=f32 form=iterative_dif cyc= 138.7 ns= 44.9
+BASECOST-VERIFY-FAIL size= 41 prec=f32 form=iterative_dif l2=1
+BASECOST size= 41 prec=f32 form=codelet cyc= 453.9 ns= 146.8
+BASECOST size= 42 prec=f32 form=codelet cyc= 476.1 ns= 154.0
+BASECOST size= 42 prec=f32 form=iterative_dif cyc= 217.4 ns= 70.3
+BASECOST-VERIFY-FAIL size= 43 prec=f32 form=iterative_dif l2=1
+BASECOST size= 43 prec=f32 form=codelet cyc= 958.9 ns= 310.2
+BASECOST size= 44 prec=f32 form=codelet cyc= 218.7 ns= 70.8
+BASECOST size= 44 prec=f32 form=iterative_dif cyc= 185.8 ns= 60.1
+BASECOST size= 45 prec=f32 form=codelet cyc= 246.3 ns= 79.7
+BASECOST size= 45 prec=f32 form=iterative_dif cyc= 343.0 ns= 111.0
+BASECOST-VERIFY-FAIL size= 46 prec=f32 form=iterative_dif l2=1
+BASECOST size= 46 prec=f32 form=codelet cyc= 1226.6 ns= 396.7
+BASECOST-VERIFY-FAIL size= 47 prec=f32 form=iterative_dif l2=1
+BASECOST size= 47 prec=f32 form=codelet cyc= 2410.0 ns= 779.5
+BASECOST size= 48 prec=f32 form=codelet cyc= 321.1 ns= 103.9
+BASECOST size= 48 prec=f32 form=iterative_dif cyc= 148.7 ns= 48.1
+BASECOST size= 49 prec=f32 form=codelet cyc= 345.4 ns= 111.7
+BASECOST size= 49 prec=f32 form=iterative_dif cyc= 292.0 ns= 94.5
+BASECOST size= 50 prec=f32 form=codelet cyc= 346.1 ns= 111.9
+BASECOST size= 50 prec=f32 form=iterative_dif cyc= 265.2 ns= 85.8
+BASECOST-VERIFY-FAIL size= 51 prec=f32 form=iterative_dif l2=1
+BASECOST size= 51 prec=f32 form=codelet cyc= 352.8 ns= 114.3
+BASECOST-VERIFY-FAIL size= 52 prec=f32 form=iterative_dif l2=1
+BASECOST size= 52 prec=f32 form=codelet cyc= 256.6 ns= 83.2
+BASECOST-VERIFY-FAIL size= 53 prec=f32 form=iterative_dif l2=1
+BASECOST size= 53 prec=f32 form=codelet cyc= 613.4 ns= 198.4
+BASECOST size= 54 prec=f32 form=codelet cyc= 244.7 ns= 79.2
+BASECOST size= 54 prec=f32 form=iterative_dif cyc= 399.5 ns= 129.3
+BASECOST size= 55 prec=f32 form=codelet cyc= 353.2 ns= 114.3
+BASECOST size= 55 prec=f32 form=iterative_dif cyc= 232.3 ns= 75.1
+BASECOST size= 56 prec=f32 form=codelet cyc= 246.6 ns= 79.7
+BASECOST size= 56 prec=f32 form=iterative_dif cyc= 184.1 ns= 59.5
+BASECOST-VERIFY-FAIL size= 57 prec=f32 form=iterative_dif l2=1
+BASECOST size= 57 prec=f32 form=codelet cyc= 495.0 ns= 160.1
+BASECOST-VERIFY-FAIL size= 58 prec=f32 form=iterative_dif l2=1
+BASECOST size= 58 prec=f32 form=codelet cyc= 605.6 ns= 195.9
+BASECOST-VERIFY-FAIL size= 59 prec=f32 form=iterative_dif l2=1
+BASECOST size= 59 prec=f32 form=codelet cyc= 1287.2 ns= 416.5
+BASECOST size= 60 prec=f32 form=codelet cyc= 234.8 ns= 76.0
+BASECOST size= 60 prec=f32 form=iterative_dif cyc= 339.9 ns= 110.2
+BASECOST-VERIFY-FAIL size= 61 prec=f32 form=iterative_dif l2=1
+BASECOST size= 61 prec=f32 form=codelet cyc= 577.9 ns= 186.9
+BASECOST-VERIFY-FAIL size= 62 prec=f32 form=iterative_dif l2=1
+BASECOST size= 62 prec=f32 form=codelet cyc= 1070.1 ns= 346.2
+BASECOST size= 63 prec=f32 form=codelet cyc= 311.0 ns= 100.7
+BASECOST size= 63 prec=f32 form=iterative_dif cyc= 342.0 ns= 110.6
+BASECOST size= 64 prec=f32 form=codelet cyc= 178.2 ns= 57.7
+BASECOST size= 64 prec=f32 form=iterative_dif cyc= 172.8 ns= 55.9
+BASECOST size= 120 prec=f32 form=codelet cyc= 420.2 ns= 135.9
+BASECOST size= 120 prec=f32 form=iterative_dif cyc= 310.7 ns= 100.5
+BASECOST size= 10 prec=f64 form=codelet cyc= 120.6 ns= 40.3
+BASECOST size= 10 prec=f64 form=iterative_dif cyc= 128.7 ns= 43.1
+BASECOST size= 10 prec=f64 form=good_thomas cyc= 75.0 ns= 25.1
+BASECOST size= 12 prec=f64 form=codelet cyc= 131.4 ns= 43.9
+BASECOST size= 12 prec=f64 form=iterative_dif cyc= 132.0 ns= 44.2
+BASECOST size= 12 prec=f64 form=good_thomas cyc= 85.6 ns= 28.6
+BASECOST size= 15 prec=f64 form=codelet cyc= 221.8 ns= 74.2
+BASECOST size= 15 prec=f64 form=iterative_dif cyc= 164.9 ns= 55.6
+BASECOST size= 15 prec=f64 form=good_thomas cyc= 133.4 ns= 44.6
+BASECOST size= 20 prec=f64 form=codelet cyc= 193.3 ns= 64.7
+BASECOST size= 20 prec=f64 form=iterative_dif cyc= 193.6 ns= 64.8
+BASECOST size= 20 prec=f64 form=good_thomas cyc= 151.7 ns= 50.7
+BASECOST size= 24 prec=f64 form=codelet cyc= 432.6 ns= 145.0
+BASECOST size= 24 prec=f64 form=iterative_dif cyc= 198.1 ns= 66.3
+BASECOST size= 24 prec=f64 form=good_thomas cyc= 174.0 ns= 58.2
+BASECOST size= 30 prec=f64 form=codelet cyc= 291.7 ns= 97.6
+BASECOST size= 30 prec=f64 form=iterative_dif cyc= 329.1 ns= 110.0
+BASECOST size= 30 prec=f64 form=good_thomas cyc= 251.6 ns= 84.4
+BASECOST size= 10 prec=f32 form=codelet cyc= 176.9 ns= 59.2
+BASECOST size= 10 prec=f32 form=iterative_dif cyc= 120.5 ns= 40.3
+BASECOST size= 10 prec=f32 form=good_thomas cyc= 97.6 ns= 32.7
+BASECOST size= 12 prec=f32 form=codelet cyc= 135.4 ns= 45.6
+BASECOST size= 12 prec=f32 form=iterative_dif cyc= 212.8 ns= 71.3
+BASECOST size= 12 prec=f32 form=good_thomas cyc= 56.5 ns= 18.9
+BASECOST size= 15 prec=f32 form=codelet cyc= 158.2 ns= 52.9
+BASECOST size= 15 prec=f32 form=iterative_dif cyc= 193.6 ns= 64.9
+BASECOST size= 15 prec=f32 form=good_thomas cyc= 140.7 ns= 47.0
+BASECOST size= 20 prec=f32 form=codelet cyc= 180.3 ns= 60.4
+BASECOST size= 20 prec=f32 form=iterative_dif cyc= 231.5 ns= 77.5
+BASECOST size= 20 prec=f32 form=good_thomas cyc= 123.8 ns= 41.4
+BASECOST size= 24 prec=f32 form=codelet cyc= 255.6 ns= 85.8
+BASECOST size= 24 prec=f32 form=iterative_dif cyc= 171.7 ns= 57.6
+BASECOST size= 24 prec=f32 form=good_thomas cyc= 169.3 ns= 56.9
+BASECOST size= 30 prec=f32 form=codelet cyc= 436.3 ns= 146.0
+BASECOST size= 30 prec=f32 form=iterative_dif cyc= 293.8 ns= 98.4
+BASECOST size= 30 prec=f32 form=good_thomas cyc= 210.1 ns= 70.3

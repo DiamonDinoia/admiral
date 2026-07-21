@@ -1,0 +1,89 @@
+=== f32 fwd (dif_pass_fused2<float,true,4,4>) ===
+Symbol size: 0x8d1 = 2257 bytes
+Total instruction lines in body (prologue through ret): 416
+
+--- INNER LOOP 1 (tile fill, addr 2319a0–231ae9) ---
+  Iterations: runs 4x per outer-loop-1 sweep, each sweep 0x80 elements wide.
+  Instructions in body: 61 (including jb)
+
+  Tile traffic (vmovaps to/from tile — base via rcx/rdx derived from rsp+0x188/rsp+0x2188):
+    tile stores: 8   (offsets: -0x20, 0xfe0, 0x7e0, 0x17e0 × {rcx,rdx})
+    tile loads:  0
+
+  GPR spill traffic (direct %rsp-based mov, inside loop body):
+    spill loads:  5   (mov 0x160(%rsp); 0x168(%rsp); 0x170(%rsp); 0x178(%rsp); cmp 0x180(%rsp))
+    spill stores: 0
+    RMWs:         0
+  Note: these 5 loads reload 4 row-pointer GPRs + loop-limit each iteration
+        (compiler ran out of GPRs; 4 extra output pointers can't stay live)
+
+  FP arithmetic:
+    vadd*:       9   vsub*:       8   vmul*:       6
+    vfmadd*:     3   vfnmadd*:    3   vxorps:      1
+    total FP:   30
+
+  Shuffles/permutes (vperm*, vunpck*, vinsert*, vshuf*): 0
+  call inside loop: 0
+
+--- INNER LOOP 2 (compute from tile, addr 231c28–231d71) ---
+  Iterations: runs 4x per outer-loop-2 sweep.
+  Instructions in body: 61 (including jb)
+
+  Tile traffic:
+    tile loads:  8   (vmovaps via rcx/rsi; offsets -0x20, 0x1e0, 0x3e0, 0x5e0 × two bases)
+    tile stores: 0
+
+  GPR spill traffic:
+    spill loads:  5   (mov 0x160(%rsp); 0x168(%rsp); 0x170(%rsp); 0x178(%rsp); cmp 0x180(%rsp))
+    spill stores: 0
+    RMWs:         0
+
+  FP arithmetic:
+    vadd*:       9   vsub*:       8   vmul*:       6
+    vfmadd*:     3   vfnmadd*:    3   vxorps:      1
+    total FP:   30
+
+  Shuffles/permutes: 0
+  call inside loop: 0
+
+--- OUTER-LOOP OVERHEAD (per outermost-loop iteration, amortized) ---
+  Red-zone saves (-0x8...-0x48(%rsp)):  9 stores + 9 loads  (full GPR spill/restore)
+  Address-computation preamble stores:  ~30 (pointer table built on stack each iteration)
+  RMWs total across all loops:          22  (stride updates to 0x158/0x160/0x168/0x170
+                                             + outer pointer bumps + loop counters)
+  lea with rsp (address of tile):        2  (one-time setup only, not in loop body)
+  call instructions anywhere:            0
+
+--- FULL-FUNCTION TOTALS (all loops combined) ---
+  FP vadd*:  18   vsub*: 16   vmul*: 12
+  vfmadd*:    6   vfnmadd*: 6   vxorps: 2
+  Total FP:  60
+  Shuffles:   0
+  Stack loads (mov from %rsp-based addr): 65
+  Stack stores (mov to %rsp-based addr):  63
+  Stack RMWs:                             22
+
+Verdict: LIGHT SPILL in hot inner-loop body (5 GPR loads/iter, 0 stores).
+  The tile (rsp+0x188 / rsp+0x2188) is accessed via derived pointer registers
+  (rcx/rdx/rsi), not directly from %rsp — those 8 vmovaps stores/loads per
+  iteration are intentional tile traffic, not register spills.
+  Heavy stack traffic exists in outer-loop overhead (setup/teardown of pointer
+  table each outermost iteration), but this is amortized over many inner iterations.
+
+========================================================================
+
+=== f32 inv (dif_pass_fused2<float,false,4,4>) ===
+Symbol size: 0x8d1 = 2257 bytes   [identical to fwd]
+
+BOTH INSTANTIATIONS ARE BYTE-FOR-BYTE STRUCTURALLY IDENTICAL in all counts.
+Every grep count above matches: 416 total insns, 30 FP per inner loop, 5 GPR
+spill loads per inner loop, 8 tile loads/stores per inner loop, 0 shuffles,
+0 calls, 22 RMWs, 63 stack stores, 65 stack loads.
+
+The fwd/inv difference is purely in WHICH twiddle pointers are passed as
+arguments (conjugate twiddles for inverse); the instruction sequence and
+register-use pattern of the butterfly computation are the same template.
+The single vxorps (sign flip) is present in BOTH — it is part of the radix-4
+butterfly structure, not the fwd/inv distinction.
+
+Verdict: LIGHT SPILL (same as fwd).

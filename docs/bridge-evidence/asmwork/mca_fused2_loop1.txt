@@ -1,0 +1,164 @@
+Iterations:        200
+Instructions:      12000
+Total Cycles:      2240
+Total uOps:        13200
+
+Dispatch Width:    6
+uOps Per Cycle:    5.89
+IPC:               5.36
+Block RThroughput: 11.0
+
+
+Instruction Info:
+[1]: #uOps
+[2]: Latency
+[3]: RThroughput
+[4]: MayLoad
+[5]: MayStore
+[6]: HasSideEffects (U)
+
+[1]    [2]    [3]    [4]    [5]    [6]    Instructions:
+ 1      8     0.33    *                   vmovupd	(%r12,%rax,8), %ymm9
+ 1      8     0.33    *                   vmovupd	(%rbx,%rax,8), %ymm6
+ 0      1     0.00                        addq	$32, %rcx
+ 0      1     0.00                        addq	$32, %rdx
+ 1      5     0.33    *                   movq	352(%rsp), %rsi
+ 1      8     0.33    *                   vmovupd	(%r14,%rax,8), %ymm2
+ 1      8     0.33    *                   vmovupd	(%r13,%rax,8), %ymm11
+ 1      8     0.33    *                   vmovupd	(%r15,%rax,8), %ymm1
+ 1      8     0.33    *                   vmovupd	(%rsi,%rax,8), %ymm0
+ 1      5     0.33    *                   movq	360(%rsp), %rsi
+ 1      3     0.50                        vaddpd	%ymm2, %ymm9, %ymm8
+ 1      3     0.50                        vsubpd	%ymm9, %ymm2, %ymm2
+ 1      3     0.50                        vaddpd	%ymm1, %ymm11, %ymm4
+ 1      3     0.50                        vsubpd	%ymm11, %ymm1, %ymm1
+ 1      8     0.33    *                   vmovupd	(%r8,%rax,8), %ymm9
+ 1      8     0.33    *                   vmovupd	(%rsi,%rax,8), %ymm7
+ 1      5     0.33    *                   movq	368(%rsp), %rsi
+ 1      1     0.33                        vxorpd	%ymm5, %ymm2, %ymm11
+ 1      8     0.33    *                   vmovupd	(%rsi,%rax,8), %ymm10
+ 1      3     0.50                        vaddpd	%ymm6, %ymm7, %ymm12
+ 1      5     0.33    *                   movq	376(%rsp), %rsi
+ 1      3     0.50                        vaddpd	%ymm0, %ymm10, %ymm3
+ 1      3     0.50                        vsubpd	%ymm10, %ymm0, %ymm0
+ 1      3     0.50                        vsubpd	%ymm12, %ymm4, %ymm15
+ 1      3     0.50                        vaddpd	%ymm4, %ymm12, %ymm14
+ 1      8     0.33    *                   vmovupd	(%r11,%rax,8), %ymm4
+ 1      8     0.33    *                   vmovupd	(%r10,%rax,8), %ymm12
+ 1      3     0.50                        vaddpd	%ymm3, %ymm8, %ymm13
+ 1      3     0.50                        vsubpd	%ymm8, %ymm3, %ymm3
+ 1      3     0.50                        vsubpd	%ymm6, %ymm0, %ymm10
+ 2      12    0.50           *            vmovapd	%ymm14, -32(%rdx)
+ 1      3     0.50                        vaddpd	%ymm1, %ymm11, %ymm14
+ 1      4     0.50                        vmulpd	%ymm4, %ymm3, %ymm8
+ 2      12    0.50           *            vmovapd	%ymm13, -32(%rcx)
+ 1      4     0.50                        vmulpd	%ymm4, %ymm15, %ymm13
+ 1      4     0.50                        vfnmadd231pd	%ymm12, %ymm15, %ymm8
+ 1      3     0.50                        vaddpd	%ymm7, %ymm10, %ymm15
+ 1      3     0.50                        vsubpd	%ymm7, %ymm0, %ymm7
+ 1      8     0.33    *                   vmovupd	(%rsi,%rax,8), %ymm0
+ 1      4     0.50                        vfmadd132pd	%ymm12, %ymm13, %ymm3
+ 1      8     0.33    *                   vmovupd	(%rdi,%rax,8), %ymm13
+ 1      3     0.50                        vaddpd	%ymm6, %ymm7, %ymm6
+ 2      12    0.50           *            vmovapd	%ymm8, 4064(%rcx)
+ 1      3     0.50                        vsubpd	%ymm11, %ymm1, %ymm8
+ 2      12    0.50           *            vmovapd	%ymm3, 4064(%rdx)
+ 1      8     0.33    *                   vmovupd	(%r9,%rax,8), %ymm3
+ 1      4     0.50                        vmulpd	%ymm6, %ymm13, %ymm1
+ 0      1     0.00                        addq	$4, %rax
+ 1      4     0.50                        vmulpd	%ymm3, %ymm15, %ymm4
+ 1      4     0.50                        vmulpd	%ymm3, %ymm14, %ymm12
+ 1      4     0.50                        vmulpd	%ymm13, %ymm8, %ymm2
+ 1      4     0.50                        vfnmadd231pd	%ymm0, %ymm8, %ymm1
+ 1      4     0.50                        vfnmadd231pd	%ymm9, %ymm14, %ymm4
+ 1      4     0.50                        vfmadd132pd	%ymm9, %ymm12, %ymm15
+ 1      4     0.50                        vfmadd132pd	%ymm0, %ymm2, %ymm6
+ 2      12    0.50           *            vmovapd	%ymm1, 6112(%rcx)
+ 2      12    0.50           *            vmovapd	%ymm4, 2016(%rcx)
+ 2      12    0.50           *            vmovapd	%ymm15, 2016(%rdx)
+ 2      12    0.50           *            vmovapd	%ymm6, 6112(%rdx)
+ 2      6     0.33    *                   cmpq	384(%rsp), %rax
+
+
+Resources:
+[0]   - ADLPPort00
+[1]   - ADLPPort01
+[2]   - ADLPPort02
+[3]   - ADLPPort03
+[4]   - ADLPPort04
+[5]   - ADLPPort05
+[6]   - ADLPPort06
+[7]   - ADLPPort07
+[8]   - ADLPPort08
+[9]   - ADLPPort09
+[10]  - ADLPPort10
+[11]  - ADLPPort11
+[12]  - ADLPPortInvalid
+
+
+Resource pressure per iteration:
+[0]    [1]    [2]    [3]    [4]    [5]    [6]    [7]    [8]    [9]    [10]   [11]   [12]   
+9.99   10.02  6.33   6.34   4.00   9.99   0.50   4.00   4.00   4.00   6.34   0.50    -     
+
+Resource pressure by instruction:
+[0]    [1]    [2]    [3]    [4]    [5]    [6]    [7]    [8]    [9]    [10]   [11]   [12]   Instructions:
+ -      -     0.33   0.34    -      -      -      -      -      -     0.34    -      -     vmovupd	(%r12,%rax,8), %ymm9
+ -      -     0.34   0.34    -      -      -      -      -      -     0.33    -      -     vmovupd	(%rbx,%rax,8), %ymm6
+ -      -      -      -      -      -      -      -      -      -      -      -      -     addq	$32, %rcx
+ -      -      -      -      -      -      -      -      -      -      -      -      -     addq	$32, %rdx
+ -      -     0.34   0.33    -      -      -      -      -      -     0.34    -      -     movq	352(%rsp), %rsi
+ -      -     0.33   0.34    -      -      -      -      -      -     0.34    -      -     vmovupd	(%r14,%rax,8), %ymm2
+ -      -     0.34   0.34    -      -      -      -      -      -     0.33    -      -     vmovupd	(%r13,%rax,8), %ymm11
+ -      -     0.34   0.33    -      -      -      -      -      -     0.34    -      -     vmovupd	(%r15,%rax,8), %ymm1
+ -      -     0.33   0.34    -      -      -      -      -      -     0.34    -      -     vmovupd	(%rsi,%rax,8), %ymm0
+ -      -     0.33   0.34    -      -      -      -      -      -     0.34    -      -     movq	360(%rsp), %rsi
+ -      -      -      -      -     1.00    -      -      -      -      -      -      -     vaddpd	%ymm2, %ymm9, %ymm8
+ -     1.00    -      -      -      -      -      -      -      -      -      -      -     vsubpd	%ymm9, %ymm2, %ymm2
+ -      -      -      -      -     1.00    -      -      -      -      -      -      -     vaddpd	%ymm1, %ymm11, %ymm4
+ -     1.00    -      -      -      -      -      -      -      -      -      -      -     vsubpd	%ymm11, %ymm1, %ymm1
+ -      -     0.34   0.34    -      -      -      -      -      -     0.33    -      -     vmovupd	(%r8,%rax,8), %ymm9
+ -      -     0.34   0.33    -      -      -      -      -      -     0.34    -      -     vmovupd	(%rsi,%rax,8), %ymm7
+ -      -     0.34   0.33    -      -      -      -      -      -     0.34    -      -     movq	368(%rsp), %rsi
+1.00    -      -      -      -      -      -      -      -      -      -      -      -     vxorpd	%ymm5, %ymm2, %ymm11
+ -      -     0.33   0.34    -      -      -      -      -      -     0.34    -      -     vmovupd	(%rsi,%rax,8), %ymm10
+ -      -      -      -      -     1.00    -      -      -      -      -      -      -     vaddpd	%ymm6, %ymm7, %ymm12
+ -      -     0.33   0.34    -      -      -      -      -      -     0.34    -      -     movq	376(%rsp), %rsi
+ -     0.01    -      -      -     1.00    -      -      -      -      -      -      -     vaddpd	%ymm0, %ymm10, %ymm3
+ -      -      -      -      -     1.00    -      -      -      -      -      -      -     vsubpd	%ymm10, %ymm0, %ymm0
+ -      -      -      -      -     1.00    -      -      -      -      -      -      -     vsubpd	%ymm12, %ymm4, %ymm15
+ -     1.00    -      -      -      -      -      -      -      -      -      -      -     vaddpd	%ymm4, %ymm12, %ymm14
+ -      -     0.34   0.34    -      -      -      -      -      -     0.33    -      -     vmovupd	(%r11,%rax,8), %ymm4
+ -      -     0.34   0.33    -      -      -      -      -      -     0.34    -      -     vmovupd	(%r10,%rax,8), %ymm12
+ -      -      -      -      -     1.00    -      -      -      -      -      -      -     vaddpd	%ymm3, %ymm8, %ymm13
+ -     1.00    -      -      -      -      -      -      -      -      -      -      -     vsubpd	%ymm8, %ymm3, %ymm3
+ -      -      -      -      -     1.00    -      -      -      -      -      -      -     vsubpd	%ymm6, %ymm0, %ymm10
+ -      -      -      -      -      -      -      -     1.00   1.00    -      -      -     vmovapd	%ymm14, -32(%rdx)
+ -      -      -      -      -     1.00    -      -      -      -      -      -      -     vaddpd	%ymm1, %ymm11, %ymm14
+1.00   0.01    -      -      -      -      -      -      -      -      -      -      -     vmulpd	%ymm4, %ymm3, %ymm8
+ -      -      -      -     1.00    -      -     1.00    -      -      -      -      -     vmovapd	%ymm13, -32(%rcx)
+1.00    -      -      -      -      -      -      -      -      -      -      -      -     vmulpd	%ymm4, %ymm15, %ymm13
+1.00    -      -      -      -      -      -      -      -      -      -      -      -     vfnmadd231pd	%ymm12, %ymm15, %ymm8
+ -      -      -      -      -     1.00    -      -      -      -      -      -      -     vaddpd	%ymm7, %ymm10, %ymm15
+ -     1.00    -      -      -      -      -      -      -      -      -      -      -     vsubpd	%ymm7, %ymm0, %ymm7
+ -      -     0.34   0.33    -      -      -      -      -      -     0.34    -      -     vmovupd	(%rsi,%rax,8), %ymm0
+1.00    -      -      -      -      -      -      -      -      -      -      -      -     vfmadd132pd	%ymm12, %ymm13, %ymm3
+ -      -     0.34   0.34    -      -      -      -      -      -     0.33    -      -     vmovupd	(%rdi,%rax,8), %ymm13
+ -     1.00    -      -      -      -      -      -      -      -      -      -      -     vaddpd	%ymm6, %ymm7, %ymm6
+ -      -      -      -      -      -      -      -     1.00   1.00    -      -      -     vmovapd	%ymm8, 4064(%rcx)
+ -     1.00    -      -      -      -      -      -      -      -      -      -      -     vsubpd	%ymm11, %ymm1, %ymm8
+ -      -      -      -     1.00    -      -     1.00    -      -      -      -      -     vmovapd	%ymm3, 4064(%rdx)
+ -      -     0.34   0.34    -      -      -      -      -      -     0.33    -      -     vmovupd	(%r9,%rax,8), %ymm3
+ -     1.00    -      -      -      -      -      -      -      -      -      -      -     vmulpd	%ymm6, %ymm13, %ymm1
+ -      -      -      -      -      -      -      -      -      -      -      -      -     addq	$4, %rax
+1.00    -      -      -      -      -      -      -      -      -      -      -      -     vmulpd	%ymm3, %ymm15, %ymm4
+0.01   1.00    -      -      -      -      -      -      -      -      -      -      -     vmulpd	%ymm3, %ymm14, %ymm12
+1.00   0.01    -      -      -      -      -      -      -      -      -      -      -     vmulpd	%ymm13, %ymm8, %ymm2
+1.00   0.01    -      -      -      -      -      -      -      -      -      -      -     vfnmadd231pd	%ymm0, %ymm8, %ymm1
+1.00    -      -      -      -      -      -      -      -      -      -      -      -     vfnmadd231pd	%ymm9, %ymm14, %ymm4
+ -     1.00    -      -      -      -      -      -      -      -      -      -      -     vfmadd132pd	%ymm9, %ymm12, %ymm15
+1.00    -      -      -      -      -      -      -      -      -      -      -      -     vfmadd132pd	%ymm0, %ymm2, %ymm6
+ -      -      -      -      -      -      -      -     1.00   1.00    -      -      -     vmovapd	%ymm1, 6112(%rcx)
+ -      -      -      -     1.00    -      -     1.00    -      -      -      -      -     vmovapd	%ymm4, 2016(%rcx)
+ -      -      -      -      -      -      -      -     1.00   1.00    -      -      -     vmovapd	%ymm15, 2016(%rdx)
+ -      -      -      -     1.00    -      -     1.00    -      -      -      -      -     vmovapd	%ymm6, 6112(%rdx)
+ -      -     0.33   0.34    -      -     0.50    -      -      -     0.34   0.50    -     cmpq	384(%rsp), %rax

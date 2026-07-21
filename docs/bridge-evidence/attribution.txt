@@ -1,0 +1,20 @@
+== N=8192 prec=d reps=200000 ==
+ours cpu_core/instructions/ 240345/xf
+ours cpu_core/cycles/ 117033/xf
+fftw cpu_core/instructions/ 198611/xf
+fftw cpu_core/cycles/ 81783/xf
+== N=32768 prec=d reps=50000 ==
+ours cpu_core/instructions/ 1125206/xf
+ours cpu_core/cycles/ 638830/xf
+fftw cpu_core/instructions/ 1037842/xf
+fftw cpu_core/cycles/ 416144/xf
+== N=8192 prec=f reps=200000 ==
+ours cpu_core/instructions/ 143069/xf
+ours cpu_core/cycles/ 55192/xf
+fftw cpu_core/instructions/ 128091/xf
+fftw cpu_core/cycles/ 45263/xf
+== N=32768 prec=f reps=50000 ==
+ours cpu_core/instructions/ 690518/xf
+ours cpu_core/cycles/ 385321/xf
+fftw cpu_core/instructions/ 556324/xf
+fftw cpu_core/cycles/ 221051/xf

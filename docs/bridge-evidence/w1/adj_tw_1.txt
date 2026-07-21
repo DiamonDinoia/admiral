@@ -1,0 +1,1 @@
+FFTWAB size= 65536 prec=f64 m=tsc fft/fftw fwd=1.028 rt=0.969 spread=12.8%/3.4% rounds=25

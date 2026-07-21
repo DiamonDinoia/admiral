@@ -1,0 +1,56 @@
+
+=== ORIG loops (function: dif_pass_fused2<double, true, 4, 4...) ===
+  Loop 0x28dbe8->0x28dd35: instrs= 74, GPR-reloads=4, YMM-spills=0, FP-ops=29, vmovupd=14
+    ->   28dc3e:	48 8b 94 24 60 01 00 	mov    0x160(%rsp),%rdx
+    ->   28dcf3:	48 8b 94 24 78 01 00 	mov    0x178(%rsp),%rdx
+    ->   28dd05:	48 8b 94 24 68 01 00 	mov    0x168(%rsp),%rdx
+  Loop 0x28d910->0x28da6a: instrs= 76, GPR-reloads=4, YMM-spills=0, FP-ops=29, vmovupd=14
+    ->   28d931:	4c 8b 84 24 78 01 00 	mov    0x178(%rsp),%r8
+    ->   28d94a:	4c 8b 84 24 60 01 00 	mov    0x160(%rsp),%r8
+    ->   28d958:	4c 8b 84 24 68 01 00 	mov    0x168(%rsp),%r8
+  Loop 0x28dba1->0x28dd9a: instrs=116, GPR-reloads=12, YMM-spills=0, FP-ops=29, vmovupd=14
+    ->   28dba1:	48 8b b4 24 28 01 00 	mov    0x128(%rsp),%rsi
+    ->   28dba9:	48 8b 8c 24 40 01 00 	mov    0x140(%rsp),%rcx
+    ->   28dbb9:	48 8b 84 24 58 01 00 	mov    0x158(%rsp),%rax
+  Loop 0x28d8c8->0x28dac8: instrs=118, GPR-reloads=9, YMM-spills=0, FP-ops=29, vmovupd=14
+    ->   28d8c8:	48 8b 94 24 58 01 00 	mov    0x158(%rsp),%rdx
+    ->   28d8d0:	48 8b 8c 24 30 01 00 	mov    0x130(%rsp),%rcx
+    ->   28d8e0:	48 8b 84 24 48 01 00 	mov    0x148(%rsp),%rax
+  Loop 0x28d7e4->0x28de06: instrs=361, GPR-reloads=51, YMM-spills=0, FP-ops=58, vmovupd=28
+    ->   28d7e4:	4c 8b 84 24 10 01 00 	mov    0x110(%rsp),%r8
+    ->   28d7f2:	48 8b 9c 24 b8 00 00 	mov    0xb8(%rsp),%rbx
+    ->   28d806:	4c 8b 9c 24 c8 00 00 	mov    0xc8(%rsp),%r11
+  Loop 0x28d6a3->0x28de61: instrs=458, GPR-reloads=70, YMM-spills=0, FP-ops=58, vmovupd=28
+    ->   28d6a3:	48 8b 7c 24 08       	mov    0x8(%rsp),%rdi
+    ->   28d6a8:	4c 8b 7c 24 10       	mov    0x10(%rsp),%r15
+    ->   28d6e3:	48 8b 74 24 f8       	mov    -0x8(%rsp),%rsi
+
+=== PACKED loops (function: dif_pass_fused2_packed<double, true, 4, 4...) ===
+  Loop 0x28c970->0x28cabd: instrs= 74, GPR-reloads=4, YMM-spills=0, FP-ops=29, vmovupd=14
+    ->   28c9c6:	48 8b 94 24 78 01 00 	mov    0x178(%rsp),%rdx
+    ->   28ca51:	48 8b 94 24 60 01 00 	mov    0x160(%rsp),%rdx
+    ->   28ca92:	48 8b 94 24 68 01 00 	mov    0x168(%rsp),%rdx
+  Loop 0x28c690->0x28c7ea: instrs= 76, GPR-reloads=4, YMM-spills=0, FP-ops=29, vmovupd=14
+    ->   28c690:	4c 8b 84 24 78 01 00 	mov    0x178(%rsp),%r8
+    ->   28c6bd:	4c 8b 84 24 60 01 00 	mov    0x160(%rsp),%r8
+    ->   28c6e8:	4c 8b 84 24 68 01 00 	mov    0x168(%rsp),%r8
+  Loop 0x28c924->0x28cb22: instrs=117, GPR-reloads=12, YMM-spills=0, FP-ops=29, vmovupd=14
+    ->   28c924:	48 8b 8c 24 28 01 00 	mov    0x128(%rsp),%rcx
+    ->   28c92c:	48 8b b4 24 40 01 00 	mov    0x140(%rsp),%rsi
+    ->   28c93c:	48 8b 84 24 58 01 00 	mov    0x158(%rsp),%rax
+  Loop 0x28c648->0x28c84b: instrs=119, GPR-reloads=10, YMM-spills=0, FP-ops=29, vmovupd=14
+    ->   28c648:	48 8b 94 24 58 01 00 	mov    0x158(%rsp),%rdx
+    ->   28c650:	48 8b 8c 24 38 01 00 	mov    0x138(%rsp),%rcx
+    ->   28c660:	48 8b 84 24 48 01 00 	mov    0x148(%rsp),%rax
+  Loop 0x28c563->0x28cb91: instrs=364, GPR-reloads=53, YMM-spills=0, FP-ops=58, vmovupd=28
+    ->   28c563:	4c 8b 84 24 10 01 00 	mov    0x110(%rsp),%r8
+    ->   28c56b:	4c 8b ac 24 a8 00 00 	mov    0xa8(%rsp),%r13
+    ->   28c585:	48 8b 84 24 b8 00 00 	mov    0xb8(%rsp),%rax
+  Loop 0x28c42a->0x28cbe7: instrs=459, GPR-reloads=73, YMM-spills=0, FP-ops=58, vmovupd=28
+    ->   28c42a:	4c 8b 7c 24 f0       	mov    -0x10(%rsp),%r15
+    ->   28c42f:	48 8b 7c 24 e8       	mov    -0x18(%rsp),%rdi
+    ->   28c441:	48 8b 54 24 e0       	mov    -0x20(%rsp),%rdx
+
+=== SUMMARY ===
+ORIG hot inner loop: 74 instrs, 4 GPR-reloads, 0 YMM-spills, 29 FP-ops
+PACKED hot inner loop: 74 instrs, 4 GPR-reloads, 0 YMM-spills, 29 FP-ops

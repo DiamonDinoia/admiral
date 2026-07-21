@@ -1,0 +1,75 @@
+=== f64 fwd (dif_pass_fused2<double,true,4,4>) ===
+Symbol: 0x22d570, size 0x8c2 = 2242 bytes
+Total instructions: 413
+
+Tile traffic (vmovapd/vmovupd to/from rsp offsets >= 0x1000):
+  tile loads:  0  (tile at rsp+0x2188 is accessed via preloaded pointer registers rcx/rsi/rdx, NOT directly via rsp)
+  tile stores: 0  (same)
+  NOTE: 16 vmovapd instructions are the tile reads/writes; they use computed base-ptr registers,
+        not rsp. Tile is sub'd at: sub $0x4188,%rsp; lea 0x2188(%rsp),%r13 (once at entry).
+
+GPR spill traffic (rsp offsets < 0x200, or negative/bare):
+  spill stores:  41 small (neg/bare/0x00-0xff) + 22 medium (0x100-0x1ff) = 63 total
+  spill loads:   42 small                      + 27 medium (incl. cmp-reads) = 69 total
+  RMW:            8 (7× addq $N,off(%rsp) + 1× cmpq $N,off(%rsp))
+  Total stack-touching instructions: 140
+
+  Hot inner loop 1 (22d930-22da79): 4 reloads/iteration (offsets 0x160/0x168/0x170/0x178)
+                                   + 1 cmp/iteration (0x180) = 5 stack refs per iteration
+  Hot inner loop 2 (22dbb8-22dd01): same pattern, 4 reloads + 1 cmp = 5 stack refs per iteration
+  Rest (140-10=130): in outer-loop setup / inter-loop bookkeeping, amortised over many inner iters
+
+FP arithmetic:
+  vadd*:    18   vsub*:    16   vmul*: 12
+  vfmadd*:   6   vfnmadd*:  6   vfnmsub*: 0
+  total FP: 58  (29 per inner loop × 2 loops)
+
+Shuffles/permutes: 2  — both are vxorpd (sign-flip with broadcasted -0.0 constant in ymm5)
+  vperm*: 0   vunpck*: 0   vshuf*: 0   vinsert*/vextract*: 0
+
+call inside loops: 0
+lea rsp,*: 3  (two LEA computing tile/scratch ptr at setup, one at epilogue)
+
+Stack frame: sub $0x4188,%rsp (16776 B); tile at rsp+0x2188; pointer table rsp+0x00..rsp+0x1ff
+
+Verdict: heavy spill (>50) — 140 total stack-touching instructions across the function body.
+  Inner-loop hot path: light (4 reloads + 1 cmp = 5 per iteration, all GPR pointer reloads;
+  zero YMM register spills).  Outer-loop pointer-table churn dominates the 140 count.
+
+=== f64 inv (dif_pass_fused2<double,false,4,4>) ===
+Symbol: 0x22de40, size 0x8c2 = 2242 bytes
+Total instructions: 413
+
+Tile traffic:    tile loads: 0    tile stores: 0   (identical structure to fwd)
+
+GPR spill traffic:
+  spill stores:  41 small + 22 medium = 63 total
+  spill loads:   42 small + 27 medium = 69 total
+  RMW:            8
+  Total stack-touching: 140
+
+  Hot inner loops: same 4 reloads + 1 cmp per iteration as fwd
+
+FP arithmetic:
+  vadd*:    18   vsub*:    16   vmul*: 12
+  vfmadd*:   6   vfnmadd*:  6   vfnmsub*: 0
+  total FP: 58
+
+Shuffles/permutes: 2  (vxorpd only)
+call inside loops: 0
+lea rsp,*: 3
+
+Verdict: heavy spill (>50) — identical to fwd in every metric.
+
+=== NOTES ===
+Both instantiations are BYTE-IDENTICAL.  The fwd/inv boolean template parameter produces no
+observable code difference: the sign flip (vxorpd with ymm5 = broadcast of -0.0) appears in
+both loops of both variants.  GCC emits the same instruction sequence for true and false.
+
+The 16 vmovapd instructions are NOT direct rsp tile traffic; they access the tile through
+pointer registers loaded from the stack (offsets 0x160-0x180 = the 4 hot reloads per inner iter).
+
+FP breakdown per inner loop (each loop does 1 pass over a 4×4 tile in SoA layout):
+  9 vadd + 8 vsub + 6 vmul + 3 vfmadd + 3 vfnmadd = 29 FP ops
+  8 vmovapd/vmovupd I/O  +  4 GPR pointer reloads
+  Ratio: 29 FP / (29 FP + 4 reloads) ≈ 88% FP density in the hot loop body.

@@ -51,7 +51,14 @@ endif()
 # if gcc or clang enable -march=native (opt-in), fast-math for benchmarks
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     if(ADM_USE_NATIVE_ARCH)
-        target_compile_options(admiral_benchmark PRIVATE -march=native)
+        if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
+            # -mcpu=native, not -march=native: on Apple clang/arm64 -march=native
+            # degrades to generic scheduling. Must match cmake/CompilerOptions.cmake
+            # or a trailing -march=native here re-clobbers the interface's -mcpu.
+            target_compile_options(admiral_benchmark PRIVATE -mcpu=native)
+        else()
+            target_compile_options(admiral_benchmark PRIVATE -march=native)
+        endif()
     endif()
     target_compile_options(admiral_benchmark PRIVATE -ffast-math)
 endif()

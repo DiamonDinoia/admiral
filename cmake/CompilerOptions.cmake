@@ -46,10 +46,17 @@ endif()
 # Native architecture optimization (optional, user-controlled)
 if(ADM_USE_NATIVE_ARCH)
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        target_compile_options(admiral_optimization_flags INTERFACE
-            -march=native
-            -mtune=native
-        )
+        if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
+            # Apple clang accepts -march=native on arm64 but degrades to generic
+            # scheduling and drops FP16/crypto; -mcpu=native is the host-tuned
+            # flag (Apple-pipeline scheduling + full ISA).
+            target_compile_options(admiral_optimization_flags INTERFACE -mcpu=native)
+        else()
+            target_compile_options(admiral_optimization_flags INTERFACE
+                -march=native
+                -mtune=native
+            )
+        endif()
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
         # MSVC: /arch:AVX2 or /arch:AVX512
         # Note: MSVC doesn't have direct equivalent to -march=native

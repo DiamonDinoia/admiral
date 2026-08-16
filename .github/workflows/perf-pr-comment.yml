@@ -1,0 +1,49 @@
+name: perf-PR comment
+
+# Trusted half: reads the artifact produced by perf-pr-head.yml and refreshes
+# one PR comment. Runs from the default branch with a write token; it never
+# checks out or executes anything from the PR.
+
+on:
+  workflow_run:
+    workflows: [perf-PR head]
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  comment:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: perf-pr
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upsert the PR comment
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const meta = Object.fromEntries(
+              fs.readFileSync('meta.txt', 'utf8').trim().split('\n')
+                .map(l => l.split('=')));
+            const pr_number = Number(meta.pr_number);
+            const table = fs.readFileSync('ab_table.txt', 'utf8');
+            const marker = '<!-- admiral-perf-pr -->';
+            const body = `${marker}\n### PR vs master perf (interleaved min-of-6, x86-64-v3)\n` +
+              'A = this PR, B = master. Ratio < 1 is a win. ' +
+              'Shared-runner timing is directional: trust the sign when `spr` is small, ' +
+              'not three significant figures.\n\n```\n' + table + '\n```';
+            const {data: comments} = await github.rest.issues.listComments({
+              ...context.repo, issue_number: pr_number, per_page: 100});
+            const mine = comments.find(c => c.body.includes(marker));
+            if (mine)
+              await github.rest.issues.updateComment({...context.repo,
+                comment_id: mine.id, body});
+            else
+              await github.rest.issues.createComment({...context.repo,
+                issue_number: pr_number, body});

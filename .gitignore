@@ -1,0 +1,96 @@
+# Build directories
+build/
+build*/
+cmake-build-*/
+out/
+
+# CMake artifacts
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+CTestTestfile.cmake
+cmake_install.cmake
+install_manifest.txt
+Makefile
+compile_commands.json
+CPackConfig.cmake
+CPackSourceConfig.cmake
+
+# Ninja build files
+.ninja_deps
+.ninja_log
+*.ninja
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Prerequisites
+*.d
+
+# IDE directories
+.vscode/
+.idea/
+.vs/
+.cache/
+*.swp
+*.swo
+*~
+
+# User-specific CMake presets
+CMakeUserPresets.json
+
+# Testing artifacts
+Testing/
+*.log
+
+# CPM cache (if local)
+_deps/
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Documentation build
+docs/_build/
+docs/html/
+docs/latex/
+report/
+
+# Knowledge-graph artifacts (generated, never committed)
+graphify-out/
+
+# Claude Code agent working dir (patches, plans, worktrees, transcripts)
+.claude/
+
+# Session scratch (ledgers, spike notes, throwaway A/B outputs)
+scratchpad/
+scratch_*
+
+# Python bytecode caches
+__pycache__/
+
+# NFS/GPFS leaves these behind when a file is deleted while still open
+.nfs*

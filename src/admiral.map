@@ -1,0 +1,22 @@
+/* Exported ABI of libadmiral.so: namespace admiral, nothing else. Hidden
+   visibility alone leaks RTTI -- typeinfo for polymorphic template instantiations
+   carries default visibility, which exported
+   std::thread::_State_impl<...admiral::detail::thread_pool...>.
+
+   Mangled globs, not extern "C++" { admiral::*; }: the linker matches that
+   against the *demangled* name, and a function template demangles with its
+   return type first ("void admiral::forward<double>(...)"), so the free
+   functions silently became local while the class members were exported.
+
+   admiral::detail::* matches too, harmlessly: a version script cannot re-export
+   what visibility already made local. */
+{
+    global:
+        _ZN7admiral*;    /* functions, members, static data */
+        _ZNK7admiral*;   /* const members */
+        _ZTIN7admiral*;  /* typeinfo, for catch across the boundary */
+        _ZTSN7admiral*;
+        _ZTVN7admiral*;
+    local:
+        *;
+};

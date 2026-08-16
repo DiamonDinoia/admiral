@@ -1,0 +1,12 @@
+/* Exported ABI of libadmiral_c.so: the admiral.h C surface, nothing else.
+   Hidden visibility alone leaks RTTI -- typeinfo for polymorphic template
+   instantiations is emitted with default visibility, which exported
+   std::thread::_State_impl<...admiral::detail::thread_pool...> and
+   std::bad_variant_access. Verified with nm -D --defined-only. */
+{
+    global:
+        adm_*;
+        admf_*;
+    local:
+        *;
+};

@@ -1,0 +1,70 @@
+name: perf-PR head
+
+# Untrusted half of the PR perf pipeline (executes PR-controlled CMake and
+# binaries), so it is strictly `contents: read` on a `pull_request` trigger --
+# no secrets, no write token. The trusted companion perf-PR-comment.yml posts
+# the result via `workflow_run`. Structure mirrors finufft's
+# perftest-pr-head.yml, with two project-specific changes: the timing protocol
+# is the interleaved rotating-window min (runner timing is drift-heavy, a
+# plain A/B inverts on shared runners), and both binaries are built through the
+# BASE's benchmark+scripts trees, so only library code varies between arms.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  ab:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout base
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+      - name: Checkout PR head
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+      - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build python3
+      - name: Build base and PR head
+        run: |
+          for side in base pr; do
+            # The PR's library with the base's harness: a PR that edits
+            # benchmark/ or scripts/ cannot move its own numbers.
+            rm -rf pr/benchmark pr/scripts
+            cp -r base/benchmark base/scripts pr/
+            cmake -S $side -B build-$side -G Ninja -DCMAKE_BUILD_TYPE=Release \
+              -DADM_TARGET_ARCH=x86-64-v3 -DADM_BUILD_TESTS=OFF -DCMAKE_CXX_COMPILER=g++-14
+            cmake --build build-$side -j "$(nproc)"
+          done
+      - name: Interleaved A/B
+        run: |
+          python3 base/scripts/ci_perf_ab.py \
+            build-pr/benchmark/admiral_benchmark \
+            build-base/benchmark/admiral_benchmark \
+            --rounds 6 --grid ci --json ab.json | tee ab_table.txt
+      - name: Package metadata
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          (echo "pr_number=$PR_NUMBER"; echo "pr_head_sha=$PR_HEAD_SHA") > meta.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: perf-pr
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            ab.json
+            ab_table.txt
+            meta.txt

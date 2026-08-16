@@ -1,0 +1,173 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}"
+    },
+    {
+      "name": "debug",
+      "displayName": "Debug",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ADM_BUILD_TESTS": "ON",
+        "ADM_BUILD_BENCHMARKS": "ON",
+        "ADM_ENABLE_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "asan",
+      "displayName": "Debug + AddressSanitizer + UBSan (clang)",
+      "inherits": "debug",
+      "cacheVariables": {
+        "ADM_SANITIZER": "address+undefined",
+        "ADM_BUILD_BENCHMARKS": "OFF",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "ADM_TARGET_ARCH": "none",
+        "CMAKE_CXX_FLAGS": "-O1 -fconstexpr-steps=100000000"
+      }
+    },
+    {
+      "name": "tsan",
+      "displayName": "Debug + ThreadSanitizer",
+      "inherits": "debug",
+      "cacheVariables": {
+        "ADM_SANITIZER": "thread",
+        "ADM_BUILD_BENCHMARKS": "OFF",
+        "ADM_TARGET_ARCH": "none",
+        "CMAKE_CXX_FLAGS": "-O1"
+      }
+    },
+    {
+      "name": "coverage",
+      "displayName": "Coverage (clang source-based, llvm-cov)",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ADM_BUILD_TESTS": "ON",
+        "ADM_BUILD_BENCHMARKS": "OFF",
+        "ADM_USE_FAST_MATH": "OFF",
+        "ADM_TARGET_ARCH": "none",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_CXX_FLAGS": "-O1 -fprofile-instr-generate -fcoverage-mapping"
+      }
+    },
+    {
+      "name": "dev",
+      "displayName": "Development (optimized, no LTO)",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ADM_BUILD_TESTS": "ON",
+        "ADM_BUILD_BENCHMARKS": "OFF",
+        "ADM_ENABLE_WARNINGS_AS_ERRORS": "ON",
+        "ADM_ENABLE_LTO": "OFF"
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "Release (use this to ship or benchmark)",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ADM_BUILD_TESTS": "OFF",
+        "ADM_BUILD_BENCHMARKS": "ON",
+        "ADM_ENABLE_WARNINGS_AS_ERRORS": "OFF",
+        "ADM_ENABLE_LTO": "OFF"
+      }
+    },
+    {
+      "name": "relwithdebinfo",
+      "displayName": "RelWithDebInfo",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "ADM_BUILD_TESTS": "ON",
+        "ADM_BUILD_BENCHMARKS": "ON",
+        "ADM_ENABLE_WARNINGS_AS_ERRORS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "debug"
+    },
+    {
+      "name": "asan",
+      "configurePreset": "asan"
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan"
+    },
+    {
+      "name": "coverage",
+      "configurePreset": "coverage"
+    },
+    {
+      "name": "dev",
+      "configurePreset": "dev"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release"
+    },
+    {
+      "name": "relwithdebinfo",
+      "configurePreset": "relwithdebinfo"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "dev",
+      "configurePreset": "dev",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "asan",
+      "configurePreset": "asan",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "coverage",
+      "configurePreset": "coverage",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "relwithdebinfo",
+      "configurePreset": "relwithdebinfo",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

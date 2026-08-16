@@ -1,0 +1,47 @@
+name: perf-master
+
+# On every master push: an FFTW-relative snapshot plus an A-vs-A sanity leg that
+# exposes runner drift. Builds pin x86-64-v3 (runners come without AVX-512
+# guarantees), so this is a TREND series for regression alarms, not the
+# tuned-native numbers the README quotes. Artifacts accumulate history; nothing
+# gates.
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  fftw-snapshot:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build libfftw3-dev python3
+      - run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DADM_TARGET_ARCH=x86-64-v3 -DADM_BUILD_TESTS=OFF -DCMAKE_CXX_COMPILER=g++-14 -DADM_BENCH_FFTW=ON
+          cmake --build build -j "$(nproc)"
+      - name: admiral vs FFTW_MEASURE (interleaved, in-process)
+        # --fftw-ab runs its own reference DFT per size (O(N^2)), so the grid
+        # stops at 16384. Rounds rotate arms; ratio = admiral / fftw.
+        run: |
+          build/benchmark/admiral_benchmark --fftw-ab \
+            --sizes=64,128,1024,4096,8192,1260,16384 --prec=f64 \
+            --reps=15 --rounds=7 --inner=200 | tee fftw_f64.txt
+          build/benchmark/admiral_benchmark --fftw-ab \
+            --sizes=64,128,1024,4096,8192,4970,16384 --prec=f32 \
+            --reps=15 --rounds=7 --inner=200 | tee fftw_f32.txt
+      - name: Drift control (binary against itself)
+        run: |
+          python3 scripts/ci_perf_ab.py build/benchmark/admiral_benchmark \
+            build/benchmark/admiral_benchmark --rounds 4 --grid ci \
+            --json self.json | tee self_table.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: perf-master
+          retention-days: 90
+          path: |
+            fftw_f64.txt
+            fftw_f32.txt
+            self.json
+            self_table.txt

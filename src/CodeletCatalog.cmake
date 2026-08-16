@@ -49,7 +49,7 @@ set(ADM_CODELET_EXTRA_SIZES "120;65;85;143;100;360" CACHE STRING
 # (before the direction split) still peaked at 19.3 GB under gcc ASan+UBSan (57.8 GB at
 # -march=native), because the hog is `template class plan_impl<float>` instantiating the
 # route tree per SIMD width, which no catalog knob reaches. Hence the pinned ISA and
-# clang++ in the asan preset — see CMakePresets.json and README.
+# clang++ in the asan preset — see CMakePresets.json.
 if(NOT ADM_SANITIZER STREQUAL "none")
     set(ADM_CODELET_MAX_N 16)
     set(ADM_CODELET_EXTRA_SIZES "")

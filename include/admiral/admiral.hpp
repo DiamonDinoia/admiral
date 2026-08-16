@@ -37,14 +37,18 @@
 // Options. Plans and one-shots alike take one optional `options` aggregate (see
 // its declaration below) rather than a parameter per knob.
 //
-// Threads. options::nthreads = 1 is serial, 0 means "one per physical core". A plan owns
-// its workers and reuses them across calls; execute is const but not reentrant,
-// so do not run one plan from two threads at once. A threaded plan must not cross
-// fork(): the child inherits no workers; replan there.
+// Threads. options::nthreads = 0 (default) is auto: a size-aware heuristic picks
+// the worker count, serial for small transforms, capped at one per physical
+// core; 1 forces serial, n forces n. A plan owns its workers and reuses them
+// across calls; execute is const but not reentrant, so do not run one plan from
+// two threads at once. A threaded plan must not cross fork(): the child inherits
+// no workers; replan there.
 //
 // Plan or one-shot. A plan holds the twiddle tables and the worker threads, so
 // reuse one whenever the same shape transforms more than once. The free
-// forward()/inverse() functions build and discard a plan per call.
+// forward()/inverse() functions build and discard a plan per call, so they
+// always route with effort::estimate: a measuring effort cannot repay on a
+// discarded plan, and opts.eff is ignored there.
 // ============================================================================
 
 #include <complex>
@@ -112,7 +116,7 @@ enum class effort { estimate, automatic, measure };
 // stderr and is fixed at construction, so a traced run and a silent one differ in no
 // other way.
 struct options {
-    std::size_t nthreads = 1;
+    std::size_t nthreads = 0;   // 0 = auto (size-aware, capped at one per physical core)
     effort eff = effort::estimate;
     unsigned debug = 0;
 };

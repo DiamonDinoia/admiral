@@ -8,6 +8,7 @@
 
 #include "admiral/admiral.hpp"
 
+#include <limits>
 #include <vector>
 
 #include "admiral/detail/nd_plan.hpp"      // nd_runtime_plan, nd_axis_state, apply_lines_*
@@ -27,6 +28,15 @@ namespace detail {
 // (plan-owned pools); no state here. options::debug is the one field the engine
 // plan does not keep, so each state holds it and replays it per execute.
 
+// nthreads resolution for the auto heuristic needs the transform's element
+// count; on overflow the plan constructor reports the bad shape itself, so a
+// saturated max (full auto count) is fine here.
+[[nodiscard]] inline std::size_t resolve_auto(const admiral::options& opts,
+                                              std::span<const std::size_t> shape) {
+    return resolve_nthreads(opts.nthreads, extent_product(shape).value_or(
+                                               std::numeric_limits<std::size_t>::max()));
+}
+
 template<typename T>
 struct plan_state {
     nd_runtime_plan<T> fwd;
@@ -34,8 +44,8 @@ struct plan_state {
     unsigned debug;
 
     plan_state(std::span<const std::size_t> shape, const admiral::options& opts)
-        : fwd{shape, /*is_forward=*/true, resolve_nthreads(opts.nthreads), opts.eff},
-          inv{shape, /*is_forward=*/false, resolve_nthreads(opts.nthreads), opts.eff},
+        : fwd{shape, /*is_forward=*/true, resolve_auto(opts, shape), opts.eff},
+          inv{shape, /*is_forward=*/false, resolve_auto(opts, shape), opts.eff},
           debug(opts.debug) {}
 };
 
@@ -59,7 +69,6 @@ struct axis_state {
                const admiral::options& opts)
         : shape(extents.begin(), extents.end()), stride(extents.size()), axis(ax), forward(fwd),
           innermost(ax + 1 == extents.size()), debug(opts.debug) {
-        const std::size_t nthreads = resolve_nthreads(opts.nthreads);
         if (shape.empty() || axis >= shape.size())
             throw std::invalid_argument("axis_plan: axis out of range");
         // Validate the full product once; every stride below is a factor of it.
@@ -67,6 +76,7 @@ struct axis_state {
         if (!total)
             throw std::invalid_argument(
                 "axis_plan: extents must be > 0 and their product must fit");
+        const std::size_t nthreads = resolve_nthreads(opts.nthreads, *total);
         std::size_t s = 1;
         for (std::size_t di = 0; di < shape.size(); ++di) {
             const std::size_t d = shape.size() - 1 - di;
@@ -99,7 +109,7 @@ struct real_state {
     unsigned debug;
 
     real_state(std::span<const std::size_t> shape, const admiral::options& opts)
-        : plan{shape, resolve_nthreads(opts.nthreads), opts.eff}, debug(opts.debug) {}
+        : plan{shape, resolve_auto(opts, shape), opts.eff}, debug(opts.debug) {}
 };
 
 template<typename T>
@@ -107,7 +117,7 @@ struct r2r_state {
     r2r_plan<T> plan;   // owns its pool when nthreads > 1 and rows > 1
 
     r2r_state(std::size_t N, r2r_kind kind, std::size_t rows, const admiral::options& opts)
-        : plan{N, kind, rows, opts.eff, resolve_nthreads(opts.nthreads)} {}
+        : plan{N, kind, rows, opts.eff, resolve_nthreads(opts.nthreads, sat_elems(N, rows))} {}
 };
 
 template<typename T>
@@ -119,6 +129,10 @@ template<typename T>
 
 // ============================================================================
 // One-shot transforms
+//
+// The plan is discarded after the call, so a measuring effort can never repay
+// its own plan-time race: every one-shot routes with effort::estimate and
+// opts.eff is ignored here.
 // ============================================================================
 
 namespace {
@@ -129,15 +143,17 @@ void one_shot_1d(std::span<const std::complex<T>> input, std::span<std::complex<
     if (input.size() != output.size()) [[unlikely]]
         throw std::invalid_argument("Input and output sizes must match");
     if (input.empty()) [[unlikely]] return;
-    detail::plan_impl<T>(output.size(), is_forward, detail::resolve_nthreads(opts.nthreads),
-                         nullptr, opts.eff)
+    detail::plan_impl<T>(output.size(), is_forward,
+                         detail::resolve_nthreads(opts.nthreads, output.size()), nullptr,
+                         effort::estimate)
         .execute(input.data(), output.data(), {.fct = fct, .debug = opts.debug});
 }
 
 template<typename T>
 void one_shot_nd(std::complex<T>* data, std::span<const std::size_t> shape, bool is_forward,
                  const options& opts, std::optional<T> fct) {
-    detail::nd_runtime_plan<T>(shape, is_forward, detail::resolve_nthreads(opts.nthreads), opts.eff)
+    detail::nd_runtime_plan<T>(shape, is_forward, detail::resolve_auto(opts, shape),
+                               effort::estimate)
         .execute(data, {.fct = fct, .debug = opts.debug});
 }
 
@@ -171,14 +187,14 @@ void inverse(std::complex<T>* data, std::span<const std::size_t> shape, const op
 template<detail::precision T>
 void forward(const T* in, std::complex<T>* out, std::span<const std::size_t> shape,
              const options& opts, std::optional<T> fct) {
-    detail::nd_real_plan<T>(shape, detail::resolve_nthreads(opts.nthreads), opts.eff)
+    detail::nd_real_plan<T>(shape, detail::resolve_auto(opts, shape), effort::estimate)
         .forward(in, out, {.fct = fct, .debug = opts.debug});
 }
 
 template<detail::precision T>
 void inverse(std::complex<T>* spec, T* out, std::span<const std::size_t> shape,
              const options& opts, std::optional<T> fct) {
-    detail::nd_real_plan<T>(shape, detail::resolve_nthreads(opts.nthreads), opts.eff)
+    detail::nd_real_plan<T>(shape, detail::resolve_auto(opts, shape), effort::estimate)
         .inverse(spec, out, {.fct = fct, .debug = opts.debug});
 }
 

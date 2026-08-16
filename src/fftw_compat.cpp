@@ -82,8 +82,9 @@ H* make_plan(int rank, const int* n, void* in, void* out, int sign, unsigned fla
     const admiral::effort eff =
         (flags & FFTW_ESTIMATE) ? admiral::effort::estimate : admiral::effort::automatic;
     try {
+        // nthreads stays 1: the shim's documented contract is single-threaded plans.
         return std::make_unique<H>(sign, in, out, std::span<const size_t>(shape),
-                                   admiral::options{.eff = eff})
+                                   admiral::options{.nthreads = 1, .eff = eff})
             .release();
     } catch (...) {
         return nullptr;

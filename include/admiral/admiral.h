@@ -32,9 +32,10 @@
 // trailing `const adm_options*`. NULL means the defaults, so a caller who wants
 // none of them passes nothing.
 //
-// Threads. nthreads = 1 is serial, 0 means "one per physical core". A plan owns
-// its workers and reuses them on every execute. Do not execute one plan from
-// two threads at the same time; separate plans are independent.
+// Threads. nthreads = 0 (default) is auto: a size-aware heuristic picks the
+// worker count, serial for small transforms, capped at one per physical core.
+// A plan owns its workers and reuses them on every execute. Do not execute one
+// plan from two threads at the same time; separate plans are independent.
 // ============================================================================
 
 #include <stddef.h>
@@ -87,11 +88,11 @@ typedef enum {
 } adm_effort;
 
 // Everything a plan is built with. Pass NULL for the defaults, or name every field
-// -- C leaves the rest indeterminate, and a zeroed struct is not the default either:
-// nthreads = 0 asks for one worker per physical core.
+// -- C leaves the rest indeterminate. A zeroed struct IS the default: nthreads 0
+// is auto, eff 0 is ADM_EFFORT_ESTIMATE, debug 0 is silent.
 //   const adm_options o = {.nthreads = 8, .eff = ADM_EFFORT_AUTOMATIC, .debug = 0};
 typedef struct {
-    size_t nthreads;   // 1 serial, 0 one per physical core
+    size_t nthreads;   // 0 auto (size-aware, capped at one per physical core), 1 serial
     adm_effort eff;
     unsigned debug;    // stderr trace verbosity: 0 silent, 1 route, 2 route + shape
 } adm_options;
@@ -104,8 +105,10 @@ ADM_NODISCARD ADM_C_API const char* adm_error_string(adm_status status);
 //
 // These plan, transform and discard the plan. Use them for a size transformed
 // once; for repeated transforms build a plan instead, which keeps the twiddle
-// tables and the worker threads alive between calls. Zero sizes are rejected;
-// the C++ one-shots treat an empty span as a no-op, this surface does not.
+// tables and the worker threads alive between calls. A discarded plan cannot
+// repay a plan-time race, so one-shots always route with ADM_EFFORT_ESTIMATE
+// and opts->eff is ignored here. Zero sizes are rejected; the C++ one-shots
+// treat an empty span as a no-op, this surface does not.
 // ============================================================================
 
 // 1-D, in place. `size` is the number of complex elements.

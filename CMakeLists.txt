@@ -17,8 +17,8 @@ get_cmake_property(_adm_vars VARIABLES)
 foreach(_adm_var IN LISTS _adm_vars)
     if(_adm_var MATCHES "^FFT_")
         message(FATAL_ERROR
-            "${_adm_var} has no effect: this project's options are ADM_*. "
-            "See the Options table in README.md.")
+            "${_adm_var} has no effect: this project's options are the ADM_* "
+            "block below.")
     endif()
 endforeach()
 

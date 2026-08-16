@@ -29,6 +29,7 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <thread>     // std::this_thread::yield fallback in cpu_relax (non-x86/aarch64)
 #include <utility>
 
@@ -77,6 +78,14 @@ inline constexpr std::size_t kThreadMinElems = std::size_t{1} << 15;
 // subscribing a big machine, and the pool spins, so cap the auto count.
 inline constexpr std::size_t kMaxAutoThreads = 16;
 
+// Auto-selection heuristic: a pool costs more than it saves below
+// kAutoSerialElems elements; above it, one worker per kAutoElemsPerThread,
+// capped at the machine's allowed physical cores. Fitted from the threaded
+// N-D sweep (benchmark/README.md conventions): threading is break-even to 1.1x
+// up to ~25k elements and 2-4x at 32-36k.
+inline constexpr std::size_t kAutoSerialElems = std::size_t{1} << 15;
+inline constexpr std::size_t kAutoElemsPerThread = std::size_t{1} << 12;
+
 // Distinct physical cores among the CPUs this process is allowed to run on
 // (Linux topology + affinity mask; same method as finufft's getOptimalThreadCount).
 // hardware_concurrency counts SMT siblings, which share execution resources -- the
@@ -110,6 +119,23 @@ inline constexpr std::size_t kMaxAutoThreads = 16;
     if (n != 0) return n;
     static const std::size_t auto_n = std::min(allowed_physical_cores(), kMaxAutoThreads);
     return auto_n;
+}
+
+// Size-aware form for n == 0: the heuristic count for a transform of `total`
+// elements, 1 meaning no pool at all. n != 0 returned verbatim.
+[[nodiscard]] inline std::size_t resolve_nthreads(std::size_t n, std::size_t total) {
+    if (n != 0) return n;
+    if (total < kAutoSerialElems) return 1;
+    return std::clamp(total / kAutoElemsPerThread, std::size_t{1}, resolve_nthreads(0));
+}
+
+// Saturating product for total-element estimates: an overflowing shape simply
+// resolves to the full auto count, and the plan constructor reports the bad
+// shape on its own path.
+[[nodiscard]] inline std::size_t sat_elems(std::size_t a, std::size_t b) noexcept {
+    return b != 0 && a > std::numeric_limits<std::size_t>::max() / b
+               ? std::numeric_limits<std::size_t>::max()
+               : a * b;
 }
 
 // ~kSpinIters * (pause latency) should exceed a typical inter-dispatch gap so
@@ -234,6 +260,7 @@ private:
 #else   // !ADM_THREADS — serial build, no worker pool.
 
 [[nodiscard]] inline std::size_t resolve_nthreads(std::size_t) noexcept { return 1; }
+[[nodiscard]] inline std::size_t resolve_nthreads(std::size_t, std::size_t) noexcept { return 1; }
 
 // Never instantiated (resolve_nthreads==1 => plans never build one); kept
 // complete so unique_ptr<thread_pool> stays valid.

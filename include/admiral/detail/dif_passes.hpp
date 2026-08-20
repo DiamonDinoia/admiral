@@ -54,11 +54,10 @@ ADM_ALWAYS_INLINE void small_ido_piece(CC ccre, CC ccim, CH chre, CH chim,
         if constexpr (k > 0u) {
             const V owr = ld(twre + (k - 1u) * ido + a);
             const V owi = ld(twim + (k - 1u) * ido + a);
-            // fnma, not fms: xsimd's scalar fms is unfused `a*b - c` while its batch fms
-            // is vfmsub, so the PW==1 tail would round differently from the vector body
-            // and two ISAs with different W would disagree. fnma is fused at every width.
-            st(chre + off, xsimd::fnma(owi, si, owr * sr));
-            st(chim + off, xsimd::fma(owr, si, owi * sr));
+            // piece_fnma / piece_fma, never the plain expression: this body runs at
+            // PW == 1 and at PW == W, and the wrappers carry one association at both.
+            st(chre + off, piece_fnma(owi, si, owr * sr));
+            st(chim + off, piece_fma(owr, si, owi * sr));
         } else {
             st(chre + off, sr);
             st(chim + off, si);
@@ -84,8 +83,8 @@ ADM_ALWAYS_INLINE void small_ido_piece_tw(CC ccre, CC ccim, CH chre, CH chim,
     dif_butterfly<T, IP, V>(tr, ti_arr, [&](const auto k, V sr, V si) {
         const std::size_t off = obase + a + kstride * k;
         if constexpr (k > 0u) {
-            store_piece<T, PW>(chre + off, xsimd::fnma(owi[k], si, owr[k] * sr));
-            store_piece<T, PW>(chim + off, xsimd::fma(owr[k], si, owi[k] * sr));
+            store_piece<T, PW>(chre + off, piece_fnma(owi[k], si, owr[k] * sr));
+            store_piece<T, PW>(chim + off, piece_fma(owr[k], si, owi[k] * sr));
         } else {
             store_piece<T, PW>(chre + off, sr);
             store_piece<T, PW>(chim + off, si);
@@ -261,8 +260,8 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                     if constexpr (k > 0u) {
                         const batch owr = batch::load_unaligned(twre + ((k - 1u) * ido + aa));
                         const batch owi = batch::load_unaligned(twim + ((k - 1u) * ido + aa));
-                        // Plain multiply, NOT xsimd::fnma: avxvnni fnma misses fma3 dispatch
-                        // (neg+vfmadd); plain form → vfnmadd231pd under -ffast-math.
+                        // Plain multiply, not piece_fnma: this body is W-wide only, so no
+                        // tail shares it and -ffast-math contracts it to one FMA anyway.
                         (owr * sr - owi * si).store_unaligned(chre + off);
                         (owr * si + owi * sr).store_unaligned(chim + off);
                     } else {
@@ -660,7 +659,7 @@ void dif_pass_fused2(const T* ccre, const T* ccim,
                             // Compile-time offsets from ptw1_cur: k: re=(k-1)*2W, im=(k-1)*2W+W.
                             const batch owr = batch::load_unaligned(ptw1_cur + (k - 1u) * 2u * W);
                             const batch owi = batch::load_unaligned(ptw1_cur + (k - 1u) * 2u * W + W);
-                            // Plain multiply (xsimd::fnma avxvnni-broken, see dif_pass).
+                            // Plain multiply, W-wide only (see dif_pass).
                             (owr * sr - owi * si).store_aligned(lr);
                             (owr * si + owi * sr).store_aligned(li);
                         } else {

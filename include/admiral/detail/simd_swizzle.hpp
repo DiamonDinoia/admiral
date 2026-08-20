@@ -93,10 +93,9 @@ template<typename T, std::size_t PW>
 using sized_piece_t = std::conditional_t<PW == 1, T, xsimd::make_sized_batch_t<T, PW>>;
 
 // Load/store one PW-wide piece of a planar array; PW == 1 is the scalar piece.
-// xsimd's arithmetic and fma/fnma have FUSED scalar overloads, so one V-generic
-// body serves every width down to and including PW == 1. Never fms: its scalar
-// overload is unfused `a*b - c` while the batch one is vfmsub, so a single
-// expression would round differently in a tail than in the row it belongs to.
+// xsimd's arithmetic has scalar overloads, so one V-generic body serves every width
+// down to and including PW == 1. Route the multiply-accumulate through piece_fnma /
+// piece_fma below rather than xsimd::fma directly, and never through fms.
 template<typename T, std::size_t PW>
 [[nodiscard]] ADM_ALWAYS_INLINE sized_piece_t<T, PW> load_piece(const T* p) {
     if constexpr (PW == 1) { return *p; } else { return sized_piece_t<T, PW>::load_unaligned(p); }
@@ -105,6 +104,31 @@ template<typename T, std::size_t PW>
 template<typename T, std::size_t PW>
 ADM_ALWAYS_INLINE void store_piece(T* p, sized_piece_t<T, PW> v) {
     if constexpr (PW == 1) { *p = v; } else { v.store_unaligned(p); }
+}
+
+// True where one instruction computes a*b + c. Without it xsimd's scalar fma and fnma
+// are std::fma, which is a libm CALL, and its generic batch fnma is negate-mul-add,
+// one op longer than the plain expression. piece_fnma and piece_fma are the only
+// readers of this flag, so no kernel carries an ISA test of its own.
+inline constexpr bool kFusedFma = XSIMD_WITH_FMA3_SSE || XSIMD_WITH_FMA3_AVX
+                                 || XSIMD_WITH_FMA3_AVX2 || XSIMD_WITH_FMA4
+                                 || XSIMD_WITH_AVX512F || XSIMD_WITH_NEON64
+                                 || XSIMD_WITH_SVE || XSIMD_WITH_RVV || XSIMD_WITH_VSX
+                                 || XSIMD_WITH_VXE;
+
+// c - a*b and a*b + c over a piece of any width, PW == 1 included. On FMA hardware the
+// explicit call pins ONE association at every width: gcc contracts the plain form as
+// vfnmadd in the vector body but as vfmsub in the PW == 1 tail, which rounds a tail
+// differently from the row it belongs to. Off FMA hardware nothing contracts, so the
+// plain form carries the same association at every width and is the shorter sequence.
+template<typename V>
+[[nodiscard]] ADM_ALWAYS_INLINE V piece_fnma(V a, V b, V c) {
+    if constexpr (kFusedFma) { return xsimd::fnma(a, b, c); } else { return c - a * b; }
+}
+
+template<typename V>
+[[nodiscard]] ADM_ALWAYS_INLINE V piece_fma(V a, V b, V c) {
+    if constexpr (kFusedFma) { return xsimd::fma(a, b, c); } else { return a * b + c; }
 }
 
 // Bit w set iff xsimd can materialise a piece of exactly width w. Bit 1 is the

@@ -128,14 +128,21 @@ endif()
 # permute paths per ISA (zip vpermt2, shuffle deinterleave, transpose networks).
 # Reuse a parent-provided xsimd rather than fetch a second, conflicting copy.
 #
-# Upstream master, not the newest release tag (14.3.0): 14.3.0 lacks "make scalar
-# fms fused", so its scalar `fms` rounds differently from the vector batch overload
-# and two ISAs of different width disagree. Move to a tag once one carries it.
+# Upstream master, not the newest release tag: "make scalar fms fused" landed
+# 2026-08-01, after 14.3.0 (2026-07-15), so NO release carries it. Without it a scalar
+# `fms` rounds differently from the vector batch overload and two ISAs of different
+# width disagree. Kernels avoid `fms` outright anyway (piece_fnma / piece_fma,
+# simd_swizzle.hpp), because the branch below accepts a parent-provided xsimd that may
+# predate the fix. Move to a tag once one carries the fix.
+#
+# Tracking master costs nothing here: over the 481 changed lines from 67e96b04 to this
+# tag, `libadmiral.so` is byte-identical at x86-64-v3 and x86-64-v4 for both gcc-14 and
+# clang-19, and the suite passes on both. Only scalar `fms` moved, which no kernel calls.
 if(NOT TARGET xsimd)
     CPMAddPackage(
         NAME xsimd
         GITHUB_REPOSITORY xtensor-stack/xsimd
-        GIT_TAG 67e96b04f9c0ed530326fb189907cf68ca4030b7  # master: scalar fms fused
+        GIT_TAG e3cdb6aee0fe0676d2eea50016d4b340acb56709  # master 2026-08-13
         SYSTEM YES
         EXCLUDE_FROM_ALL YES   # its install() rules must not land in the prefix
         OPTIONS
@@ -145,7 +152,7 @@ if(NOT TARGET xsimd)
     )
 
     if(xsimd_ADDED)
-        message(STATUS "xsimd: xtensor-stack/xsimd 67e96b04 (master + fused scalar fms)")
+        message(STATUS "xsimd: xtensor-stack/xsimd e3cdb6ae (master + fused scalar fms)")
     endif()
 else()
     message(STATUS "xsimd: reusing parent-provided target")

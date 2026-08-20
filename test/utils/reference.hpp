@@ -43,10 +43,14 @@ std::size_t shape_product(const auto& shape) {
 double relerrtwonorm(const auto& a, const auto& b) {
     static_assert(requires { { std::norm(a[0] - b[0]) } -> std::convertible_to<double>; },
                   "relerrtwonorm: element types must subtract to something normable");
+    // A reference may carry a WIDER element type than the result it judges, and the
+    // subtraction then promotes `b[m]`. Widen it explicitly: clang reports the implicit
+    // promotion under -Wdouble-promotion, which the suite builds with -Werror.
+    using Ref = std::remove_cvref_t<decltype(a[0])>;
     double err = 0.0, nrm = 0.0;
     for (std::size_t m = 0; m < std::size(a); ++m) {
         nrm += static_cast<double>(std::norm(a[m]));
-        err += static_cast<double>(std::norm(a[m] - b[m]));
+        err += static_cast<double>(std::norm(a[m] - static_cast<Ref>(b[m])));
     }
     // An all-zero reference has no scale to be relative to; err/nrm would be NaN, and
     // `NaN <= tol` fails with a message that says nothing. Fall back to the absolute norm.

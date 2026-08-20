@@ -1,7 +1,7 @@
 # test/CMakeLists.txt
 # Unit tests using Catch2 v3.
 #
-# Layout: one directory per area, each holding that area's tests -- including its
+# Layout: one directory per area, each holding that area's tests, including its
 # coverage-driven ones, which are tests like any other and belong next to what
 # they cover. utils/ holds the shared reference transform, error budget and
 # matchers; every test dir includes it as "utils/<file>" (test/ is on the include
@@ -91,7 +91,7 @@ foreach(test_src IN LISTS ADM_TEST_SOURCES)
     endif()
 
     # No PCH here even under ADM_ENABLE_PCH: one suite-wide PCH serializes the build
-    # behind its generation, and the heaviest TUs are instantiation-bound — they
+    # behind its generation, and the heaviest TUs are instantiation-bound: they
     # have no parse for a PCH to save.
 
     # Register this executable's Catch2 test cases with ctest.

@@ -89,7 +89,7 @@ TEMPLATE_TEST_CASE("fct: N-D custom scale round-trip", "[fct][nd]", float, doubl
 // A degenerate tensor (no extent > 1) has no axis to fold a custom fct into, so the
 // N-D driver applies it as a standalone post-pass. The in-place overload's copy of
 // that branch is exercised by the round-trip tests above; the (src, dst) overload's
-// is not, and there the scale is the ONLY thing the call does -- if it were dropped
+// is not, and there the scale is the ONLY thing the call does: if it were dropped
 // the transform would still look like a correct identity.
 TEMPLATE_TEST_CASE("fct: degenerate tensor scales out-of-place", "[fct][nd]",
                    float, double) {

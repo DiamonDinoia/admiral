@@ -2,7 +2,7 @@
 # exercises the export set, the installed headers, and the README's claim that the
 # three public headers include nothing but the standard library.
 #
-# Standalone by design -- configure it against a prefix, it is not add_subdirectory'd:
+# Standalone by design: configure it against a prefix, it is not add_subdirectory'd:
 #   cmake -S test/package -B build-pkg -DCMAKE_PREFIX_PATH=<prefix> && ctest --test-dir build-pkg
 cmake_minimum_required(VERSION 3.25)
 project(admiral_package_test C CXX)
@@ -10,7 +10,7 @@ project(admiral_package_test C CXX)
 find_package(admiral REQUIRED)
 enable_testing()
 
-# The C consumers call cos/sin/hypot themselves, so THEY need libm -- admiral does
+# The C consumers call cos/sin/hypot themselves, so THEY need libm. admiral does
 # not export it. Indirect deps do not satisfy a consumer's own references under
 # --no-copy-dt-needed-entries, so relying on libadmiral_c.so pulling libm in fails
 # to link. find_library keeps it a no-op where libm is part of libc (macOS, MSVC).

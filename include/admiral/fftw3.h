@@ -4,7 +4,7 @@
 // FFTW3-compatible header for Admiral.
 //
 // Include this instead of <fftw3.h> and link admiral::fftw. Existing FFTW code
-// that stays inside the surface below compiles and runs unchanged — same
+// that stays inside the list below compiles and runs unchanged: same
 // spellings, same sign convention, same row-major layout, same unscaled result
 // in both directions.
 //
@@ -24,9 +24,9 @@
 //   the fftwf_ single-precision mirror of all of the above
 //
 // What is not
-//   Real transforms (r2c, c2r, r2r) — use admiral::plan_r2c<T> from
+//   Real transforms (r2c, c2r, r2r). Use admiral::plan_r2c<T> from
 //   <admiral/admiral.hpp>. The guru, advanced and split interfaces. Wisdom.
-//   fftw_plan_with_nthreads — pass a thread count to admiral::plan instead.
+//   fftw_plan_with_nthreads. Pass a thread count to admiral::plan instead.
 //   Nothing here silently degrades: an impossible call does not compile.
 //
 // Where the behaviour differs from FFTW

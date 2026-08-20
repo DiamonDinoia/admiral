@@ -78,7 +78,7 @@ H* make_plan(int rank, const int* n, void* in, void* out, int sign, unsigned fla
     }
     // FFTW_MEASURE is zero, so estimate is the flag to detect: it opts out of the
     // candidate race. Everything else, PATIENT/EXHAUSTIVE included, takes
-    // effort::automatic — the engine has one search budget (admiral.hpp).
+    // effort::automatic: the engine has one search budget (admiral.hpp).
     const admiral::effort eff =
         (flags & FFTW_ESTIMATE) ? admiral::effort::estimate : admiral::effort::automatic;
     try {

@@ -1,8 +1,8 @@
 // Accuracy at the ULP level, against a long-double naive DFT.
 //
 // The rest of the suite uses one flat budget, 32 eps, sized to pass every route.
-// The bound here is 4*eps*sqrt(log2 N) — ~10x tighter at these sizes, and it grows
-// with N the way the measured error actually does — so a change that costs a few ULP
+// The bound here is 4*eps*sqrt(log2 N), ~10x tighter at these sizes, and it grows
+// with N the way the measured error actually does, so a change that costs a few ULP
 // has somewhere to show up.
 //
 // The reference is O(N^2) in long double with long-double trig: 11 mantissa bits more
@@ -73,7 +73,7 @@ std::vector<cld> naive_dft(const std::vector<cld>& x, int sign, bool scale = tru
         for (std::size_t j = 0; j < n; ++j) {
             // turn_fraction reduces k*j mod n in INTEGERS before dividing. Forming
             // ld(k)*ld(j)/ld(n) instead leaves an absolute angle error that grows like
-            // n*eps_ld -- 1 double eps of oracle error at n=2048, and ~20 at 65536,
+            // n*eps_ld: 1 double eps of oracle error at n=2048, and ~20 at 65536,
             // which is most of the budget these tests are supposed to be measuring.
             const ld ang = ld(sign) * 2 * std::numbers::pi_v<ld> * turn_fraction(k, j, n);
             acc += x[j] * cld(std::cos(ang), std::sin(ang));
@@ -144,7 +144,7 @@ struct margin {
     WARN("worst margin " << (m).eps << " eps of " << (m).bound << " allowed (" \
                          << 100.0 * (m).frac << "% of budget) at N=" << (m).at)
 
-// FNV-1a over the raw result bytes. Not a portability claim -- see the [.golden] case.
+// FNV-1a over the raw result bytes. Not a portability claim; see the [.golden] case.
 std::uint64_t hash_bytes(const void* p, std::size_t bytes) {
     constexpr std::uint64_t kFnvOffsetBasis = 1469598103934665603ull;
     constexpr std::uint64_t kFnvPrime = 1099511628211ull;
@@ -257,8 +257,8 @@ TEST_CASE("ULP: the factored reference agrees with the naive one", "[accuracy][u
             // In units of the ORACLE's own eps, not double's: long double is 80-bit
             // on x86 and is double on Apple Silicon, so a fixed double-eps bound would
             // encode the x86 mantissa width. Normalizing by the accumulator's eps
-            // states the real property — the factored oracle tracks the naive one to
-            // a few ulp of the platform's long double — and the error grows like
+            // states the real property: the factored oracle tracks the naive one to
+            // a few ulp of the platform's long double, and the error grows like
             // sqrt(log N), which makes extrapolating to 65536 safe. 32 matches the
             // flat 32-eps budget fft_tol uses.
             // Where long double == double, the oracle's own few-eps noise sits on top
@@ -310,7 +310,7 @@ TEMPLATE_TEST_CASE("ULP: 262144 forward matches a factored long-double DFT",
     REQUIRE(measured <= double(bound_for<T>(n)));
 }
 
-// A closed-form oracle that costs O(N), so it runs at any size at all -- including
+// A closed-form oracle that costs O(N), so it runs at any size at all, including
 // the ones no long-double reference can reach. Input is a sum of pure tones; the
 // unnormalized forward of exp(+2*pi*i*k*j/N) is exactly N at bin k and 0 elsewhere.
 // This pins POSITION as well as value: unlike Parseval it cannot pass on a permuted
@@ -365,7 +365,7 @@ TEMPLATE_TEST_CASE("ULP: multi-tone input has a closed-form spectrum", "[accurac
 // -ffast-math's reassociation, so it is hidden ([.golden]) and never runs under ctest.
 // Run it by hand around a refactor that is meant to be bit-neutral:
 //     ./admiral_tests "[golden]"
-// and refresh the constant -- from the number the failure prints -- whenever the
+// and refresh the constant, from the number the failure prints, whenever the
 // toolchain, ADM_TARGET_ARCH, or a deliberate numerical change moves it.
 TEST_CASE("ULP: golden hash of a fixed f64 transform", "[accuracy][ulp][.golden]") {
     constexpr std::size_t n = 65536;

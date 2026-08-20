@@ -1,7 +1,7 @@
 #pragma once
 
 // ============================================================================
-// plan_impl<T> — the 1-D engine, and the one place that decides HOW to
+// plan_impl<T>: the 1-D engine, and the one place that decides HOW to
 // transform a given length. Every public entry point ends here.
 // Construction picks a route for (T, n, direction, nthreads) and builds only
 // that route's tables; execute() follows the choice with no branching on n.
@@ -39,7 +39,7 @@
 #include <variant>
 #include <vector>
 
-#include "base_cost_model.hpp" // generated routing cost model — see tools/fit_cost_model.cpp
+#include "base_cost_model.hpp" // generated routing cost model, see tools/fit_cost_model.cpp
 #include "bluestein.hpp"  // bluestein_plan
 #include "debug.hpp"        // dbg_print, dbg_off/dbg_route/dbg_shape (exec_options::debug)
 #include "dif_driver.hpp"   // iterative_dif_execute_ws, dif_execute_in_place
@@ -74,7 +74,7 @@ struct exec_options {
 };
 
 // ============================================================================
-// plan_impl — thin routing shell.
+// plan_impl: thin routing shell.
 // select_route() picks one execution path at construction, precomputes its
 // state into std::variant; execute() dispatches via std::visit.
 // ============================================================================
@@ -106,7 +106,7 @@ public:
         return good_thomas_catalog::available<T>(n);
     }
 
-    // True iff `rk` is instantiable for (T, size) -- the exact predicate the
+    // True iff `rk` is instantiable for (T, size), the exact predicate the
     // force-route ctor tests. Public because availability is ISA- and
     // precision-dependent, so a caller must ask rather than catch the ctor's
     // exception. Pure predicate over compile-time catalogs; no state.
@@ -115,7 +115,7 @@ public:
         case route_kind::codelet:           return is_codelet_catalog(size);
         case route_kind::good_thomas:       return good_thomas_available(size);
         // 11-smooth, or anything the radix DP factors with the static kernels
-        // plus generic runtime-prime middle passes (dif_generic_radices) -- see
+        // plus generic runtime-prime middle passes (dif_generic_radices); see
         // dif_chain_supported.
         case route_kind::iterative_dif:     return dif_chain_supported(size);
         case route_kind::four_step:         return four_step_supported(size);
@@ -182,7 +182,7 @@ public:
     // executes its own passes in parallel, so it is the only route whose value
     // depends on it (see large_route_bytes); everything else ignores nthreads.
     // nthreads > 1 builds the plan-owned pool here; execute() then uses it
-    // internally — there is no per-call threading knob.
+    // internally. There is no per-call threading knob.
     // eff: measure times the ranked candidates on this machine (module header).
     plan_impl(std::size_t size, bool is_forward, std::size_t nthreads = 1,
               const dif_factor_plan* dif_override = nullptr,
@@ -245,7 +245,7 @@ public:
     void execute(std::span<std::complex<T>> data, const exec_options<T>& opts = {}) const;
 
     // src == dst: in-place. src != dst: reads src (preserved, no partial alias),
-    // writes dst; no separate src->dst staging copy -- each route folds the read of
+    // writes dst; no separate src->dst staging copy, since each route folds the read of
     // src into its first pass. Out-of-line.
     void execute(const std::complex<T>* src, std::complex<T>* dst,
                  const exec_options<T>& opts = {}) const;
@@ -279,7 +279,7 @@ private:
     }
 
     // The ranking select_route walked. Each form prints its modelled cycles and whether it
-    // was buildable -- the elected route is the first line that is both cheap and
+    // was buildable. The elected route is the first line that is both cheap and
     // available, so a surprising route reads off the table directly.
     ADM_NOINLINE ADM_COLD void trace_ranking() const {
         const auto& r = base_route_ranking<T>(m.size);
@@ -367,7 +367,7 @@ private:
 
     // Measure-at-plan-time: time the model's top-ranked candidates on scratch
     // and return the measured winner. Stage 1 (base forms) stays in the fitted
-    // domain -- the only place a runtime A/B carries new information over the
+    // domain, the only place a runtime A/B carries new information over the
     // fitted corrections; stage 2 races the DP's next-cheapest CHAINS, at any N.
     // Builds and discards one plan per candidate (plan-time only, never shipped).
     // Threaded engines are not stage-1 candidates (the ranked domain is serial).
@@ -435,7 +435,7 @@ public:
 private:
     // True iff route rk has buildable state for (size, T) (instantiability, not
     // correctness). iterative_dif/bluestein build for any N.
-    // Route ladder — first match wins.
+    // Route ladder, first match wins.
     static route_kind select_route(std::size_t size, std::size_t nthreads) {
         // Modelled domain (2..512): walk the cost model's ranking and take the
         // cheapest route that is actually buildable, so an unavailable winner degrades
@@ -624,7 +624,7 @@ plan_impl<T>::plan_impl(std::size_t size, bool is_forward, std::size_t nthreads,
 }
 
 // Race counts are fixed per stage, not clock-denominated: reproducible and machine-independent.
-// Not a patience rule either -- stopping after k non-improving candidates would read the
+// Not a patience rule either: stopping after k non-improving candidates would read the
 // candidate order as a ranking by measured value, and it is only ascending in MODEL cost.
 inline constexpr std::size_t kMeasureCandidates = 8;
 // Samples per candidate. A min of one rejects no outlier: an unlimited-budget race with a
@@ -711,8 +711,8 @@ plan_impl<T>::measure_route(std::size_t size, bool is_forward, std::size_t nthre
         in[i] = {T(0.5 * int(i % 7) - 1), T(0.25 * int(i % 5) - 0.5)};
 
     // `unit` is the fastest execution of ANY plan for this transform seen so far. It is not a
-    // budget -- the race is bounded by a candidate count -- it is the yardstick the reject
-    // ratio below measures a candidate against.
+    // budget, since the race is bounded by a candidate count. It is the yardstick the
+    // reject ratio below measures a candidate against.
     double unit = kMeasureInf;
     std::size_t raced = 0;
     const auto have_budget = [&] { return raced < kMeasureCandidates; };
@@ -754,7 +754,7 @@ plan_impl<T>::measure_route(std::size_t size, bool is_forward, std::size_t nthre
         if (ns < best_ns) { best_ns = ns; pick.route = cands[c]; }
     }
 
-    // Chain race: which multiset, then which ordering of the winner — both questions the model
+    // Chain race: which multiset, then which ordering of the winner. Both are questions the model
     // cannot answer (orderings tie on the additive cost the DP minimizes).
     if (pick.route == route_kind::iterative_dif && race_chains) {
         // Each race gets the candidate count for itself: which route and which

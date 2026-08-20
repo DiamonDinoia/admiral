@@ -1,7 +1,7 @@
 #pragma once
 
 // ============================================================================
-// N-D FFT plan — row-column algorithm (sequence of batched 1D transforms).
+// N-D FFT plan: row-column algorithm (sequence of batched 1D transforms).
 //
 // Innermost axis (contiguous, stride 1): plan_impl::execute(span) verbatim.
 //
@@ -82,7 +82,7 @@ struct nd_axis_state {
 //
 // Small-inner pow2 f32 exception: radix-8 DIF spills on AVX2's 16 YMM; radix-4
 // stays spill-free and the extra pass costs less than spill traffic at small B.
-// f64 (W=4) fits radix-8 — keeps default.
+// f64 (W=4) fits radix-8, so it keeps the default.
 template<typename T>
 [[nodiscard]] inline nd_axis_state<T> make_nd_axis_state(std::size_t length, std::size_t inner,
                                                          bool is_forward, bool innermost,
@@ -269,7 +269,7 @@ enum class band_form : std::uint8_t {
     split,   // one call per band (the second is skipped when there is no second band)
 };
 
-// Packing costs a gather and a scatter —- 2 passes over the slab -- and saves one
+// Packing costs a gather and a scatter, 2 passes over the slab, and saves one
 // whole pass chain, so it pays only once the chain is long enough. `dif` is an
 // availability test: with no column chain there is nothing to save. When a chain
 // exists, the packed slab is itself one full-width chain over the qualifying columns.
@@ -283,15 +283,15 @@ inline constexpr std::size_t kPackMinPasses = 5;
     // Equal widths are 2*nruns independent runs of one run_len, so they fit in ONE call.
     // The parallel unit count is nruns * ceil(w/Bt) and Bt bottoms out at one SIMD batch,
     // so a band of <= W is a single tile: split in two, each call had one unit and ran
-    // serially. Unequal widths cannot merge -- run_len is one value per call.
+    // serially. Unequal widths cannot merge, since run_len is one value per call.
     if (w0 == w1) return band_form::merged;
     return band_form::split;
 }
 
 // Two disjoint column bands of the same lines, transformed as one packed run.
-// A sub-register band pays for a whole pass chain regardless of its width -- the
-// column tail runs one masked piece per row whether that row holds 2 columns or W
-// -- so packing both bands into a single Bp = w0 + w1 <= W slab removes an entire
+// A sub-register band pays for a whole pass chain regardless of its width, because the
+// column tail runs one masked piece per row whether that row holds 2 columns or W.
+// Packing both bands into a single Bp = w0 + w1 <= W slab removes an entire
 // chain. The gather/scatter pair costs 2 passes over the slab against the chain's
 // log(len), and the gather reads exactly the strided elements the first pass would
 // have read anyway. Caller guarantees Bp <= W, st.dif, and disjoint bands.
@@ -352,7 +352,7 @@ void nd_apply_axis(std::complex<T>* data, std::size_t total, std::size_t len,
 }
 
 // N-D plan engine. Rank is runtime; per-axis state precomputed once, reused across
-// execute() calls. Per-axis loop is not the hot path — no Dim template needed.
+// execute() calls. Per-axis loop is not the hot path, so no Dim template is needed.
 template<typename T>
 class nd_runtime_plan {
     struct M {
@@ -386,7 +386,7 @@ public:
 private:
     // exec_options::debug >= dbg_route, rank >= 2 only: rank 1 hands its single line
     // to the axis plan, which traces itself. The axis plans below get no debug
-    // deliberately -- their batch loops would print once per line. Out of line and
+    // deliberately: their batch loops would print once per line. Out of line and
     // cold, so the call-site guard is the whole cost when tracing is off. The rank >= 2
     // tails are split out so the rank-1 arm keeps a leaf frame.
     ADM_NOINLINE void execute_nd(std::complex<T>* data, const exec_options<T>& opts) const;
@@ -447,7 +447,7 @@ nd_runtime_plan<T>::nd_runtime_plan(std::span<const std::size_t> shape, bool is_
         // (routes so, and owns a pool) only when the batch loop above it cannot
         // thread. Otherwise it runs serially inside parallel_for and must be
         // built as a 1-thread plan. There is no per-call pool anymore, so this
-        // ctor decision is the ONLY one — routing and execution cannot diverge
+        // ctor decision is the ONLY one: routing and execution cannot diverge
         // the way a routed-serial plan handed a pool at execute could.
         const std::size_t units = m.total / m.shape[d];
         const bool threads_above = units >= 2 && m.total >= kThreadMinElems;
@@ -472,7 +472,7 @@ void nd_runtime_plan<T>::execute(std::complex<T>* data, const exec_options<T>& o
     if (ndim == 1) {
         // Rank-1: hand the single line straight to the axis plan; the generic path
         // wraps it in layering that does zero work at nrows==1. A custom fct always
-        // lands on the (only) axis — degenerate shape{1} included.
+        // lands on the (only) axis, degenerate shape{1} included.
         const scale_plan sp = make_scale_plan(opts.fct);
         m.axes[0].plan->execute(std::span<std::complex<T>>(data, m.total),
                                 {.fct = sp.custom ? std::optional<T>(sp.fct) : std::nullopt,
@@ -501,7 +501,7 @@ void nd_runtime_plan<T>::execute_nd(std::complex<T>* data, const exec_options<T>
 
 // src == dst: in-place (same contract as plan_impl::execute(p, p)). Dispatched to
 // the in-place path, which runs the batched innermost row pass.
-// src != dst: out-of-place — the innermost row pass reads src and writes dst (the
+// src != dst: out-of-place. The innermost row pass reads src and writes dst (the
 // input copy folds into the threaded first pass), later axes run in place on dst.
 // Partial overlap is UB.
 template<typename T>

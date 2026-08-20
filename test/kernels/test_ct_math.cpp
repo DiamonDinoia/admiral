@@ -1,4 +1,4 @@
-// ct_math.hpp — the compile-time number-theory helpers behind kernel generation.
+// ct_math.hpp holds the compile-time number-theory helpers behind kernel generation.
 //
 // Two layers on purpose:
 //   * static_assert is the actual contract. These run in the constant evaluator,

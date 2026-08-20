@@ -105,7 +105,7 @@ void dif_pass_small_ido(const T* ccre, const T* ccim,
     constexpr std::size_t W0 = sized_piece_width<T, xsimd::batch<T>::size / 2>();
     // Piece-outer / block-inner with hoisted twiddles, strip-mined over b. The (k,a)
     // twiddle set is b-invariant, and at 1 < ido < W its 2*(IP-1) narrow loads per block
-    // rival the 2*IP data loads -- that reload is part of why the valley costs more than
+    // rival the 2*IP data loads: that reload is part of why the valley costs more than
     // the plateau. Only for IP <= 3: above that the 2*(IP-1) pinned twiddle batches spill
     // against the butterfly's live set, and large l1 is exactly where valley chains run.
     if constexpr (IP <= 3 && 2 * (IP - 1u) + 2 * IP + 4u <= poet::vector_register_count()) {
@@ -155,11 +155,11 @@ void dif_pass_small_ido(const T* ccre, const T* ccim,
 // Vectorizes over the contiguous `a` (ido) dimension.
 // InPlace=false: Stockham, CC -> CH, the two disjoint (hence restrict-qualified by the callers
 // below). InPlace=true: CC and CH are the SAME buffer and every access stays inside block b, so
-// the pointer types must NOT be restrict-qualified -- hence CC/CH are template parameters rather
+// the pointer types must NOT be restrict-qualified, hence CC/CH are template parameters rather
 // than fixed signatures, which keeps one body serving both instead of a copy.
 //
 // The only difference is the output offset (obase/kstride): Stockham appends the digit
-// HIGH (b + l1*k -- self-sorting), in-place appends it LOW (k + IP*b), so the store
+// HIGH (b + l1*k, self-sorting), in-place appends it LOW (k + IP*b), so the store
 // lands on lines this pass just loaded. Twiddles are independent of b, so they are
 // bit-identical under both maps.
 template<typename T, std::size_t IP, bool InPlace, typename CC, typename CH>
@@ -167,13 +167,13 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
               std::size_t l1, std::size_t ido,
               const T* twre, const T* twim,
                    // SoA element stride of the input / output buffer, elected in the driver:
-                   //   1 -- two planar spans, re at base and im at base+gap: IP output
+                   //   1: two planar spans, re at base and im at base+gap: IP output
                    //        blocks x 2 planes = 2*IP concurrent store streams.
-                   //   2 -- W-blocked planar, re and im of the SAME W-batch adjacent, so im
+                   //   2: W-blocked planar, re and im of the SAME W-batch adjacent, so im
                    //        is base+W and every logical offset doubles: IP streams.
                    //        Legal only where every offset is W-aligned (ido % W == 0), which
-                   //        is exactly when the masked/overlap/scalar tails -- the only paths
-                   //        with an unaligned `a` -- cannot fire, so they always see 1.
+                   //        is exactly when the masked/overlap/scalar tails, the only paths
+                   //        with an unaligned `a`, cannot fire, so they always see 1.
                    std::size_t esi, std::size_t eso) {
     using batch = xsimd::batch<T>;
     constexpr std::size_t W = batch::size;
@@ -278,7 +278,7 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                 dif_butterfly<T, IP>(tr, ti_arr, emit_tw);
             };
             // Half-butterfly at `aa`: even (Odd=0) or odd (Odd=1) DIF half of a wide
-            // pow2 radix. IP/2 combined batches live — spill-free radix-8 profile.
+            // pow2 radix. IP/2 combined batches live, the spill-free radix-8 profile.
             // Used by the two-sweep restage (wants_reload radices only).
             auto do_half = [&](std::size_t aa, auto ODD) ADM_LAMBDA_ALWAYS_INLINE {
                 constexpr std::size_t H = IP / 2;
@@ -325,7 +325,7 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
             // takes the single-sweep full-radix path instead and pays its spills.
             if constexpr (dif_butterfly_wants_reload<IP> && !InPlace) {
                 // Two-sweep restage: even-half then odd-half, as two separate physical
-                // loops -- the compiler CSEs a single loop back to 2*IP-live spilling.
+                // loops. The compiler CSEs a single loop back to 2*IP-live spilling.
                 // The second (cache-hot) read removes the full-radix spill traffic.
                 // Two halves per iteration: one deep-FMA-tree half per iteration
                 // leaves the machine issue-starved.
@@ -344,12 +344,12 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
             } else if constexpr (kSplitCols) {
                 // In-place wide radix, spill-free. The recursion's first level spills
                 // to L1 on purpose (pow2_dif_butterfly would spill it to the stack):
-                //   A: cc[n] = a+b, cc[n+H] = (a-b)*W_IP^n   -- 4 live batches
-                //   B: two H-point butterflies over the now-disjoint halves -- 3H/2 live
+                //   A: cc[n] = a+b, cc[n+H] = (a-b)*W_IP^n   (4 live batches)
+                //   B: two H-point butterflies over the now-disjoint halves (3H/2 live)
                 // The out-of-place restage is illegal here: its odd sweep re-reads
                 // columns the even sweep overwrote. Costs 2*IP stores per block against
                 // the Stockham form's IP, but each lands on a line just loaded (no RFO).
-                // Each half writes back only the H columns it read (ocol above) -- the
+                // Each half writes back only the H columns it read (ocol above), since the
                 // natural interleave clobbers {H,H+2,..} before the odd half reads them.
                 // Appending (odd, Kc) is exactly what in-place passes of radix 2 then H
                 // would append, so the plan records this pass as (2, H) in rowperm.
@@ -430,7 +430,7 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                     if (kSplitCols || (2 * rem >= W && !((kPieceWidths<T> >> rem) & 1u))) {
                         // Masked lanes are exactly [a, ido): no over-read past the block, no
                         // double-transform. Written out rather than routed through do_batch
-                        // with a Masked flag -- the full-width loop above is the hottest code
+                        // with a Masked flag: the full-width loop above is the hottest code
                         // in the library and an all-true mask would emit masked forms there too.
                         constexpr auto um = xsimd::unaligned_mode{};
                         const xsimd::batch_bool<T> m = lane_prefix_mask<T>(rem);
@@ -507,7 +507,7 @@ ADM_ALWAYS_INLINE void dif_pass_impl(const T* ccre, const T* ccim,
 }
 
 // In-place (Gentleman-Sande) entry: ONE buffer. Every read and write stays inside
-// block b's span, so the store hits lines the same iteration just loaded -- no RFO
+// block b's span, so the store hits lines the same iteration just loaded: no RFO
 // on untouched lines, and the live footprint is 2N instead of 4N.
 template<typename T, std::size_t IP, typename... A>
 ADM_FLATTEN void dif_pass_ip_flat(A... a) { dif_pass_body<T, IP, true>(a...); }
@@ -533,7 +533,7 @@ void dif_pass(const T* ccre, const T* ccim,
 }
 
 // Runtime-prime middle pass (compile-time prime P in dif_generic_radices): a tile
-// skeleton whose leaf is rader_apply_batched<P> — one size-P DFT per SIMD lane as a
+// skeleton whose leaf is rader_apply_batched<P>: one size-P DFT per SIMD lane as a
 // length-(P-1) cyclic convolution through kernel_batched<P-1>. The inner state stays
 // in one a-tile's (register + L1 stack) footprint instead of paying Bluestein's
 // traffic. Direction-free like every middle pass: the inverse rides swapped planes.
@@ -608,7 +608,7 @@ ADM_NOINLINE void dif_pass_prime_chip(const T* ccre, const T* ccim,
 // Tile closure: ido2=ido/P2, l12=l1*P1. Pass p+1's input CC'[a'+ido2*(j'+P2*b')]
 // aliases pass p's output at a=a'+ido2*j', b'=b+l1*k. For ONE b and ONE a'-tile
 // [a0,a0+Wa), pass p's butterflies produce exactly the inputs of P1 pass-p+1
-// groups — closed working set of P1*P2*Wa complex values.
+// groups, a closed working set of P1*P2*Wa complex values.
 //
 // Operation order (butterfly, twiddle, butterfly, twiddle) preserved → bit-identical.
 //
@@ -624,7 +624,7 @@ void dif_pass_fused2(const T* ccre, const T* ccim,
     using batch = xsimd::batch<T>;
     constexpr std::size_t W  = batch::size;
     // L1 tile: 2 planes * P1*P2*WaMax*sizeof(T) <= kFusedTileBytes, WaMax rounded down
-    // to a multiple of W — the raw quotient happens to be W-aligned only at W=8.
+    // to a multiple of W. The raw quotient happens to be W-aligned only at W=8.
     constexpr std::size_t WaMax = (kFusedTileBytes / (2 * P1 * P2 * sizeof(T)) / W) * W;
     static_assert(WaMax >= W, "fused2: L1 tile too small for this SIMD width");
     const std::size_t ido2 = ido / P2;
@@ -712,7 +712,7 @@ void dif_pass_fused2(const T* ccre, const T* ccim,
 //
 // Tile closure: ido_0=ido, ido_1=ido_0/P2, ido_2=ido_0/(P2*P3); ido_2*P2*P3=ido_0,
 // so the P2*P3 strided sub-ranges cover the ido_0 positions feeding the (b,a0) tile
-// of pass p+1 — closed working set of P1*P2*P3*Wa complex values. Two L1 tiles:
+// of pass p+1, a closed working set of P1*P2*P3*Wa complex values. Two L1 tiles:
 //   tile1 layout: (k1*P2*P3 + j2*P3 + j3)*WaMax + t
 //   tile2 layout: (k1*P2*P3 + k2*P3 + j3)*WaMax + t
 //   WaMax = 4096/(P1*P2*P3*sizeof(T))
@@ -912,7 +912,7 @@ void dif_pass_first_impl(const std::complex<T>* data,
         }
         for (; a + W <= ido; a += W) do_batch(a);
         // Overlap tail >= W/2: recompute the last W columns (see dif_pass). Never under
-        // Split -- ido-W is the only batch start that is not a multiple of W, and the
+        // Split: ido-W is the only batch start that is not a multiple of W, and the
         // factored load C[(k-1)*blk + a0] is valid only while a0+W stays inside one
         // blk-wide block; past that the top lanes read the next k's block and the pass
         // writes garbage. The scalar tail indexes the factored row correctly at any column.
@@ -1047,7 +1047,7 @@ using dif_last_tail_seq = decltype(dif_tail_seq_shift(std::make_index_sequence<W
 }
 
 // Scalar rows [b, l1) of the dif_pass_last thin tail. NOINLINE so its scalar arrays do not
-// join the caller's register allocation -- inlined, clang spills the hot store loop's
+// join the caller's register allocation. Inlined, clang spills the hot store loop's
 // address arithmetic at sizes that never execute this tail.
 template<typename T, bool Forward, std::size_t IP>
 ADM_COLD ADM_NOINLINE void dif_pass_last_scalar_rows(const T* ccre,

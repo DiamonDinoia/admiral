@@ -33,7 +33,7 @@ static_assert(4 * (SBO_MAX + SBO_PAD) * sizeof(double) <= 192u * 1024u,
 
 // Span alignment: what a SIMD load needs, floored at a cache line so a padded row
 // stride also keeps every span base line-aligned. Asked of the arch rather than
-// written as 64 -- that literal is only right while the register is <= a line, and
+// written as 64: that literal is only right while the register is <= a line, and
 // an RVV VLEN above 512 bits is not (every other buffer here already asks xsimd).
 template<typename T>
 inline constexpr std::size_t span_align =
@@ -75,9 +75,9 @@ struct soa_scratch {
 
     T* buf(std::size_t k) noexcept { return m.ptr + k * m.stride; }
 
-    // Span stride. Callers that need to know the spans are one allocation -- e.g. the DIF
+    // Span stride. Callers that need to know the spans are one allocation, e.g. the DIF
     // driver's W-blocked SoA, which lays a generation out as 2N contiguous across what are
-    // otherwise two planes -- take it from here rather than differencing two buf() pointers,
+    // otherwise two planes, take it from here rather than differencing two buf() pointers,
     // which is only a valid stride when they came from the same object.
     [[nodiscard]] std::size_t stride() const noexcept { return m.stride; }
 

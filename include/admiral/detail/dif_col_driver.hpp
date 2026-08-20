@@ -1,7 +1,7 @@
 #pragma once
 
 // ============================================================================
-// Batched column DIF pass-chain driver — strided/batched analogue of
+// Batched column DIF pass-chain driver, the strided/batched analogue of
 // iterative_dif_execute_ws (dif_driver.hpp). One call transforms a slab of
 // shape [axis_extent][batch_count] over batch_count contiguous SIMD-lane columns:
 //
@@ -34,7 +34,7 @@ namespace detail {
 // scratch) runs its whole DIF chain as a unit, so the slab is re-strided once:
 //   * serial, a fat tile (~L2) amortises the column-stride TLB cost;
 //   * threaded, the tile must shrink with the thread count or the aggregate
-//     footprint thrashes L3 -- /6 leaves room for the other axes and the scratch.
+//     footprint thrashes L3; /6 leaves room for the other axes and the scratch.
 // Geometry comes from cpu_cache, not from baked-in constants. choose_line_route
 // compares the whole strided slab against this same number, so the tile width and the
 // route agree on what "stays cached" means.
@@ -50,7 +50,7 @@ namespace detail {
 }
 
 // Tiles per worker the balance term aims for. Reachable only by SPLITTING a run, so it
-// buys nothing once the runs alone outnumber the workers -- see nd_col_block.
+// buys nothing once the runs alone outnumber the workers; see nd_col_block.
 inline constexpr std::size_t kTilesPerWorker = 4;
 
 // Column-tile width Bt: widest W-multiple fitting the thread-adjusted budget, clamped
@@ -58,8 +58,8 @@ inline constexpr std::size_t kTilesPerWorker = 4;
 // run fits one untiled pass.
 //
 // Widest-that-fits: tile time per column falls with the width and flattens at the
-// budget, and an uneven cut is not penalised -- nothing to gain by balancing the tiles
-// against each other.
+// budget, and an uneven cut is not penalised: there is nothing to gain by balancing the
+// tiles against each other.
 //
 // The balance term counts UNITS = nruns*ntiles, not ntiles: splitting a run is only one
 // of the two ways work reaches a worker. Sized off the run alone the cap collapses to
@@ -129,7 +129,7 @@ void col_dif_execute_ws(std::complex<T>* data,
 
     if (n_passes == 1) {
         // Single radix: the pass is AoS in-place (ido==1), so the copy-in cannot ride
-        // along inside it -- do it up front. Only reachable for a forced route at tiny
+        // along inside it, so it happens up front. Only reachable for a forced route at tiny
         // N (a single radix caps at 32); select_route never sends four_step_large here.
         if (first_src != nullptr)
             for (std::size_t i = 0; i < N; ++i)

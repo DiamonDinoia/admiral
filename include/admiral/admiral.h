@@ -1,7 +1,7 @@
 #pragma once
 
 // ============================================================================
-// Admiral C API — complex and real FFTs, 1-D and N-D.
+// Admiral C API: complex and real FFTs, 1-D and N-D.
 //
 //   #include <admiral/admiral.h>
 //
@@ -15,7 +15,7 @@
 // to the prefix: adm_forward / admf_forward. The two sets are otherwise the
 // same.
 //
-// Layout. Contiguous row-major, last axis fastest — the same layout as FFTW.
+// Layout. Contiguous row-major, last axis fastest, the same layout as FFTW.
 // Strided and non-contiguous data is not supported.
 //
 // Sign and scale. Forward uses exp(-2*pi*i*k*n/N) and is unscaled. Inverse uses
@@ -28,7 +28,7 @@
 // nodiscard, so ignoring it is a warning. adm_error_string() turns a status
 // into text.
 //
-// Options. Everything that builds a plan -- the one-shots included -- takes a
+// Options. Everything that builds a plan, the one-shots included, takes a
 // trailing `const adm_options*`. NULL means the defaults, so a caller who wants
 // none of them passes nothing.
 //
@@ -87,8 +87,8 @@ typedef enum {
     ADM_EFFORT_MEASURE = 2
 } adm_effort;
 
-// Everything a plan is built with. Pass NULL for the defaults, or name every field
-// -- C leaves the rest indeterminate. A zeroed struct IS the default: nthreads 0
+// Everything a plan is built with. Pass NULL for the defaults, or name every field,
+// since C leaves the rest indeterminate. A zeroed struct IS the default: nthreads 0
 // is auto, eff 0 is ADM_EFFORT_ESTIMATE, debug 0 is silent.
 //   const adm_options o = {.nthreads = 8, .eff = ADM_EFFORT_AUTOMATIC, .debug = 0};
 typedef struct {
@@ -108,7 +108,7 @@ ADM_NODISCARD ADM_C_API const char* adm_error_string(adm_status status);
 // tables and the worker threads alive between calls. A discarded plan cannot
 // repay a plan-time race, so one-shots always route with ADM_EFFORT_ESTIMATE
 // and opts->eff is ignored here. Zero sizes are rejected; the C++ one-shots
-// treat an empty span as a no-op, this surface does not.
+// treat an empty span as a no-op, this API does not.
 // ============================================================================
 
 // 1-D, in place. `size` is the number of complex elements.

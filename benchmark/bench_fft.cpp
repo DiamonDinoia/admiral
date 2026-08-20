@@ -469,9 +469,9 @@ CategoryStats compute_category_stats(const std::string& category, const std::str
 
 void print_performance_report() {
     std::cout << "\n\n";
-    std::cout << "═══════════════════════════════════════════════════════════════════════\n";
+    std::cout << "=======================================================================\n";
     std::cout << "                         PERFORMANCE REPORT                            \n";
-    std::cout << "═══════════════════════════════════════════════════════════════════════\n\n";
+    std::cout << "=======================================================================\n\n";
 
     // Per-precision breakdown: float and double are reported separately so a
     // regression in one precision is never masked by the other's average.
@@ -497,7 +497,7 @@ void print_performance_report() {
         std::cout << "\n";
 
         std::cout << "Performance by Category [" << prec_name << "]:\n";
-        std::cout << "───────────────────────────────────────────────────────────────────────\n";
+        std::cout << "-----------------------------------------------------------------------\n";
         std::cout << std::setw(15) << "Category" << " | "
                   << std::setw(6) << "Count" << " | "
                   << "Forward Ratio (fft/ducc0) | "
@@ -506,7 +506,7 @@ void print_performance_report() {
                   << std::setw(6) << "" << " | "
                   << "Avg    Min    Max           | "
                   << "Avg    Min    Max\n";
-        std::cout << "───────────────────────────────────────────────────────────────────────\n";
+        std::cout << "-----------------------------------------------------------------------\n";
 
         for (const auto& cat : {"Power-of-2", "Prime", "Composite"}) {
             auto stats = compute_category_stats(cat, prec);
@@ -538,11 +538,11 @@ void print_performance_report() {
             }
             std::cout << "\n";
         } else {
-            std::cout << "ducc0 faster [" << prec_name << "]: NONE — fft wins every size.\n\n";
+            std::cout << "ducc0 faster [" << prec_name << "]: NONE, fft wins every size.\n\n";
         }
     }
 
-    std::cout << "═══════════════════════════════════════════════════════════════════════\n";
+    std::cout << "=======================================================================\n";
     std::cout << "\nInterpretation:\n";
     std::cout << "  - Ratio = fft time / ducc0 time\n";
     std::cout << "  - Ratio > 1.0: ducc0 is faster (fft takes more time)\n";
@@ -603,8 +603,8 @@ bool compare_min_of_n(std::size_t N, int reps, long inner,
                       int adm_nthreads = 1,
                       admiral::effort adm_eff = admiral::effort::estimate) {
     // The library's 1D transform stays serial: large N is DRAM-bound, small N is
-    // barrier-dominated. nthreads threads only the ducc0/FFTW references — ducc0
-    // disables 1-D threading — so a 1D --nthreads>1 row mainly exposes FFTW.
+    // barrier-dominated. nthreads threads only the ducc0/FFTW references, and ducc0
+    // disables 1-D threading, so a 1D --nthreads>1 row mainly exposes FFTW.
     const std::size_t nt = static_cast<std::size_t>(nthreads);
     // --adm-nthreads also threads the library plan (0 = resolve_nthreads auto).
     // Threading is plan-owned: only four_step_large runs in parallel; below its
@@ -745,7 +745,7 @@ bool compare_min_of_n(std::size_t N, int reps, long inner,
 #ifdef ADM_BENCH_FFTW
     if (fftw_ok) {
         // Honor use_cyc, not just counter availability: threaded, the library's
-        // counter sees only the caller while FFTW's caller runs all threads —
+        // counter sees only the caller while FFTW's caller runs all threads, so
         // a cyc ratio would mislabel the MT comparison.
         const bool ucf = use_cyc && fft_fwd.cyc > 0.0 && fftw_fwd.cyc > 0.0
                        && fft_rt.cyc > 0.0 && fftw_rt.cyc > 0.0;
@@ -865,13 +865,13 @@ bool compare_factors_ab(std::size_t N,
     const double spread = std::max(mad_of(ab.fs), mad_of(ba.fs))
                         + 0.5 * std::abs(mab_f * mba_f - 1.0);
     const bool any_wall = ab.any_wall || ba.any_wall;
-    // A/ducc, B/ducc: A is "first" in ab and "second" in ba — geomean over both roles
+    // A/ducc, B/ducc: A is "first" in ab and "second" in ba, so a geomean over both roles
     // averages out γ for the anchor too.
     const double a_ducc = std::sqrt(geomean_of(ab.fd) * geomean_of(ba.sd));
     const double b_ducc = std::sqrt(geomean_of(ab.sd) * geomean_of(ba.fd));
 
     // "A robustly faster" requires the corrected edge to clear the spread (2*MAD-ish)
-    // on BOTH fwd and rt — a sub-spread delta is noise, not a result.
+    // on BOTH fwd and rt: a sub-spread delta is noise, not a result.
     const bool robust_a = (mfwd < 1.0 - 2.0 * spread) && (mrt < 1.0);
     const bool robust_b = (mfwd > 1.0 + 2.0 * spread) && (mrt > 1.0);
     const char* verdict = robust_a ? "A faster (robust)"
@@ -887,7 +887,7 @@ bool compare_factors_ab(std::size_t N,
               << " | rounds=" << rounds << "x2 spread=" << std::setprecision(1)
               << (spread * 100.0) << "%"
               << "  <== " << verdict
-              << (any_wall ? "  [perf counters UNAVAILABLE — ratio is wall-clock, NOT trustworthy]" : "")
+              << (any_wall ? "  [perf counters UNAVAILABLE: ratio is wall-clock, NOT trustworthy]" : "")
               << "\n";
     return true;
 }
@@ -1071,7 +1071,7 @@ void decomp_report(const std::vector<std::size_t>& sizes) {
             std::snprintf(opt, sizeof opt, "%zux%zu", fs.n1, fs.n2);
 
         const bool mismatch = std::string(opt_route) != route
-            // four_step vs four_step_batched are the same family — not a mismatch.
+            // four_step vs four_step_batched are the same family, not a mismatch.
             && !(std::string(opt_route) == "four_step"
                  && std::string(route) == "four_step_batched");
         auto fc = [](double v) {
@@ -1088,8 +1088,8 @@ void decomp_report(const std::vector<std::size_t>& sizes) {
 }
 
 // --route-ab-dif: default route vs forced iterative_dif, interleaved A/B.
-// Engine A: plan_impl<T>(N, fwd/inv) — the planner's route.
-// Engine B: plan_impl<T>(N, fwd/inv, 1, &dif_plan) — forced iterative_dif via
+// Engine A: plan_impl<T>(N, fwd/inv), the planner's route.
+// Engine B: plan_impl<T>(N, fwd/inv, 1, &dif_plan), forced iterative_dif via
 // build_dif_factor_plan<T>(N) or an explicit --factors= chain.
 // Output prefix: RABDIF; nameA names A's actual route. Ratio <1 ⇒ default faster.
 template<typename T>
@@ -1241,7 +1241,7 @@ void base_cost_size(std::size_t N, int rounds, int reps, long inner) {
     // (-ffinite-math-only) makes infinity()/isinf UB and clang -Werror rejects them.
     std::vector<double> best_cyc(K, std::numeric_limits<double>::max());
     std::vector<double> best_us (K, std::numeric_limits<double>::max());
-    // MdAPE (fractional) of the round that produced best_cyc — the generator uses
+    // MdAPE (fractional) of the round that produced best_cyc. The generator uses
     // this as the per-measurement noise band so a route only flips when the win
     // exceeds the noise (1.0 = 100% = untrusted until a real reading lands).
     std::vector<double> best_err(K, 1.0);
@@ -1331,12 +1331,12 @@ void chain_sweep(std::size_t N, int rounds, int reps, long inner, std::size_t ma
         chains.swap(keep);
     }
 
-    // rounds=0: dump the model's cost ranking of every runnable chain — no timing,
+    // rounds=0: dump the model's cost ranking of every runnable chain, with no timing and
     // no accuracy filter (join against timed cyc before using).
     // Each line also carries the design columns of dif_surface's nine coefficients,
     // summed over the chain, so refitting the model on measurement is a least-squares
     // solve on these columns. res is the part no column explains (generic/merged
-    // radices, order_eps); for in-table radices it comes out ~0 — the self-check.
+    // radices, order_eps); for in-table radices it comes out ~0, which is the self-check.
     if (rounds == 0) {
         for (const auto& c : chains) {
             const auto            fp = make_dif_factor_plan(c);
@@ -1347,7 +1347,7 @@ void chain_sweep(std::size_t N, int rounds, int reps, long inner, std::size_t ma
                 const std::size_t ido = n / r;
                 if (ido > 1 && ido < xsimd::batch<T>::size) ++veto;
                 // The columns exist only where the surface does: an ISA key without
-                // fitted coefficients prices passes from the measured tape instead —
+                // fitted coefficients prices passes from the measured tape instead, with
                 // nothing linear to refit, so emit just the veto count and model cost.
                 if constexpr (d::dif_surface_is_analytic<T>) {
                     const std::size_t idx = d::dif_cost_index(r);
@@ -1456,7 +1456,7 @@ void chain_sweep(std::size_t N, int rounds, int reps, long inner, std::size_t ma
 // Structural-model dump: every route's MODELED cost, for offline scoring. The
 // stdlib-only fitter cannot reach the engine's model, so this prints it from the
 // engine itself, one line per (N, prec, form), to join against BASECOST receipts.
-// No timing, no plan execution — pure model evaluation.
+// No timing, no plan execution: pure model evaluation.
 template<typename T>
 void model_dump(std::size_t lo, std::size_t hi) {
     using plan_t = admiral::detail::plan_impl<T>;
@@ -1690,7 +1690,7 @@ int main(int argc, char** argv) {
             const std::size_t na = prod(fa), nb = prod(fb);
             if (na != nb || na == 0) {
                 std::cerr << "--factors-ab: the two factorizations multiply to "
-                          << na << " vs " << nb << " — must match\n";
+                          << na << " vs " << nb << ", must match\n";
                 return 1;
             }
             auto run = [&](auto tag) {
@@ -1826,7 +1826,7 @@ int main(int argc, char** argv) {
     //   --cost-audit=N[:Sa-Sb-..] [--prec=..] [--rounds=K] ...
     // Prints the DP pick build_dif_factor_plan<T>(N). A candidate ordering after ':'
     // also runs the role-swapped cycle-true A/B (DP-pick vs candidate), to refine
-    // the formula — not to emit an override. Reuses compare_factors_ab.
+    // the formula, not to emit an override. Reuses compare_factors_ab.
     {
         std::string ca_arg;
         std::string cmp_prec = "both";
@@ -2202,8 +2202,8 @@ int main(int argc, char** argv) {
     std::cout << "FFT Benchmark: fft vs ducc0 Comparison\n";
     std::cout << "=====================================================================================\n";
 
-    // Run the full sweep once per precision so float is measured as a
-    // first-class citizen alongside double.
+    // Run the full sweep once per precision, so float is measured as widely as
+    // double.
     auto run_sweep = [](auto tag) {
         using T = decltype(tag);
         const char* prec_name = (sizeof(T) == 4) ? "float" : "double";

@@ -1,6 +1,6 @@
 #pragma once
 
-// Private implementation header — included only by per-N TUs and codelet_dispatch.cpp.
+// Private implementation header, included only by per-N TUs and codelet_dispatch.cpp.
 // Defines codelet_apply<N,T,Forward>: deinterleave -> kernel<N>::apply -> reinterleave.
 // in == out is in-place; in != out reads `in` (preserved) and writes `out`.
 // Un-normalized (does NOT apply 1/N).  N <= CODELET_CATALOG_MAX is guaranteed by routing.
@@ -17,7 +17,7 @@ namespace admiral {
 namespace detail {
 
 // Output sink for kernel<N>::apply_sink: interleaves the emitted (re,im) pairs
-// straight to AoS `out` — no SoA output round-trip. The inverse's exit conjugation
+// straight to AoS `out`, with no SoA output round-trip. The inverse's exit conjugation
 // rides the sign here (see the conj-trick comment below); chunks arrive with j in
 // ascending order, each output index emitted exactly once.
 template<typename T, bool Forward>
@@ -111,8 +111,8 @@ void codelet_apply(const std::complex<T>* in, std::complex<T>* out) {
 // padding and the last full tile is not a special case.
 //
 // SCALED (unlike codelet_apply): `fct` folds into the output, replacing the run's second
-// pass. Inverse rides the same forward kernel_batched via conj(fwd(conj(x))) -- the
-// output conjugation is just the sign of the imaginary scale -- so only the Forward
+// pass. Inverse rides the same forward kernel_batched via conj(fwd(conj(x))): the
+// output conjugation is the sign of the imaginary scale, so only the Forward
 // instantiation of the heavy batched kernel is ever compiled.
 //
 // N in {2,4} keeps the per-line loop: there kernel<N> is a register-resident pow2

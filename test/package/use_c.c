@@ -47,7 +47,7 @@ int main(void) {
     }
     adm_plan_destroy(p);
 
-    /* max|got-ref| <= 32*eps*||ref||_inf, and the spectrum peak is N — the flat
+    /* max|got-ref| <= 32*eps*||ref||_inf, and the spectrum peak is N, so the flat
      * 32*eps the C++ suite asserts in the relative L2 norm. */
     const double tol = (double)N * 32.0 * DBL_EPSILON;
     printf("c worst=%.3g tol=%.3g\n", worst, tol);

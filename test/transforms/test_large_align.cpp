@@ -47,7 +47,7 @@ std::vector<std::complex<T>> tone_spectrum(std::size_t N, std::size_t K) {
 }
 
 // Owns an over-aligned buffer and hands out a pointer offset `off_elems` complex
-// elements past a span_align boundary -- span_align rather than a literal 64
+// elements past a span_align boundary. span_align rather than a literal 64
 // because that is the alignment the kernels actually assume, so off_elems=0 is
 // the aligned case on every ISA. off_elems in {1,2,3} => 16/32/48-byte misaligned
 // (complex<double> is 16 B), exercising the store-align peel's masked windows.
@@ -197,7 +197,7 @@ TEST_CASE("four_step_large tone and impulse (float)", "[large][fourstep]") {
 TEMPLATE_TEST_CASE("execute() input/output alignment variants vs analytical",
                    "[large][align]", float, double) {
     using T = TestType;
-    // four_step_large is f64-only; for f32 this size routes iterative_dif — still
+    // four_step_large is f64-only; for f32 this size routes iterative_dif, still
     // a valid alignment probe of the shared peel.
     for (const std::size_t N : {std::size_t{4096}, std::size_t{1048576}}) {
         CAPTURE(N);
@@ -233,7 +233,7 @@ TEMPLATE_TEST_CASE("execute() input/output alignment variants vs analytical",
 // clause and takes the 4-plane fallback, which also pins that clause. That arm is compared
 // to tolerance, not bitwise: the same misalignment also makes the last pass take its AoS
 // store peel, whose partial-row block groups the same values differently. Bitwise still
-// holds where alignment matches -- the in == out arm below. `fired` guards the whole case
+// holds where alignment matches, the in == out arm below. `fired` guards the whole case
 // against passing vacuously if the parity predicate ever stops admitting these sizes.
 TEMPLATE_TEST_CASE("out-aliased SoA pair equals the 4-plane path", "[dif][align]", float, double) {
     using T = TestType;
@@ -257,7 +257,7 @@ TEMPLATE_TEST_CASE("out-aliased SoA pair equals the 4-plane path", "[dif][align]
             // in == out is the shape the alias actually ships into: bluestein's and rader's
             // inner DIF both call dif_execute_in_place(buf, buf, ...) on soa_scratch memory,
             // which is aligned, so they take the aliased path on every qualifying chain.
-            // It is also the only case where lending `out` out is not obviously safe -- pass 1
+            // It is also the only case where lending `out` out is not clearly safe: pass 1
             // writes the lent pair, and that pair IS the input. Legal because pass 0 fully
             // drains `in` before pass 1 runs, but "legal by argument" is what a test is for.
             offset_buffer<T> ip(N, 0);

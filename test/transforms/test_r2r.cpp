@@ -66,7 +66,7 @@ TEMPLATE_TEST_CASE("DCT/DST match the direct sum in both directions", "[r2r]", f
     // A sweep, not a hand-picked list: the four kinds' index maps differ at the
     // parity boundary (k == N/2 is the one index where the two writes per k collide)
     // and at N == 1, so every small N is its own case. The larger sizes then cover
-    // the routes a small N never reaches -- prime (251), pentanomial (121), the
+    // the routes a small N never reaches: prime (251), pentanomial (121), the
     // 5-smooth and pow2 chains, and N/2 prime > 11 (26, 46), which is what puts r2c
     // on its scalar even path instead of the batched one.
     for (std::size_t N = 1; N <= 64; ++N) {

@@ -1,9 +1,9 @@
-# ctest gate: the shipped shared library exports its public surface and nothing else.
+# ctest gate: the shipped shared library exports its public API and nothing else.
 # Run: cmake -DNM=<nm> -DLIB=<path> -DPATTERN=<regex> -DREQUIRED=<regex;...>
 #      -P CheckExportedSymbols.cmake
 # PATTERN catches a leak, REQUIRED a silently missing export. Hidden visibility does
 # not reach compiler-emitted RTTI, so the version script in src/*.map is what closes
-# the ABI — a linker ignoring it must fail this test.
+# the ABI. A linker that ignores it must fail this test.
 
 
 execute_process(

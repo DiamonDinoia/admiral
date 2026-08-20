@@ -1,11 +1,11 @@
 #pragma once
 
 // ----------------------------------------------------------------------------
-// portable_trig — sincos for rational turn fractions, at plan construction.
+// portable_trig: sincos for rational turn fractions, at plan construction.
 //
 // FFT twiddles are exp(+/-2*pi*i*num/den) with INTEGER num,den. Argument
 // reduction is exact integer arithmetic (reduce mod den, round to nearest
-// quadrant), leaving a residual in [-pi/4,pi/4] for the polynomial — no
+// quadrant), leaving a residual in [-pi/4,pi/4] for the polynomial. No
 // Payne-Hanek needed, and more accurate than it for large arguments.
 // Polynomial kernel (Horner in u=t^2 on [0,(pi/4)^2]) vendored from
 // DiamonDinoia/polyfit (examples/portable_trig.hpp).

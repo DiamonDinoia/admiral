@@ -15,7 +15,7 @@
 // has ido >= 2 (ido==1 goes to dif_pass_last). All scratch/twiddle storage externally
 // owned; no hot-path allocation.
 //
-// Ref: Gentleman & Sande, "Fast Fourier transforms — for fun and profit", AFIPS
+// Ref: Gentleman & Sande, "Fast Fourier transforms: for fun and profit", AFIPS
 // Fall JCC 29 (1966) 563. DOI 10.1145/1464291.1464352
 // ============================================================================
 
@@ -43,9 +43,9 @@ namespace detail {
 
 // ----------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
-// Execute tape. The plan records the driver's walk once -- kernel thunk, l1/ido,
-// element-stride bits, ping-pong buffer selectors -- as plain data (dif_step,
-// twiddles.hpp); execute() runs a flat loop with no per-execute recomputation.
+// Execute tape. The plan records the driver's walk once as plain data (dif_step,
+// twiddles.hpp): kernel thunk, l1/ido, element-stride bits, ping-pong buffer
+// selectors. execute() runs a flat loop with no per-execute recomputation.
 //
 // Every thunk has the one signature dif_step::fn_t so the loop is branch-free;
 // boundary kernels read rt.in/rt.out. Thunks resolve their tables by pass index into
@@ -128,11 +128,11 @@ void dif_tape_step_single(const T* sr, const T* si, T*, T*,
     }
 }
 
-// Every direction-free step family — mid-pass body (plain and chiplet), in-place pass,
-// fused pair and triple — behind one selector each, named rather than dispatched inline in
+// Every direction-free step family sits behind one selector each: mid-pass body (plain
+// and chiplet), in-place pass, fused pair and triple. Named rather than dispatched inline in
 // dif_build_tape: they carry the pass tree, and the tape builder is instantiated per
 // direction, so inline they would each compile twice per precision to produce the same
-// kernels. Definitions: src/inst_dif_thunks_{f,d}.cpp. Keep this set exhaustive — the
+// kernels. Definitions: src/inst_dif_thunks_{f,d}.cpp. Keep this set exhaustive, since the
 // point is that the per-direction TU holds only what actually depends on the direction.
 //
 // One struct, so one `extern template struct` per precision covers every family. Members
@@ -340,20 +340,20 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
 // First pass: AoS `in` -> SoA ping buffer (cc0). Middle passes: SoA ping-pong between
 // cc0 and cc1. Last pass: final SoA buffer -> AoS `out`.
 //
-// in == out (in-place): first pass fully drains `in` before any AoS store — no staging
+// in == out (in-place): first pass fully drains `in` before any AoS store, so no staging
 // copy needed. in != out: same property makes it free out-of-place. cc0 and cc1 each
 // >= N elements (re+im separately). Allocation-free. scale_val folds into
 // dif_pass_last's store loop; pass 1 for un-normalized output. Requires n_passes >= 2
 // (single-factor N routes to the codelet path).
 //
-// The pass chain itself — kernel thunks, per-pass l1/ido, element-stride bits, ping-pong
-// selectors — is plan data (dtw.tape, dif_build_tape); this is a flat loop of resolved
+// The pass chain itself is plan data (dtw.tape, dif_build_tape): kernel thunks, per-pass
+// l1/ido, element-stride bits, ping-pong selectors. This is a flat loop of resolved
 // indirect calls. soa_stride >= N selects the tape baked with the W-blocked SoA election
 // (im plane interleaved per W-batch: element stride 2 halves a radix-IP pass's 2*IP
 // store streams to IP). The election needs each PAIR to be one contiguous 2N span, which
 // only the allocation's owner can declare (test_iterative passes four independent
 // vectors and stays on the flat tape). soa_stride is that declaration, not an address
-// stride the kernels apply: the two pairs need not share one -- dif_execute_in_place's
+// stride the kernels apply: the two pairs need not share one, and dif_execute_in_place's
 // aliased path gives pair 1 the caller's `out`, whose internal stride is exactly N.
 template<typename T, bool Forward>
 void iterative_dif_execute_ws(const std::complex<T>* in, std::complex<T>* out,
@@ -417,19 +417,19 @@ void dif_dispatch(bool forward, const std::complex<T>* in, std::complex<T>* out,
 // `out` doubles as the second ping-pong pair, halving the scratch to one pair.
 // Four conditions, all necessary:
 //
-//   parity — pass 0 writes buffer 0 (dif_build_tape's st.dst = 0) and the last pass reads
+//   parity: pass 0 writes buffer 0 (dif_build_tape's st.dst = 0) and the last pass reads
 //     `ping`. Buffer 1 is free only if nothing reads it after its writer, i.e. the last
 //     pass reads buffer 0. Flipping the start flips both, so this is pure flip-count
 //     parity and cannot be arranged. `in` is safe even when in == out: pass 0 fully
 //     drains it, and pass 1 is the first writer of buffer 1.
-//   layout — a pair must be one contiguous 2N span, because blocked passes address the
+//   layout: a pair must be one contiguous 2N span, because blocked passes address the
 //     im plane as dr + W with element stride 2. `out` is exactly 2N contiguous T.
-//   alignment — a PERFORMANCE guard, not a correctness one: the planes are only ever
+//   alignment: a PERFORMANCE guard, not a correctness one: the planes are only ever
 //     touched with load_unaligned/store_unaligned, so any `out` would compute the right
 //     answer, but a pair off the line boundary splits every W-block store across two
 //     lines. Both the buffer and the im plane's offset (N * sizeof(T)) have to land on
 //     span_align.
-//   residency — the win is the smaller resident set, and it only converts while the
+//   residency: the win is the smaller resident set, and it only converts while the
 //     4-plane scratch fits L2. Past that the aliased pair costs more than it saves: it
 //     is stuck at stride exactly N and so loses span_stride's anti-alias padding.
 template<typename T>

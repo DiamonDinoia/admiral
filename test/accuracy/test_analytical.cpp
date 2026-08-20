@@ -59,7 +59,7 @@ TEMPLATE_TEST_CASE("FFT analytical: Gaussian spectrum matches its closed form",
     // check passes a merely DC-dominated transform.
     const std::size_t N = 128;
     // Periodization wraps the tails, so the only approximation is the spectral
-    // alias sum, O(exp(-2 pi^2 sigma^2)) -- e^-1243 at N=128 with sigma = N/16.
+    // alias sum, O(exp(-2 pi^2 sigma^2)): e^-1243 at N=128 with sigma = N/16.
     const T sigma = T(N) / T(16);
     std::vector<std::complex<T>> input(N);
     for (std::size_t n = 0; n < N; ++n) {
@@ -197,7 +197,7 @@ TEMPLATE_TEST_CASE("FFT symmetry for real signals", "[fft][analytical][propertie
 
     // X[k] == conj(X[N-k]), compared as a whole spectrum: relative L2 needs no
     // amplitude fudge for the O(N) bins. k=0 and k=N/2 map to themselves, so this
-    // also forces those two bins real -- no separate check for them.
+    // also forces those two bins real, so there is no separate check for them.
     std::vector<std::complex<T>> mirrored(N);
     for (std::size_t k = 0; k < N; ++k) mirrored[k] = std::conj(output[(N - k) % N]);
     require_close(output, mirrored, fft_tol<T>());

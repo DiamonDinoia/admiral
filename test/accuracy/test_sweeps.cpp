@@ -111,7 +111,7 @@ TEST_CASE("large-N round-trip (terminal DIF and deep Bluestein)", "[coverage][la
 // Bluestein at pads crossing the six-step delegate line (bluestein.hpp): the inner
 // padded transform runs four_step_large there. 524287 pads to 2^20 (1024^2 fused);
 // 401407 pads to 802816 = 896^2 (smooth, fused). Naive DFT is infeasible at these
-// sizes, so the checks are known answers (impulse, tone — a sign flip moves the
+// sizes, so the checks are known answers (impulse, tone: a sign flip moves the
 // bin to N-k0), round-trip and Parseval. Tolerance x64: |DFT(chirp)| is a Gauss
 // sum ~sqrt(2n), so intermediates carry sqrt(2n)x the input magnitude.
 TEST_CASE("Bluestein pad on the six-step delegate", "[coverage][large][bluestein]") {
@@ -119,7 +119,7 @@ TEST_CASE("Bluestein pad on the six-step delegate", "[coverage][large][bluestein
     using admiral::detail::bluestein_choose_pad;
     using admiral::detail::bluestein_inner_six_step_admits;
     using admiral::detail::bluestein_plan;
-    // Gate pinning: the two cells must cross, the two controls must not —
+    // Gate pinning: the two cells must cross and the two controls must not,
     // 262143 pads to 2^19 (below the byte line) and 393749 pads to 787500 = 875x900
     // (n2 % n1 != 0 -> the transpose-cycles path). Refusals are ISA-free; if the
     // gate moves, re-pick the cells.
@@ -210,7 +210,7 @@ TEST_CASE("Public large gate requires a cycle-free split", "[coverage][large]") 
 // f32 small-ido cover: a non-in-place pass with 4 <= ido < W routes to
 // dif_pass_small_ido's exact-width pieces. Reachable only above N=13312 for float;
 // the sweep above stops at 512 where the in-place prefix absorbs these passes.
-// ido is 13, 8 and 15 here — three different sized_cover decompositions.
+// ido is 13, 8 and 15 here: three different sized_cover decompositions.
 TEST_CASE("f32 small-ido pass cover", "[coverage][small_ido]") {
     using T = float;
     for (std::size_t N : {std::size_t{13312}, std::size_t{33000}, std::size_t{33075}}) {

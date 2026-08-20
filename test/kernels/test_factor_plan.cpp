@@ -133,7 +133,7 @@ TEMPLATE_TEST_CASE("DIF factor planner is optimal for modeled cost", "[factor_pl
     // A sweep, not a hand-picked list: brute-force enumeration is a valid oracle at every
     // N the additive DP actually prices, which is every N whose elected chain is made of
     // candidate radices. A generic prime in the chain means dif_generic_stage_cost priced
-    // it instead -- a different objective, like the pow2 fusion band check_optimal skips.
+    // it instead: a different objective, like the pow2 fusion band check_optimal skips.
     const auto additively_priced = [](const dif_factor_plan& p) {
         for (std::size_t i = 0; i < p.count; ++i)
             if (std::find(dif_candidate_radices.begin(), dif_candidate_radices.end(), p[i])
@@ -239,7 +239,7 @@ TEMPLATE_TEST_CASE("starved generic tail bounds chain availability from both sid
 }
 
 // One flat valley tier cancels between two chains that each hold exactly one valley pass,
-// leaving the residual to rank them -- which elected an r15 valley over its own 3*5 split.
+// leaving the residual to rank them, which elected an r15 valley over its own 3*5 split.
 // The wide-radix tier is what separates them, so the ordering is asserted directly.
 TEMPLATE_TEST_CASE("a wide radix in the valley outprices a narrow one", "[factor_plan]",
                    float, double) {
@@ -302,8 +302,8 @@ TEMPLATE_TEST_CASE("four_step split: argmin, admissible, and order-blind",
             REQUIRE(s.n1 * s.n2 == N);
             REQUIRE(admissible(s.n1, s.n2));
         }
-        // The exec chooser's objective is symmetric in (n1, n2) -- both the leaf term
-        // and min(n1,L)+min(n2,L) are -- so it CANNOT rank the two memory orders even
+        // The exec chooser's objective is symmetric in (n1, n2): both the leaf term
+        // and min(n1,L)+min(n2,L) are, so it CANNOT rank the two memory orders even
         // though execution can tell them apart. Only FMA contraction separates them, at
         // a few ulps, which is what makes its n1 <= N/2 bound elect the larger factor
         // first at a handful of sizes. Asserted with the same reassociation epsilon the

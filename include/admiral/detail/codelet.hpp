@@ -135,7 +135,7 @@ template<typename T, std::size_t Wt = 2>
 }
 
 // Compile-time-M radix-R combine: full chunks at native width, then the sub-W
-// remainder (rem = M % W < W) by its binary expansion — one batch per set bit
+// remainder (rem = M % W < W) by its binary expansion: one batch per set bit
 // at existing widths, value-folded scalar chunks for the rest. Every j is a
 // compile-time constant, so no combine work survives as an out-of-line call.
 template<unsigned R, unsigned N, typename T>
@@ -152,7 +152,7 @@ ADM_ALWAYS_INLINE void radix_butterfly_ct(T* ADM_RESTRICT yre, T* ADM_RESTRICT y
     constexpr std::size_t nfull = M / W;
     if constexpr (nfull > 0) {
         // Force-inline only when 2R+10 live batches fit the vector file (R<=4);
-        // R=8: out-of-line wins — inlined spilling combine merges live ranges
+        // R=8: out-of-line wins, because an inlined spilling combine merges live ranges
         // with caller (see kernel_should_noinline).
         if constexpr (2u * R + 10u <= poet::vector_register_count() + 2u) {
             poet::dynamic_for<U>(std::size_t{0}, nfull, [&](std::size_t b) ADM_LAMBDA_ALWAYS_INLINE {
@@ -249,7 +249,7 @@ consteval std::array<T, P - 1> make_rader_bhat() {
 template<typename T, std::size_t R, std::size_t W = 1>
 [[nodiscard]] consteval std::size_t cofactor_batch_width() {
     if constexpr (W >= xsimd::batch<T>::size)
-        return xsimd::batch<T>::size;  // native width is always available — stop here
+        return xsimd::batch<T>::size;  // native width is always available, so stop here
     else if constexpr (W >= R && !std::is_void_v<xsimd::make_sized_batch_t<T, W>>)
         return W;                      // narrowest available width that holds R
     else
@@ -356,7 +356,7 @@ struct kernel_batched {
     }
 
     // Same transform, but the FINAL combine emits via sink(p, outr, outi) instead
-    // of storing to yre/yim — caller fuses its store (scale + AoS interleave) into
+    // of storing to yre/yim. The caller fuses its store (scale + AoS interleave) into
     // the last butterfly. yre/yim still required as scratch. Each output index
     // sinked exactly once.
     static void apply_sink(const V* xre, const V* xim, std::size_t xstride, V* yre, V* yim,
@@ -457,9 +457,9 @@ static_assert(kNoinlineMinSize >= xsimd::batch<float>::size && kNoinlineMinSize 
 //     stride, which costs more than the lanes the batch leaves idle.
 // Width/utilization gate (masked-load cost):
 //   * Wc==R:            full batch, no mask.
-//   * 2*R <= Wc:        half-idle batch — reject.
-//   * Wc*sizeof(T)<=16: 128-bit masked load — cheap.
-//   * else:             256-bit masked load — require R*M >= kMaskedLoad256MinWork.
+//   * 2*R <= Wc:        half-idle batch, reject.
+//   * Wc*sizeof(T)<=16: 128-bit masked load, cheap.
+//   * else:             256-bit masked load, require R*M >= kMaskedLoad256MinWork.
 inline constexpr std::size_t kMaskedLoad256MinWork = 27;
 
 template<typename T, unsigned R>
@@ -520,7 +520,7 @@ struct kernel {
     static constexpr unsigned M = N / r;
     // Exact factorization: a non-dividing peeled radix silently drops or duplicates
     // inputs. codelet_radix is a fixpoint divisor of N (or N for a Rader prime,
-    // M==1), so this always holds — pins the planner contract at compile time.
+    // M==1), so this always holds. The assert pins the planner contract at compile time.
     static_assert(r * M == N, "codelet_radix(N) must divide N exactly");
 
     // Flat register-resident leaf, admitted where it beats the cofactor combine.
@@ -583,7 +583,7 @@ struct kernel {
                 {
                     poet::static_for<0, Mp - M>([&](auto P) {
                         // Guard: static_for instantiates with P=0 even when Mp==M;
-                        // ovr[M] is OOB — clang -Warray-bounds.
+                        // ovr[M] is OOB, which clang reports as -Warray-bounds.
                         if constexpr (M + P < Mp) {
                             ovr[M + P] = V(T(0));
                             ovi[M + P] = V(T(0));
@@ -591,7 +591,7 @@ struct kernel {
                     });
                     if constexpr (Wc == r) {
                         // Full batch: the batched input layout is byte-identical to the
-                        // planar source — forward it when V-aligned instead of staging
+                        // planar source, so forward it when V-aligned instead of staging
                         // (gcc lowers the staging loop to out-of-line memcpy PLT calls).
                         const bool kb_aligned =
                             (reinterpret_cast<std::uintptr_t>(xre) % alignof(V) == 0) &&
@@ -620,7 +620,7 @@ struct kernel {
                 }
                 // Combine r blocks fused per Wc-tile: the M output batches are an
                 // M×Wc matrix whose in-register Wc×Wc transpose (vunpck/vperm) IS
-                // the gather y[q*M+j] — the combine consumes the transposed rows and
+                // the gather y[q*M+j]: the combine consumes the transposed rows and
                 // emits via sink with no yre/yim round-trip. xsimd::transpose needs
                 // exactly Wc batches per tile; only rows [0,r) are real.
                 constexpr std::size_t nft = M / Wc;  // number of full Wc-wide tiles
@@ -720,7 +720,7 @@ struct kernel {
         apply_impl(xre, xim, xstride, yre, yim, yre_sink<T>{yre, yim});
     }
 
-    // Same transform, but outputs emit via sink(p, outr, outi) — the caller fuses
+    // Same transform, but outputs emit via sink(p, outr, outi). The caller fuses
     // its store (AoS interleave) into the last combine. yre/yim: scratch only.
     // Each output index sinked exactly once, values T or sized-batch V.
     template<typename Sink>
@@ -746,7 +746,7 @@ struct kernel<1, T, true> {
     }
 };
 
-// Inverse via swapped domain -- see the kernel_batched note above.
+// Inverse via swapped domain; see the kernel_batched note above.
 template<unsigned N, typename T>
 struct kernel<N, T, false> {
     static void apply(const T* xre, const T* xim, std::size_t xstride, T* yre, T* yim) {
@@ -899,7 +899,7 @@ ADM_NOINLINE void rader_apply_batched(const V* xre, const V* xim, std::size_t xs
     V cre[L], cim[L];
     kernel_batched<L, T, false, V>::apply(Pre, Pim, 1, cre, cim);
 
-    // A[0] is already sum_q a_q -- see rader_apply.
+    // A[0] is already sum_q a_q; see rader_apply.
     yre[0] = x0r + Are[0];
     yim[0] = x0i + Aim[0];
     for (unsigned m = 0; m < L; ++m) {

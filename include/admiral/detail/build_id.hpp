@@ -2,7 +2,7 @@
 
 // Identity of the current build, as the routing cost model keys it.
 //
-// (arch, compiler, major, W, regs, sizeof T) -- deliberately NOT an ISA
+// (arch, compiler, major, W, regs, sizeof T), deliberately NOT an ISA
 // revision. The model's features only ever read the vector width and the
 // architectural register count, so the same key works on NEON, SVE or RVV
 // without a new enumeration; an unswept target finds no match and runs

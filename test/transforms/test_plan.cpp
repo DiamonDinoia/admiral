@@ -294,7 +294,7 @@ void check_catalog_size(std::size_t N) {
 }
 
 // Non-catalog sizes: the O(N^2) direct DFT is a poor oracle at large N due to
-// accumulation error. Use a round-trip (forward then inverse) check instead —
+// accumulation error. Use a round-trip (forward then inverse) check instead:
 // a valid end-to-end correctness test independent of any external reference.
 template<typename T>
 void check_noncatalog_size_roundtrip(std::size_t N) {
@@ -310,9 +310,9 @@ void check_noncatalog_size_roundtrip(std::size_t N) {
 
 } // namespace
 
-TEST_CASE("Codelet catalog routing — public API correctness (double)", "[codelet][catalog][plan]") {
+TEST_CASE("Codelet catalog routing: public API correctness (double)", "[codelet][catalog][plan]") {
     // The catalog is every integer in [2,64] (incl. primes 11..61 and composites
-    // with a factor >7 like 22,26,33,55,62) — the O(N^2) oracle is accurate there.
+    // with a factor >7 like 22,26,33,55,62), where the O(N^2) oracle is accurate.
     for (std::size_t N = 2; N <= 64; ++N) {
         CAPTURE(N);
         check_catalog_size<double>(N);
@@ -328,7 +328,7 @@ TEST_CASE("Codelet catalog routing — public API correctness (double)", "[codel
     }
 }
 
-TEST_CASE("Codelet catalog routing — public API correctness (float)", "[codelet][catalog][plan]") {
+TEST_CASE("Codelet catalog routing: public API correctness (float)", "[codelet][catalog][plan]") {
     // Every catalog size in [2,64]: reference DFT + round-trip.
     for (std::size_t N = 2; N <= 64; ++N) {
         CAPTURE(N);
@@ -343,11 +343,11 @@ TEST_CASE("Codelet catalog routing — public API correctness (float)", "[codele
 }
 
 // Multi-pass pow2 / 7-smooth path: verify forward output against the O(N^2)
-// reference DFT (not just round-trip — that can't catch a matching fwd/inv sign
-// error). Sizes that factor into two catalog factors and route through the
+// reference DFT, since a round-trip cannot catch a matching fwd/inv sign
+// error. Sizes that factor into two catalog factors and route through the
 // iterative DIF pass-chain: 100=10*10, 128=8*16, 144=12*12, 256=16*16. O(N^2)
 // reference stays accurate enough for double at these N.
-TEST_CASE("Multi-pass path — forward vs reference DFT (double)", "[multipass][plan]") {
+TEST_CASE("Multi-pass path: forward vs reference DFT (double)", "[multipass][plan]") {
     for (std::size_t N : {100u, 128u, 144u, 256u}) {
         CAPTURE(N);
         check_catalog_size<double>(N);
@@ -463,7 +463,7 @@ TEMPLATE_TEST_CASE("plan with effort::measure picks a working route", "[plan][me
 // The chain race elects a radix chain the cost model never ranked first: a different
 // factorization, and then a permutation of it (measure_route stages 2 and 3). Both are
 // only shape-checked, so a legal-but-wrong chain would ship silently. Cross-check against
-// the estimate plan, whose chain is a different one by construction -- an O(N log N)
+// the estimate plan, whose chain is a different one by construction: an O(N log N)
 // oracle where reference_dft's O(N^2) cannot reach.
 TEMPLATE_TEST_CASE("effort::measure elects a chain that agrees with estimate",
                    "[plan][measure]", float, double) {
@@ -516,7 +516,7 @@ TEST_CASE("measure_batch spans the sample interval at every execution cost",
 }
 
 // With ADM_MEASURE=OFF the knob must be accepted and behave exactly like
-// estimate (hint semantics, FFTW-style) -- same correct result.
+// estimate (hint semantics, FFTW-style), with the same correct result.
 TEMPLATE_TEST_CASE("plan with effort::measure at N=1 and N=2 stays exact", "[plan][measure]",
                    float, double) {
     using T = TestType;

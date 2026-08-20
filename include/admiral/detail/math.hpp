@@ -51,8 +51,8 @@ template<std::size_t... N>
 }
 
 // Largest leaf a four-step split may use. Bounded above by the contiguous
-// spill-free catalog range [2..64] — extras beyond the range (e.g. 120) are
-// deliberately not four-step leaves — and it also bounds codelet_cost_cyc's
+// spill-free catalog range [2..64]; extras beyond the range (e.g. 120) are
+// deliberately not four-step leaves. It also bounds codelet_cost_cyc's
 // index and four_step_execute's leaf buffer.
 inline constexpr std::size_t kFourStepLeafMax = 64;
 
@@ -134,7 +134,7 @@ template<typename T>
 }
 
 // Every leaf in the dense range is measured in all three tables, so the fallback above is
-// unreachable there -- every caller gates on is_codelet_catalog first, which is what makes
+// unreachable there: every caller gates on is_codelet_catalog first, which is what makes
 // routing through leaf_cost_cyc identical to indexing the table.
 
 // The extras cannot join this assert in either direction, because
@@ -202,23 +202,23 @@ template<typename T>
 }
 
 // Admissible iterative-DIF radices: the first seven are the narrow (16-reg) set, wide
-// (32-reg) ISAs enumerate the last four too -- one array, a prefix each. Namespace scope,
+// (32-reg) ISAs enumerate the last four too, one array with a prefix each. Namespace scope,
 // not function-local: a constexpr local cannot be `static` before C++23, and without
 // static storage gcc re-materializes the table per call rather than indexing one .rodata
 // copy.
 inline constexpr std::size_t kChainRadices[11] = {2, 3, 4, 5, 7, 8, 11, 9, 15, 16, 32};
 
 // Cheapest sum of ceil((n/r)/W) over admissible radix chains: the lane-work of an
-// iterative DIF. Purely structural -- no fitted constant. 0.0 means "no chain reaches n",
+// iterative DIF. Purely structural, with no fitted constant. 0.0 means "no chain reaches n",
 // which callers read as such (n > 1 with zero work is not a transform).
 //
 // A DP over the divisors of n, relaxed FORWARD: reaching divisor d with cost c lets every
 // d*r be reached for c + vec(d). Forward because the inner loop then needs no division
-// and no search -- for a fixed radix the product d*r is ascending in d, so one cursor per
+// and no search: for a fixed radix the product d*r is ascending in d, so one cursor per
 // radix walks the divisor list once.
 //
 // Not bounded by BASE_MODEL_NMAX: the bluestein feature passes the convolution pad. A
-// product past the end of the divisor list is simply not relaxed, so an argument beyond
+// product past the end of the divisor list is not relaxed, so an argument beyond
 // the margin degrades to a larger cost estimate instead of walking off the end.
 [[nodiscard]] constexpr double chain_work(std::size_t n, std::size_t w, std::size_t regs) {
     if (n <= 1) return 0.0;
@@ -299,7 +299,7 @@ inline constexpr double kBluesteinCostPerPadLog = 1.53;
 // ----------------------------------------------------------------------------
 // constexpr log2 / exp. <cmath> is not constexpr before C++26, and the routing
 // cost model needs log-scale features (and exponentiates its log-cycle score)
-// during constant evaluation. Cost-model arithmetic only — twiddles use
+// during constant evaluation. Cost-model arithmetic only; twiddles use
 // ct_sincos_turn at full precision.
 // ----------------------------------------------------------------------------
 [[nodiscard]] constexpr double ct_log2(double x) {
@@ -312,7 +312,7 @@ inline constexpr double kBluesteinCostPerPadLog = 1.53;
     while (x >= 2.0) { x *= 0.5; ++e; }
     while (x < 1.0) { x *= 2.0; --e; }
     // ln(x) = 2*atanh(t), t = (x-1)/(x+1); |t| <= 1/3 on [1,2) so t^2 <= 1/9
-    // and t^33/33 < 1e-17 — converged well past double for any x.
+    // and t^33/33 < 1e-17, converged well past double for any x.
     const double t = (x - 1.0) / (x + 1.0);
     const double t2 = t * t;
     double term = t, sum = t;
@@ -362,7 +362,7 @@ extern template void codelet_dispatch<double, true >(const std::complex<double>*
 extern template void codelet_dispatch<double, false>(const std::complex<double>*, std::complex<double>*, std::size_t);
 
 // `nlines` in-place AoS DFTs of a catalog size at uniform `stride`, with SIMD lanes
-// carrying LINES rather than elements — the layout that fills the vector units a
+// carrying LINES rather than elements, the layout that fills the vector units a
 // single small-N codelet cannot. Why a run prefers it over any per-line route:
 // plan_impl::execute_many. How the tile works: src/codelet_apply.hpp.
 // SCALED, unlike codelet_dispatch: `fct` folds into the output interleave, which

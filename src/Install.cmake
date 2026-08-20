@@ -1,7 +1,7 @@
 # find_package(admiral) -> admiral::admiral{,_static}, admiral::admiral_c{,_static},
 #                          admiral::fftw{,_static}
 #
-# Shared and static per surface, all six self-contained machine code for
+# Shared and static per interface, all six self-contained machine code for
 # std::complex<float> and std::complex<double>. The OBJECT libraries are a
 # compile-time device and are not installed; nor is admiral_internal.
 #

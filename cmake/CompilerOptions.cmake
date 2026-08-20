@@ -18,8 +18,8 @@ add_library(admiral_optimization_flags INTERFACE)
 # Fast math, on its OWN target and never propagated to consumers.
 #
 # Separate from the arch flags: a consumer MUST share -march (W = xsimd::batch<T>::size
-# is the ISA) and MUST NOT share -ffast-math — the test suite's long-double reference
-# DFT would otherwise be reassociated into being no more exact than what it judges.
+# is the ISA) and MUST NOT share -ffast-math. Otherwise the compiler reassociates the
+# test suite's long-double reference DFT into being no more exact than what it judges.
 # adm_apply_build_profile links this PRIVATE always.
 add_library(admiral_fast_math_flags INTERFACE)
 if(ADM_USE_FAST_MATH)
@@ -78,7 +78,7 @@ else()
 endif()
 
 # Link-time optimization: opt-in only, never on in a preset. It re-optimizes the
-# whole library on every link — and GCC writes GIMPLE instead of machine code into
+# whole library on every link, and GCC writes GIMPLE instead of machine code into
 # the installed archives, readable only by this exact compiler.
 # Available for experiments via -DADM_ENABLE_LTO=ON.
 if(ADM_ENABLE_LTO)

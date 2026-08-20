@@ -37,10 +37,10 @@ namespace admiral {
 namespace detail {
 
 // Sub-batch column tails. On a long strided axis the L2 budget drives B BELOW W, where
-// the vector loop `c + W <= B` never runs -- not a thin remainder.
+// the vector loop `c + W <= B` never runs, so the tail is not a thin remainder.
 //
 // Covered by sized_cover (simd_swizzle.hpp): exact-width pieces, widest first, plus one
-// backward-aligned full-width piece where that beats narrowing. No runtime mask -- the
+// backward-aligned full-width piece where that beats narrowing. No runtime mask: the
 // same mechanism and gate as the row driver's small-ido pass, out here in the column
 // index.
 //
@@ -84,7 +84,7 @@ ADM_ALWAYS_INLINE void dif_col_piece(const T* ccre, const T* ccim,
 }
 
 // [c, B) in ONE full-width masked butterfly. Planar both sides, so a lane mask is the
-// whole story -- no swizzle to widen. Whichever of this and the piece cover needs fewer
+// whole story, with no swizzle to widen. Whichever of this and the piece cover needs fewer
 // ops wins; the crossover is "does the cover finish in one piece" (one_piece_cover below
 // picks per call).
 //
@@ -176,7 +176,7 @@ ADM_ALWAYS_INLINE void dif_col_piece_first(const std::complex<T>* data,
 }
 
 // Masked twin of dif_col_piece_first: ONE full-width piece for a sub-batch block, instead of
-// a width descent. AoS side masked to 2*rem reals, planar side to rem lanes -- the planar row
+// a width descent. AoS side masked to 2*rem reals, planar side to rem lanes; the planar row
 // stride is B, so an unmasked store would clobber the next row.
 template<typename T, bool Forward, std::size_t IP, bool HiHalf>
 ADM_ALWAYS_INLINE ADM_FLATTEN void dif_col_piece_first_masked(
@@ -271,7 +271,7 @@ ADM_ALWAYS_INLINE void dif_col_piece_fused(std::complex<T>* data,
 
 // Rows of the compile-time-mask tail, one instantiation per width. NOINLINE for the reason
 // the whole tail is outlined: W-1 copies of this nest inside dif_col_tail regress the cover
-// path too. The runtime-mask arm has no wrapper at all -- even an ALWAYS_INLINE one pushes
+// path too. The runtime-mask arm has no wrapper at all: even an ALWAYS_INLINE one pushes
 // dif_col_pass over gcc's inlining budget, which then outlines the bulk butterfly.
 template<typename T, std::size_t IP, std::size_t TailN>
 ADM_NOINLINE void dif_col_masked_rows_ct(const T* ccre,
@@ -344,7 +344,7 @@ ADM_NOINLINE void dif_col_masked_rows_last_ct(const T* ccre,
 }
 
 // Runs f with the sub-batch width as a compile-time constant, over the widths that are NOT
-// themselves piece widths -- the only ones a cover would have to descend for, so the arm
+// themselves piece widths, the only ones a cover would have to descend for, so the arm
 // chain is far shorter than W-1. False when no arm matches, so callers keep their cover as
 // the fallback rather than silently skipping the tail.
 template<typename T, typename F>
@@ -372,7 +372,7 @@ template<typename T, typename F>
 // Runs f with the piece width as a compile-time constant when [cfull, cfull+rem) is
 // covered by ONE piece of an available width >= 2, else returns false. Width 1 is
 // excluded: a specialised scalar piece does not beat the generic body. Widths >= W are
-// unreachable: every caller enters a tail only for a sub-batch remainder -- cfull != B
+// unreachable: every caller enters a tail only for a sub-batch remainder, since cfull != B
 // gives rem = B % W, and the _last pass gates on B < W.
 template<typename T, typename F>
 [[nodiscard]] ADM_ALWAYS_INLINE bool dispatch_one_piece(std::size_t rem, F&& f) {
@@ -436,7 +436,7 @@ ADM_NOINLINE void dif_col_tail(const T* ccre, const T* ccim,
     constexpr std::size_t W = xsimd::batch<T>::size;
     // Out of place, so the backward-aligned overlap is legal: the recomputed columns
     // are rewritten with identical values.
-    // Cover outermost: the width descent is per pass, not per (b, a) -- see the note
+    // Cover outermost: the width descent is per pass, not per (b, a); see the note
     // on dif_col_tail_last_general.
     if (!one_piece_cover<T>(cfull, B)) {
         if constexpr (kRuntimeTailMask) {
@@ -529,7 +529,7 @@ ADM_NOINLINE void dif_col_tail_last_masked(const T* ccre, const T* ccim,
 
 // Three frames on purpose. The arm chain shares a stack frame with nothing else:
 // dif_col_pass_last is register-tight from the AoS store-align peel, so folding the chain
-// into the caller -- or placing it in front of the general cover -- regresses cells whose
+// into the caller, or placing it in front of the general cover, regresses cells whose
 // executed path never reaches it. The extra call on the general path amortises over l1 rows.
 template<typename T, bool Forward, std::size_t IP>
 ADM_NOINLINE void dif_col_tail_last(const T* ccre, const T* ccim,
@@ -703,7 +703,7 @@ void dif_col_pass_last(const T* ccre, const T* ccim,
         // is a template functor so the aligned bulk (plain aos_interleave) and the
         // head/tail (compile-time prefix/suffix dispatch) are SEPARATE instantiations:
         // the hot bulk body carries none of the partial-store dispatch. Each column is
-        // written exactly once with identical vector arithmetic -- preserves 1-vs-N-thread
+        // written exactly once with identical vector arithmetic, which preserves 1-vs-N-thread
         // bit identity (scalar FMAs contract differently).
         const auto vec_block = [&](std::size_t c, auto store) {
             batch tr[IP], ti[IP];

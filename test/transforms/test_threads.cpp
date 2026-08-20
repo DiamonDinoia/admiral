@@ -140,14 +140,14 @@ TEMPLATE_TEST_CASE("nthreads=0 auto-select matches serial", "[threads]", float, 
 
 // parallel_for's documented contract: "First exception wins; rethrown after join."
 // No FFT body throws, so this is unreachable through the public plan API and needs
-// the pool directly -- but it is live error handling rather than scaffolding: every
+// the pool directly. It is live error handling rather than scaffolding: every
 // four_step_large and real_fft body constructs a soa_scratch, which past SBO_MAX
 // calls ::operator new[] and can therefore throw bad_alloc on a WORKER thread.
 // Uncaught, that escapes the thread's callable and terminates the process.
 // n=64 over 4 threads gives chunk 16, so the throwing chunk (begin==0) belongs to a
-// worker while the caller runs the last one -- i.e. the capture-and-rethrow path,
+// worker while the caller runs the last one, i.e. the capture-and-rethrow path,
 // not a plain local throw. Holds for ADM_THREADS=0 too, where parallel_for runs the
-// body inline and the exception simply propagates.
+// body inline and the exception propagates directly.
 TEST_CASE("parallel_for propagates a body exception, then resets", "[threads]") {
     admiral::detail::thread_pool pool(4);
 
@@ -182,7 +182,7 @@ TEST_CASE("parallel_for with fewer units than threads leaves workers idle", "[th
 }
 
 // 810000 = 900^2 has n2 % n1 == 0 but 900 % W != 0: the serial gate refuses it,
-// the threaded gate admits it -- the pool runs the unfused sweeps, executable
+// the threaded gate admits it: the pool runs the unfused sweeps, executable
 // only in this configuration.
 TEST_CASE("threaded unfused four_step_large agrees across nthreads (double)",
           "[threads][fourstep]") {

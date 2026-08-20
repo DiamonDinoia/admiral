@@ -45,7 +45,7 @@ namespace admiral {
 namespace detail {
 
 // Out-of-place complex transpose out[j*n2+i] = W[i*n1+j]: deinterleave W source rows to
-// planar re/im, xsimd::transpose in registers, interleave back -- W contiguous full-vector
+// planar re/im, xsimd::transpose in registers, interleave back: W contiguous full-vector
 // stores per output row instead of a scalar scatter. Cache-blocked at B for L1 residency.
 constexpr std::size_t four_step_tblock = 32;  // transpose cache-block (complex)
 
@@ -224,7 +224,7 @@ void four_step_transpose_inplace(std::complex<T>* m, std::size_t R, std::size_t 
 
 // Step a of the fused sweeps' lower-triangular tile pass, on all m panels: diagonal
 // self-tile plus pairs (a,b) for b < a. Writes tiles (a,b) and (b,a); keyed on the larger
-// index, so concurrent steps never share a tile. Shuffles and copies only — no FP, so
+// index, so concurrent steps never share a tile. Shuffles and copies only, no FP, so
 // the serial arms calling this are bit-for-bit the threaded step.
 template<typename T>
 inline void four_step_fused_sweep_step(std::complex<T>* out, std::size_t ld,
@@ -260,7 +260,7 @@ inline void four_step_fused_sweep_step(std::complex<T>* out, std::size_t ld,
 
 // Phase B of a threaded fused pass: the tile sweeps, after the DFT phase barrier. Only
 // the first nparts chunks run (begin<end), so balance over nparts and key the range on
-// the chunk index (u0/chunk), never on tid -- a skipped chunk would silently drop its
+// the chunk index (u0/chunk), never on tid: a skipped chunk would silently drop its
 // tile rows. Shared by both fused passes below.
 template<typename T>
 inline void four_step_fused_sweep_phase(std::complex<T>* out, std::size_t ld,
@@ -411,7 +411,7 @@ using large_split = four_step_split;
 }
 
 // Hand-fit admission byte lines for this route, shared with the callers that gate on
-// them: a threshold and the quantity it was fitted against are ONE artifact -- change
+// them: a threshold and the quantity it was fitted against are ONE artifact. Change
 // either and both are re-derived, together. Bluestein's inner six-step arm is admitted
 // off the same f64 serial line, so it has to be one constant and not a matching literal.
 

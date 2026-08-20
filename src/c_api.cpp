@@ -27,7 +27,7 @@ const char* adm_error_string(adm_status status) {
 namespace {
 
 // admiral.h's complex structs are layout-compatible with std::complex, so every
-// buffer crosses the boundary as a view — nothing is copied.
+// buffer crosses the boundary as a view, and nothing is copied.
 template<typename T>
 std::span<std::complex<T>> to_cpp_span(void* data, size_t size) {
     return std::span<std::complex<T>>(reinterpret_cast<std::complex<T>*>(data), size);
@@ -37,7 +37,7 @@ std::span<std::complex<T>> to_cpp_span(void* data, size_t size) {
 // than at every call site; std::nullopt is the rejection. The asserts catch layout
 // or value drift between the two declarations of the same options and efforts.
 static_assert(sizeof(adm_options) == sizeof(admiral::options),
-              "adm_options and admiral::options are out of sync -- update this mapping");
+              "adm_options and admiral::options are out of sync: update this mapping");
 static_assert(static_cast<int>(admiral::effort::estimate) == ADM_EFFORT_ESTIMATE);
 static_assert(static_cast<int>(admiral::effort::automatic) == ADM_EFFORT_AUTOMATIC);
 static_assert(static_cast<int>(admiral::effort::measure) == ADM_EFFORT_MEASURE);

@@ -8,7 +8,7 @@ spread columns are small.
 
 usage: ci_perf_ab.py BIN_A BIN_B [--rounds=6] [--grid=ci|full] [--json=path]
 
-Grid lines: N,prec,iters -- picked so each arm-call is ~20-100 ms; the bench
+Grid lines: N,prec,iters, picked so each arm-call is ~20-100 ms. The bench
 includes a per-call buffer copy, which compresses ratios toward 1 at large N.
 Requires both binaries to offer --size=N --iters=M --prec=f32|f64 (built with
 ADM_BUILD_BENCHMARKS=ON).

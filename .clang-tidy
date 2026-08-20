@@ -10,7 +10,7 @@
 Checks: >
   -*,
 
-  # ── Bugprone: real defect catchers ────────────────────────────────────────
+  # ---- Bugprone: real defect catchers ------------------------------------
   bugprone-assert-side-effect,
   bugprone-bool-pointer-implicit-conversion,
   bugprone-branch-clone,
@@ -21,7 +21,7 @@ Checks: >
   # OFF: it flags every unsigned*unsigned assigned to size_t without asking whether
   # the product can overflow. All 15 sites here are compile-time cache-size constants
   # (48u * 1024u) or products bounded by a codelet radix or the register count, so the
-  # rewrite is unreachable-overflow noise -- and `std::size_t{2} * N` is harder to read
+  # rewrite is unreachable-overflow noise, and `std::size_t{2} * N` is harder to read
   # than `2u * N`, which is the same reason readability-uppercase-literal-suffix is off.
   bugprone-incorrect-roundings,
   bugprone-infinite-loop,
@@ -71,7 +71,7 @@ Checks: >
   # OFF: fires on type-substitution macros (ADM_FFTW_SHIM COMPLEX_T parameters)
   # where parenthesising a type token is not valid C++.
 
-  # ── Performance: real-cost issues ─────────────────────────────────────────
+  # ---- Performance: real-cost issues -------------------------------------
   performance-avoid-endl,
   performance-faster-string-find,
   performance-for-range-copy,
@@ -92,14 +92,14 @@ Checks: >
   # OFF: enums in the public ABI (effort, adm_status) are int-sized by design;
   # changing the base type would be an ABI break with zero runtime benefit here.
 
-  # ── Portability ────────────────────────────────────────────────────────────
+  # ---- Portability -------------------------------------------------------
   portability-restrict-system-includes,
   portability-std-allocator-const,
   -portability-simd-intrinsics,
   # OFF: the library targets xsimd which abstracts SIMD; direct intrinsic use
   # is banned by project policy (CLAUDE.md). The check is irrelevant.
 
-  # ── CERT (selected — avoid duplicating bugprone; skip C-file-IO rules) ────
+  # ---- CERT (selected: avoid duplicating bugprone; skip C-file-IO rules) ----
   cert-dcl50-cpp,
   cert-dcl58-cpp,
   -cert-err33-c,
@@ -119,7 +119,7 @@ Checks: >
   # there would add 20 lines for a parsing path that cannot produce UB (the format
   # string and field width together bound the value). Keep the existing defensive code.
 
-  # ── Misc (curated) ────────────────────────────────────────────────────────
+  # ---- Misc (curated) ----------------------------------------------------
   misc-const-correctness,
   misc-no-recursion,
   misc-redundant-expression,
@@ -134,7 +134,7 @@ Checks: >
   # OFF: the project has explicit instantiation declarations; anonymous namespaces
   # inside headers are deliberately avoided to keep extern-template viable.
 
-  # ── Readability (defect-catching only — no naming/style rewrites) ──────────
+  # ---- Readability (defect-catching only, no naming/style rewrites) ------
   readability-avoid-const-params-in-decls,
   readability-deleted-default,
   readability-duplicate-include,

@@ -1,5 +1,5 @@
 // Iterative DIF driver validation against an independent O(N^2) oracle, NOT
-// admiral's kernel<N> — the oracle must share no code with the thing under
+// admiral's kernel<N>: the oracle must share no code with the thing under
 // test. kernel<N> takes the same oracle at catalog sizes in test_codelet.cpp.
 
 #include <catch2/catch_test_macros.hpp>
@@ -53,7 +53,7 @@ void check_sizes(std::initializer_list<std::size_t> sizes) {
 }  // namespace
 
 // 7-smooth composite sizes
-TEST_CASE("iterative DIF matches the reference DFT — 7-smooth composites", "[iterative_dif]") {
+TEST_CASE("iterative DIF matches the reference DFT: 7-smooth composites", "[iterative_dif]") {
     check_sizes({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 16, 24, 25, 27, 28, 30, 32, 35,
                  36, 48, 49, 56, 60, 63, 64, 105, 120, 125, 128, 175, 189, 210, 240, 256,
                  315, 360, 420, 512});
@@ -62,7 +62,7 @@ TEST_CASE("iterative DIF matches the reference DFT — 7-smooth composites", "[i
 // 11-smooth sizes: radix-11 routing. Covers radix-11 as a single fused pass (11),
 // and in first / intermediate / last pass positions combined with radices 2/3/4/5/7.
 // 121 = 11^2 is the worst case, being nothing but radix 11.
-TEST_CASE("iterative DIF matches the reference DFT — 11-smooth sizes", "[iterative_dif]") {
+TEST_CASE("iterative DIF matches the reference DFT: 11-smooth sizes", "[iterative_dif]") {
     check_sizes({11,    // [11]
                  22,    // [2, 11]
                  33,    // [3, 11]
@@ -76,7 +76,7 @@ TEST_CASE("iterative DIF matches the reference DFT — 11-smooth sizes", "[itera
 }
 
 // Power-of-2 sizes up to 1024
-TEST_CASE("iterative DIF matches the reference DFT — pow2 sizes", "[iterative_dif]") {
+TEST_CASE("iterative DIF matches the reference DFT: pow2 sizes", "[iterative_dif]") {
     check_sizes({2, 4, 8, 16, 32, 64, 128, 256, 512, 1024});
 }
 

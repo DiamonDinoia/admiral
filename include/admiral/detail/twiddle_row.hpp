@@ -1,7 +1,7 @@
 #pragma once
 
 // ============================================================================
-// twiddle_row — one twiddle row, W entries at a time.
+// twiddle_row: one twiddle row, W entries at a time.
 //
 // A row is a geometric sequence: entry i is W_den^{step*i} = r^i for
 // r = W_den^{step}, i in [0, n). Filling it W-wide takes two pieces:
@@ -11,7 +11,7 @@
 //             r^(b*W) itself from sincos so nothing accumulates across blocks.
 //
 // WHY, over calling sincos per entry: portable_trig::sincos_turns is
-// divider-bound -- two 64-bit integer divisions, one double division and a 4-way
+// divider-bound, with two 64-bit integer divisions, one double division and a 4-way
 // quadrant switch per entry. One W-wide complex multiply replaces W entries of that.
 //
 // A twiddle table is a numerical library's set of fundamental constants, so
@@ -69,7 +69,7 @@ void geom_twiddle_row(std::size_t step, std::size_t den, std::size_t n,
     }
 
     // Seed: lane l = r^l, by W sincos calls per ROW, amortised over the ido entries
-    // filled. Exact, not scanned across lanes -- less error (see banner).
+    // filled. Exact, not scanned across lanes, which costs less error (see banner).
     alignas(B::arch_type::alignment()) T seed_re[W], seed_im[W];
     for (std::size_t l = 0; l < W; ++l) std::tie(seed_re[l], seed_im[l]) = exact(l);
     const B sre = B::load_aligned(seed_re);

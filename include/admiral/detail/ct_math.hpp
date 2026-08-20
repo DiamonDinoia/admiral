@@ -26,7 +26,7 @@ using std::numbers::pi;  // double; the compile-time twiddle math below is doubl
 // ----------------------------------------------------------------------------
 
 // Always double regardless of T: twiddles at full double precision, cast at use.
-// Not templated on T — intentional.
+// Not templated on T, deliberately.
 struct ct_sincos_t {
     double s;
     double c;
@@ -51,7 +51,7 @@ struct ct_sincos_t {
 
 // sin/cos of 2*pi*num/den, range-reduced by octant; `conjugate` negates the
 // angle. Forward transforms use the conjugate (negative) exponent, so callers
-// pass their Forward flag straight through and keep num/den unsigned -- which
+// pass their Forward flag straight through and keep num/den unsigned, which
 // is what every one of them actually has.
 // consteval: folds kernel<N>/butterfly twiddles at compile time only.
 [[nodiscard]] consteval ct_sincos_t ct_sincos_turns(bool conjugate, std::size_t num,
@@ -94,7 +94,7 @@ struct ct_sincos_t {
 // compile-time kernel<N> share one definition.
 // Coprime factor pair of n, larger factor first, or {0,0} if n is a prime power
 // (no PFA). Larger-first because stage B carries the emit: the biggest loop body
-// shrinks when N2 is the smaller factor. Generic -- every coprime-split size routes
+// shrinks when N2 is the smaller factor. Generic: every coprime-split size routes
 // here, no special cases.
 //
 // The trial divisor steps by 1, not 2, so an EVEN n reaches its (odd, pow2)
@@ -113,7 +113,7 @@ struct ct_sincos_t {
     if (N % 5 == 0) return 5;
     if (N % 7 == 0) return 7;
     if (N % 11 == 0) return 11;  // 11-smooth composites (e.g. 121=11^2) avoid Bluestein
-    return N;  // prime-to-our-set: direct DFT
+    return N;  // prime relative to the radix set: direct DFT
 }
 
 [[nodiscard]] constexpr std::size_t codelet_radix(std::size_t N) {

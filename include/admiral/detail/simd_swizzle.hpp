@@ -78,7 +78,7 @@ ADM_ALWAYS_INLINE void aos_deinterleave(const T* ADM_RESTRICT src, Batch& re, Ba
 // E.g. make_sized_batch_t<float,2> is void → f32: 7=4+1+1+1, f64: 7=4+2+1.
 // Shared by both DIF drivers: the row driver's small-ido pieces and the column
 // driver's sub-batch tail are the same problem in different index dimensions.
-// A PW-wide piece also fixes the AoS footprint for free -- aos_deinterleave with a
+// A PW-wide piece also fixes the AoS footprint for free: aos_deinterleave with a
 // narrower Batch touches exactly 2*PW reals, so a partial block neither over-reads
 // past the axis buffer nor needs a mask.
 template<typename T, std::size_t N>
@@ -108,7 +108,7 @@ ADM_ALWAYS_INLINE void store_piece(T* p, sized_piece_t<T, PW> v) {
 }
 
 // Bit w set iff xsimd can materialise a piece of exactly width w. Bit 1 is the
-// scalar piece, always available. f64: 1,2,4,8; f32: 1,4,8,16 — there is no
+// scalar piece, always available. f64: 1,2,4,8; f32: 1,4,8,16. There is no
 // 2-wide float, which is why the tail policy below cannot be width-agnostic.
 // 64-bit: W >= 32 would shift a 32-bit mask out of range (no shipped ISA is
 // that wide; this keeps the constant total).
@@ -214,7 +214,7 @@ template<typename T>
     return batch::load_unaligned(seq.data()) < batch(static_cast<T>(n));
 }
 
-// Store the first R (1<=R<=W) planar complex as AoS (2*R reals) — partial-block
+// Store the first R (1<=R<=W) planar complex as AoS (2*R reals), the partial-block
 // store for dif_pass_last masked tail. Compile-time prefix masks lower to plain
 // moves (e.g. R=3 at W=4 f32: movups+movsd rather than vmaskmov).
 template<std::size_t R, typename T, typename Batch = xsimd::batch<T>>
@@ -258,7 +258,7 @@ ADM_ALWAYS_INLINE std::size_t aos_store_align_peel(const std::complex<T>* data,
     }
 }
 
-// Store the last (W-M0) planar complex as AoS — partial-block suffix store,
+// Store the last (W-M0) planar complex as AoS, the partial-block suffix store,
 // mirror of aos_interleave_prefix. Compile-time suffix masks lower to plain moves.
 template<std::size_t M0, typename T, typename Batch = xsimd::batch<T>>
 ADM_ALWAYS_INLINE void aos_interleave_suffix(T* ADM_RESTRICT dst, Batch re, Batch im) {
@@ -297,7 +297,7 @@ template<typename T>
 }
 
 // Compile-time twin of the above, same .lo/.hi shape so the masked helpers below take either.
-// Which form is cheaper is an ISA property, not a preference -- see kRuntimeTailMask in
+// Which form is cheaper is an ISA property, not a preference; see kRuntimeTailMask in
 // dif_col_pass.hpp. `hi` is all-false when the block does not reach the second zip half, and
 // that arm is then dead by HiHalf rather than by testing the mask.
 template<std::size_t R, typename T>

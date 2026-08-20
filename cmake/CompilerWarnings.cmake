@@ -45,7 +45,7 @@ function(set_project_warnings target_name)
         -Wformat=2
         -Wimplicit-fallthrough
         -Wsuggest-override
-        # Additional flags — zero-warning-clean on both compilers:
+        # Additional flags, zero-warning-clean on both compilers:
         -Wcast-qual          # drop-const casts
         # -Wfloat-equal is OFF: butterfly.hpp uses if constexpr(w.c == 0.0) for
         # compile-time special-case detection; those are exact constant comparisons,

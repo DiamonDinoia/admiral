@@ -1,4 +1,4 @@
-# Dependencies.cmake — external dependency management (CPM).
+# Dependencies.cmake: external dependency management (CPM).
 
 include_guard(GLOBAL)
 
@@ -29,7 +29,7 @@ if(ADM_BUILD_BENCHMARKS)
 
 # Pinned to a commit, not the branch: every speedup in README.md is a ratio against
 # this exact reference. CPM's cache directory name is a hash of these arguments, not
-# the git sha — read .git/HEAD in the source dir for what was actually built.
+# the git sha. Read .git/HEAD in the source dir for what the build actually used.
 # Bumping the pin is a benchmark-methodology change: re-run the sweep and update the
 # README table in the same commit.
 CPMAddPackage(
@@ -123,7 +123,7 @@ endif()
 
 # Features admiral relies on: compile-time masked load, make_sized_batch_t/is_void
 # for exactly-r-wide batches, and constant/prefix masks that lower to plain moves on
-# both AVX2 and AVX-512 — the masked tails (dif_passes.hpp, codelet.hpp,
+# both AVX2 and AVX-512. The masked tails (dif_passes.hpp, codelet.hpp,
 # good_thomas) hit exactly those kernels. After any bump: asm-audit the AoS/SoA
 # permute paths per ISA (zip vpermt2, shuffle deinterleave, transpose networks).
 # Reuse a parent-provided xsimd rather than fetch a second, conflicting copy.
@@ -137,7 +137,7 @@ if(NOT TARGET xsimd)
         GITHUB_REPOSITORY xtensor-stack/xsimd
         GIT_TAG 67e96b04f9c0ed530326fb189907cf68ca4030b7  # master: scalar fms fused
         SYSTEM YES
-        EXCLUDE_FROM_ALL YES   # its install() rules must not land in our prefix
+        EXCLUDE_FROM_ALL YES   # its install() rules must not land in the prefix
         OPTIONS
             "BUILD_TESTS OFF"
             "BUILD_BENCHMARK OFF"
@@ -162,7 +162,7 @@ if(NOT TARGET poet::poet AND NOT TARGET poet)
         GITHUB_REPOSITORY DiamonDinoia/poet
         VERSION 0.0.1
         SYSTEM YES
-        EXCLUDE_FROM_ALL YES   # its install() rules must not land in our prefix
+        EXCLUDE_FROM_ALL YES   # its install() rules must not land in the prefix
         OPTIONS
             "POET_STRICT_WARNINGS OFF"
             "POET_BUILD_TESTS OFF"

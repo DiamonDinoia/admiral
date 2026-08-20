@@ -1,7 +1,7 @@
 // The routing cost model's structural helpers, against independent oracles.
 //
 // base_cost_model.hpp decides every route for 2 <= N <= 512, and it scores a plan with
-// lpf_nfac, balanced_split and chain_work from math.hpp — the same definitions
+// lpf_nfac, balanced_split and chain_work from math.hpp, the same definitions
 // tools/fit_cost_model.cpp fits the coefficients with. A single shared definition can
 // still be uniformly wrong, which sharing cannot catch.
 //
@@ -22,7 +22,7 @@ namespace {
 
 // Every value here is an integer held in a double: the lane count (m + w - 1) / w, and
 // chain_work sums those, all far below 2^53. So the comparisons below are exact equality
-// on purpose -- a tolerance would hide exactly the drift this file exists for.
+// on purpose: a tolerance would hide exactly the drift this file exists for.
 double chain_work_recursive(std::size_t n, std::size_t w, std::size_t regs,
                             std::map<std::size_t, double>& memo) {
     if (n <= 1) return 0.0;

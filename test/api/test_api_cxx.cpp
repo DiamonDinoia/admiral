@@ -19,7 +19,7 @@ TEMPLATE_TEST_CASE("FFT size 1", "[fft][edge]", float, double) {
 
     admiral::forward(std::span<const std::complex<T>>(input), std::span(output));
 
-    // N=1 is the identity, so this is exact — not "within 1e-6".
+    // N=1 is the identity, so this is exact, not "within 1e-6".
     REQUIRE(output.size() == 1);
     REQUIRE(output[0] == input[0]);
 }

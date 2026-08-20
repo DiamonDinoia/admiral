@@ -26,7 +26,7 @@ target_link_libraries(admiral_benchmark
         Threads::Threads
 )
 
-# Third-party headers as SYSTEM so they cannot trip our -Werror profile.
+# Third-party headers as SYSTEM so they cannot trip the project's -Werror profile.
 foreach(dep ducc::ducc0 nanobench)
     get_target_property(dep_includes ${dep} INTERFACE_INCLUDE_DIRECTORIES)
     if(dep_includes)
@@ -52,7 +52,7 @@ if(ADM_BENCH_THREADS)
 endif()
 
 # The same arch/fast-math flags as the library, from the one target that defines them.
-# Deliberately not adm_apply_build_profile — benchmarks never link sanitizers. Fast
+# Deliberately not adm_apply_build_profile: benchmarks never link sanitizers. Fast
 # math is named explicitly: the benchmark is a timing harness, and dropping it would
 # change what every number means; tests deliberately do NOT get it.
 target_link_libraries(admiral_benchmark PRIVATE admiral_optimization_flags)

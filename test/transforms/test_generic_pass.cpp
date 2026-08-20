@@ -7,7 +7,7 @@
 //   5-15-31-11) and at 262143 / 1048575, where the O(N^2) reference is infeasible
 //   and X[k] == 1 for impulse input is exact at any N.
 // * Boundary trap: bare or bookended generic fallback chains (13, 26, 65, 806) must
-//   stay out of iterative_dif — electing them throws at dispatch (poet no_match).
+//   stay out of iterative_dif: electing them throws at dispatch (poet no_match).
 
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -49,7 +49,7 @@ void check_forced(std::size_t N, const dif_factor_plan& ov, bool forward, bool i
 
 // Driver-level force: the same kernels and the same tape, without plan_impl's
 // availability veto (which deliberately keeps a chiplet prime at a SHORT ido out
-// of production routes -- see dif_chain_supported). The chiplet cells below sit
+// of production routes; see dif_chain_supported). The chiplet cells below sit
 // on the vetoed side by construction (97/83 at ido 8..44).
 template<typename T>
 void check_forced_raw(std::size_t N, const dif_factor_plan& ov, bool forward, bool in_place) {
@@ -84,7 +84,7 @@ TEMPLATE_TEST_CASE("generic prime pass: forced chains vs naive DFT", "[accuracy]
     using T = TestType;
     REQUIRE(admiral::detail::dif_is_generic_radix(31u));
     // Generic strictly mid-chain; every pass radix valid on ALL ISAs (the
-    // register-parametric radix set drops 9/15/16/25/32 when regs <= 16 -- forcing
+    // register-parametric radix set drops 9/15/16/25/32 when regs <= 16, and forcing
     // one of them throws by design). Masked tails: 465's ido=5 (full-width at
     // no ISA... it masks at W=2/4), 25575's generic pass sees ido=11.
     for (bool fwd : {false, true}) {
@@ -194,7 +194,7 @@ TEMPLATE_TEST_CASE("elected generic-pass sizes: route + impulse flatness", "[acc
     impulse_flat<T>(262143, 4.0);
     impulse_flat<T>(1048575, 6.0);
     // Chiplet cells (f64 W=8: the candidate walk elects a 97-carrying chain here;
-    // other ISAs route elsewhere — impulse flatness pins accuracy on any).
+    // other ISAs route elsewhere, and impulse flatness pins accuracy on any).
     impulse_flat<T>(194000, 4.0);
     impulse_flat<T>(122220, 4.0);
     // A broken election silently reverts these to bluestein: wherever the candidate walk

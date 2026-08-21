@@ -463,9 +463,9 @@ ADM_NOINLINE void good_thomas_execute(const std::complex<T>* in,
 }
 
 // ============================================================================
-// PFA catalog: one good_thomas_desc per routed size. Eligibility and dispatch
-// are generated from this pack; add/remove is a one-line diff.
-// Per-cell precision routing delegated to base_cost_model.hpp.
+// PFA catalog: one good_thomas_desc per routed size. This pack generates the
+// eligibility predicate and the dispatch, so adding or removing a size is a one-line
+// diff. base_cost_model.hpp owns per-cell precision routing.
 // ============================================================================
 template<std::size_t N1, std::size_t N2, std::size_t N3>
 struct good_thomas_desc {
@@ -507,7 +507,7 @@ using good_thomas_catalog = good_thomas_catalog_t<
     good_thomas_desc<3, 4, 5>>;        // 60
 
 // Trampoline: one extern template per precision and direction keeps the whole
-// PFA kernel tree out of every TU that merely routes to it. Defined in
+// PFA kernel tree out of every TU that only routes to it. Defined in
 // inst_gt_f.cpp / inst_gt_d.cpp.
 template<typename T, bool Forward>
 void good_thomas_run(const std::complex<T>* in, std::complex<T>* out, std::size_t n) noexcept {

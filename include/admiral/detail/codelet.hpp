@@ -152,7 +152,7 @@ ADM_ALWAYS_INLINE void radix_butterfly_ct(T* ADM_RESTRICT yre, T* ADM_RESTRICT y
     constexpr std::size_t nfull = M / W;
     if constexpr (nfull > 0) {
         // Force-inline only when 2R+10 live batches fit the vector file (R<=4);
-        // R=8: out-of-line wins, because an inlined spilling combine merges live ranges
+        // At R=8 out-of-line wins, because an inlined spilling combine merges live ranges
         // with caller (see kernel_should_noinline).
         if constexpr (2u * R + 10u <= poet::vector_register_count() + 2u) {
             poet::dynamic_for<U>(std::size_t{0}, nfull, [&](std::size_t b) ADM_LAMBDA_ALWAYS_INLINE {
@@ -243,9 +243,10 @@ consteval std::array<T, P - 1> make_rader_bhat() {
 // ----------------------------------------------------------------------------
 
 // Narrowest power-of-two SIMD width >= R with a native batch, capped at native
-// width. Packs R independent sub-transforms into the smallest register, minimizing
-// idle lanes. W walked as template argument so make_sized_batch_t can probe each
-// candidate; native width is always available, so recursion always terminates.
+// width. Packs R independent sub-transforms into the smallest register, which leaves
+// the fewest idle lanes. The recursion walks W as a template argument so
+// make_sized_batch_t can probe each candidate. Native width is always available, so the
+// recursion always terminates.
 template<typename T, std::size_t R, std::size_t W = 1>
 [[nodiscard]] consteval std::size_t cofactor_batch_width() {
     if constexpr (W >= xsimd::batch<T>::size)
@@ -357,8 +358,7 @@ struct kernel_batched {
 
     // Same transform, but the FINAL combine emits via sink(p, outr, outi) instead
     // of storing to yre/yim. The caller fuses its store (scale + AoS interleave) into
-    // the last butterfly. yre/yim still required as scratch. Each output index
-    // sinked exactly once.
+    // the last butterfly. yre/yim stay as scratch. Each output index sinks once.
     static void apply_sink(const V* xre, const V* xim, std::size_t xstride, V* yre, V* yim,
                            auto&& sink) {
         if constexpr (is_rader_prime(N)) {
@@ -423,8 +423,8 @@ void rader_apply(const T* xre, const T* xim, std::size_t xstride, T* yre, T* yim
 // Reads N inputs x[k] = (xre,xim)[k*xstride], writes DFT to (yre,yim)[0..N).
 // Output must not alias input. Forward: exp(-2*pi*i*kn/N); inverse: + (swapped domain).
 //
-// Fully compile-time-recursive (all radices unrolled). Building block validated
-// by tests; the runtime driver reuses radix_butterfly for large N.
+// Fully compile-time-recursive (all radices unrolled). The tests validate this
+// building block; the runtime driver reuses radix_butterfly for large N.
 // ----------------------------------------------------------------------------
 
 // Should the size-M sub-transform be a noinline boundary instead of inlined?
@@ -447,10 +447,10 @@ static_assert(kNoinlineMinSize >= xsimd::batch<float>::size && kNoinlineMinSize 
 
 // Cofactor-SIMD profitability for peeled cofactor M and radix R: run R size-M
 // sub-transforms across Wc lanes. Profitable when kernel<M> is scalar-dominated AND
-// the batch is well-utilized. Eligible M:
+// the batch is nearly full. Eligible M:
 //   * Rader primes (M>13 prime): batching R copies amortizes per-copy scalar cost.
-//     Rejected if 2*R <= Wc: scalar rader_apply<M> runs its kernel<M-1> convolution
-//     at full width and wins.
+//     Rejected if 2*R <= Wc, because scalar rader_apply<M> runs its kernel<M-1>
+//     convolution at full width and wins.
 //   * Odd composites / small odd primes (3,5,7,9,11,15,21,27,...): no radix-2/4
 //     factor; kernel<M> combine is scalar.
 //   * Even M at least one batch tile wide: the scalar recursion runs at non-unit
@@ -475,7 +475,7 @@ template<typename T, unsigned R>
     // Wc == R the load is a full batch, so M=4 pays no mask. M=8 needs 2*M live batches to
     // fit, hence 32-reg ISAs only. There is no M=16 arm: Wc == R forces R <= 16, so
     // M=16 >= Wc and even_m already admits it. odd_m keeps the noinline guard and pow2_m
-    // does not: that predicate models scalar spill pressure.
+    // does not, because that predicate models scalar spill pressure.
     const bool odd_m = M >= 3 && (M % 2 != 0) && !kernel_should_noinline(M);
     const bool pow2_m = (M == 4 || (M == 8 && 2 * M < poet::vector_register_count())) &&
                         cofactor_batch_width<T, R>() == R;
@@ -537,7 +537,7 @@ struct kernel {
     // Whole forward transform, emitting each output via sink(p, outr, outi):
     // (l*M + j) from the last combine, lane width V or scalar T. apply() below
     // stores to yre/yim; apply_sink() forwards the caller's store (codelet_apply's
-    // AoS interleave) without an output SoA round-trip.
+    // AoS interleave) without an output SoA round-trip. Each output index sinks once.
     template<typename Sink>
     static void apply_impl(const T* xre, const T* xim, std::size_t xstride,
                            T* yre, T* yim, Sink&& sink) {
@@ -620,7 +620,7 @@ struct kernel {
                 }
                 // Combine r blocks fused per Wc-tile: the M output batches are an
                 // M×Wc matrix whose in-register Wc×Wc transpose (vunpck/vperm) IS
-                // the gather y[q*M+j]: the combine consumes the transposed rows and
+                // the gather y[q*M+j]. The combine consumes the transposed rows and
                 // emits via sink with no yre/yim round-trip. xsimd::transpose needs
                 // exactly Wc batches per tile; only rows [0,r) are real.
                 constexpr std::size_t nft = M / Wc;  // number of full Wc-wide tiles
@@ -653,8 +653,8 @@ struct kernel {
                 // yre/yim, then one value-folded scalar combine chunk per column.
                 if constexpr (M % Wc != 0 && M >= Wc) {
                     // Masks feeding a transpose are the sanctioned exception to the
-                    // sized-batch tail policy. Gated on M >= Wc (at least one full
-                    // tile): for tile-less tiny cofactors (e.g. M=3,Wc=4 in
+                    // sized-batch tail policy. Gated on M >= Wc, at least one full
+                    // tile. For tile-less tiny cofactors (e.g. M=3,Wc=4 in
                     // rader<13>'s kernel<12>) the scalar scatter wins.
                     constexpr auto smask = xsimd::make_batch_bool_constant<T, lane_lt<M % Wc>, A>();
                     constexpr std::size_t k0 = nft * Wc;
@@ -678,8 +678,8 @@ struct kernel {
                 // Leftover columns [nft*Wc, M) (count C < Wc): descend existing
                 // sized batches by C's bits (one chunk per set bit), then
                 // value-folded scalar chunks for the sub-width residue. Pure
-                // scalar loses badly: one 4-wide chunk beats four scalar
-                // radix-8 butterflies.
+                // scalar loses. One 4-wide chunk beats four scalar radix-8
+                // butterflies.
                 constexpr std::size_t C = M - nft * Wc;
                 poet::static_for<1, std::bit_width(Wc)>([&](auto S) {
                     constexpr std::size_t Wt = Wc >> S;
@@ -722,7 +722,7 @@ struct kernel {
 
     // Same transform, but outputs emit via sink(p, outr, outi). The caller fuses
     // its store (AoS interleave) into the last combine. yre/yim: scratch only.
-    // Each output index sinked exactly once, values T or sized-batch V.
+    // Each output index sinks exactly once, as a value T or a sized batch V.
     template<typename Sink>
     static void apply_sink(const T* xre, const T* xim, std::size_t xstride,
                            T* yre, T* yim, Sink&& sink) {
@@ -854,7 +854,7 @@ ADM_NOINLINE void rader_apply(const T* xre, const T* xim, std::size_t xstride,
     kernel<L, T, false>::apply(Pre, Pim, 1, cre, cim);
 
     // X[0] = sum_n x[n] = x0 + sum_q a_q, and the forward kernel already computed
-    // that sum as A[0] -- no separate accumulation (and no length-L serial chain).
+    // that sum as A[0], so no separate accumulation and no length-L serial chain.
     yre[0] = x0r + Are[0];
     yim[0] = x0i + Aim[0];
     for (unsigned m = 0; m < L; ++m) {

@@ -49,7 +49,7 @@ endfunction()
 # Both artifacts bake in the engine objects, so an installed one links standalone
 # and the export set stays free of build-only dependencies.
 #
-# SOURCE is the shim over the engine. The C++ interface has none: the C shims call
+# SOURCE is the shim over the engine. The C++ interface has none. The C shims call
 # the C++ API too, so its definitions live in admiral_engine.
 function(adm_add_surface name)
     cmake_parse_arguments(PARSE_ARGV 1 A "" "SOURCE;VERSION_SCRIPT;EXPORT_NAME" "")
@@ -79,7 +79,7 @@ function(adm_add_surface name)
     add_library(${name} SHARED
         ${own_objects}
         $<TARGET_OBJECTS:admiral_engine>)
-    # The archive lists the codelet objects: a PRIVATE link would leave a consumer
+    # The archive lists the codelet objects. A PRIVATE link would leave a consumer
     # of the .a to find an internal admiral target itself.
     add_library(${name}_static STATIC
         ${own_objects}

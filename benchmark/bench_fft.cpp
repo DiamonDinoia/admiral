@@ -24,7 +24,6 @@
 #include <admiral/detail/four_step.hpp>     // choose_four_step_split, gate_four_step_cost
 #include <admiral/detail/math.hpp>          // codelet_dispatch, is_codelet_catalog
 #include <admiral/detail/plan.hpp>          // plan_impl
-#include <admiral/detail/portable_trig.hpp> // portable_trig
 #include <admiral/detail/twiddles.hpp>      // build_dif_factor_plan, dif_wide_radices
 
 #include "bench_harness.hpp"
@@ -35,7 +34,7 @@ using namespace bench;
 
 namespace {
 
-// Wrapper for ducc0 FFT - isolates ducc0 API details. Templated on precision so
+// Wrapper for ducc0 FFT that isolates the ducc0 API details. Templated on precision so
 // float and double race against the same ducc0 c2c entry point.
 template<typename T>
 std::vector<std::complex<T>> ducc0_forward_fft(const std::vector<std::complex<T>>& input,
@@ -118,7 +117,6 @@ double l2_rel_error(const std::vector<std::complex<T>>& got,
     return den > 0.0 ? std::sqrt(num / den) : std::sqrt(num);
 }
 
-// Performance data structure
 struct BenchmarkResult {
     size_t size;
     std::string type;
@@ -319,7 +317,7 @@ void factor_sweep_size(std::size_t N, const std::vector<unsigned>& radices, int 
     });
     (void)sink;
 
-    // CPU cycles when available: wall-clock factor ranking does not transfer to
+    // CPU cycles when available. A wall-clock factor ranking does not transfer to
     // cycles, the win/lose metric. Falls back to wall only if counters are off.
     const bool use_cyc = fft_fwd.cyc > 0.0 && ducc_fwd.cyc > 0.0
                       && fft_rt.cyc > 0.0 && ducc_rt.cyc > 0.0;
@@ -366,8 +364,9 @@ void benchmark_size(size_t N, const std::string& type) {
         data[i] = std::complex<T>(std::sin(T(i) * T(0.1)), std::cos(T(i) * T(0.1)));
     }
 
-    // Build the plans once (twiddles generated at planning): the fair comparison
-    // vs ducc0, which caches plans. The timed loop measures execute() only.
+    // Build the plans once, which generates the twiddles at plan time. ducc0 caches
+    // its plans, so plan reuse is the fair comparison. The timed loop measures
+    // execute() only.
     admiral::plan<T> fwd_plan(N);
     admiral::plan<T> inv_plan(N);
 
@@ -394,7 +393,6 @@ void benchmark_size(size_t N, const std::string& type) {
         ankerl::nanobench::doNotOptimizeAway(result.data());
     });
 
-    // Benchmark ducc0 round-trip (via wrapper)
     double ducc0_rt_time = time_execution("ducc0_rt", [&]() {
         auto fwd = ducc0_forward_fft<T>(data);
         auto inv = ducc0_inverse_fft<T>(fwd);
@@ -422,7 +420,6 @@ void benchmark_size(size_t N, const std::string& type) {
               << std::setw(9) << result.rt_ratio() << "x\n";
 }
 
-// Statistical summary for a category
 struct CategoryStats {
     std::string name;
     size_t count;
@@ -622,8 +619,8 @@ bool compare_min_of_n(std::size_t N, int reps, long inner,
     admiral::detail::plan_impl<T> inv_plan(N, false, /*nthreads=*/adm_nt, override_plan ? &*override_plan : nullptr, adm_eff);
     std::vector<std::complex<T>> buf(N);
 
-    // Accuracy gate first: a plan that did not compute the transform is rejected
-    // and never timed, so its bogus fast ratio never reports as a win.
+    // Accuracy gate first. The gate drops a plan that did not compute the transform
+    // and never times it, so a bogus fast ratio never reports as a win.
     std::copy(data.begin(), data.end(), buf.begin());
     fwd_plan.execute(std::span(buf));
     // Above kNaiveRefMaxN the O(N^2) reference is too slow; large sizes gate on
@@ -675,8 +672,8 @@ bool compare_min_of_n(std::size_t N, int reps, long inner,
         sink += inv[N / 2].real();
     });
 #ifdef ADM_BENCH_FFTW
-    // Optional FFTW reference, accuracy-gated like the other arms: a mis-scaled
-    // result is reported and its timing skipped.
+    // Optional FFTW reference, accuracy-gated like the other arms. The gate reports a
+    // mis-scaled result and skips its timing.
     fftw_c2c<T> fftw(N, nthreads);
     const double fftw_l2 = (N <= kNaiveRefMaxN)
         ? l2_rel_error<T>(fftw.forward(data), reference_forward_dft<T>(data))
@@ -706,8 +703,8 @@ bool compare_min_of_n(std::size_t N, int reps, long inner,
     const bool lose = !(fwd_ratio < 1.0 && rt_ratio < 1.0);
 
     // Forward-transform throughput, for the library and ducc0:
-    //   GFLOPS  = flops / (us * 1e3)        -- wall-clock, familiar units
-    //   flops/cycle (+ %peak)               -- frequency-invariant (use_cyc only)
+    //   GFLOPS  = flops / (us * 1e3)        wall-clock, familiar units
+    //   flops/cycle (+ %peak)               frequency-invariant (use_cyc only)
     const double flops = fft_flops(N);
     const double fft_gflops = flops / (fft_fwd.us * 1e3);
     const double ducc_gflops = flops / (ducc_fwd.us * 1e3);
@@ -744,9 +741,9 @@ bool compare_min_of_n(std::size_t N, int reps, long inner,
               << "\n";
 #ifdef ADM_BENCH_FFTW
     if (fftw_ok) {
-        // Honor use_cyc, not just counter availability: threaded, the library's
-        // counter sees only the caller while FFTW's caller runs all threads, so
-        // a cyc ratio would mislabel the MT comparison.
+        // Honor use_cyc rather than counter availability alone. Threaded, the
+        // library's counter sees only the caller while FFTW's caller runs all threads,
+        // so a cyc ratio would mislabel the MT comparison.
         const bool ucf = use_cyc && fft_fwd.cyc > 0.0 && fftw_fwd.cyc > 0.0
                        && fft_rt.cyc > 0.0 && fftw_rt.cyc > 0.0;
         const double fwd_r = ucf ? fft_fwd.cyc / fftw_fwd.cyc : fft_fwd.us / fftw_fwd.us;
@@ -870,8 +867,8 @@ bool compare_factors_ab(std::size_t N,
     const double a_ducc = std::sqrt(geomean_of(ab.fd) * geomean_of(ba.sd));
     const double b_ducc = std::sqrt(geomean_of(ab.sd) * geomean_of(ba.fd));
 
-    // "A robustly faster" requires the corrected edge to clear the spread (2*MAD-ish)
-    // on BOTH fwd and rt: a sub-spread delta is noise, not a result.
+    // "Faster" here means the corrected edge clears the spread (2*MAD-ish) on BOTH
+    // fwd and rt. A sub-spread delta is noise, not a result.
     const bool robust_a = (mfwd < 1.0 - 2.0 * spread) && (mrt < 1.0);
     const bool robust_b = (mfwd > 1.0 + 2.0 * spread) && (mrt > 1.0);
     const char* verdict = robust_a ? "A faster (robust)"
@@ -1264,7 +1261,6 @@ void base_cost_size(std::size_t N, int rounds, int reps, long inner) {
         }
     }
 
-    // Emit one line per form.
     for (std::size_t i = 0; i < K; ++i) {
         const double cyc_out = best_cyc[i] >= std::numeric_limits<double>::max() ? 0.0 : best_cyc[i];
         const double ns_out  = best_us[i] * 1000.0;
@@ -1313,7 +1309,7 @@ void chain_sweep(std::size_t N, int rounds, int reps, long inner, std::size_t ma
         return;
     }
     // Keep an evenly spaced subset, not a prefix (a prefix is all-radix-2 heads),
-    // and force in the model's whole candidate list: a sweep blind to the elected
+    // and force in the model's whole candidate list. A sweep blind to the elected
     // chain cannot score the model that elected it.
     const std::size_t found = chains.size();
     if (found > max_chains) {
@@ -1346,7 +1342,7 @@ void chain_sweep(std::size_t N, int rounds, int reps, long inner, std::size_t ma
             for (const unsigned r : c) {
                 const std::size_t ido = n / r;
                 if (ido > 1 && ido < xsimd::batch<T>::size) ++veto;
-                // The columns exist only where the surface does: an ISA key without
+                // The columns exist only where the surface does. An ISA key without
                 // fitted coefficients prices passes from the measured tape instead, with
                 // nothing linear to refit, so emit just the veto count and model cost.
                 if constexpr (d::dif_surface_is_analytic<T>) {
@@ -1440,8 +1436,8 @@ void chain_sweep(std::size_t N, int rounds, int reps, long inner, std::size_t ma
               << " timed=" << arms.size() - 1 << " kept=" << chains.size()
               << " runnable=" << found << " enumerated=" << enumerated << " gamma=" << std::fixed
               << std::setprecision(3) << gamma << std::defaultfloat << "\n";
-    // model= is what the DP charges this chain: the useful question is not whether
-    // the model ranks correctly, but how deep a candidate list holds the winner.
+    // model= is what the DP charges this chain. The useful question is how deep a
+    // candidate list has to be before it holds the winner.
     for (std::size_t i = 0; i < dup; ++i)
         std::cout << "CHAIN size= " << N << " prec=" << prec
                   << " chain=" << join_radices(*arms[i].chain) << " cyc= " << std::fixed
@@ -1470,7 +1466,7 @@ void model_dump(std::size_t lo, std::size_t hi) {
         };
         if (N <= d::kFourStepLeafMax && d::is_codelet_catalog(N))
             emit("codelet", d::gate_leaf_cyc(N));
-        // The chain that would actually run, priced pass by pass. This is the term
+        // The chain the engine would run, priced pass by pass. This is the term
         // estimated_plan_cost cannot express for non-11-smooth N.
         if (plan_t::route_available(plan_t::route_kind::iterative_dif, N)) {
             emit("iterative_dif", d::dif_chain_cost<T>(N, d::dif_elected_chain<T>(N)));
@@ -1644,8 +1640,8 @@ int main(int argc, char** argv) {
                 using T = decltype(tag);
                 const double tol = tol_override < 0.0 ? default_accuracy_tol<T>() : tol_override;
                 for (std::size_t N : sizes)
-                    // inner=0 => nanobench auto-tunes epoch length (~1ms floor):
-                    // short, and the reported err flags any unstable reading.
+                    // inner=0 => nanobench auto-tunes epoch length (~1ms floor). Runs
+                    // stay short, and the reported err flags any unstable reading.
                     ok = compare_min_of_n<T>(N, reps, inner,
                                              factor_override.empty() ? nullptr : &factor_override,
                                              tol, nthreads, adm_nthreads, adm_eff) && ok;
@@ -1768,7 +1764,7 @@ int main(int argc, char** argv) {
                         continue;
                     }
                     volatile T sink = T(0);
-                    // Both forward arms are copy-free and out-of-place: the plain
+                    // Both forward arms are copy-free and out-of-place. The plain
                     // forward() stages through fftw's in_ and execute(span(buf))
                     // stages through a restore, so a staged arm bills an N-complex
                     // copy to one side of the ratio.
@@ -2214,17 +2210,14 @@ int main(int argc, char** argv) {
         std::cout << "                         |  Forward    |  Fwd+Inv    |  Forward    |  Fwd+Inv    | (fft/ducc)| (fft/ducc)\n";
         std::cout << "-------------------------------------------------------------------------------------\n";
 
-        // Power-of-2 sizes
         std::cout << "\nPower-of-2 sizes:\n";
         for (size_t N : {2u, 4u, 8u, 16u, 32u, 64u, 128u, 256u, 512u, 1024u, 2048u, 4096u})
             benchmark_size<T>(N, "pow2");
 
-        // Prime sizes
         std::cout << "\nPrime sizes:\n";
         for (size_t N : {3u, 5u, 7u, 11u, 13u, 17u, 31u})
             benchmark_size<T>(N, "prime");
 
-        // Composite sizes
         std::cout << "\nComposite sizes:\n";
         for (size_t N : {6u, 10u, 12u, 15u, 20u, 24u, 30u, 100u})
             benchmark_size<T>(N, "composite");
@@ -2260,7 +2253,6 @@ int main(int argc, char** argv) {
     std::cout << "  - Ratio > 1.0: ducc0 is faster\n";
     std::cout << "  - Ratio ≈ 1.0: Similar performance\n";
 
-    // Print detailed performance report
     print_performance_report();
 
     return 0;

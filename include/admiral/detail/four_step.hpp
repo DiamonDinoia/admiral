@@ -276,7 +276,7 @@ void four_step_batched_ct(const T* in_re, const T* in_im, T* out_re, T* out_im,
 
 // ============================================================================
 // Batched four-step route (f32 only): N in {128,256,384,448,512,640,768}.
-// f32 wins where iterative_dif underutilizes the 8-wide register.
+// f32 wins where iterative_dif leaves the 8-wide register partly idle.
 // f64 table is empty; both W=4 and W=8 fall back to iterative_dif.
 // ============================================================================
 

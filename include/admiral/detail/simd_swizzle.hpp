@@ -23,7 +23,7 @@ namespace detail {
 // passes need them as planar batch<T> pairs and back.
 //   deinterleave (AoS->SoA): 2-source shuffle per plane (even->re, odd->im).
 //   interleave (SoA->AoS): zip_lo/zip_hi.
-// Pure xsimd primitives; ISA lowering chosen by xsimd dispatch (AVX2 needs a shuffle
+// Pure xsimd operations. xsimd dispatch picks the ISA lowering (AVX2 needs a shuffle
 // plus a cross-lane permute; no single AVX2 instruction avoids it).
 
 // Permute-index generators for xsimd::make_batch_constant: lane i reads get(i)
@@ -106,10 +106,10 @@ ADM_ALWAYS_INLINE void store_piece(T* p, sized_piece_t<T, PW> v) {
     if constexpr (PW == 1) { *p = v; } else { v.store_unaligned(p); }
 }
 
-// True where one instruction computes a*b + c. Without it xsimd's scalar fma and fnma
-// are std::fma, which is a libm CALL, and its generic batch fnma is negate-mul-add,
-// one op longer than the plain expression. piece_fnma and piece_fma are the only
-// readers of this flag, so no kernel carries an ISA test of its own.
+// True where one instruction computes a*b + c. Where the flag is false, xsimd's scalar
+// fma and fnma are std::fma, which is a libm CALL, and xsimd's generic batch fnma is
+// negate-mul-add, one op longer than the plain expression. piece_fnma and piece_fma are
+// the only readers of the flag, so no kernel carries an ISA test of its own.
 inline constexpr bool kFusedFma = XSIMD_WITH_FMA3_SSE || XSIMD_WITH_FMA3_AVX
                                  || XSIMD_WITH_FMA3_AVX2 || XSIMD_WITH_FMA4
                                  || XSIMD_WITH_AVX512F || XSIMD_WITH_NEON64
@@ -117,10 +117,10 @@ inline constexpr bool kFusedFma = XSIMD_WITH_FMA3_SSE || XSIMD_WITH_FMA3_AVX
                                  || XSIMD_WITH_VXE;
 
 // c - a*b and a*b + c over a piece of any width, PW == 1 included. On FMA hardware the
-// explicit call pins ONE association at every width: gcc contracts the plain form as
-// vfnmadd in the vector body but as vfmsub in the PW == 1 tail, which rounds a tail
+// explicit call pins ONE association at every width. gcc contracts the plain form as
+// vfnmadd in the vector body but as vfmsub in the PW == 1 tail, so a tail rounds
 // differently from the row it belongs to. Off FMA hardware nothing contracts, so the
-// plain form carries the same association at every width and is the shorter sequence.
+// plain form holds one association at every width and is the shorter sequence.
 template<typename V>
 [[nodiscard]] ADM_ALWAYS_INLINE V piece_fnma(V a, V b, V c) {
     if constexpr (kFusedFma) { return xsimd::fnma(a, b, c); } else { return c - a * b; }
@@ -188,7 +188,7 @@ ADM_ALWAYS_INLINE void aos_interleave(T* ADM_RESTRICT dst, Batch re, Batch im) {
 }
 
 // PW-wide AoS<->SoA piece. A lone complex is already two adjacent reals, so the
-// scalar piece needs no swizzle. Either way exactly 2*PW reals are touched, so a
+// scalar piece needs no swizzle. Either way the piece touches exactly 2*PW reals, so a
 // partial block neither over-reads past the axis buffer nor needs a mask.
 template<typename T, std::size_t PW>
 ADM_ALWAYS_INLINE void aos_deinterleave_piece(const T* ADM_RESTRICT src,
@@ -397,9 +397,9 @@ struct real_run_copy {
 };
 
 // Runtime prefix/suffix stores for the column last pass's misaligned head (prefix [0,n))
-// and ragged tail (suffix [m0,W)): the loop-invariant runtime bound is dispatched to a
-// compile-time batch_bool_constant store via static_for; each arm is a fully specialised
-// masked store the compiler lowers to plain moves. Kept out of the aligned-bulk store
+// and ragged tail (suffix [m0,W)): static_for dispatches the loop-invariant runtime bound
+// to a compile-time batch_bool_constant store, and each arm is a fully specialised masked
+// store the compiler lowers to plain moves. Kept out of the aligned-bulk store
 // (plain aos_interleave) so the hot path carries none of this dispatch.
 //
 // ALWAYS_INLINE: the peel runs per column block, not per execute, so a call here sits on

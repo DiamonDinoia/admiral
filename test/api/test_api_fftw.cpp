@@ -1,4 +1,4 @@
-// FFTW3 compatibility shim: verify the covered surface matches FFTW conventions
+// FFTW3 compatibility shim: verify the covered API matches FFTW conventions
 // (unnormalized both directions) and agrees with the native admiral:: API.
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
@@ -118,7 +118,7 @@ TEST_CASE("fftw shim: rejects bad ranks and an overflowing shape", "[fftw]") {
     REQUIRE(fftw_plan_dft(2, zero, nullptr, nullptr, FFTW_FORWARD, FFTW_ESTIMATE) == nullptr);
     // 2^90 > SIZE_MAX: extent_product returns nullopt, the plan ctor throws
     // invalid_argument, and make_plan must convert that to FFTW's null return rather
-    // than let it escape a C ABI. Rejected before any allocation is attempted.
+    // than let it escape a C ABI. The ctor rejects it before any allocation.
     const int huge[3] = {1 << 30, 1 << 30, 1 << 30};
     REQUIRE(fftw_plan_dft(3, huge, nullptr, nullptr, FFTW_FORWARD, FFTW_ESTIMATE) == nullptr);
 }
@@ -189,7 +189,7 @@ TEST_CASE("fftw shim: allocator wrappers, both precisions", "[fftw]") {
 TEST_CASE("fftw shim: aligned malloc and single precision", "[fftw]") {
     auto* buf = fftwf_alloc_complex(32);
     REQUIRE(buf != nullptr);
-    // The shim's alignment guarantee is span_align, not a literal: assert against
+    // The shim's alignment guarantee is span_align, not a literal. Assert against
     // the same constant it allocates with, or this test pins the wrong ISA's number.
     REQUIRE(reinterpret_cast<std::uintptr_t>(buf) % admiral::detail::span_align<float> == 0);
     for (int i = 0; i < 32; ++i) { buf[i][0] = float(i); buf[i][1] = 0.f; }
@@ -215,7 +215,7 @@ TEST_CASE("fftw shim: aligned malloc and single precision", "[fftw]") {
 TEST_CASE("fftw shim: null plans and null arrays are no-ops, malloc(0) is valid",
           "[fftw]") {
     // Shim semantics (FFTW itself leaves null-plan execution undefined; this shim
-    // defines it as a no-op): the guards live in fftw_compat.cpp's run()/execute paths.
+    // defines it as a no-op). The guards live in fftw_compat.cpp's run()/execute paths.
     REQUIRE_NOTHROW(fftw_execute(nullptr));
     REQUIRE_NOTHROW(fftwf_execute(nullptr));
     REQUIRE_NOTHROW(fftw_execute_dft(nullptr, nullptr, nullptr));

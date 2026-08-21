@@ -6,7 +6,7 @@
 // A -ffast-math oracle is no more exact than what it judges, so test TUs must
 // not inherit it (admiral_fast_math_flags is PRIVATE). The compile-time check
 // is the only place a linkage regression is visible. __FINITE_MATH_ONLY__ is
-// separate: it does not define __FAST_MATH__, yet alone lets the compiler
+// separate. It does not define __FAST_MATH__, yet on its own it lets the compiler
 // assume no NaN/Inf in the reference accumulation.
 #ifdef __FAST_MATH__
 #error "test TUs must not be compiled with -ffast-math (see admiral_fast_math_flags)"
@@ -39,13 +39,13 @@ std::size_t shape_product(const auto& shape) {
 // Normwise relative L2 distance ||a-b||_2 / ||a||_2, with `a` the reference. L2
 // rather than per-element so a near-zero spectral bin cannot inflate the ratio.
 // Elements may be real or complex; the accumulators are double so a 2^20-point
-// float vector does not lose the error being measured.
+// float vector does not lose the error it reports.
 double relerrtwonorm(const auto& a, const auto& b) {
     static_assert(requires { { std::norm(a[0] - b[0]) } -> std::convertible_to<double>; },
                   "relerrtwonorm: element types must subtract to something normable");
     // A reference may carry a WIDER element type than the result it judges, and the
-    // subtraction then promotes `b[m]`. Widen it explicitly: clang reports the implicit
-    // promotion under -Wdouble-promotion, which the suite builds with -Werror.
+    // subtraction then promotes `b[m]`. Widen `b[m]` explicitly instead: clang reports
+    // the implicit promotion under -Wdouble-promotion, and the suite builds -Werror.
     using Ref = std::remove_cvref_t<decltype(a[0])>;
     double err = 0.0, nrm = 0.0;
     for (std::size_t m = 0; m < std::size(a); ++m) {
@@ -72,8 +72,9 @@ auto WithinAbsT(const auto target, const auto margin) {
     return Catch::Matchers::WithinAbs(static_cast<double>(target), static_cast<double>(margin));
 }
 
-// The suite's one array comparison. Reports the measured error, not just "false":
-// a bare predicate inside a REQUIRE says nothing about how far off the result was.
+// The suite's one array comparison. It reports the measured error rather than
+// "false" alone. A bare predicate inside a REQUIRE says nothing about how far off
+// the result was.
 void require_close(const auto& got, const auto& ref, double tol) {
     REQUIRE(std::size(got) == std::size(ref));
     const double err = relerrtwonorm(ref, got);
@@ -82,7 +83,7 @@ void require_close(const auto& got, const auto& ref, double tol) {
 }
 
 // The same check over the C API's structs, which have no operator-. Casting rather than
-// re-deriving the comparison: adm_complex is layout-compatible with std::complex by
+// re-deriving the comparison. adm_complex is layout-compatible with std::complex by
 // documented contract (admiral.h), so this is also the conversion a C caller performs.
 template <typename C>
 void require_close_c(const C* got, const C* ref, std::size_t size, double tol) {

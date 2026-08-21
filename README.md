@@ -7,8 +7,9 @@ interfaces: C++, C, and a drop-in FFTW subset.
 ## Performance
 
 Measured on a Xeon w5-3435X (16 physical cores, AVX-512, `-march=native`).
-Speedup is their time over Admiral's, so above 1 Admiral is faster. How these
-numbers are measured, and how to rerun them: [benchmark/](benchmark/README.md).
+Speedup is their time over Admiral's, so above 1 Admiral is faster.
+[benchmark/](benchmark/README.md) covers how these numbers are measured and how to
+rerun them.
 
 Against ducc0 (`c4dda23`), over 61 1-D lengths and 27 N-D shapes per precision:
 
@@ -71,8 +72,8 @@ target_link_libraries(app PRIVATE admiral::fftw)   # or admiral::admiral_c
 | FFTW | `<admiral/fftw3.h>` | `admiral::fftw` or `admiral::fftw_static` |
 
 The C++ header declares the engine instead of defining it, so it includes only
-the standard library. Compiled means the C++ API ships for
-`std::complex<float>` and `std::complex<double>` only; the exported target
+the standard library. The engine is compiled, so the C++ API ships for
+`std::complex<float>` and `std::complex<double>` only. The exported target
 requires C++20 at the call site.
 
 The archives are C++ behind a C API, so a C-only project must enable C++:
@@ -113,8 +114,8 @@ admiral::forward<double>(x, x);   // one-shot, no plan. Plain containers need th
 ### Options
 
 Every plan and one-shot takes an optional `admiral::options` aggregate, so a
-call site names what it sets and nothing else; the C API mirrors it as
-`adm_options`, passed by pointer, with `NULL` meaning the defaults.
+call site names what it sets and nothing else. The C API mirrors it as
+`adm_options`, passed by pointer, where `NULL` means the defaults.
 
 | field | default | what it does |
 |-------|---------|--------------|
@@ -124,8 +125,8 @@ call site names what it sets and nothing else; the C API mirrors it as
 
 `automatic` and `measure` elect from timings, so the picked route depends on the
 machine and the load; both are inert under `-DADM_MEASURE=OFF`. The one-shot
-functions ignore `eff` and always route with `estimate`: a discarded plan cannot
-repay a plan-time race.
+functions ignore `eff` and always route with `estimate`, since a discarded plan
+cannot repay a plan-time race.
 
 ### C
 
@@ -141,8 +142,8 @@ adm_plan_destroy(plan);
 
 Double precision keeps the plain name, single precision prefixes `admf_`. Every
 call returns an `adm_status` (`ADM_SUCCESS` is 0, nodiscard). Pass a
-`const adm_options*` instead of `NULL` to set options. A zeroed struct is
-exactly the defaults, so partial initializers are safe.
+`const adm_options*` instead of `NULL` to set options. A zeroed struct means
+the defaults, so partial initializers are safe.
 
 ### FFTW
 
@@ -170,12 +171,12 @@ one plan per executing thread.
 | `ADM_BUILD_BENCHMARKS` | Builds `admiral_benchmark`, which fetches ducc0 and nanobench. Only needed to measure performance; see `benchmark/` | `ON` as top-level project |
 | `ADM_ENABLE_THREADS` | `OFF` makes every plan serial regardless of `nthreads` and drops the system threads library from the link. Turn off for a single-threaded environment | `ON` |
 | `ADM_MEASURE` | Compiles in plan-time route measurement (`effort::automatic`/`measure`, and FFTW's non-`ESTIMATE` flags). `OFF` leaves them accepted but inert: every plan routes by the cost model, so plans become bitwise reproducible across runs | `ON` |
-| `ADM_TARGET_ARCH` | The one `-march` the whole build uses. `native` is fastest on the build machine but the binaries may not run elsewhere; use `x86-64-v3` for portable binaries, `none` for the compiler baseline. Also the build-memory lever: one engine TU peaks near 12 GB at AVX-512 `native` versus ~2 GB at `x86-64-v2`. Do not also pass `-march` in `CMAKE_CXX_FLAGS` | `native` |
+| `ADM_TARGET_ARCH` | The one `-march` the whole build uses. `native` is fastest on the build machine but the binaries may not run elsewhere; use `x86-64-v3` for portable binaries, `none` for the compiler baseline. Also the build-memory knob: one engine TU peaks near 12 GB at AVX-512 `native` versus ~2 GB at `x86-64-v2`. Do not also pass `-march` in `CMAKE_CXX_FLAGS` | `native` |
 | `ADM_USE_FAST_MATH` | Adds `-ffast-math`: faster transforms, but relaxed IEEE (reassociation, flushed denormals, no errno). Turn off when strict IEEE semantics matter | `ON` |
 
-The remaining knobs (sanitizers, codelet catalog, LTO, PCH, the cost-model fit
-targets) are development-facing and documented where they are declared, in the
-CMake sources.
+The CMake sources document the remaining knobs (sanitizers, codelet catalog, LTO,
+PCH, the cost-model fit targets) where they declare them. Those knobs face
+development, not use.
 
 ## Dependencies
 

@@ -65,8 +65,8 @@ namespace detail {
 //   plan.execute(data, {.debug = dbg_shape}); // trace route and shape to stderr
 // fct == nullopt: forward=1, inverse=1/N.
 // debug == 0: silent, and the only cost is the compare (see debug.hpp).
-// Threading is NOT an option here: it is fixed at plan creation (the nthreads
-// ctor argument), and the plan-owned pool is used internally at execute.
+// Threading is NOT an option here. The nthreads ctor argument fixes it at plan
+// creation, and execute() then uses the plan-owned pool internally.
 template<typename T>
 struct exec_options {
     std::optional<T> fct = std::nullopt;
@@ -151,10 +151,10 @@ private:
         route_kind route;
         route_state st;
         // Plan-owned workers, built at creation iff nthreads > 1 (see the ctor).
-        // unique_ptr, not optional: the workers capture the pool address, so it
-        // must survive a plan move; thread_pool holds a mutex and is not movable;
-        // and get() on a const plan still yields a mutable pool*, keeping
-        // execute() const.
+        // unique_ptr, not optional. The workers capture the pool address, so the pool
+        // must survive a plan move, thread_pool holds a mutex and is not movable, and
+        // get() on a const plan still yields a mutable pool*, which keeps execute()
+        // const.
         std::unique_ptr<thread_pool> pool;
     } m;
 
@@ -189,8 +189,8 @@ public:
               admiral::effort eff = admiral::effort::estimate);
 
 private:
-    // Route-resolved delegate: the pool gate reads the route, which cannot be
-    // referenced from m's own initializer list (clang -Werror,-Wuninitialized).
+    // Route-resolved delegate: the pool gate reads the route, which m's own
+    // initializer list cannot reference (clang -Werror,-Wuninitialized).
     // choice is deliberately by value: when the chain race won a re-ordering its
     // dif_chain member must outlive build_dif_twiddle_set in the body below.
     plan_impl(std::size_t size, bool is_forward, std::size_t nthreads,
@@ -266,7 +266,7 @@ private:
                   " fct=", static_cast<double>(fct), m.pool ? " threaded" : " serial");
         if (lines != 1) dbg_print("  lines=", lines, " stride=", stride);
         if (level < dbg_shape) return;
-        // The shape is whatever the elected route actually holds; a route whose name is
+        // The shape is whatever the elected route holds; a route whose name is
         // its whole shape prints nothing rather than a placeholder.
         std::visit([](const auto& st) {
             using S = std::decay_t<decltype(st)>;
@@ -367,8 +367,8 @@ private:
 
     // Measure-at-plan-time: time the model's top-ranked candidates on scratch
     // and return the measured winner. Stage 1 (base forms) stays in the fitted
-    // domain, the only place a runtime A/B carries new information over the
-    // fitted corrections; stage 2 races the DP's next-cheapest CHAINS, at any N.
+    // domain, the only place a runtime A/B carries new information over the fitted
+    // model. Stage 2 races the DP's next-cheapest CHAINS, at any N.
     // Builds and discards one plan per candidate (plan-time only, never shipped).
     // Threaded engines are not stage-1 candidates (the ranked domain is serial).
     static measured_choice measure_route(std::size_t size, bool is_forward, std::size_t nthreads);
@@ -393,7 +393,7 @@ private:
     }
 
     // Bailey-split admission: byte line AND split shape. n2 % n1 != 0 sends both
-    // in-place transposes to the element-cycle fallback, which is SERIAL -- the cliff
+    // in-place transposes to the element-cycle fallback, which is SERIAL. The cliff
     // survives threading, so this clause binds every nthreads. Serial further requires
     // n1 % W == 0 (band fusion); threaded that clause would be WRONG, because the row
     // DFTs and transposes both take the pool.
@@ -418,7 +418,7 @@ private:
     // generation dominates it).
     [[nodiscard]] static bool dif_chain_supported(std::size_t size) {
         if (std::has_single_bit(size) || is_codelet_supported(size)) return true;
-        // The chain that would EXECUTE, which is not always the DP's argmin: the shape
+        // The chain that would EXECUTE, which is not always the DP's argmin. The shape
         // vetoes (a big generic parked at ido < W) condemn some cheapest chains, and the
         // election walks the candidate list past them.
         return dif_chain_shape_ok(size, dif_elected_chain<T>(size));
@@ -438,8 +438,8 @@ private:
     // Route ladder, first match wins.
     static route_kind select_route(std::size_t size, std::size_t nthreads) {
         // Modelled domain (2..512): walk the cost model's ranking and take the
-        // cheapest route that is actually buildable, so an unavailable winner degrades
-        // to the model's next choice. The gates below earn their keep only above
+        // cheapest route that is buildable, so an unavailable winner degrades
+        // to the model's next choice. The gates below matter only above
         // BASE_MODEL_NMAX, where there is no model at all.
         {
             const auto& ranking = base_route_ranking<T>(size);
@@ -463,7 +463,7 @@ private:
             return route_kind::iterative_dif;
         // Non-11-smooth N=n1*n2 with both <=64 catalog leaves (e.g. 143=11x13,
         // 289=17x17, 338=13x26): codelet composition instead of Bluestein.
-        // Cost-gated: only when model says leaves beat Bluestein (169/209/221/247
+        // Cost-gated: only when the model says leaves beat Bluestein (169/209/221/247
         // keep Bluestein). Only fires on the Bluestein set (11-smooth dispatched above).
         if (four_step_supported(size) && four_step_beats_bluestein<T>(size))
             return route_kind::four_step;
@@ -590,7 +590,7 @@ plan_impl<T>::plan_impl(std::size_t size, bool is_forward, std::size_t nthreads,
     : plan_impl(size, is_forward, nthreads, dif_override,
                 [&] {
                     // This lambda runs BEFORE the delegate's size guard, and routing is
-                    // undefined at 0: the chain DP hoists `dif_radix_admissible(0, 25)` out of
+                    // undefined at 0. The chain DP hoists `dif_radix_admissible(0, 25)` out of
                     // its divisor loop (which is empty for 0), and is_pentanomial(0) divides 0
                     // by 2 forever. Answer trivially and let the delegate throw.
                     if (size == 0) [[unlikely]] return measured_choice{};
@@ -613,7 +613,7 @@ plan_impl<T>::plan_impl(std::size_t size, bool is_forward, std::size_t nthreads,
         throw std::invalid_argument("Plan size must be greater than 0");
     }
     // Every radix in dif_radix_set is 11-smooth, so no chain can represent a
-    // non-smooth N: forcing one would time a garbage A/B baseline. Reject loudly.
+    // non-smooth N. Forcing one would time a garbage A/B baseline. Reject loudly.
     if (dif_override && !route_available(route_kind::iterative_dif, size))
         throw std::invalid_argument("forced dif: size is not 11-smooth");
     const dif_factor_plan* chain =
@@ -623,12 +623,13 @@ plan_impl<T>::plan_impl(std::size_t size, bool is_forward, std::size_t nthreads,
     emplace_route_state(size, is_forward, chain);
 }
 
-// Race counts are fixed per stage, not clock-denominated: reproducible and machine-independent.
+// Race counts are fixed per stage and not clock-denominated, so a race is reproducible
+// and machine-independent.
 // Not a patience rule either: stopping after k non-improving candidates would read the
 // candidate order as a ranking by measured value, and it is only ascending in MODEL cost.
 inline constexpr std::size_t kMeasureCandidates = 8;
-// Samples per candidate. A min of one rejects no outlier: an unlimited-budget race with a
-// single sample elected a different chain every round at 8192/32768/25575.
+// Samples per candidate. A min of one rejects no outlier. An unlimited-budget race with
+// a single sample elected a different chain every round at 8192/32768/25575.
 inline constexpr std::size_t kMeasureReps = 5;
 inline constexpr std::size_t kMeasureMaxCandidates = 4;
 // Clock-resolution floor: a per-call time below this is the timer, not the plan.
@@ -654,11 +655,11 @@ plan_impl<T>::measure_route(std::size_t size, bool is_forward, std::size_t nthre
     const route_kind fallback = select_route(size, nthreads);
     using clock = std::chrono::steady_clock;
 
-    // Everything before the scratch allocation must be self-evident: at big N the
+    // Everything before the scratch allocation must be self-evident. At big N the
     // buffers are Θ(N) and a bluestein/fsl/gated call must not pay them.
     measured_choice pick{fallback, {}};
 
-    // ---- stage 1 candidates (fitted domain): the model fallback FIRST -- a
+    // ---- stage 1 candidates (fitted domain): the model fallback FIRST. A
     // degenerate race (clock failure, all-equal) returns it unchanged.
     // Top-2 distinct model candidates, plus the f32 batched route.
     route_kind cands[kMeasureMaxCandidates];
@@ -683,7 +684,7 @@ plan_impl<T>::measure_route(std::size_t size, bool is_forward, std::size_t nthre
     // the only correction to it. effort::estimate keeps the bare gate; the split must be
     // pool-safe (n2 % n1, as large_route_admits requires) for four_step_large to be buildable.
 
-    // Both directions, or the race can only fix half the gate: a rejection needs four_step_large
+    // Both directions, or the race can only fix half the gate. A rejection needs four_step_large
     // priced against the fallback, an admission needs the DIF chain priced against it. One extra
     // plan build either way.
     if (size > BASE_MODEL_NMAX && nthreads > 1) {
@@ -711,8 +712,8 @@ plan_impl<T>::measure_route(std::size_t size, bool is_forward, std::size_t nthre
         in[i] = {T(0.5 * int(i % 7) - 1), T(0.25 * int(i % 5) - 0.5)};
 
     // `unit` is the fastest execution of ANY plan for this transform seen so far. It is not a
-    // budget, since the race is bounded by a candidate count. It is the yardstick the
-    // reject ratio below measures a candidate against.
+    // budget, because a candidate count bounds the race. It is the yardstick the reject
+    // ratio below measures a candidate against.
     double unit = kMeasureInf;
     std::size_t raced = 0;
     const auto have_budget = [&] { return raced < kMeasureCandidates; };
@@ -774,8 +775,8 @@ plan_impl<T>::measure_route(std::size_t size, bool is_forward, std::size_t nthre
         };
         for (std::size_t i = 0; i < chain_cands.count && have_budget(); ++i)
             race(chain_cands[i]);
-        // Then WHICH ORDER of the winning multiset. The ordering walk is load-bearing: rotations
-        // reach the cheap permutations; next_permutation covers the rest.
+        // Then WHICH ORDER of the winning multiset. The ordering walk decides the result:
+        // rotations reach the cheap permutations, and next_permutation covers the rest.
         raced = 0;
         dif_factor_plan perm = pick.dif_chain;
         for (std::size_t s = 1; s < perm.count && have_budget(); ++s) {

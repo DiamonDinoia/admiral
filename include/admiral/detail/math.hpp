@@ -60,7 +60,7 @@ inline constexpr std::size_t kFourStepLeafMax = 64;
 // unused). Per-precision, not one table plus a scale: the per-entry f32/f64 ratio carries
 // structure in n that a single scale cannot, and it misprices one precision exactly at the
 // sizes that decide routes. It is also the only place recording that a prime leaf is
-// rader_apply<P> over kernel<P-1> and so costs far more than a neighbouring composite --
+// rader_apply<P> over kernel<P-1> and so costs far more than a neighbouring composite,
 // which is why the routing model and its fitter read it instead of fitting a polynomial.
 // Regenerate with `admiral_benchmark --codelet-sweep --prec=both --no-ducc`; take
 // per-entry medians across sweeps, one sweep moves an entry too much.
@@ -102,7 +102,7 @@ inline constexpr std::array<double, kFourStepLeafMax + 1> gate_leaf_cyc_ref = {
 // times a measured ratio, keeping it in frame with the 63 leaves the model was fitted on.
 //
 // A missing row is not a small error: the double(n) fallback under-prices an extra leaf
-// badly, so the model elects the codelet at every N reading that entry.
+// by enough that the model elects the codelet at every N reading that entry.
 inline constexpr std::array<std::array<double, 3>, 6> codelet_cost_cyc_extra = {{
     //  n      f64      f32
     {  65.0,  452.5,  355.6},
@@ -260,15 +260,15 @@ inline constexpr std::size_t kChainRadices[11] = {2, 3, 4, 5, 7, 8, 11, 9, 15, 1
     return work[nd - 1] < 0.0 ? 0.0 : work[nd - 1];
 }
 
-// Past these exponents a 3/7-heavy pad loses to the larger bit_ceil it aims to
-// undercut: the engine's 3/7-heavy inner DIF chains are weak.
+// Past these exponents a 3/7-heavy pad loses to the larger bit_ceil it undercuts,
+// because the engine's 3/7-heavy inner DIF chains are weak.
 inline constexpr unsigned kPadMaxV3 = 4;
 inline constexpr unsigned kPadMaxV7 = 2;
 
 // Bluestein convolution length: first {2,3,5,7}-smooth >= 2n-1 whose inner chain is
 // decent, capped at bit_ceil. Lives here rather than in bluestein.hpp because it is a
 // price, not an engine: the dif-vs-bluestein gate, the routing cost model and the model's
-// offline fitter all have to featurise the pad the transform will actually run.
+// offline fitter all have to featurise the pad the transform will run.
 [[nodiscard]] constexpr std::size_t bluestein_choose_pad(std::size_t n) {
     const std::size_t need = 2 * n - 1;
     const std::size_t ceil2 = std::bit_ceil(need);

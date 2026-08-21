@@ -26,15 +26,16 @@ namespace detail {
 // Small-ido pass: sized-batch codelets over the a dimension. dif_pass_impl's a-loop
 // needs a + W <= ido, so at 1 < ido < W it never fires. Cover [0, ido) with
 // exact-width pieces instead, widest first; no masks, contiguous loads/stores.
-// dif_butterfly is V-generic and fma/fnma have FUSED scalar overloads, so one body
-// serves every width down to PW==1; each piece stores and releases before the next.
+// dif_butterfly is V-generic and piece_fnma / piece_fma hold one association at every
+// width, so one body serves every width down to PW==1. Each piece stores and releases
+// before the next.
 // Only the width is a template argument: one instantiation per (radix, width).
 // sized_piece_width / sized_piece_t are in simd_swizzle.hpp.
 
 // One radix-IP butterfly over the PW contiguous a-columns starting at a. Carries the
 // output map as (obase, kstride) rather than l1, like dif_pass_body: the in-place
 // ragged tail reuses this piece and differs only in the store offset. CC/CH are
-// template parameters so that caller can alias (restrict would lie).
+// template parameters so the caller can alias (restrict would lie).
 template<typename T, std::size_t IP, std::size_t PW, typename CC, typename CH>
 ADM_ALWAYS_INLINE void small_ido_piece(CC ccre, CC ccim, CH chre, CH chim,
                                        std::size_t ido, std::size_t b, std::size_t a,
@@ -104,8 +105,8 @@ void dif_pass_small_ido(const T* ccre, const T* ccim,
     constexpr std::size_t W0 = sized_piece_width<T, xsimd::batch<T>::size / 2>();
     // Piece-outer / block-inner with hoisted twiddles, strip-mined over b. The (k,a)
     // twiddle set is b-invariant, and at 1 < ido < W its 2*(IP-1) narrow loads per block
-    // rival the 2*IP data loads: that reload is part of why the valley costs more than
-    // the plateau. Only for IP <= 3: above that the 2*(IP-1) pinned twiddle batches spill
+    // rival the 2*IP data loads. That reload is part of why the valley costs more than
+    // the plateau. Only for IP <= 3. Above that the 2*(IP-1) pinned twiddle batches spill
     // against the butterfly's live set, and large l1 is exactly where valley chains run.
     if constexpr (IP <= 3 && 2 * (IP - 1u) + 2 * IP + 4u <= poet::vector_register_count()) {
         constexpr std::size_t kL1 = 48u * 1024u;
@@ -154,8 +155,8 @@ void dif_pass_small_ido(const T* ccre, const T* ccim,
 // Vectorizes over the contiguous `a` (ido) dimension.
 // InPlace=false: Stockham, CC -> CH, the two disjoint (hence restrict-qualified by the callers
 // below). InPlace=true: CC and CH are the SAME buffer and every access stays inside block b, so
-// the pointer types must NOT be restrict-qualified, hence CC/CH are template parameters rather
-// than fixed signatures, which keeps one body serving both instead of a copy.
+// the pointer types must NOT be restrict-qualified. CC and CH are template parameters and
+// not fixed signatures, so one body serves both instead of a copy.
 //
 // The only difference is the output offset (obase/kstride): Stockham appends the digit
 // HIGH (b + l1*k, self-sorting), in-place appends it LOW (k + IP*b), so the store
@@ -234,7 +235,7 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
         // Output offset, both maps as `obase + a + kstride*k`. Stockham appends k as the HIGH
         // digit (b + l1*k) and so self-sorts; in-place appends it as the LOW digit, keeping
         // every access inside block b's span so the store hits lines this iteration just
-        // loaded. Plain hoisted scalars, NOT a lambda: gcc IPA-CP outlines the emit lambda
+        // loaded. Plain hoisted scalars, NOT a lambda. gcc IPA-CP outlines the emit lambda
         // into .isra clones, where a captured helper degenerates into a closure-deref chain.
         const std::size_t obase   = InPlace ? idz * IP * b : idz * b;
         const std::size_t kstride = InPlace ? idz : idz * l1;
@@ -260,8 +261,9 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                     if constexpr (k > 0u) {
                         const batch owr = batch::load_unaligned(twre + ((k - 1u) * ido + aa));
                         const batch owi = batch::load_unaligned(twim + ((k - 1u) * ido + aa));
-                        // Plain multiply, not piece_fnma: this body is W-wide only, so no
-                        // tail shares it and -ffast-math contracts it to one FMA anyway.
+                        // Plain multiply, not piece_fnma: this body is W-wide only, so
+                        // no tail shares the body and -ffast-math contracts the
+                        // expression to one FMA.
                         (owr * sr - owi * si).store_unaligned(chre + off);
                         (owr * si + owi * sr).store_unaligned(chim + off);
                     } else {
@@ -602,7 +604,7 @@ ADM_NOINLINE void dif_pass_prime_chip(const T* ccre, const T* ccim,
 
 //
 // At large N the pass chain is L2-latency-bound. Fusing two adjacent passes halves
-// the sweeps: pass p's output staged in an L1 tile, consumed by pass p+1 cache-hot.
+// the sweeps. Pass p's output stays in an L1 tile, and pass p+1 consumes it cache-hot.
 //
 // Tile closure: ido2=ido/P2, l12=l1*P1. Pass p+1's input CC'[a'+ido2*(j'+P2*b')]
 // aliases pass p's output at a=a'+ido2*j', b'=b+l1*k. For ONE b and ONE a'-tile
@@ -841,12 +843,12 @@ void dif_pass_fused3(const T* ccre, const T* ccim,
 // First pass: AoS → planar SoA.
 // Input: data[a+ido*(j+IP*b)]; output: chre/chim[a+ido*(b+l1*k)].
 // l1==1 for the first factor (written generically). For ido>1: vectorizes over
-// contiguous a; AoS inputs gathered per-element into SIMD. For ido==1: scalar.
+// contiguous a, gathering the AoS inputs per element into SIMD. For ido==1: scalar.
 // Split: the pass-0 row is FACTORED (twiddles.hpp, dif_twiddle_set::p0_block):
 // twre/twim hold [C: (IP-1)*blk][A: (IP-1)*nb] and w[k][a1*blk+a0] = A[k][a1]*C[k][a0],
 // trading one complex multiply per k for an L1-fitting table. blk is a power of two
-// multiple of W, so a0 is a mask and a1 a shift, and no batch straddles a block --
-// the overlap tail is the one exception.
+// multiple of W, so a0 is a mask and a1 a shift, and no batch straddles a block.
+// The overlap tail is the one exception.
 template<typename T, bool Forward, std::size_t IP, bool Split = false>
 void dif_pass_first_impl(const std::complex<T>* data,
                     T* chre, T* chim,

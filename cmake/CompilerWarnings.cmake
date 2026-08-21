@@ -57,7 +57,7 @@ function(set_project_warnings target_name)
 
     set(CLANG_WARNINGS
         ${COMMON_WARNINGS}
-        # Clang-only (not supported by GCC as standalone flags):
+        # Clang-only (GCC does not accept these as standalone flags):
         -Wzero-as-null-pointer-constant  # literal 0 used as null pointer
         -Wextra-semi                     # redundant semicolons after definitions
         # -Wpedantic above makes clang 22 reject Catch2's __COUNTER__ as a C2y extension,

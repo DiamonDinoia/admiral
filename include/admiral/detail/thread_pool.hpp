@@ -4,7 +4,7 @@
 // Fixed fork-join thread pool for N-D batch loops.
 //
 // All work units are equal (rows/columns/tiles), so static contiguous chunking
-// is optimal; a general task-graph scheduler buys nothing.
+// is optimal; a general task-graph scheduler adds nothing.
 // ponytail: hand-rolled. Add a dependency only if profiling shows a win from
 // work-stealing or irregular scheduling.
 //
@@ -74,8 +74,8 @@ inline constexpr std::size_t kThreadMinElems = std::size_t{1} << 15;
 
 #if ADM_THREADS
 
-// Ceiling for nthreads=0 auto-selection: tiny transforms never gain from over
-// subscribing a big machine, and the pool spins, so cap the auto count.
+// Ceiling for nthreads=0 auto-selection: tiny transforms never gain from
+// oversubscribing a big machine, and the pool spins, so cap the auto count.
 inline constexpr std::size_t kMaxAutoThreads = 16;
 
 // Auto-selection heuristic: a pool costs more than it saves below

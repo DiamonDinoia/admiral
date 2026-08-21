@@ -1,7 +1,7 @@
 # Tests
 
 Catch2 v3. One executable per source file (a fix rebuilds and relinks one small
-binary, not a suite), registered with ctest through `catch_discover_tests`.
+binary, not a suite). `catch_discover_tests` registers each one with ctest.
 
 ## Run
 

@@ -42,7 +42,7 @@ endif()
 
 # Recommended-compiler floor: older compilers build correctly but emit slower
 # codelets (register spills, outlined kernel bodies) with no portable source
-# workaround. Warn, do not fail: this costs performance, not correctness.
+# workaround. Warn, do not fail. This costs performance, not correctness.
 if((CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 14)
    OR (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 19))
     message(WARNING

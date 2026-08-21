@@ -1,6 +1,6 @@
 name: perf-master
 
-# On every master push: an FFTW-relative snapshot plus an A-vs-A sanity leg that
+# Every master push runs an FFTW-relative snapshot plus an A-vs-A sanity leg that
 # exposes runner drift. Builds pin x86-64-v3 (runners come without AVX-512
 # guarantees), so this is a TREND series for regression alarms, not the
 # tuned-native numbers the README quotes. Artifacts accumulate history; nothing

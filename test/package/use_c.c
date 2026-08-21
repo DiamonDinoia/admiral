@@ -1,4 +1,4 @@
-/* Installed C surface, compiled as C. This is also the test for the README's
+/* Installed C interface, compiled as C. This is also the test for the README's
  * "project(app C CXX)" note: the archive is C++ behind a C API, so if the export set
  * ever stops carrying the C++ runtime this link fails. */
 #include <admiral/admiral.h>

@@ -4,8 +4,8 @@
 //   * static_assert is the actual contract. These run in the constant evaluator,
 //     which is how the generators call them, and a violation is a build failure
 //     rather than a red test.
-//   * the TEST_CASE calls the same helpers through volatile arguments, forcing the
-//     RUNTIME instantiation no generator emits. That is a coverage path, not a
+//   * the TEST_CASE calls the same helpers through volatile arguments, which forces
+//     the RUNTIME instantiation no generator emits. That is a coverage path, not a
 //     second assertion of the same fact, so it only spot-checks.
 
 #include <catch2/catch_test_macros.hpp>
@@ -52,7 +52,7 @@ static_assert(is_rader_prime(97));
 static_assert(!is_rader_prime(100));      // composite
 
 // g is a primitive root iff its powers hit every residue in [1,p) exactly once.
-// Checked in the constant evaluator for the primes Rader actually plans.
+// The constant evaluator checks it for the primes Rader plans.
 consteval bool generates_group(std::size_t p) {
     const std::size_t g = ct_primitive_root(p);
     if (g < 2) return false;

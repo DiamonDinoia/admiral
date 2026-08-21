@@ -1,7 +1,8 @@
 // Compiler-portability macros for the fft detail headers.
 //
-// Define/undef paired with undef_macros.hpp (POET convention): each detail header
-// that includes this must end with #include "undef_macros.hpp" to prevent leaking.
+// Define/undef paired with undef_macros.hpp (POET convention). Each detail header
+// that includes this must end with #include "undef_macros.hpp" so the macros do not
+// leak.
 // Not include-guarded: the undef removes these symbols, so re-inclusion is valid.
 
 #if defined(ADM_DETAIL_MACROS_ACTIVE)
@@ -52,11 +53,11 @@
 // ----------------------------------------------------------------------------
 // ADM_NOINLINE forbids inlining into the caller. It is a regalloc barrier
 // between kernel<N> and kernel<M=N/r> recursion levels and between large-N
-// drivers and leaf codelets: each callee gets its own regalloc, so deep spills
-// don't accumulate into the caller's live set. No portable mid-function regalloc
-// reset exists (asm memory clobber is a memory barrier, not a regalloc reset);
-// noinline is the reliable lever. Apply only above the register-pressure
-// threshold: small leaves pay more in call overhead (see kernel_should_noinline).
+// drivers and leaf codelets. Each callee gets its own regalloc, so deep spills
+// do not accumulate into the caller's live set. No portable mid-function regalloc
+// reset exists (asm memory clobber is a memory barrier, not a regalloc reset), so
+// noinline is the only reliable control. Apply it only above the register-pressure
+// threshold. Small leaves pay more in call overhead (see kernel_should_noinline).
 // ----------------------------------------------------------------------------
 #if defined(_MSC_VER) && !defined(__clang__)
 #define ADM_NOINLINE __declspec(noinline)

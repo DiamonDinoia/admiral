@@ -133,7 +133,7 @@ void dif_tape_step_single(const T* sr, const T* si, T*, T*,
 // dif_build_tape: they carry the pass tree, and the tape builder is instantiated per
 // direction, so inline they would each compile twice per precision to produce the same
 // kernels. Definitions: src/inst_dif_thunks_{f,d}.cpp. Keep this set exhaustive, since the
-// point is that the per-direction TU holds only what actually depends on the direction.
+// point is that the per-direction TU holds only what depends on the direction.
 //
 // One struct, so one `extern template struct` per precision covers every family. Members
 // are defined out of line deliberately: an explicit instantiation declaration does not
@@ -340,8 +340,8 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
 // First pass: AoS `in` -> SoA ping buffer (cc0). Middle passes: SoA ping-pong between
 // cc0 and cc1. Last pass: final SoA buffer -> AoS `out`.
 //
-// in == out (in-place): first pass fully drains `in` before any AoS store, so no staging
-// copy needed. in != out: same property makes it free out-of-place. cc0 and cc1 each
+// in == out (in-place): the first pass fully drains `in` before any AoS store, so no
+// staging copy is needed. in != out: the same property makes it free out-of-place. cc0 and cc1 each
 // >= N elements (re+im separately). Allocation-free. scale_val folds into
 // dif_pass_last's store loop; pass 1 for un-normalized output. Requires n_passes >= 2
 // (single-factor N routes to the codelet path).
@@ -424,13 +424,12 @@ void dif_dispatch(bool forward, const std::complex<T>* in, std::complex<T>* out,
 //     drains it, and pass 1 is the first writer of buffer 1.
 //   layout: a pair must be one contiguous 2N span, because blocked passes address the
 //     im plane as dr + W with element stride 2. `out` is exactly 2N contiguous T.
-//   alignment: a PERFORMANCE guard, not a correctness one: the planes are only ever
-//     touched with load_unaligned/store_unaligned, so any `out` would compute the right
-//     answer, but a pair off the line boundary splits every W-block store across two
-//     lines. Both the buffer and the im plane's offset (N * sizeof(T)) have to land on
-//     span_align.
+//   alignment: a PERFORMANCE guard, not a correctness one. Every access uses
+//     load_unaligned/store_unaligned, so any `out` would compute the right answer, but a
+//     pair off the line boundary splits every W-block store across two lines. Both the
+//     buffer and the im plane's offset (N * sizeof(T)) have to land on span_align.
 //   residency: the win is the smaller resident set, and it only converts while the
-//     4-plane scratch fits L2. Past that the aliased pair costs more than it saves: it
+//     4-plane scratch fits L2. Past that the aliased pair costs more than it saves. It
 //     is stuck at stride exactly N and so loses span_stride's anti-alias padding.
 template<typename T>
 [[nodiscard]] bool dif_out_aliasable(bool forward, const std::complex<T>* out, std::size_t N,

@@ -51,8 +51,8 @@ struct ct_sincos_t {
 
 // sin/cos of 2*pi*num/den, range-reduced by octant; `conjugate` negates the
 // angle. Forward transforms use the conjugate (negative) exponent, so callers
-// pass their Forward flag straight through and keep num/den unsigned, which
-// is what every one of them actually has.
+// pass their Forward flag straight through and keep num/den unsigned. Every
+// caller already holds unsigned values.
 // consteval: folds kernel<N>/butterfly twiddles at compile time only.
 [[nodiscard]] consteval ct_sincos_t ct_sincos_turns(bool conjugate, std::size_t num,
                                                     std::size_t den) {
@@ -136,8 +136,8 @@ template<typename T>
 
 // ----------------------------------------------------------------------------
 // Number theory for Rader's algorithm (see codelet.hpp).
-// Rader converts prime kernel<p> into a length-(p-1) cyclic convolution,
-// avoiding a spilling flat O(p²) DFT.
+// Rader converts prime kernel<p> into a length-(p-1) cyclic convolution, which
+// replaces a spilling flat O(p²) DFT.
 // ----------------------------------------------------------------------------
 
 [[nodiscard]] constexpr bool ct_is_prime(std::size_t n) {
@@ -196,7 +196,7 @@ template<typename T>
 }
 
 // A radix-IP butterfly holds 2*IP live batches plus its twiddles and addresses, so
-// the file it can actually use is a fraction of the file it has. A fraction rather
+// the file it can use is a fraction of the file it has. A fraction rather
 // than a fixed headroom keeps the bound positive on a narrow-register ISA. Callers
 // pass poet::vector_register_count(); at 32 registers this yields 24.
 inline constexpr double kRegUsableFraction = 0.75;

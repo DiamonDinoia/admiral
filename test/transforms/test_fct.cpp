@@ -87,10 +87,10 @@ TEMPLATE_TEST_CASE("fct: N-D custom scale round-trip", "[fct][nd]", float, doubl
 }
 
 // A degenerate tensor (no extent > 1) has no axis to fold a custom fct into, so the
-// N-D driver applies it as a standalone post-pass. The in-place overload's copy of
-// that branch is exercised by the round-trip tests above; the (src, dst) overload's
-// is not, and there the scale is the ONLY thing the call does: if it were dropped
-// the transform would still look like a correct identity.
+// N-D driver applies it as a standalone post-pass. The round-trip tests above reach
+// the in-place overload's copy of that branch. They do not reach the (src, dst)
+// overload's copy, and there the scale is the ONLY thing the call does. A dropped
+// scale would still look like a correct identity.
 TEMPLATE_TEST_CASE("fct: degenerate tensor scales out-of-place", "[fct][nd]",
                    float, double) {
     using T = TestType;
@@ -120,8 +120,8 @@ TEMPLATE_TEST_CASE("fct: r2c/c2r custom scale round-trip", "[fct][r2c]", float, 
     std::vector<std::complex<T>> spec(p.cplx_size());
     std::vector<T> out(Nr);
 
-    // A "custom" scale has to actually DIFFER from the default or neither scaling
-    // loop runs: the r2c pass skips its loop when fct == 1 and the c2r pass skips
+    // A "custom" scale has to DIFFER from the default or neither scaling loop
+    // runs. The r2c pass skips its loop when fct == 1 and the c2r pass skips
     // its when fct == 1/Nr, so passing either value tests nothing. Both powers of
     // two, so the scale itself is exact and only the transform carries error.
     std::vector<std::complex<T>> unscaled(p.cplx_size());
@@ -153,7 +153,7 @@ TEMPLATE_TEST_CASE("plan_r2c survives a move", "[r2c]", float, double) {
     ref.forward(in.data(), want.data(), T(1));
 
     // A defaulted move on the pimpl is only correct while every member moves with it,
-    // so the moved-from plan must still transform, not merely report its sizes.
+    // so the moved-from plan must still transform rather than only report its sizes.
     admiral::plan_r2c<T> src(shape);
     admiral::plan_r2c<T> moved(std::move(src));
     moved.forward(in.data(), got.data(), T(1));

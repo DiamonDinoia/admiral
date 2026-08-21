@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Interleaved A/B wall-clock compare of two admiral_benchmark binaries.
 
-Runner timing is drift-heavy, so the protocol is the lab's p134ab one: each
-cell runs back-to-back inside the same window, round order rotates AB/BA, and
-the answer is the min per binary. The ratios only claim direction unless the
+Runner timing is drift-heavy, so the protocol interleaves. Each cell runs
+back-to-back inside the same window, round order rotates AB/BA, and the answer
+is the min per binary. The ratios only claim direction unless the
 spread columns are small.
 
 usage: ci_perf_ab.py BIN_A BIN_B [--rounds=6] [--grid=ci|full] [--json=path]

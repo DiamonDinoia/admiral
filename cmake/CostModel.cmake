@@ -1,11 +1,11 @@
 # Optional regeneration of include/admiral/detail/base_cost_model.hpp.
 #
-# OFF by default, and no build needs it: the checked-in header is coefficients
-# only, pooled over every swept build. A size those coefficients misprice is
-# recovered at plan time by effort::automatic.
+# OFF by default, and no build needs it. The checked-in header is coefficients
+# only, pooled over every swept build. effort::automatic recovers a size those
+# coefficients misprice at plan time.
 #
-# Turn it on to fold a new compiler, version or target into the pool. No Python:
-# the fitter is C++ (tools/fit_cost_model.cpp).
+# Turn it on to fold a new compiler, version or target into the pool. No Python.
+# The fitter is C++ (tools/fit_cost_model.cpp).
 #   cmake -B b -DADM_FIT_COST_MODEL=ON
 #   cmake --build b --target admiral_cost_sweep   # measure THIS build
 #   cmake --build b --target admiral_cost_model   # refit the header from all
@@ -30,7 +30,7 @@ set(ADM_COST_MODEL_OUT
 
 # The receipt file name only has to be unique; its contents are self-describing
 # (BASECOST-ENV records compiler, version, width and register count). Compile
-# flags are hashed in: two builds of one compiler at different -march are different
+# flags hash in as well. Two builds of one compiler at different -march are different
 # codegen and must not share a receipt. The uarch mixes in too, because identical
 # flags on different silicon share the flags-hash, and one machine must not clobber
 # another's.
@@ -79,7 +79,7 @@ endif()
 
 # tools/fit_cost_model.cpp is stdlib-only and deterministic, so the header is
 # reproducible from the receipts. It reads math.hpp for the measured codelet cost
-# table the fitted features are built from. A second copy in the fitter could
+# table that the fitted features use. A second copy in the fitter could
 # silently drift from what the engine runs.
 add_executable(admiral_fit_cost_model tools/fit_cost_model.cpp)
 target_include_directories(admiral_fit_cost_model PRIVATE

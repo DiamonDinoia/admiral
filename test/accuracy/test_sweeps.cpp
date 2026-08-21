@@ -21,10 +21,10 @@
 
 using namespace Catch::Matchers;
 
-// Every route (codelet / iterative_dif / four_step / rader / bluestein /
-// good_thomas) is hit somewhere in 2..512, the measured routing table's dense
-// domain. Round-trip for all; naive-DFT cross-check on top, which masks nothing a
-// round-trip would (sign, direction and twiddle-index bugs all surface).
+// The sweep reaches every route (codelet / iterative_dif / four_step / rader /
+// bluestein / good_thomas) somewhere in 2..512, the cost model's dense domain. Round-trip
+// for all, naive-DFT cross-check on top. The cross-check masks nothing a round-trip would:
+// sign, direction and twiddle-index bugs all surface.
 TEMPLATE_TEST_CASE("exhaustive integer-N round-trip and forward vs naive DFT",
                    "[coverage][sweep]", float, double) {
     using T = TestType;
@@ -171,7 +171,7 @@ TEST_CASE("Bluestein pad on the six-step delegate", "[coverage][large][bluestein
 }
 
 // Public large-route gate (plan.hpp large_route_admits): above the byte line,
-// four_step_large additionally requires a cycle-free split at every nthreads
+// four_step_large also requires a cycle-free split at every nthreads
 // (n2 % n1 != 0 sends both transposes to the serial element-cycle fallback), plus
 // band-fused W alignment when serial. Pins are ISA-free: 787500 = 875x900 is
 // cycle-shaped on any W; 802816 = 896^2 and 810000 = 900^2 divide evenly;
@@ -247,7 +247,7 @@ TEST_CASE("f32 batched four-step routed sizes", "[coverage][four_step]") {
 // Rader with a four-step inner convolution: for p=79, L=p-1=78 is neither a power
 // of two nor codelet-supported, so pick_inner routes the length-L convolution
 // through four_step (the rader.hpp branch the routed sweep never hits). rader_plan
-// is direction-fixed and unnormalized, matching reference_dft.
+// is direction-fixed and unnormalized, as reference_dft is.
 TEST_CASE("Rader prime with four-step inner convolution", "[coverage][rader]") {
     using namespace admiral::detail;
     const std::size_t p = 79;

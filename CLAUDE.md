@@ -154,7 +154,7 @@ gains exactly zero, so the metric is sound. The DATA is what is mixed. Split reg
 vintage before believing a new slot, and confirm on the shipped build with a route diff
 filtered to the receipt's MEASURED forms.
 
-### The leaf-cost table is measured, and its FRAME is load-bearing
+### The leaf-cost table is measured, and its absolute scale decides routes
 
 `codelet_cost_cyc_f64` / `_f32` / `_extra` in `include/admiral/detail/math.hpp` hold
 absolute measured cycles, not relative weights. `iterative_dif` carries no leaf term,

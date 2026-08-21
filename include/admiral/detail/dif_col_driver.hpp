@@ -41,8 +41,8 @@ namespace detail {
 [[nodiscard]] inline std::size_t col_cache_budget(std::size_t nthreads) {
     const cache_bytes& cc = cpu_cache();
     // l3 is one sharing-group's L3, so the per-worker share divides by the threads
-    // sharing THAT group, not by a machine-wide count, which badly underbuys the tile
-    // budget on many-group machines. Unknown group size (l3_cores==0) falls back to
+    // sharing THAT group, not by a machine-wide count, which underbuys the tile budget
+    // by a wide margin on many-group machines. Unknown group size (l3_cores==0) falls back to
     // nthreads.
     const std::size_t nt = std::max<std::size_t>(1, nthreads);
     const std::size_t sharing = cc.l3_cores ? std::min(nt, cc.l3_cores) : nt;
@@ -50,7 +50,7 @@ namespace detail {
 }
 
 // Tiles per worker the balance term aims for. Reachable only by SPLITTING a run, so it
-// buys nothing once the runs alone outnumber the workers; see nd_col_block.
+// gains nothing once the runs alone outnumber the workers; see nd_col_block.
 inline constexpr std::size_t kTilesPerWorker = 4;
 
 // Column-tile width Bt: widest W-multiple fitting the thread-adjusted budget, clamped
@@ -58,8 +58,8 @@ inline constexpr std::size_t kTilesPerWorker = 4;
 // run fits one untiled pass.
 //
 // Widest-that-fits: tile time per column falls with the width and flattens at the
-// budget, and an uneven cut is not penalised: there is nothing to gain by balancing the
-// tiles against each other.
+// budget, and an uneven cut costs nothing: balancing the tiles against each other gains
+// nothing.
 //
 // The balance term counts UNITS = nruns*ntiles, not ntiles: splitting a run is only one
 // of the two ways work reaches a worker. Sized off the run alone the cap collapses to
@@ -119,8 +119,8 @@ void col_dif_execute_ws(std::complex<T>* data,
     if (N <= 1) return;
     // Defaulted stride is only a placeholder for the no-copy-in case; reading the
     // source at stride 0 would silently transform the first row N times. A throw, not an
-    // assert: an assert is nothing under NDEBUG -- exactly the builds where a wrong answer
-    // would ship. One entry branch against N*B element work.
+    // assert: an assert is nothing under NDEBUG, exactly the builds where a wrong
+    // answer would ship. One entry branch against N*B element work.
     if (first_src != nullptr && first_src_stride == 0)
         throw std::invalid_argument("col dif: first_src copy-in requires its own stride");
 
@@ -194,7 +194,7 @@ void col_dif_execute_ws(std::complex<T>* data,
 
 // forward -> compile-time <Forward> trampoline, and the column engine's instantiation
 // boundary: the two leaves are named nowhere but here and are declared extern below, so
-// the whole col tree stays out of every TU that merely uses an N-D plan. Spelled out
+// the whole col tree stays out of every TU that only uses an N-D plan. Spelled out
 // rather than variadic-forwarding so there is a signature to declare.
 // Definitions: src/inst_col_{f,d}_{fwd,inv}.cpp, one per leaf.
 template<typename T>

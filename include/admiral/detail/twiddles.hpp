@@ -305,7 +305,7 @@ template<typename T>
            / static_cast<double>(span);
 }
 
-// Terminal (ido == 1) pass: sublinear in span. The level charge is NOT here --
+// Terminal (ido == 1) pass: sublinear in span. The level charge is NOT here.
 // dif_stage_cost adds it to the terminal too, because dif_pass_last streams at big spans.
 template<typename T>
 [[nodiscard]] constexpr double terminal_pass_cpe(std::size_t radix, std::size_t span) {
@@ -466,9 +466,9 @@ template<typename T>
 
 // Tie-break weight on every stage cost: equal-cost permutations of one radix multiset
 // are unrankable by an additive model, yet order matters on hardware. The weight sits
-// far below real cost, so it cannot flip a base-cost decision. Load-bearing on the
-// ESTIMATE path (the race absorbs ordering differences; the estimate arm cannot), so
-// do not delete it on the strength of the measure arm. 32-reg ISAs nudge the FIRST
+// far below real cost, so it cannot flip a base-cost decision. The ESTIMATE path needs
+// it (the race absorbs ordering differences; the estimate arm cannot), so do not delete
+// it on the strength of the measure arm. 32-reg ISAs nudge the FIRST
 // pass only.
 [[nodiscard]] constexpr double dif_order_eps(std::size_t N, std::size_t n, std::size_t radix) {
     if (poet::vector_register_count() >= 32 && n != N) return 0.0;
@@ -557,7 +557,7 @@ template<typename T>
 }
 
 // Modeled cost in cycles of RUNNING chain p at N: the same per-pass prices the DP
-// minimizes, summed over the chain that will actually execute (reordered, raced or
+// minimizes, summed over the chain that will execute (reordered, raced or
 // pow2-enumerated, not necessarily the one the additive DP walked).
 template<typename T>
 [[nodiscard]] inline double dif_chain_cost(std::size_t N, const dif_factor_plan& p) {
@@ -681,7 +681,7 @@ inline constexpr std::size_t kDifBeam = kDifCandidates;
 struct dif_chain_list {
     std::array<dif_factor_plan, kDifCandidates> chain{};
     std::size_t count = 0;
-    // How many slots this list actually wants. `estimate` needs one, since it consumes only
+    // How many slots this list wants. `estimate` needs one, since it consumes only
     // the argmin. A list that keeps 16 costs 8-23x the DP time of one that keeps 1.
     std::size_t cap = kDifCandidates;
 
@@ -859,10 +859,10 @@ template<typename T>
         return static_cast<std::size_t>(std::ranges::lower_bound(divisors, n) - divisors.begin());
     };
 
-    // divisors[0] == 1 has cost 0, and is the base case rather than a stored entry:
-    // writing dp[0] instead trips -Wnull-dereference (gcc-14 -Werror), which cannot
+    // divisors[0] == 1 has cost 0, and is the base case rather than a stored entry.
+    // Writing dp[0] instead trips -Wnull-dereference (gcc-14 -Werror), which cannot
     // prove a vector sized from an opaque count has a non-null buffer. Rows are sized
-    // to the beam actually asked for, not to kDifBeam: the want=1 DP is what
+    // to the beam asked for and not to kDifBeam, because the want=1 DP is what
     // estimate and every twiddle build pay.
     std::vector<entry> dp(divisors.size() * beam);
     const auto row = [&dp, beam](std::size_t i) { return std::span<entry>(&dp[i * beam], beam); };
@@ -978,15 +978,15 @@ template<typename T>
 }
 
 
-// The chain that will EXECUTE: the model's cheapest candidate the engine can actually
-// run. The shape vetoes are properties of a chain, not of N, so a cell whose argmin they
-// condemn is rescued by the next candidate rather than by a table entry naming the size.
+// The chain that will EXECUTE: the model's cheapest candidate the engine can
+// run. The shape vetoes are properties of a chain, not of N, so the next candidate
+// rescues a cell whose argmin they condemn, rather than a table entry naming the size.
 // Route availability and twiddle construction both come through here, so they cannot
 // disagree about which chain the plan is for.
 template<typename T>
 [[nodiscard]] inline dif_factor_plan dif_elected_chain(std::size_t N) {
     // The argmin runs at all but a handful of sizes, and asking for one candidate is the
-    // 1-best DP: pay for the wide beam only where the vetoes actually bite.
+    // 1-best DP: pay for the wide beam only where the vetoes apply.
     const dif_factor_plan best = dif_chain_candidates<T>(N, 1)[0];
     if (dif_chain_shape_ok<T>(N, best)) return best;
     const dif_chain_list c = dif_chain_candidates<T>(N);
@@ -1233,8 +1233,8 @@ template<typename T>
             if (s.sched[p] != dif_fuse::plain) break;
             // A wants_reload radix cannot go in-place here: the two-sweep restage re-
             // reads input columns the even sweep already overwrote, spilling more than
-            // the in-place saving buys. It CAN go in place on the split-column kernel
-            // -- second loop below.
+            // the in-place saving buys. It CAN go in place on the split-column kernel,
+            // the second loop below.
             if (dif_is_generic_radix(s.radices[p])) break;  // Stockham only: no in-place kernel
             if (butterfly_wants_reload(s.radices[p], poet::vector_register_count())) break;
             // No ido gate: `ido >= W` is the right line only while the in-place tail is

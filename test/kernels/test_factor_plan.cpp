@@ -62,7 +62,7 @@ void check_optimal(std::size_t N) {
     // minimizes a richer fusion-discounted cost (enumerate_pow2_dif_plan, with
     // fuse discounts + terminal codelets), so a naive additive brute-force is
     // not its objective and would flag a legitimately-better plan as suboptimal.
-    // That path is validated by the FFT correctness tests, not here. (kDifFuseMinN
+    // The FFT correctness tests validate that path, not this one. (kDifFuseMinN
     // is ISA/precision-dependent: 8192 at v4, which no test size here reaches.)
     if ((N & (N - 1u)) == 0u && N >= admiral::detail::kDifFuseMinN<T>) return;
 
@@ -110,8 +110,8 @@ TEMPLATE_TEST_CASE("DIF factor planner never elects an avoidable valley pass", "
     for (std::size_t N = 2; N <= 4096; ++N) {
         const auto plan = build_dif_factor_plan<TestType>(N);
         if (plan.count == 0) continue;
-        // Fused-pow2 band is scored by enumerate_pow2_dif_plan on the same terms
-        // but its chain set is restricted on purpose; skip it here.
+        // enumerate_pow2_dif_plan scores the fused-pow2 band on the same terms, but
+        // its chain set is restricted on purpose, so skip it here.
         if ((N & (N - 1u)) == 0u && N >= kDifFuseMinN<TestType>) continue;
         std::size_t n = N, valley = 0;
         for (std::size_t i = 0; i < plan.count; ++i) {
@@ -131,7 +131,7 @@ TEMPLATE_TEST_CASE("DIF factor planner is optimal for modeled cost", "[factor_pl
                    float, double) {
     using namespace admiral::detail;
     // A sweep, not a hand-picked list: brute-force enumeration is a valid oracle at every
-    // N the additive DP actually prices, which is every N whose elected chain is made of
+    // N the additive DP prices, which is every N whose elected chain is made of
     // candidate radices. A generic prime in the chain means dif_generic_stage_cost priced
     // it instead: a different objective, like the pow2 fusion band check_optimal skips.
     const auto additively_priced = [](const dif_factor_plan& p) {
@@ -155,7 +155,7 @@ TEMPLATE_TEST_CASE("DIF factor planner is optimal for modeled cost", "[factor_pl
 
 // The DP hands the plan-time race its K cheapest chains and ANY of them can be elected,
 // so every invariant is a property of the whole list, not of the argmin alone. Structural
-// legality is checked per candidate, and the list itself has to be well-formed: distinct
+// legality holds per candidate, and the list itself has to be well-formed: distinct
 // entries, argmin first, and an election that lands on a member.
 TEMPLATE_TEST_CASE("dif candidate list: legal, distinct, and the election lands on it",
                    "[factor_plan]", float, double) {
@@ -170,7 +170,7 @@ TEMPLATE_TEST_CASE("dif candidate list: legal, distinct, and the election lands 
             std::size_t prod = 1;
             for (std::size_t i = 0; i < c[k].count; ++i) prod *= c[k][i];
             REQUIRE(prod == N);  // a candidate that does not factor N would transform garbage
-            // Legality is asserted of the chains that can actually be ELECTED. The list
+            // The assertions cover the chains that can be ELECTED. The list
             // also carries the DP's no-chain fallback (bare 13 -> [13]) at sizes with no
             // chain at all, which is a feature-test channel, not a runnable plan.
             if (dif_chain_shape_ok<TestType>(N, c[k]))
@@ -216,16 +216,16 @@ TEMPLATE_TEST_CASE("dif candidate list: legal, distinct, and the election lands 
         census(N);
 }
 
-// kGenericStarvedTailMinRadix is a measured bound, so it is pinned from BOTH sides: a
-// generic radix above it at a part-width ido must lose availability, and one below it
-// must keep it. Moving the bound either way loses cells, so both directions are pinned.
+// kGenericStarvedTailMinRadix is a measured bound, so this case pins it from BOTH
+// sides. A generic radix above it at a part-width ido must lose availability, and one
+// below it must keep it. Moving the bound either way loses cells.
 TEMPLATE_TEST_CASE("starved generic tail bounds chain availability from both sides",
                    "[factor_plan]", float, double) {
     using namespace admiral::detail;
     constexpr std::size_t W = xsimd::batch<TestType>::size;
     // 188 = 2*47*2 and 124 = 2*31*2 park their generic prime at ido == 2. Same shape,
     // opposite verdicts, because 47 is at the bound and 31 is below it. The band is
-    // asserted through dif_chain_shape_ok, never by restating the constant: a numeric
+    // asserted through dif_chain_shape_ok, never by restating the constant. A numeric
     // assertion on kGenericStarvedTailMinRadix short-circuits the case and leaves the
     // behaviour it guards untested.
     if constexpr (W > 2) {
@@ -239,8 +239,8 @@ TEMPLATE_TEST_CASE("starved generic tail bounds chain availability from both sid
 }
 
 // One flat valley tier cancels between two chains that each hold exactly one valley pass,
-// leaving the residual to rank them, which elected an r15 valley over its own 3*5 split.
-// The wide-radix tier is what separates them, so the ordering is asserted directly.
+// so the residual ranks them, which elected an r15 valley over its own 3*5 split. The
+// wide-radix tier separates them, so this case asserts the ordering directly.
 TEMPLATE_TEST_CASE("a wide radix in the valley outprices a narrow one", "[factor_plan]",
                    float, double) {
     using namespace admiral::detail;
@@ -286,7 +286,7 @@ TEMPLATE_TEST_CASE("four_step split: argmin, admissible, and order-blind",
         const four_step_split sym = choose_four_step_split(N);
         const four_step_split ex = choose_four_step_split_exec<TestType>(N);
 
-        // Existence: the symmetric chooser finds a split iff one exists at all. exec
+        // Existence: the symmetric chooser finds a split iff one exists. exec
         // searches the same admissible set, so the two agree on validity even though
         // they minimise different objectives.
         bool any = false;
@@ -306,8 +306,8 @@ TEMPLATE_TEST_CASE("four_step split: argmin, admissible, and order-blind",
         // and min(n1,L)+min(n2,L) are, so it CANNOT rank the two memory orders even
         // though execution can tell them apart. Only FMA contraction separates them, at
         // a few ulps, which is what makes its n1 <= N/2 bound elect the larger factor
-        // first at a handful of sizes. Asserted with the same reassociation epsilon the
-        // rest of this file uses, so a genuinely asymmetric penalty has to come here and
+        // first at a handful of sizes. This case asserts it with the same reassociation
+        // epsilon the rest of the file uses, so an asymmetric penalty has to come here and
         // say so rather than arriving as rounding.
         const double fwd = exec_cost(ex.n1, ex.n2), rev = exec_cost(ex.n2, ex.n1);
         REQUIRE(std::abs(fwd - rev) <= 1e-12 * std::abs(fwd));

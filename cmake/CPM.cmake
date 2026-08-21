@@ -1,4 +1,4 @@
-# CPM.cmake bootstrap — https://github.com/cpm-cmake/CPM.cmake
+# CPM.cmake bootstrap, from https://github.com/cpm-cmake/CPM.cmake
 #
 # Upstream's cmake/get_cpm.cmake with the release pinned and hashed. The wiki
 # snippet hardcodes CMAKE_BINARY_DIR and cannot configure a fresh build dir

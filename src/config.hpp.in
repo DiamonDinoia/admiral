@@ -10,12 +10,12 @@
 #define ADM_THREADS @ADM_THREADS_01@
 
 // true: admiral::effort::measure times the model's route candidates at plan
-// creation and keeps the measured winner. false: the measuring efforts are
-// accepted and behave as effort::estimate (established at library build for both
-// the engine and every consumer, like ADM_THREADS above).
+// creation and keeps the measured winner. false: the API accepts the measuring
+// efforts and behaves as effort::estimate (fixed at library build for both the
+// engine and every consumer, like ADM_THREADS above).
 //
 // A constant, not a macro, so plan.hpp can branch on it with `if constexpr` and
-// carries no preprocessor conditionals. ADM_THREADS above cannot follow: it
+// carries no preprocessor conditionals. ADM_THREADS above cannot follow. It
 // selects an #include (<thread>) and a whole class body, which `if constexpr`
 // cannot express. The race costs ~20 KB of a 23 MB library, so compiling it in
 // and discarding the branch gives up nothing worth a #if.

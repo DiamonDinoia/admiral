@@ -2,13 +2,13 @@
 //
 // The rest of the suite uses one flat budget, 32 eps, sized to pass every route.
 // The bound here is 4*eps*sqrt(log2 N), ~10x tighter at these sizes, and it grows
-// with N the way the measured error actually does, so a change that costs a few ULP
+// with N the way the measured error does, so a change that costs a few ULP
 // has somewhere to show up.
 //
 // The reference is O(N^2) in long double with long-double trig: 11 mantissa bits more
 // than double, and no FFT structure of its own, so it cannot share a bug with the code
 // under test. That caps the sizes, hence one representative per route rather than a
-// sweep. On failure the measured value is printed in eps units.
+// sweep. On failure the case prints the measured value in eps units.
 
 #include "utils/reference.hpp"
 
@@ -62,7 +62,7 @@ std::vector<cld> widen(const std::vector<std::complex<T>>& x) {
     return out;
 }
 
-// sign = -1 forward (unscaled), +1 inverse (scaled by 1/n), matching admiral.
+// sign = -1 forward (unscaled), +1 inverse (scaled by 1/n), as admiral does.
 // `scale` exists only for factored_dft below, which composes sub-transforms and
 // must apply the 1/n exactly once, at the end.
 std::vector<cld> naive_dft(const std::vector<cld>& x, int sign, bool scale = true) {
@@ -74,7 +74,7 @@ std::vector<cld> naive_dft(const std::vector<cld>& x, int sign, bool scale = tru
             // turn_fraction reduces k*j mod n in INTEGERS before dividing. Forming
             // ld(k)*ld(j)/ld(n) instead leaves an absolute angle error that grows like
             // n*eps_ld: 1 double eps of oracle error at n=2048, and ~20 at 65536,
-            // which is most of the budget these tests are supposed to be measuring.
+            // which is most of the budget these tests measure.
             const ld ang = ld(sign) * 2 * std::numbers::pi_v<ld> * turn_fraction(k, j, n);
             acc += x[j] * cld(std::cos(ang), std::sin(ang));
         }
@@ -89,8 +89,8 @@ std::vector<cld> naive_dft(const std::vector<cld>& x, int sign, bool scale = tru
 // O(N*(n1+n2)) instead of O(N^2), which is what puts 65536 and 262144 in reach.
 //
 // Unlike naive_dft this reference has FFT structure, so it could in principle share
-// a bug with the code it judges. It is pinned by agreement with naive_dft at every
-// overlapping size (below).
+// a bug with the code it judges. Agreement with naive_dft at every overlapping size
+// pins it (below).
 std::vector<cld> factored_dft(const std::vector<cld>& x, std::size_t n1, std::size_t n2, int sign) {
     const std::size_t N = n1 * n2;
     std::vector<cld> a(N), line(n1), row(n2), y(N);
@@ -124,15 +124,15 @@ ld bound_for(std::size_t n) {
 }
 
 // The sizes every change in the current performance work targets. kSizes cannot
-// reach them: the O(N^2) reference is the whole cost. factored_dft can.
+// reach them, because the O(N^2) reference is the whole cost. factored_dft can.
 struct large_case {
     std::size_t n, n1, n2;
 };
 constexpr large_case kLarge[] = {{65536, 256, 256}, {100000, 400, 250}, {262144, 512, 512}};
 
-// Tightest cell in a case. Reported unconditionally, because a change that moves the
-// margin from 1.2 eps to 3.9 eps still passes, and "passed" is not the information
-// wanted when the point of the run is to compare against a pre-change margin.
+// Tightest cell in a case. The case reports it every run, because a change that moves
+// the margin from 1.2 eps to 3.9 eps still passes, and "passed" says nothing when the
+// run exists to compare against a pre-change margin.
 struct margin {
     double frac = 0, eps = 0, bound = 0;
     std::size_t at = 0;
@@ -244,8 +244,8 @@ TEMPLATE_TEST_CASE("ULP: N-D forward matches a long-double DFT", "[accuracy][ulp
 }
 
 // factored_dft is only usable as an oracle if it agrees with the oracle it replaces.
-// Every size here is one naive_dft can still afford, and each is checked against the
-// split factored_dft uses at the large sizes (a square-ish one).
+// Every size here is one naive_dft can still afford, and this case checks each against
+// the split factored_dft uses at the large sizes (a square-ish one).
 TEST_CASE("ULP: the factored reference agrees with the naive one", "[accuracy][ulp]") {
     for (const auto [n, n1, n2] : {large_case{64, 8, 8}, {120, 12, 10}, {256, 16, 16},
                                    {1000, 40, 25}, {2048, 64, 32}}) {
@@ -272,7 +272,7 @@ TEST_CASE("ULP: the factored reference agrees with the naive one", "[accuracy][u
     }
 }
 
-// Large-N ULP, the sizes the performance work actually targets. 262144 is ~2.7e8
+// Large-N ULP, the sizes the performance work targets. 262144 is ~2.7e8
 // long-double trig evaluations per precision, so it is hidden; 65536 and 100000 run
 // by default. `ctest` picks up only the non-hidden case.
 TEMPLATE_TEST_CASE("ULP: large 1-D forward matches a factored long-double DFT",
@@ -310,8 +310,8 @@ TEMPLATE_TEST_CASE("ULP: 262144 forward matches a factored long-double DFT",
     REQUIRE(measured <= double(bound_for<T>(n)));
 }
 
-// A closed-form oracle that costs O(N), so it runs at any size at all, including
-// the ones no long-double reference can reach. Input is a sum of pure tones; the
+// A closed-form oracle that costs O(N), so it runs at any size, the ones no
+// long-double reference can reach included. Input is a sum of pure tones; the
 // unnormalized forward of exp(+2*pi*i*k*j/N) is exactly N at bin k and 0 elsewhere.
 // This pins POSITION as well as value: unlike Parseval it cannot pass on a permuted
 // spectrum. The only error it carries is the rounding of the generated input to T,
@@ -359,7 +359,7 @@ TEMPLATE_TEST_CASE("ULP: multi-tone input has a closed-form spectrum", "[accurac
 }
 
 // Bit-exactness against a recorded value. A tolerance test structurally cannot answer
-// "did this refactor change a single bit?" -- 1 ULP and 0 ULP both pass. This can.
+// "did this refactor change a single bit?", because 1 ULP and 0 ULP both pass. This can.
 //
 // HOST-SPECIFIC BY CONSTRUCTION: the value depends on the toolchain, the ISA level and
 // -ffast-math's reassociation, so it is hidden ([.golden]) and never runs under ctest.
@@ -390,7 +390,7 @@ TEMPLATE_TEST_CASE("ULP: r2c matches a long-double DFT", "[accuracy][ulp]", floa
     margin m;
     // 26 and 34 halve to a prime > 11, which does not factor into dif_radix_set, so
     // multipass_supported declines and the even path runs unbatched; 25/27 are odd
-    // and skip the recombination pass entirely.
+    // and skip the recombination pass.
     for (const std::size_t n : {8u, 16u, 25u, 26u, 27u, 34u, 60u, 128u, 210u, 1000u, 1024u}) {
         std::mt19937 rng(13);
         std::uniform_real_distribution<T> u(-1, 1);

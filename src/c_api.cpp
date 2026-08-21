@@ -27,14 +27,14 @@ const char* adm_error_string(adm_status status) {
 namespace {
 
 // admiral.h's complex structs are layout-compatible with std::complex, so every
-// buffer crosses the boundary as a view, and nothing is copied.
+// buffer crosses the boundary as a view, and no copy happens.
 template<typename T>
 std::span<std::complex<T>> to_cpp_span(void* data, size_t size) {
     return std::span<std::complex<T>>(reinterpret_cast<std::complex<T>*>(data), size);
 }
 
-// A C caller can pass an eff outside the enum, so the cast is guarded here rather
-// than at every call site; std::nullopt is the rejection. The asserts catch layout
+// A C caller can pass an eff outside the enum, so this layer guards the cast once
+// rather than at every call site; std::nullopt is the rejection. The asserts catch layout
 // or value drift between the two declarations of the same options and efforts.
 static_assert(sizeof(adm_options) == sizeof(admiral::options),
               "adm_options and admiral::options are out of sync: update this mapping");

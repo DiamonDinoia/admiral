@@ -74,7 +74,7 @@
     },
     {
       "name": "release",
-      "displayName": "Release (use this to ship or benchmark)",
+      "displayName": "Release (ship and benchmark builds)",
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",

@@ -1,8 +1,8 @@
 // The runtime-prime DIF middle pass (dif_pass_prime_chip, primes 13..97 mid-chain;
 // batched-Rader leaf per a-tile). What pins what:
 // * Forced chains vs the naive reference at small N (both directions, in place and
-//   out of place), covering a generic masked tail (465's ido==5 < W8) and a ragged
-//   one (25575's ido==341 % 8 = 5).
+//   out of place), which covers a generic masked tail (465's ido==5 < W8) and a
+//   ragged one (25575's ido==341 % 8 = 5).
 // * Elected-route cells: route name + impulse flatness at 25575 (DP elects
 //   5-15-31-11) and at 262143 / 1048575, where the O(N^2) reference is infeasible
 //   and X[k] == 1 for impulse input is exact at any N.
@@ -153,9 +153,9 @@ TEMPLATE_TEST_CASE("prime chiplet pass: forced chains vs naive DFT", "[accuracy]
         check_forced_raw<T>(4268, dif_factor_plan{4, 97, 11}, fwd, true);
     }
     // Round-trip force (O(N^2) references are suite-hostile past ~5k on the
-    // baseline ISAs): a dropped sign in the chiplet's consteval tables is still
-    // pinned by the elected-route impulse flats below and by the 1005/4268
-    // reference checks above. 6208 = 8.97.8 sits the 97 at ido 8 (W-multiple on
+    // baseline ISAs). The elected-route impulse flats below and the 1005/4268
+    // reference checks above still pin a dropped sign in the chiplet's consteval
+    // tables. 6208 = 8.97.8 sits the 97 at ido 8 (W-multiple on
     // f64 -> full tiles through the es2 W-blocked bracket); 25564 = 7.83.11.4
     // puts the 83 mid-chain at ido 44 (ragged tail at every W).
     for (bool ip : {false, true}) {
@@ -185,7 +185,7 @@ TEMPLATE_TEST_CASE("elected generic-pass sizes: route + impulse flatness", "[acc
     {
         plan_impl<T> fwd(25575, true, 1, nullptr);
         // f64 elects iterative_dif here; the chain that wins it (and whether dif
-        // beats bluestein at all) is ISA-dependent, so pin accuracy not routes.
+        // beats bluestein) is ISA-dependent, so pin accuracy not routes.
         if constexpr (sizeof(T) == 8)
             if (poet::vector_register_count() >= 32)
                 CHECK(std::string(fwd.route_name()) == "iterative_dif");
@@ -238,10 +238,10 @@ TEMPLATE_TEST_CASE("boundary-generic chains stay out of iterative_dif", "[covera
             pl.execute(in.data(), out.data(), one);
         }()));
     }
-    // Veto shape: a big prime at ido >= W is admitted (the O(p^2) loss the ido<64
+    // Veto shape: the plan admits a big prime at ido >= W (the O(p^2) loss the ido<64
     // veto guarded is gone with the chiplet); ido < W stays out, half-idle tiles
-    // still lose to bluestein. The shape is also priced out of the DP (2x the valley
-    // tier), so the DP itself only elects supported placements: 9603's 97 lands at
+    // still lose to bluestein. The DP also prices that shape out (2x the valley
+    // tier), so it only elects supported placements: 9603's 97 lands at
     // ido=33 at W=16, while 776's only placements {2,4} stay out for W>4.
     {
         constexpr std::size_t W = xsimd::batch<T>::size;

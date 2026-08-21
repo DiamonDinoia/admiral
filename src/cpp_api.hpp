@@ -22,9 +22,9 @@ namespace admiral {
 namespace detail {
 
 // Each state takes the public options aggregate whole rather than one parameter
-// per field: it is the only thing a plan is built from, and resolve_nthreads is
-// applied here because routing depends on the real worker count, not on the
-// 0-means-auto sentinel. Threading then lives INSIDE the engine plans
+// per field: it is the only thing a plan is built from, and resolve_nthreads runs
+// here because routing depends on the real worker count, not on the 0-means-auto
+// sentinel. Threading then lives INSIDE the engine plans
 // (plan-owned pools); no state here. options::debug is the one field the engine
 // plan does not keep, so each state holds it and replays it per execute.
 

@@ -100,7 +100,7 @@ TEMPLATE_TEST_CASE("Batched r2r rows equal the same rows one at a time", "[r2r]"
     using admiral::r2r_kind;
     // Not bitwise: r2c has a batched tile path that rows == 1 never takes, so the two
     // legitimately round differently. An indexing bug in the batch path is orders of
-    // magnitude larger than that, which is what this bounds.
+    // magnitude larger, and this bound catches it.
     for (const std::size_t N : {5u, 8u, 12u, 17u, 64u}) {
         for (const std::size_t rows : {2u, 3u, 9u}) {
             for (const r2r_kind kind : {r2r_kind::dct2, r2r_kind::dct3, r2r_kind::dst2,
@@ -123,9 +123,9 @@ TEMPLATE_TEST_CASE("Batched r2r rows equal the same rows one at a time", "[r2r]"
 TEMPLATE_TEST_CASE("Threaded r2r equals the serial plan", "[r2r]", float, double) {
     using admiral::r2r_kind;
     // The pool only threads the r2c/c2r tile loop over rows, so nthreads > 1 with
-    // rows > 1 is the one configuration that constructs it at all. Compared against
-    // the serial plan of the same shape, not bitwise: the tile loop partitions
-    // differently per thread count.
+    // rows > 1 is the one configuration that constructs it at all. The case compares
+    // against the serial plan of the same shape, not bitwise, because the tile loop
+    // partitions differently per thread count.
     constexpr std::size_t N = 40, rows = 12;
     for (const r2r_kind kind : {r2r_kind::dct2, r2r_kind::dct3, r2r_kind::dst2, r2r_kind::dst3}) {
         const auto x = make_real_input<TestType>(N * rows, 88u + static_cast<unsigned>(kind));
@@ -167,8 +167,8 @@ TEMPLATE_TEST_CASE("r2r fct replaces the default scale", "[r2r]", float, double)
 TEMPLATE_TEST_CASE("r2r runs in place", "[r2r]", float, double) {
     using admiral::r2r_kind;
     // Both cores stage the whole input into scratch before storing anything, so
-    // out == in is legal at any rows. Bitwise, because it is the same code either way
-    // -- a reorder that interleaved the passes would corrupt this and nothing else.
+    // out == in is legal at any rows. Bitwise, because it is the same code either way.
+    // A reorder that interleaved the passes would corrupt this and nothing else.
     for (const std::size_t N : {7u, 16u, 45u}) {
         for (const r2r_kind kind : {r2r_kind::dct2, r2r_kind::dct3, r2r_kind::dst2,
                                     r2r_kind::dst3}) {

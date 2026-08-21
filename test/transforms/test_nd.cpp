@@ -256,7 +256,7 @@ TEST_CASE("2D 16384-long strided f64 axis vs analytical", "[nd][2d]") {
 }
 
 // ----------------------------------------------------------------------------
-// Dim=1: the new layer must reproduce the legacy 1D path.
+// Dim=1: nd_plan must reproduce the legacy 1D path.
 // ----------------------------------------------------------------------------
 
 TEMPLATE_TEST_CASE("1D via nd_plan matches legacy 1D FFT", "[nd][1d]", float, double) {
@@ -429,7 +429,7 @@ TEMPLATE_TEST_CASE("Unified plan<T> handles N-D via runtime shape", "[nd][plan]"
     check_2d({12, 20}, 72);
     check_2d({8, 8}, 73);
 
-    // 1D through the same unified type still reproduces the legacy 1D path.
+    // 1D through the same unified type must reproduce the legacy 1D path.
     {
         const std::size_t N = 64;
         const auto in = make_input<T>(N, 74);
@@ -445,9 +445,9 @@ TEMPLATE_TEST_CASE("Unified plan<T> handles N-D via runtime shape", "[nd][plan]"
 }
 
 // The narrow-run criterion of choose_line_route is a pure function of the shape, but no
-// tensor a portable test can afford elects it: it needs a slab past L2 behind a run of
-// one or two elements. Driven directly, with the budget read from the same helper the
-// criterion uses, so the sizes hold on any cache geometry.
+// tensor a portable test can afford elects it. It needs a slab past L2 behind a run of
+// one or two elements. This case drives it directly, with the budget read from the same
+// helper the criterion uses, so the sizes hold on any cache geometry.
 TEMPLATE_TEST_CASE("choose_line_route narrow-run criterion", "[nd][route]", float, double) {
     using T = TestType;
     using admiral::detail::choose_line_route;
@@ -475,11 +475,11 @@ TEMPLATE_TEST_CASE("choose_line_route narrow-run criterion", "[nd][route]", floa
     CHECK(choose_line_route<T>(st, len, 1, full, 1) == line_route::transposed);
 }
 
-// real_run_copy is nd_plan's band-pack primitive. Its `full` branch (n >= W, one
+// real_run_copy is nd_plan's band-pack helper. Its `full` branch (n >= W, one
 // unmasked batch ahead of the masked remainder) runs only for a band at least a
-// register wide; the only call site passes 2*band_width. Swept over every length
-// the type admits rather than spot-checked, because which branch a given n takes
-// is a function of W and therefore of the build.
+// register wide; the only call site passes 2*band_width. This case sweeps every
+// length the type admits rather than spot-checking, because which branch a given n
+// takes follows W and therefore the build.
 TEMPLATE_TEST_CASE("real_run_copy copies exactly its run", "[nd][swizzle]", float, double) {
     using T = TestType;
     constexpr std::size_t W = xsimd::batch<T>::size;

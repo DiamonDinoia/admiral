@@ -1,11 +1,11 @@
 # Which straight-line codelet sizes get compiled, and the sources generated for
-# them. Included by src/CMakeLists.txt before the targets are declared.
+# them. src/CMakeLists.txt includes this file before it declares the targets.
 #
 # kernel<N> codelets (radix-31/61 are ~P^2 unrolled, times {float,double}) are
-# heavy to instantiate. Only ONE direction is ever built: codelet_apply<N,T,false>
+# heavy to instantiate. The build emits only ONE direction. codelet_apply<N,T,false>
 # conjugates in and out around kernel<N,T,true>, so {fwd,inv} multiplies the thin
 # boundary loops, not the unrolled body. Compiling them here, one small TU per N,
-# keeps consumer TUs free of that cost: they see only the narrow
+# keeps consumer TUs free of that cost. They see only the narrow
 # codelet_dispatch<T> declaration plus the extern template in math.hpp. One TU
 # per N maximizes parallel compile and bounds peak memory per TU.
 #
@@ -20,10 +20,10 @@ set(ADM_CODELET_MIN_N 2 CACHE STRING
     "Smallest N considered for compiled straight-line codelets")
 set(ADM_CODELET_MAX_N 64 CACHE STRING
     "Largest N considered for compiled straight-line codelets")
-# [2..64] is spill-free throughout: every composite is a small-radix combination
+# [2..64] is spill-free throughout. Every composite is a small-radix combination
 # and every prime > 11 is a Rader chiplet (a length-(p-1) convolution over the
-# smaller codelets), so no size degrades to a flat O(N^2) unroll. Every catalog
-# size is checked against a reference DFT (`admiral_benchmark --verify`) and beats
+# smaller codelets), so no size degrades to a flat O(N^2) unroll. `admiral_benchmark
+# --verify` checks every catalog size against a reference DFT, and every size beats
 # ducc0 on a pinned cycle-true --compare.
 set(ADM_CODELET_EXCLUDE_SIZES "" CACHE STRING
     "Semicolon-separated sizes excluded from the generated codelet catalog")
@@ -44,10 +44,10 @@ set(ADM_CODELET_EXTRA_SIZES "120;65;85;143;100;360" CACHE STRING
 # every f32 lane.
 
 # Sanitizer instrumentation costs several GB per TU on the larger Rader codelets, so the
-# catalog shrinks here; large-codelet correctness is covered by the Release --verify sweep
-# instead. This is not the whole memory story: even with this cap active, the planner TU
+# catalog shrinks here. The Release --verify sweep covers large-codelet correctness
+# instead. This cap is not the whole memory cost. Even with the cap active, the planner TU
 # (before the direction split) still peaked at 19.3 GB under gcc ASan+UBSan (57.8 GB at
-# -march=native), because the hog is `template class plan_impl<float>` instantiating the
+# -march=native), because the cost is `template class plan_impl<float>` instantiating the
 # route tree per SIMD width, which no catalog knob reaches. Hence the pinned ISA and
 # clang++ in the asan preset; see CMakePresets.json.
 if(NOT ADM_SANITIZER STREQUAL "none")

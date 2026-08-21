@@ -48,9 +48,9 @@ std::vector<std::complex<T>> tone_spectrum(std::size_t N, std::size_t K) {
 
 // Owns an over-aligned buffer and hands out a pointer offset `off_elems` complex
 // elements past a span_align boundary. span_align rather than a literal 64
-// because that is the alignment the kernels actually assume, so off_elems=0 is
+// because that is the alignment the kernels assume, so off_elems=0 is
 // the aligned case on every ISA. off_elems in {1,2,3} => 16/32/48-byte misaligned
-// (complex<double> is 16 B), exercising the store-align peel's masked windows.
+// (complex<double> is 16 B), which exercises the store-align peel's masked windows.
 template<typename T>
 struct offset_buffer {
     static constexpr std::size_t kAlign = admiral::detail::span_align<T>;
@@ -68,7 +68,7 @@ struct offset_buffer {
 // (N > 786432). The six-step engine's in-place transpose decomposes by split
 // shape: square (1M, 4M), block-grid at C = 2*R (2M), element cycles otherwise.
 // Every size below must pass the public serial gate (four_step_large_fused_shape)
-// or the case is vacuously iterative_dif; the route is pinned in each case.
+// or the case is vacuously iterative_dif, so each case pins the route.
 constexpr std::size_t kBelowFuse = 1048576;   // 16 MB, square split 1024x1024
 constexpr std::size_t kRect2M    = 2097152;   // 32 MB, block split 1024x2048
 constexpr std::size_t kNonPow2   = 2073600;   // 33 MB, non-pow2 1440x1440
@@ -191,9 +191,9 @@ TEST_CASE("four_step_large tone and impulse (float)", "[large][fourstep]") {
 
 // Every (input, output) cache-line-alignment pairing through the OOP execute
 // path. Covers both a four_step_large size (store-align peel in the col pass)
-// and an iterative_dif size (peel in dif_col_pass_last). Forward validated
-// against the analytical tone reference so a mis-peeled store is caught, not
-// just a self-consistent one.
+// and an iterative_dif size (peel in dif_col_pass_last). The forward runs against
+// the analytical tone reference, so a mis-peeled store fails here rather than
+// passing as self-consistent.
 TEMPLATE_TEST_CASE("execute() input/output alignment variants vs analytical",
                    "[large][align]", float, double) {
     using T = TestType;
@@ -220,7 +220,7 @@ TEMPLATE_TEST_CASE("execute() input/output alignment variants vs analytical",
                 std::vector<std::complex<T>> got(dst.ptr, dst.ptr + N);
                 require_close(got, ref, tol);
 
-                // src must be untouched by the OOP path regardless of alignment.
+                // The OOP path must leave src untouched at every alignment.
                 for (std::size_t i = 0; i < N; ++i) REQUIRE(src.ptr[i] == in[i]);
             }
         }
@@ -230,8 +230,8 @@ TEMPLATE_TEST_CASE("execute() input/output alignment variants vs analytical",
 // The out-aliased SoA pair: dif_execute_in_place lends `out` to the driver as the second
 // ping-pong pair when the tape's parity leaves it dead, halving the scratch. The control arm
 // needs no build flag: a span_align-misaligned `out` fails dif_out_aliasable's alignment
-// clause and takes the 4-plane fallback, which also pins that clause. That arm is compared
-// to tolerance, not bitwise: the same misalignment also makes the last pass take its AoS
+// clause and takes the 4-plane fallback, which also pins that clause. That arm compares
+// to tolerance, not bitwise. The same misalignment also makes the last pass take its AoS
 // store peel, whose partial-row block groups the same values differently. Bitwise still
 // holds where alignment matches, the in == out arm below. `fired` guards the whole case
 // against passing vacuously if the parity predicate ever stops admitting these sizes.
@@ -254,7 +254,7 @@ TEMPLATE_TEST_CASE("out-aliased SoA pair equals the 4-plane path", "[dif][align]
                           std::vector<std::complex<T>>(aligned.ptr, aligned.ptr + N),
                           fft_tol<T>());
 
-            // in == out is the shape the alias actually ships into: bluestein's and rader's
+            // in == out is the shape the alias ships into: bluestein's and rader's
             // inner DIF both call dif_execute_in_place(buf, buf, ...) on soa_scratch memory,
             // which is aligned, so they take the aliased path on every qualifying chain.
             // It is also the only case where lending `out` out is not clearly safe: pass 1
@@ -277,7 +277,7 @@ TEMPLATE_TEST_CASE("out-aliased SoA pair equals the 4-plane path", "[dif][align]
 TEMPLATE_TEST_CASE("four_step_transpose_inplace vs naive", "[large][fourstep]", float, double) {
     using T = TestType;
     // square, C = m*R, R = m*C, and three non-divisible shapes (both < and >
-    // the vector width, so the band remainder is exercised on each axis).
+    // the vector width, so each axis exercises the band remainder).
     static constexpr std::size_t shapes[][2] = {{64, 64}, {32, 96}, {96, 32},
                                                 {48, 80}, {49, 128}, {33, 100}};
     for (const auto& s : shapes) {

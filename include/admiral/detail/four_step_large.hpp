@@ -45,13 +45,14 @@ namespace admiral {
 namespace detail {
 
 // Out-of-place complex transpose out[j*n2+i] = W[i*n1+j]: deinterleave W source rows to
-// planar re/im, xsimd::transpose in registers, interleave back: W contiguous full-vector
-// stores per output row instead of a scalar scatter. Cache-blocked at B for L1 residency.
+// planar re/im, xsimd::transpose in registers, interleave back. That gives W contiguous
+// full-vector stores per output row instead of a scalar scatter. Cache-blocked at B for
+// L1 residency.
 constexpr std::size_t four_step_tblock = 32;  // transpose cache-block (complex)
 
 // Vector WxW transpose of source band [i_lo,i_hi) (W-aligned) x cols [0,n1v),
 // j-blocked at B. out[j*n2+i] = Wm[i*ld+j] over the band, ld = padded row stride.
-// Fused into execute's row loop so src is read L2-hot, avoiding a DRAM re-read.
+// Fused into execute's row loop, which reads src L2-hot and skips a DRAM re-read.
 template<typename T>
 void four_step_transpose_band(const std::complex<T>* Wm, std::complex<T>* out,
                               std::size_t n1, std::size_t ld, std::size_t n2,
@@ -113,8 +114,8 @@ void four_step_tile_transpose(const std::complex<T>* src, std::size_t ld_s,
 
 // In-place transpose of the n x n leading-dim-ld matrix at m. Tile-pair swaps stage one
 // side through an L1 stack tile; diagonal tiles self-transpose in registers; the ragged
-// border (n % W) is scalar swaps. Tile rows are independent: tile (a,b) is touched only
-// by row min(a,b)'s chunk.
+// border (n % W) is scalar swaps. Tile rows are independent: only row min(a,b)'s chunk
+// touches tile (a,b).
 template<typename T>
 void four_step_square_transpose_inplace(std::complex<T>* m, std::size_t ld, std::size_t n,
                                         thread_pool* pool) {
@@ -260,8 +261,8 @@ inline void four_step_fused_sweep_step(std::complex<T>* out, std::size_t ld,
 
 // Phase B of a threaded fused pass: the tile sweeps, after the DFT phase barrier. Only
 // the first nparts chunks run (begin<end), so balance over nparts and key the range on
-// the chunk index (u0/chunk), never on tid: a skipped chunk would silently drop its
-// tile rows. Shared by both fused passes below.
+// the chunk index (u0/chunk), never on tid. A skipped chunk would drop its tile rows
+// with no error. Shared by both fused passes below.
 template<typename T>
 inline void four_step_fused_sweep_phase(std::complex<T>* out, std::size_t ld,
                                         std::size_t n1, std::size_t m, std::size_t ntiles,
@@ -412,7 +413,7 @@ using large_split = four_step_split;
 
 // Hand-fit admission byte lines for this route, shared with the callers that gate on
 // them: a threshold and the quantity it was fitted against are ONE artifact. Change
-// either and both are re-derived, together. Bluestein's inner six-step arm is admitted
+// either and re-derive both, together. Bluestein's inner six-step arm is admitted
 // off the same f64 serial line, so it has to be one constant and not a matching literal.
 
 // Threaded, both precisions: a BUDGET divided by nthreads, clamped below by a FLOOR.
@@ -423,7 +424,7 @@ inline constexpr std::size_t kLargeRouteThreadedFloorBytes = std::size_t{512} <<
 inline constexpr std::size_t kLargeRouteSerialF64Bytes = std::size_t{12} << 20;
 inline constexpr std::size_t kLargeRouteSerialF32Bytes = (std::size_t{16} << 20) - 1;
 
-// Serial f32 admission is a WINDOW, not a half-line: the DIF chain wins again from an
+// Serial f32 admission is a WINDOW, not a half-line. The DIF chain wins again from an
 // upper size on. f64 shows no upper crossover and threading removes it for both
 // precisions, so this bound is f32-and-serial only.
 inline constexpr std::size_t kLargeRouteSerialF32MaxBytes = std::size_t{32} << 20;

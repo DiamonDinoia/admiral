@@ -17,14 +17,14 @@
 // A twiddle table is a numerical library's set of fundamental constants, so
 // accuracy, not speed, settles both pieces:
 //
-//  * EXACT SEED, not a Kogge-Stone prefix-product scan across the lanes: that scan
-//    chains log2(W)+1 complex multiplies, which costs more accumulated error than the
-//    exact seed to save what the W sincos calls per row cost.
+//  * EXACT SEED, not a Kogge-Stone prefix-product scan across the lanes. That scan
+//    chains log2(W)+1 complex multiplies, and the accumulated error costs more than
+//    the W sincos calls per row it saves.
 //  * EVERY BLOCK anchored, so error stays at the reference's own rounding; chaining a
-//    recurrence between sparse anchors trades more error than the plan time it buys.
-//    Both rejects are deleted, not parked behind a knob.
-//    The ULP suite (test_ulp.cpp) probes the tables end-to-end; the factored pass-0
-//    row additionally has an entry-by-entry check in test_iterative.cpp.
+//    recurrence between sparse anchors costs more error than the plan time it saves.
+//    The tree deletes both rejects rather than keeping them behind a knob.
+//    The ULP suite (test_ulp.cpp) probes the tables end-to-end, and
+//    test_iterative.cpp checks the factored pass-0 row entry by entry.
 //
 // The largest f64 tables are store-bound (RFO included), so cheaper twiddle
 // arithmetic would not move those cells anyway.

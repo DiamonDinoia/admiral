@@ -5,7 +5,7 @@
 //
 // FFT twiddles are exp(+/-2*pi*i*num/den) with INTEGER num,den. Argument
 // reduction is exact integer arithmetic (reduce mod den, round to nearest
-// quadrant), leaving a residual in [-pi/4,pi/4] for the polynomial. No
+// quadrant) and leaves a residual in [-pi/4,pi/4] for the polynomial. No
 // Payne-Hanek needed, and more accurate than it for large arguments.
 // Polynomial kernel (Horner in u=t^2 on [0,(pi/4)^2]) vendored from
 // DiamonDinoia/polyfit (examples/portable_trig.hpp).
@@ -57,7 +57,7 @@ constexpr std::pair<double, double> sincos_reduced_turns(std::size_t num, std::s
     const std::size_t q = (four_num + den / 2) / den;   // round-to-nearest in [0, 4]
 
     // Residual angle = 2*pi * (four_num - q*den)/(4*den) in [-pi/4, pi/4]. The
-    // numerator is signed, so it is formed in double: both operands are integers
+    // numerator is signed, so the code forms it in double: both operands are integers
     // below 2^53, hence the subtraction is exact.
     const double residual = (2.0 * pi) *
                             (static_cast<double>(four_num) - static_cast<double>(q * den)) /

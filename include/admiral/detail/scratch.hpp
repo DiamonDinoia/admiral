@@ -15,7 +15,7 @@ namespace detail {
 // ============================================================================
 // Small-buffer-optimized scratch: K contiguous planar buffers of length N.
 // N <= SBO_MAX: aligned stack buffer (no heap). N > SBO_MAX: single heap block
-// sliced into K spans. Neither path constructs T: both are left uninitialized.
+// sliced into K spans. Neither path constructs T, so both buffers stay uninitialized.
 // ============================================================================
 
 // Stack-resident threshold. K=4 f64: ~128 KB stack; keeps iterative-DIF scratch
@@ -23,8 +23,9 @@ namespace detail {
 inline constexpr std::size_t SBO_MAX = 4096;
 
 // Anti-alias padding (T elements) between planar spans. For power-of-2 n, spans
-// at k*n are 4 KB-critical (e.g. n=4096 f64 → 32 KB apart), causing L1
-// conflict misses between re/im and ping/pong buffers. Non-power-of-2 offset breaks it.
+// at k*n are 4 KB-critical (e.g. n=4096 f64 → 32 KB apart), which makes the re/im
+// and ping/pong buffers conflict-miss in L1. A non-power-of-2 offset breaks that
+// spacing.
 inline constexpr std::size_t SBO_PAD = 16;
 
 // Sanity-check: K=4 f64 (worst case) stack frame within 192 KB budget.
@@ -32,8 +33,8 @@ static_assert(4 * (SBO_MAX + SBO_PAD) * sizeof(double) <= 192u * 1024u,
               "soa_scratch<double,4> stack frame exceeds the 192 KB budget");
 
 // Span alignment: what a SIMD load needs, floored at a cache line so a padded row
-// stride also keeps every span base line-aligned. Asked of the arch rather than
-// written as 64: that literal is only right while the register is <= a line, and
+// stride also keeps every span base line-aligned. The value comes from the arch
+// rather than a literal 64. That literal is only right while the register is <= a line, and
 // an RVV VLEN above 512 bits is not (every other buffer here already asks xsimd).
 template<typename T>
 inline constexpr std::size_t span_align =
@@ -75,10 +76,11 @@ struct soa_scratch {
 
     T* buf(std::size_t k) noexcept { return m.ptr + k * m.stride; }
 
-    // Span stride. Callers that need to know the spans are one allocation, e.g. the DIF
-    // driver's W-blocked SoA, which lays a generation out as 2N contiguous across what are
-    // otherwise two planes, take it from here rather than differencing two buf() pointers,
-    // which is only a valid stride when they came from the same object.
+    // Span stride. Some callers need to know the spans are one allocation. The DIF
+    // driver's W-blocked SoA is one: it lays a generation out as 2N contiguous across
+    // what are otherwise two planes. Such a caller takes the stride from here rather
+    // than differencing two buf() pointers, which is a valid stride only when both
+    // pointers came from the same object.
     [[nodiscard]] std::size_t stride() const noexcept { return m.stride; }
 
 private:
@@ -96,8 +98,8 @@ private:
     }
 
     struct M {
-        // User-provided ctor (not `= default`) suppresses value-init on `m{}`,
-        // preventing a per-execute zero-init of the 128 KB stack_buf.
+        // User-provided ctor (not `= default`) suppresses value-init on `m{}`, so
+        // there is no per-execute zero-init of the 128 KB stack_buf.
         M() {}
         std::size_t stride;
         T* ptr;

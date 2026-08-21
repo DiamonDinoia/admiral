@@ -52,7 +52,6 @@ void check_sizes(std::initializer_list<std::size_t> sizes) {
 
 }  // namespace
 
-// 7-smooth composite sizes
 TEST_CASE("iterative DIF matches the reference DFT: 7-smooth composites", "[iterative_dif]") {
     check_sizes({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 16, 24, 25, 27, 28, 30, 32, 35,
                  36, 48, 49, 56, 60, 63, 64, 105, 120, 125, 128, 175, 189, 210, 240, 256,
@@ -61,7 +60,7 @@ TEST_CASE("iterative DIF matches the reference DFT: 7-smooth composites", "[iter
 
 // 11-smooth sizes: radix-11 routing. Covers radix-11 as a single fused pass (11),
 // and in first / intermediate / last pass positions combined with radices 2/3/4/5/7.
-// 121 = 11^2 is the worst case, being nothing but radix 11.
+// 121 = 11^2 is the worst case: nothing but radix 11.
 TEST_CASE("iterative DIF matches the reference DFT: 11-smooth sizes", "[iterative_dif]") {
     check_sizes({11,    // [11]
                  22,    // [2, 11]
@@ -75,7 +74,6 @@ TEST_CASE("iterative DIF matches the reference DFT: 11-smooth sizes", "[iterativ
                  242}); // [2, 11, 11]
 }
 
-// Power-of-2 sizes up to 1024
 TEST_CASE("iterative DIF matches the reference DFT: pow2 sizes", "[iterative_dif]") {
     check_sizes({2, 4, 8, 16, 32, 64, 128, 256, 512, 1024});
 }
@@ -88,8 +86,8 @@ TEST_CASE("a forced radix outside dif_radix_set is rejected", "[iterative_dif]")
     REQUIRE_THROWS_AS(build_dif_twiddle_set<double>(24, &plan), std::invalid_argument);
 }
 
-// The factored pass-0 row (dif_twiddle_set::p0_block) is read W lanes at a time from a
-// blk-wide block, so a batch is only valid while a0+W stays inside one block. The overlap
+// The pass reads the factored pass-0 row (dif_twiddle_set::p0_block) W lanes at a time
+// from a blk-wide block, so a batch is valid only while a0+W stays inside one block. The overlap
 // tail starts at ido-W, not W-aligned when ido%W != 0; the tail then takes the flat row.
 namespace {
 
@@ -137,7 +135,7 @@ constexpr double factored_tol = 1e3 * double(std::numeric_limits<T>::epsilon());
 
 TEST_CASE("the factored pass-0 row matches the flat one at every column",
           "[iterative_dif][twiddles]") {
-    // ido % W == 0: no overlap tail at all, the shape the goal cells run.
+    // ido % W == 0: no overlap tail, the shape the goal cells run.
     CHECK(first_pass_factored_dev<double, 16>(4096) < factored_tol<double>);
     CHECK(first_pass_factored_dev<double, 5>(20000) < factored_tol<double>);
     // Overlap tail fires, batch stays inside its block.
@@ -156,7 +154,7 @@ TEST_CASE("the factored pass-0 row matches the flat one at every column",
 
 TEST_CASE("col dif: first_src copy-in requires its own stride", "[iterative][col]") {
     // The defensive throw at col_dif_execute_ws: no public caller reaches it
-    // (four_step_large always passes n1), so it is checked here directly.
+    // (four_step_large always passes n1), so this case checks it directly.
     const std::size_t N = 16;
     const auto dtw = build_dif_twiddle_set<double>(N, nullptr, /*fuse_packed=*/false);
     std::vector<std::complex<double>> data(N * 4), src(N * 4);

@@ -1,7 +1,7 @@
 ---
 # clang-tidy configuration for admiral (C++20 FFT library).
 #
-# Philosophy: enable checks that catch real defects reachable in this code.
+# The set below enables the checks that catch real defects reachable in this code.
 # Every check that is OFF gets a one-line reason here or in CheckOptions below.
 #
 # Run with llvm/19.1.7 and the clang compile_commands.json (sa-audit build).
@@ -66,7 +66,7 @@ Checks: >
   -bugprone-easily-swappable-parameters,
   # OFF: fires on every pair of same-type or convertible function parameters
   # (FFTW shim void*/int pairs, math template APIs); ratio of false positives to
-  # true positives is too high for a library with many numeric primitives.
+  # true positives is too high for a library with many numeric helpers.
   -bugprone-macro-parentheses,
   # OFF: fires on type-substitution macros (ADM_FFTW_SHIM COMPLEX_T parameters)
   # where parenthesising a type token is not valid C++.
@@ -96,17 +96,18 @@ Checks: >
   portability-restrict-system-includes,
   portability-std-allocator-const,
   -portability-simd-intrinsics,
-  # OFF: the library targets xsimd which abstracts SIMD; direct intrinsic use
-  # is banned by project policy (CLAUDE.md). The check is irrelevant.
+  # OFF: the library targets xsimd which abstracts SIMD, and project policy bans
+  # direct intrinsic use (CLAUDE.md). The check is irrelevant.
 
   # ---- CERT (selected: avoid duplicating bugprone; skip C-file-IO rules) ----
   cert-dcl50-cpp,
   cert-dcl58-cpp,
   -cert-err33-c,
-  # OFF: the tree ignores exactly two classes of stdio return, both deliberately --
+  # OFF: the tree ignores exactly two classes of stdio return, both deliberately. One is
   # the fputs/fprintf calls in debug.hpp (a trace that fails to print must not change
-  # what the program computes) and fclose on the read-only sysfs stream in cache.hpp.
-  # Enabling it buys `[[maybe_unused]] auto _ =` at eight sites and no defect.
+  # what the program computes). The other is fclose on the read-only sysfs stream in
+  # cache.hpp. Enabling it adds `[[maybe_unused]] auto _ =` at eight sites and finds
+  # no defect.
   cert-err52-cpp,
   cert-err60-cpp,
   cert-flp30-c,
@@ -131,8 +132,8 @@ Checks: >
   # OFF: high-volume false positives for large template headers (every include in
   # each explicit-instantiation TU looks redundant from a single-TU perspective).
   -misc-use-anonymous-namespace,
-  # OFF: the project has explicit instantiation declarations; anonymous namespaces
-  # inside headers are deliberately avoided to keep extern-template viable.
+  # OFF: the project has explicit instantiation declarations, and the tree avoids
+  # anonymous namespaces inside headers to keep extern-template viable.
 
   # ---- Readability (defect-catching only, no naming/style rewrites) ------
   readability-avoid-const-params-in-decls,
@@ -143,10 +144,10 @@ Checks: >
   readability-redundant-preprocessor,
   readability-string-compare,
   -readability-braces-around-statements,
-  # OFF: single-line [[unlikely]] if statements are used in the hot path;
-  # adding braces harms layout without changing correctness.
+  # OFF: the hot path uses single-line [[unlikely]] if statements, and adding
+  # braces harms layout without changing correctness.
   -readability-identifier-length,
-  # OFF: math code uses conventional short names (v, i, j, W, T, N, lo, hi …).
+  # OFF: math code uses conventional short names (v, i, j, W, T, N, lo, hi ...).
   -readability-magic-numbers,
   # OFF: numeric constants are the substance of an FFT cost model; naming every
   # literal would add noise without clarity.

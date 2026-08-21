@@ -131,8 +131,8 @@ TEMPLATE_TEST_CASE("axis_plan matches per-line 1D plan", "[axis]", float, double
 TEMPLATE_TEST_CASE("axis_plan execute_bands matches two execute calls", "[axis]", float, double) {
     using T = TestType;
     // Packed path: len 512 is 5 radix-4/2 passes for float, so the pack gate opens;
-    // for double it is 2 passes and the two-run fallback runs instead. Both arms of
-    // the gate are exercised by the two instantiations.
+    // for double it is 2 passes and the two-run fallback runs instead. The two
+    // instantiations exercise both arms of the gate.
     check_bands<T>({512, 12}, 0, {0, 0}, {512, 3}, 9, 12, true);
     check_bands<T>({512, 12}, 0, {0, 0}, {512, 3}, 9, 12, false);
     // 6+6: within one batch for float, wider than one for double.

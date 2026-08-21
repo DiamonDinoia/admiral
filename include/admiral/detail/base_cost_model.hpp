@@ -7,17 +7,17 @@
 // features of N, predicting log(cycles). The route is argmin over forms, and
 // exp is monotonic, so ranking needs no exponentiation.
 //
-// The coefficients are shared by every build: they describe the algorithm
+// Every build shares the coefficients. They describe the algorithm
 // (radix content, lane waste, padding, footprint), so even a target this tool
 // never swept routes on them, and nothing here is keyed to a machine. One
 // slot is keyed to the COMPILER, which a machine key would not reach: gcc and
 // clang price four_step against iterative_dif 1.25x apart on one host at one
 // kernel vintage, and they move that pair in OPPOSITE directions at equal width.
-// An unswept compiler takes the gcc branch. Every
-// form is priced off what the engine actually runs: the measured PER-PRECISION
-// leaf table (math.hpp) for codelet-terminated forms, the elected pad for
-// Bluestein. A cell the coefficients still misprice is recovered by measuring at
-// plan time (effort::automatic), not by a table that only covers swept machines.
+// An unswept compiler takes the gcc branch. Every form takes its price from what
+// the engine runs: the measured PER-PRECISION leaf table (math.hpp) for
+// codelet-terminated forms, the elected pad for Bluestein. Where the coefficients
+// still misprice a cell, a plan-time measurement (effort::automatic) recovers it.
+// No table keyed to swept machines does.
 //
 // 38 coefficients. Route regret vs the exhaustive 2..512 sweep,
 // in-sample max | out-of-fold:

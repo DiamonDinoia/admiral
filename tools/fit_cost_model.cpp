@@ -44,9 +44,8 @@ using admiral::detail::four_step_cost;
 using admiral::detail::leaf_cost_cyc;
 using admiral::detail::lpf_nfac;
 
-// Receipts written before BASECOST-ENV existed: those files carry no
-// width/register/version fields and nothing is inferable; new sweeps are
-// self-describing.
+// Receipts written before BASECOST-ENV existed carry no width/register/version
+// fields, and nothing there is inferable. New sweeps are self-describing.
 const std::map<std::string, std::tuple<std::string, std::string, int,
                                        std::map<std::string, std::pair<int, int>>>>
     LEGACY_ENV = {
@@ -89,7 +88,7 @@ std::vector<double> feat_own(const std::string& form, std::size_t n, std::size_t
         return szt == 4 ? four_step_cost<float>(a, b) : four_step_cost<double>(a, b);
     };
     if (form == "codelet") {
-        // The measured table, not a polynomial in n: a prime leaf is rader_apply<P>
+        // The measured table, not a polynomial in n. A prime leaf is rader_apply<P>
         // over kernel<P-1>, several times costlier than a composite neighbour. No
         // function of (n, lpf, nfac) expresses that, since lpf(n) == n for every prime,
         // and the gap differs per precision, so the table is per-precision too.
@@ -101,7 +100,7 @@ std::vector<double> feat_own(const std::string& form, std::size_t n, std::size_t
              lg(double(lpf)), waste(lpf, w)};
     } else if (form == "four_step" || form == "four_step_batched" || form == "good_thomas") {
         // balanced_split maximizes n1 <= sqrt(n), so its n2 is the SMALLEST any split
-        // achieves: whenever four_step is supported at all both factors are in the
+        // achieves: whenever four_step is supported both factors are in the
         // measured table, and four_step_cost is the engine's own leaf model.
         const auto [n1, n2] = balanced_split(n);
         v = {lg(double(n)),      vecs(n1, w) * double(n2) / double(n1),
@@ -416,17 +415,17 @@ void emit(std::ostream& os, const std::vector<std::string>& present,
           "// features of N, predicting log(cycles). The route is argmin over forms, and\n"
           "// exp is monotonic, so ranking needs no exponentiation.\n"
           "//\n"
-          "// The coefficients are shared by every build: they describe the algorithm\n"
+          "// Every build shares the coefficients. They describe the algorithm\n"
           "// (radix content, lane waste, padding, footprint), so even a target this tool\n"
           "// never swept routes on them, and nothing here is keyed to a machine. One\n"
           "// slot is keyed to the COMPILER, which a machine key would not reach: gcc and\n"
           "// clang price four_step against iterative_dif 1.25x apart on one host at one\n"
           "// kernel vintage, and they move that pair in OPPOSITE directions at equal width.\n"
-          "// An unswept compiler takes the gcc branch. Every\n"
-          "// form is priced off what the engine actually runs: the measured PER-PRECISION\n"
-          "// leaf table (math.hpp) for codelet-terminated forms, the elected pad for\n"
-          "// Bluestein. A cell the coefficients still misprice is recovered by measuring at\n"
-          "// plan time (effort::automatic), not by a table that only covers swept machines.\n"
+          "// An unswept compiler takes the gcc branch. Every form takes its price from what\n"
+          "// the engine runs: the measured PER-PRECISION leaf table (math.hpp) for\n"
+          "// codelet-terminated forms, the elected pad for Bluestein. Where the coefficients\n"
+          "// still misprice a cell, a plan-time measurement (effort::automatic) recovers it.\n"
+          "// No table keyed to swept machines does.\n"
           "//\n";
     os << "// " << nz << " coefficients. Route regret vs the exhaustive " << NMIN << ".."
        << NMAX << " sweep,\n"
@@ -654,7 +653,7 @@ void emit(std::ostream& os, const std::vector<std::string>& present,
 struct Args {
     std::string data = "bench-results";
     std::string out = "include/admiral/detail/base_cost_model.hpp";
-    // Fewest coefficients that still rank routes; tighter alphas buy coefficients
+    // Fewest coefficients that still rank routes; tighter alphas add coefficients
     // without moving regret.
     double alpha = 0.05;
 };
@@ -671,10 +670,10 @@ int run(const Args& args) {
     std::cout << "loaded " << T.size() << " builds, " << nsizes << " sizes, " << nreceipts
               << " (n,form) receipts\n";
     // Refuse to write a header fit from nothing: the default --out is the tracked
-    // routing table, so an unparseable sweep must fail loudly, not "succeed" empty.
+    // routing table, so an unparseable sweep must fail rather than "succeed" empty.
     if (T.empty() || nreceipts < 40)
         die("not enough usable receipts (" + std::to_string(nreceipts) +
-            ") in " + args.data + " -- nothing written");
+            ") in " + args.data + ", nothing written");
 
     // pooled fit: one model per form, slopes shared across every variant and both
     // compilers; only the is_clang slot is not shared.

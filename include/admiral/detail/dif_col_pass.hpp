@@ -39,18 +39,18 @@ namespace detail {
 // Sub-batch column tails. On a long strided axis the L2 budget drives B BELOW W, where
 // the vector loop `c + W <= B` never runs, so the tail is not a thin remainder.
 //
-// Covered by sized_cover (simd_swizzle.hpp): exact-width pieces, widest first, plus one
+// sized_cover (simd_swizzle.hpp) covers it: exact-width pieces, widest first, plus one
 // backward-aligned full-width piece where that beats narrowing. No runtime mask: the
 // same mechanism and gate as the row driver's small-ido pass, out here in the column
 // index.
 //
-// The tail gets its OWN loop nest rather than sharing the bulk one: its start column is
+// The tail gets its OWN loop nest rather than sharing the bulk one. Its start column is
 // loop-invariant, and a second body inside the bulk nest degrades the bulk loop's codegen
 // even at widths where the tail is provably dead. Two nests keep the bulk literal and
 // cost a second pass over the tile only when B % W != 0.
 //
 // Each piece is a free function template with PW as a template parameter, NOT a generic
-// lambda in the pass body: gcc 14.2 ICEs on an alias template instantiated from a
+// lambda in the pass body. gcc 14.2 ICEs on an alias template instantiated from a
 // generic lambda's own parameter at this instantiation depth.
 
 // One radix-IP butterfly over the PW contiguous columns at c: planar in, planar out.
@@ -271,7 +271,7 @@ ADM_ALWAYS_INLINE void dif_col_piece_fused(std::complex<T>* data,
 
 // Rows of the compile-time-mask tail, one instantiation per width. NOINLINE for the reason
 // the whole tail is outlined: W-1 copies of this nest inside dif_col_tail regress the cover
-// path too. The runtime-mask arm has no wrapper at all: even an ALWAYS_INLINE one pushes
+// path too. The runtime-mask arm has no wrapper at all. Even an ALWAYS_INLINE one pushes
 // dif_col_pass over gcc's inlining budget, which then outlines the bulk butterfly.
 template<typename T, std::size_t IP, std::size_t TailN>
 ADM_NOINLINE void dif_col_masked_rows_ct(const T* ccre,
@@ -434,8 +434,8 @@ ADM_NOINLINE void dif_col_tail(const T* ccre, const T* ccim,
                                std::size_t cfull,
                                const T* twre, const T* twim) {
     constexpr std::size_t W = xsimd::batch<T>::size;
-    // Out of place, so the backward-aligned overlap is legal: the recomputed columns
-    // are rewritten with identical values.
+    // Out of place, so the backward-aligned overlap is legal: it rewrites the
+    // recomputed columns with identical values.
     // Cover outermost: the width descent is per pass, not per (b, a); see the note
     // on dif_col_tail_last_general.
     if (!one_piece_cover<T>(cfull, B)) {
@@ -702,9 +702,9 @@ void dif_col_pass_last(const T* ccre, const T* ccim,
         // Butterfly W columns at c, then store via `store` (dst, re, im). The store
         // is a template functor so the aligned bulk (plain aos_interleave) and the
         // head/tail (compile-time prefix/suffix dispatch) are SEPARATE instantiations:
-        // the hot bulk body carries none of the partial-store dispatch. Each column is
-        // written exactly once with identical vector arithmetic, which preserves 1-vs-N-thread
-        // bit identity (scalar FMAs contract differently).
+        // the hot bulk body carries none of the partial-store dispatch. The pass writes each
+        // column exactly once with identical vector arithmetic, which preserves
+        // 1-vs-N-thread bit identity (scalar FMAs contract differently).
         const auto vec_block = [&](std::size_t c, auto store) {
             batch tr[IP], ti[IP];
             for (std::size_t j = 0; j < IP; ++j) {
@@ -738,7 +738,7 @@ void dif_col_pass_last(const T* ccre, const T* ccim,
 
 // Single-pass (fused first+last): reads and writes AoS. Reached when the axis
 // length factors to a single radix, so l1 == 1 and ido == 1 (twiddle trivial).
-// Invariant: ido == 1; the ido>1 twiddle branches are dead and have been removed.
+// Invariant: ido == 1, so this pass carries no ido>1 twiddle branch.
 template<typename T, bool Forward, std::size_t IP>
 void dif_col_pass_fused(std::complex<T>* data, std::size_t axis_stride,
                         std::size_t l1, [[maybe_unused]] std::size_t ido, std::size_t B,

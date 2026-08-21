@@ -1,8 +1,8 @@
 name: perf-PR head
 
 # Untrusted half of the PR perf pipeline (executes PR-controlled CMake and
-# binaries), so it is strictly `contents: read` on a `pull_request` trigger --
-# no secrets, no write token. The trusted companion perf-PR-comment.yml posts
+# binaries), so it is strictly `contents: read` on a `pull_request` trigger, with
+# no secrets and no write token. The trusted companion perf-PR-comment.yml posts
 # the result via `workflow_run`. Structure mirrors finufft's
 # perftest-pr-head.yml, with two project-specific changes: the timing protocol
 # is the interleaved rotating-window min (runner timing is drift-heavy, a
@@ -39,7 +39,7 @@ jobs:
       - name: Build base and PR head
         run: |
           for side in base pr; do
-            # The PR's library with the base's harness: a PR that edits
+            # The PR's library with the base's harness. A PR that edits
             # benchmark/ or scripts/ cannot move its own numbers.
             rm -rf pr/benchmark pr/scripts
             cp -r base/benchmark base/scripts pr/

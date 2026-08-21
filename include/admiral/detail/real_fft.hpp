@@ -46,7 +46,7 @@ namespace detail {
 template<typename T>
 class real_adm_plan {
 public:
-    // Defined out-of-line below so `extern template` actually suppresses
+    // Defined out-of-line below so `extern template` suppresses
     // instantiation in consumer TUs: [temp.explicit]/12 exempts inline functions,
     // and a member defined in the class body is implicitly inline.
     // eff flows to the inner 1-D engine (fwd_/inv_).
@@ -402,7 +402,7 @@ class nd_real_plan {
 public:
     // Out-of-line (see real_adm_plan above). The WHOLE tree has to sit behind one
     // instantiation: move only part of it and the serial path inlines and contracts
-    // where the threaded path calls, breaking the 1-vs-N-thread bit identity that
+    // where the threaded path calls, which breaks the 1-vs-N-thread bit identity
     // test_fft_threads checks for r2c.
     // nthreads > 1 builds the plan-owned pool (tile + column loops thread on it
     // at execute; no per-call threading knob exists).
@@ -447,7 +447,7 @@ private:
 
     // exec_options::debug >= dbg_route. One line per transform, not per line, for the
     // same reason as nd_runtime_plan::trace. `axes` is the direction's outer-axis set, so
-    // the shape a route is reported for is the one that actually ran.
+    // the shape a route is reported for is the one that ran.
     ADM_NOINLINE ADM_COLD void trace(unsigned level, const char* how,
                                      const std::vector<nd_axis_state<T>>& axes) const {
         dbg_print("r2c rank=", m.shape.size(), " ", how, " real=", real_size(), " cplx=",

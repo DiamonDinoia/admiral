@@ -140,7 +140,7 @@ TEMPLATE_TEST_CASE("nthreads=0 auto-select matches serial", "[threads]", float, 
 
 // parallel_for's documented contract: "First exception wins; rethrown after join."
 // No FFT body throws, so this is unreachable through the public plan API and needs
-// the pool directly. It is live error handling rather than scaffolding: every
+// the pool directly. It is live error handling and not dead code. Every
 // four_step_large and real_fft body constructs a soa_scratch, which past SBO_MAX
 // calls ::operator new[] and can therefore throw bad_alloc on a WORKER thread.
 // Uncaught, that escapes the thread's callable and terminates the process.
@@ -181,8 +181,8 @@ TEST_CASE("parallel_for with fewer units than threads leaves workers idle", "[th
     REQUIRE(sum.load() == 1);
 }
 
-// 810000 = 900^2 has n2 % n1 == 0 but 900 % W != 0: the serial gate refuses it,
-// the threaded gate admits it: the pool runs the unfused sweeps, executable
+// 810000 = 900^2 has n2 % n1 == 0 but 900 % W != 0. The serial gate refuses it and
+// the threaded gate admits it, so the pool runs the unfused sweeps, executable
 // only in this configuration.
 TEST_CASE("threaded unfused four_step_large agrees across nthreads (double)",
           "[threads][fourstep]") {

@@ -14,8 +14,8 @@ add_executable(admiral_benchmark
 )
 
 # Link against: admiral_internal, ducc::ducc0 (reference), nanobench (timing).
-# Threads::Threads is unconditional even at ADM_ENABLE_THREADS=OFF: ducc0's
-# threading.cc is compiled either way, and the link misses pthread_* on toolchains
+# Threads::Threads is unconditional even at ADM_ENABLE_THREADS=OFF. The build
+# compiles ducc0's threading.cc either way, and the link misses pthread_* on toolchains
 # whose libc predates the 2.34 merge.
 find_package(Threads REQUIRED)
 target_link_libraries(admiral_benchmark
@@ -53,8 +53,8 @@ endif()
 
 # The same arch/fast-math flags as the library, from the one target that defines them.
 # Deliberately not adm_apply_build_profile: benchmarks never link sanitizers. Fast
-# math is named explicitly: the benchmark is a timing harness, and dropping it would
-# change what every number means; tests deliberately do NOT get it.
+# math is named here on purpose. The benchmark is a timing harness, and dropping it
+# would change what every number means. Tests deliberately do NOT get it.
 target_link_libraries(admiral_benchmark PRIVATE admiral_optimization_flags)
 if(TARGET admiral_fast_math_flags)
     target_link_libraries(admiral_benchmark PRIVATE admiral_fast_math_flags)

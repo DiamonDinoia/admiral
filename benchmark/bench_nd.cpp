@@ -1,6 +1,6 @@
 // N-D and r2c paired compares against ducc0 (and FFTW when built).
 //
-// Split out of bench_fft.cpp for compile time: this instantiates the
+// Split out of bench_fft.cpp for compile time. This instantiates the
 // nd_plan -> col_dif_dispatch chain for c2c and r2c at both precisions.
 // Explicitly instantiated at the bottom; bench_harness.hpp declares the
 // instantiations extern so the rest of the benchmark sees declarations only.
@@ -38,8 +38,8 @@ std::string shape_to_string(const std::vector<std::size_t>& shape) {
 // fct=1 (forward) / 1/Ntot (inverse) matches the library's scaling.
 //
 // The caller owns `out`: a per-rep allocation plus first-touch of the output must
-// not be billed to ducc0 while the library arm writes into a hoisted buffer.
-// `in == out` runs ducc0 in place, matching the library's round-trip inverse.
+// not land in ducc0's time while the library arm writes into a hoisted buffer.
+// `in == out` runs ducc0 in place, as the library's round-trip inverse does.
 template<typename T>
 void ducc0_c2c_nd(const std::complex<T>* in, std::complex<T>* out,
                   const std::vector<std::size_t>& shape, bool forward, size_t nthreads = 1) {
@@ -122,7 +122,7 @@ bool compare_nd(const std::vector<std::size_t>& shape, int reps, long inner, int
         sink += buf[Ntot / 2].real();
     });
     // Identity control: a second plan and buffer at a different allocation position,
-    // timed exactly like the first. A ratio other than ~1 is harness spread, and
+    // timed the same way as the first. A ratio other than ~1 is harness spread, and
     // every ratio below is that spread wide.
     admiral::plan<T> p2(std::span<const std::size_t>(shape.data(), shape.size()), {.nthreads = nt});
     std::vector<std::complex<T>> buf2(Ntot);
@@ -243,7 +243,7 @@ bool compare_nd_r2c(const std::vector<std::size_t>& shape, int reps, long inner,
         sink += rbuf[Nreal / 2];
     });
     // Identity control: a second plan and buffer at a different allocation position,
-    // timed exactly like the first, so its ratio bounds the harness spread.
+    // timed the same way as the first, so its ratio bounds the harness spread.
     admiral::plan_r2c<T> p2(std::span<const std::size_t>(shape.data(), shape.size()),
                             {.nthreads = nt});
     std::vector<std::complex<T>> cbuf2(Nc);

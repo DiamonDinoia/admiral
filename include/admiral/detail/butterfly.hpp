@@ -365,8 +365,8 @@ ADM_ALWAYS_INLINE void dif_butterfly(const V (&tr)[IP],
 
 // Same contract as dif_butterfly, for the *last* radix of a pass group, where
 // emit is a bare store: the butterfly's own arithmetic dominates, so an odd radix
-// with a coprime split takes the twiddle-free PFA. Interior passes must NOT:
-// the PFA's serial stage-A -> stage-B chain exposes latency that the flat per-k
+// with a coprime split takes the twiddle-free PFA. Interior passes must NOT. The
+// PFA's serial stage-A -> stage-B chain exposes latency that the flat per-k
 // structure of radix_sym_dft hides.
 template<typename T, std::size_t IP, typename V, typename Emit>
 ADM_ALWAYS_INLINE void dif_butterfly_terminal(const V (&tr)[IP],

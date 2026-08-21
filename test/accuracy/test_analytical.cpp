@@ -55,8 +55,8 @@ TEMPLATE_TEST_CASE("FFT analytical: Gaussian spectrum matches its closed form",
     using T = TestType;
     // The periodized Gaussian's DFT is, up to double-exponentially small images,
     // the sampled Gaussian: X_k = sigma*sqrt(2*pi)*exp(-k'^2/(2 s^2)) with
-    // k' = 2*pi*sigma*min(k,N-k)/N. Check values, not just decay: a decay-only
-    // check passes a merely DC-dominated transform.
+    // k' = 2*pi*sigma*min(k,N-k)/N. Check values rather than decay alone. A decay-only
+    // check passes a DC-dominated transform.
     const std::size_t N = 128;
     // Periodization wraps the tails, so the only approximation is the spectral
     // alias sum, O(exp(-2 pi^2 sigma^2)): e^-1243 at N=128 with sigma = N/16.
@@ -71,8 +71,8 @@ TEMPLATE_TEST_CASE("FFT analytical: Gaussian spectrum matches its closed form",
     admiral::forward(std::span(input), std::span(output));
 
     const T peak = sigma * std::sqrt(T(2) * std::numbers::pi_v<T>);
-    // Error is measured against the peak, not against each bin, so the budget covers
-    // the whole spectrum's accumulated rounding rather than one bin's.
+    // The test measures error against the peak rather than each bin, so the budget
+    // covers the whole spectrum's accumulated rounding rather than one bin's.
     constexpr T kPeakRelTol = T(50);
     for (std::size_t k = 0; k <= N / 2; ++k) {
         const T kk = T(2) * std::numbers::pi_v<T> * sigma * T(k) / T(N);
@@ -195,9 +195,9 @@ TEMPLATE_TEST_CASE("FFT symmetry for real signals", "[fft][analytical][propertie
     std::vector<std::complex<T>> output(N);
     admiral::forward(std::span(input), std::span(output));
 
-    // X[k] == conj(X[N-k]), compared as a whole spectrum: relative L2 needs no
+    // X[k] == conj(X[N-k]), compared as a whole spectrum. Relative L2 needs no
     // amplitude fudge for the O(N) bins. k=0 and k=N/2 map to themselves, so this
-    // also forces those two bins real, so there is no separate check for them.
+    // check also forces those two bins real and no separate check for them exists.
     std::vector<std::complex<T>> mirrored(N);
     for (std::size_t k = 0; k < N; ++k) mirrored[k] = std::conj(output[(N - k) % N]);
     require_close(output, mirrored, fft_tol<T>());

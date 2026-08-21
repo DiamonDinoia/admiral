@@ -4,8 +4,8 @@
 // Real-to-real transforms (DCT/DST) on top of the r2c engine.
 //
 // One length-N real FFT serves all four kinds. Makhoul's shuffle folds the
-// half-sample shift into a real transform of the SAME length — not a 2N-long even
-// extension — so a DCT costs one r2c plus two O(N) passes.
+// half-sample shift into a real transform of the SAME length, not a 2N-long even
+// extension, so a DCT costs one r2c plus two O(N) passes.
 //
 //   v[j] = x[2j], v[N-1-j] = x[2j+1]         (even indices up, odd indices down)
 //   V    = DFT_N(v)                          via real_adm_plan::r2c
@@ -16,7 +16,7 @@
 // N-k meet only at k = N/2 (N even), where V is real and both formulas agree.
 //
 // Kinds. DCT-III is DCT-II transposed, so the inverse pipeline IS the DCT-III
-// forward and vice versa -- there are exactly two cores here, not four. DST-II is
+// forward and vice versa: there are exactly two cores here, not four. DST-II is
 // DCT-II of a sign-alternated input read backwards:
 //   RODFT10(x)[k] = REDFT10(x')[N-1-k],  x'[n] = (-1)^n x[n]
 //
@@ -63,7 +63,7 @@ public:
     r2r_plan(std::size_t N, r2r_kind kind, std::size_t rows = 1,
              admiral::effort eff = admiral::effort::estimate, std::size_t nthreads = 1);
 
-    // fct scales the result; nullopt takes the kind's own normalization -- see run().
+    // fct scales the result; nullopt takes the kind's own normalization, see run().
     void forward(const T* in, T* out, std::optional<T> fct = std::nullopt) const {
         run(in, out, r2r_forward_is_dct2(kind_), fct);
     }
@@ -90,8 +90,8 @@ private:
     }
 
     void run(const T* in, T* out, bool use_dct2, std::optional<T> fct) const {
-        // Unscaled, dct2_rows IS the type-2 kind and dct3_rows IS its exact inverse --
-        // c2r already carries the 1/N that makes it so. Hence the type-2 kinds need no
+        // Unscaled, dct2_rows IS the type-2 kind and dct3_rows IS its exact inverse,
+        // because c2r already carries the 1/N that makes it so. Hence the type-2 kinds need no
         // scale in either direction. The type-3 kinds are the same two cores read the
         // other way round, and FFTW's type-3 is its type-2's inverse times 2N
         // (REDFT01(REDFT10(x)) = 2N*x), so that factor is the whole difference.
@@ -153,10 +153,10 @@ void r2r_plan<T>::dct2_rows(const T* in, T* out, T scale) const {
         T* y = out + r * N_;
         for (std::size_t k = 0; k < Nh_; ++k) {
             const std::complex<T> W = tw_[k] * V[k];
-            // k and N-k in one step, reversed for the sine kinds (index N-1-k). Both
-            // cases where the second index is not its own slot are skipped: at k == 0
+            // k and N-k in one step, reversed for the sine kinds (index N-1-k). The loop
+            // skips both cases where the second index is not its own slot: at k == 0
             // there is no index N (cosine) or -1 (sine), and at 2k == N (N even) hi is
-            // lo again -- V is real there and Re(W) == -Im(W), so it would store the
+            // lo again: V is real there and Re(W) == -Im(W), so it would store the
             // value already written. Every slot 0..N-1 is then written exactly once.
             const std::size_t lo = sine ? N_ - 1 - k : k;
             y[lo] = two * W.real();

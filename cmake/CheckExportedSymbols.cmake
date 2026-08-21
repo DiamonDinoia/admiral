@@ -1,9 +1,9 @@
-# ctest gate: the shipped shared library exports its public surface and nothing else.
+# ctest gate: the shipped shared library exports its public API and nothing else.
 # Run: cmake -DNM=<nm> -DLIB=<path> -DPATTERN=<regex> -DREQUIRED=<regex;...>
 #      -P CheckExportedSymbols.cmake
 # PATTERN catches a leak, REQUIRED a silently missing export. Hidden visibility does
-# not reach compiler-emitted RTTI, so the version script in src/*.map is what closes
-# the ABI — a linker ignoring it must fail this test.
+# not reach compiler-emitted RTTI, so the version script in src/*.map closes
+# the ABI. A linker that ignores it must fail this test.
 
 
 execute_process(
@@ -35,7 +35,7 @@ if(leaked)
         "${LIB} exports symbols outside ${PATTERN}:\n    ${leaked}")
 endif()
 
-# Pipe-separated, because a ';' would have been split by add_test.
+# Pipe-separated, because add_test would split a ';'.
 string(REPLACE "|" ";" required "${REQUIRED}")
 foreach(want IN LISTS required)
     if(NOT symbols MATCHES "${want}")

@@ -171,7 +171,7 @@ TEST_CASE("C API plan reuse", "[c_api][plan]") {
     adm_plan_destroy(plan);
 }
 
-// Sizes spanning pow2, primes, composites, a prime power, and Bluestein primes.
+// Sizes over pow2, primes, composites, a prime power, and Bluestein primes.
 static const std::vector<size_t> kSweepSizes = {
     4, 8, 16, 32, 64, 128, 256,        // power-of-2
     3, 5, 7, 11, 13, 17, 31,           // small primes
@@ -219,7 +219,7 @@ TEST_CASE("C API round-trip size sweep (float)", "[c_api][sweep]") {
 // ============================================================================
 
 TEST_CASE("C API N-D round-trip identity (double)", "[c_api][nd]") {
-    // 2D and 3D shapes spanning catalog / 7-smooth / fallback column routes.
+    // 2D and 3D shapes over the catalog / 7-smooth / fallback column routes.
     const std::vector<std::vector<size_t>> shapes = {
         {8, 8}, {16, 32}, {12, 15}, {17, 19}, {31, 9}, {4, 5, 6}, {8, 8, 8}};
     for (const auto& shape : shapes) {
@@ -259,8 +259,8 @@ TEST_CASE("C API N-D round-trip identity (float)", "[c_api][nd]") {
 }
 
 // A rank-1 axis is the identity along that axis, so an N-D transform of shape
-// {1, N} (or {N, 1}) must reproduce the 1D transform of size N — verified
-// purely through the C API.
+// {1, N} (or {N, 1}) must reproduce the 1D transform of size N, and this case
+// verifies that through the C API alone.
 TEST_CASE("C API N-D shape {1,N}/{N,1} matches 1D (double)", "[c_api][nd]") {
     for (size_t N : {8u, 16u, 13u, 31u}) {
         CAPTURE(N);
@@ -354,8 +354,8 @@ TEST_CASE("C API N-D reusable plan matches one-shot (float)", "[c_api][nd][plan]
 }
 
 TEST_CASE("C API threaded plans (double)", "[c_api][plan][threads]") {
-    // 1<<16 f64 crosses the threaded four_step_large line (1 MiB), so p4 really
-    // runs on the per-plan pool. nthreads = 0 is the documented auto value.
+    // 1<<16 f64 crosses the threaded four_step_large line (1 MiB), so p4 does run
+    // on the per-plan pool. nthreads = 0 is the documented auto value.
     const size_t N = 1 << 16;
     std::vector<adm_complex> in(N);
     for (size_t i = 0; i < N; ++i) {

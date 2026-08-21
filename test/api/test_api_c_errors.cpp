@@ -130,7 +130,7 @@ TEMPLATE_TEST_CASE("C API r2c/c2r round-trip and validation", "[coverage][c_api]
 }
 
 // adm_options is the C mirror of admiral::options: same three knobs, NULL for the
-// defaults. An eff outside the enum has to be rejected rather than cast blindly,
+// defaults. The C layer must reject an eff outside the enum rather than cast it,
 // because C cannot stop a caller from inventing one.
 TEST_CASE("adm_options reaches threads, effort and debug", "[c_api][options]") {
     constexpr size_t N = 240;

@@ -9,7 +9,7 @@
 //
 // g is a primitive root mod p; (*) is length-L=(p-1) cyclic convolution via
 // c = IDFT_L( DFT_L(a) .* DFT_L(b) ). DFT_L(b) is precomputed. Inner transforms
-// use codelet / iterative_dif / four_step — no chirp-z zero-padding.
+// use codelet / iterative_dif / four_step, with no chirp-z zero-padding.
 //
 // Runtime analogue of compile-time rader_apply<P> in codelet.hpp (uses kernel<P-1>);
 // here the inner transform is a runtime plan path, not an instantiated codelet.

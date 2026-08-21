@@ -1,7 +1,7 @@
 #pragma once
 
 // ============================================================================
-// Admiral C API — complex and real FFTs, 1-D and N-D.
+// Admiral C API: complex and real FFTs, 1-D and N-D.
 //
 //   #include <admiral/admiral.h>
 //
@@ -15,8 +15,8 @@
 // to the prefix: adm_forward / admf_forward. The two sets are otherwise the
 // same.
 //
-// Layout. Contiguous row-major, last axis fastest — the same layout as FFTW.
-// Strided and non-contiguous data is not supported.
+// Layout. Contiguous row-major, last axis fastest, the same layout as FFTW.
+// The library does not support strided or non-contiguous data.
 //
 // Sign and scale. Forward uses exp(-2*pi*i*k*n/N) and is unscaled. Inverse uses
 // exp(+2*pi*i*k*n/N) and divides by the element count, so forward then inverse
@@ -28,7 +28,7 @@
 // nodiscard, so ignoring it is a warning. adm_error_string() turns a status
 // into text.
 //
-// Options. Everything that builds a plan -- the one-shots included -- takes a
+// Options. Everything that builds a plan, the one-shots included, takes a
 // trailing `const adm_options*`. NULL means the defaults, so a caller who wants
 // none of them passes nothing.
 //
@@ -41,7 +41,7 @@
 #include <stddef.h>
 
 // The build hides every symbol by default, so the public C entry points opt back
-// in explicitly.
+// in.
 #if defined(_WIN32) || defined(__CYGWIN__)
 #  define ADM_C_API __declspec(dllexport)
 #elif defined(__GNUC__) || defined(__clang__)
@@ -87,8 +87,8 @@ typedef enum {
     ADM_EFFORT_MEASURE = 2
 } adm_effort;
 
-// Everything a plan is built with. Pass NULL for the defaults, or name every field
-// -- C leaves the rest indeterminate. A zeroed struct IS the default: nthreads 0
+// Everything a plan is built with. Pass NULL for the defaults, or name every field,
+// since C leaves the rest indeterminate. A zeroed struct IS the default: nthreads 0
 // is auto, eff 0 is ADM_EFFORT_ESTIMATE, debug 0 is silent.
 //   const adm_options o = {.nthreads = 8, .eff = ADM_EFFORT_AUTOMATIC, .debug = 0};
 typedef struct {
@@ -107,8 +107,8 @@ ADM_NODISCARD ADM_C_API const char* adm_error_string(adm_status status);
 // once; for repeated transforms build a plan instead, which keeps the twiddle
 // tables and the worker threads alive between calls. A discarded plan cannot
 // repay a plan-time race, so one-shots always route with ADM_EFFORT_ESTIMATE
-// and opts->eff is ignored here. Zero sizes are rejected; the C++ one-shots
-// treat an empty span as a no-op, this surface does not.
+// and opts->eff is ignored here. This API rejects a zero size, while the C++
+// one-shots treat an empty span as a no-op.
 // ============================================================================
 
 // 1-D, in place. `size` is the number of complex elements.
@@ -136,8 +136,8 @@ ADM_NODISCARD ADM_C_API adm_status adm_inverse_nd(adm_complex* data, const size_
 // Real transforms (r2c / c2r), N-D, out of place
 //
 // `shape` gives the extents of the REAL tensor. A real signal has a conjugate-
-// symmetric spectrum, so only half of it is stored: the complex tensor has the
-// same extents except the innermost, which becomes shape[ndim-1]/2 + 1. Its
+// symmetric spectrum, so a buffer holds only half of it. The complex tensor has
+// the same extents except the innermost, which becomes shape[ndim-1]/2 + 1. Its
 // element count is therefore
 //
 //     shape[0] * ... * shape[ndim-2] * (shape[ndim-1]/2 + 1)

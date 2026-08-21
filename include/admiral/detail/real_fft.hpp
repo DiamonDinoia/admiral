@@ -3,7 +3,7 @@
 // ============================================================================
 // Real-to-complex (r2c) and inverse (c2r), built on the c2c engine.
 //
-// 1D even-N: half-length trick — pack N reals into N/2 complex z[j]=x[2j]+i*x[2j+1],
+// 1D even-N: half-length trick. Pack N reals into N/2 complex z[j]=x[2j]+i*x[2j+1],
 // run length-(N/2) plan_impl, then one recombination pass (length-N twiddles) yields
 // the N/2+1 half-spectrum. c2r: inverse recombination -> IDFT_{N/2} -> unpack.
 // No new kernels or twiddle machinery; just plan_impl + portable_trig.
@@ -46,7 +46,7 @@ namespace detail {
 template<typename T>
 class real_adm_plan {
 public:
-    // Defined out-of-line below so `extern template` actually suppresses
+    // Defined out-of-line below so `extern template` suppresses
     // instantiation in consumer TUs: [temp.explicit]/12 exempts inline functions,
     // and a member defined in the class body is implicitly inline.
     // eff flows to the inner 1-D engine (fwd_/inv_).
@@ -165,7 +165,7 @@ private:
 
         // Recombine to half-spectrum X[k], k=0..M. Butterfly per-k; store
         // transpose-batched over H consecutive k (mirror of pack). Full block: k<M,
-        // ka=k, kb=M-k — no modulo. k=M Nyquist + M%H remainder go scalar.
+        // ka=k, kb=M-k, no modulo. k=M Nyquist + M%H remainder go scalar.
         const V hv(T(0.5));
         std::size_t k = 0;
         for (; k + H <= M; k += H) {
@@ -402,7 +402,7 @@ class nd_real_plan {
 public:
     // Out-of-line (see real_adm_plan above). The WHOLE tree has to sit behind one
     // instantiation: move only part of it and the serial path inlines and contracts
-    // where the threaded path calls, breaking the 1-vs-N-thread bit identity that
+    // where the threaded path calls, which breaks the 1-vs-N-thread bit identity
     // test_fft_threads checks for r2c.
     // nthreads > 1 builds the plan-owned pool (tile + column loops thread on it
     // at execute; no per-call threading knob exists).
@@ -445,9 +445,9 @@ private:
         std::unique_ptr<thread_pool> pool;   // null means serial
     } m;
 
-    // exec_options::debug >= dbg_route. One line per transform, not per line -- same
-    // reason as nd_runtime_plan::trace. `axes` is the direction's outer-axis set, so
-    // the shape a route is reported for is the one that actually ran.
+    // exec_options::debug >= dbg_route. One line per transform, not per line, for the
+    // same reason as nd_runtime_plan::trace. `axes` is the direction's outer-axis set, so
+    // the shape a route is reported for is the one that ran.
     ADM_NOINLINE ADM_COLD void trace(unsigned level, const char* how,
                                      const std::vector<nd_axis_state<T>>& axes) const {
         dbg_print("r2c rank=", m.shape.size(), " ", how, " real=", real_size(), " cplx=",
@@ -520,8 +520,8 @@ void nd_real_plan<T>::inverse(std::complex<T>* spec, T* out, const exec_options<
     }
 }
 
-// Instantiated once in src/inst_real_{f,d}.cpp. Every consumer TU -- c_api,
-// fftw_api, 4 tests, 2 benchmarks -- otherwise rebuilds this whole tree.
+// Instantiated once in src/inst_real_{f,d}.cpp. Every consumer TU (c_api,
+// fftw_api, 4 tests, 2 benchmarks) otherwise rebuilds this whole tree.
 extern template class real_adm_plan<float>;
 extern template class real_adm_plan<double>;
 extern template class nd_real_plan<float>;

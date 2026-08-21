@@ -68,7 +68,7 @@ TEMPLATE_TEST_CASE("forced route names itself and round-trips", "[coverage][rout
         CAPTURE(name, n);
         if (n == 0) {
             // Unavailable everywhere in the range: route_available must then
-            // agree with the ctor, which is the property that actually matters.
+            // agree with the ctor, which is the property that matters.
             REQUIRE_THROWS_AS(P(60u, true, route), std::invalid_argument);
             continue;
         }
@@ -81,8 +81,8 @@ TEMPLATE_TEST_CASE("forced route names itself and round-trips", "[coverage][rout
         REQUIRE(fwd.is_forward());
         REQUIRE_FALSE(inv.is_forward());
 
-        // A split is reported only by the plain four-step state, and when it is
-        // reported it must factor n exactly.
+        // Only the plain four-step state reports a split, and a reported split must
+        // factor n exactly.
         const auto split = fwd.four_step_split_used();
         REQUIRE(split.valid() == (route == R::four_step));
         if (split.valid()) REQUIRE(split.n1 * split.n2 == n);
@@ -98,18 +98,18 @@ TEMPLATE_TEST_CASE("forced route names itself and round-trips", "[coverage][rout
     // fewer than three routes round-tripped has lost a route, not an ISA.
     REQUIRE(exercised >= 3);
 
-    // Documented contract: a route that cannot serve (T, n) is rejected, not
-    // silently swapped for a working one. 17 is prime, so it has no coprime
+    // Documented contract: the ctor rejects a route that cannot serve (T, n) rather
+    // than silently swapping in one that works. 17 is prime, so it has no coprime
     // Good-Thomas factorization at any ISA.
     REQUIRE_FALSE(P::route_available(R::good_thomas, 17u));
     REQUIRE_THROWS_AS(P(17u, true, R::good_thomas), std::invalid_argument);
     REQUIRE_THROWS_AS(P(0u, true, R::bluestein), std::invalid_argument);
 }
 
-// Every size a forced four_step_large admits must round-trip, not just the one
-// pick() lands on. The route's own gate is a byte threshold the force path
+// Every size a forced four_step_large admits must round-trip, the ones pick()
+// never lands on included. The route's own gate is a byte threshold the force path
 // ignores, and its first column pass takes a different shape when the leaf chain
-// is a single radix -- which for one ISA is a size pick() never selects.
+// is a single radix, which for one ISA is a size pick() never selects.
 TEMPLATE_TEST_CASE("forced four_step_large round-trips at every admitted size",
                    "[coverage][route][four_step_large]", float, double) {
     using P = admiral::detail::plan_impl<TestType>;
@@ -273,10 +273,10 @@ TEMPLATE_TEST_CASE("plan rejects bad sizes and handles N==1", "[coverage][route]
     using P = admiral::detail::plan_impl<TestType>;
 
     REQUIRE_THROWS_AS(P(0u, true), std::invalid_argument);
-    // Every effort, not just the default: the route is resolved in the delegating ctor's
+    // Every effort, the default included. The delegating ctor resolves the route in its
     // argument, before the guard below can run, so each effort reaches the chain DP on its
-    // own path. Size 0 has to throw rather than hang -- is_pentanomial(0) halves 0 forever
-    // -- and a throws-check catches that only because a hang fails the test's timeout.
+    // own path. Size 0 has to throw rather than hang, since is_pentanomial(0) halves 0
+    // forever, and a throws-check catches that only because a hang fails the test's timeout.
     REQUIRE_THROWS_AS(P(0u, true, 1u, nullptr, admiral::effort::estimate), std::invalid_argument);
     REQUIRE_THROWS_AS(P(0u, true, 1u, nullptr, admiral::effort::automatic), std::invalid_argument);
     REQUIRE_THROWS_AS(P(0u, true, 1u, nullptr, admiral::effort::measure), std::invalid_argument);
@@ -288,8 +288,8 @@ TEMPLATE_TEST_CASE("plan rejects bad sizes and handles N==1", "[coverage][route]
     REQUIRE_THROWS_AS(P(13u, true, 1u, &chain), std::invalid_argument);
 
     // N==1: the DFT is the identity times fct, and both execute overloads
-    // shortcut before any kernel. execute_many additionally has to apply fct
-    // down a strided run.
+    // shortcut before any kernel. execute_many also applies fct down a
+    // strided run.
     const P fwd(1u, true), inv(1u, false);
     std::vector<std::complex<TestType>> one{{TestType(3), TestType(-1)}};
     std::vector<std::complex<TestType>> two(2);
@@ -348,7 +348,7 @@ TEST_CASE("estimated_plan_cost takes each modeled route", "[coverage][route]") {
     REQUIRE(estimated_plan_cost(p_rader)
             == 2.0 * estimated_plan_cost(p_rader - 1) + 17.0 * double(p_rader));
 
-    // (c) Bluestein fallback: a size no earlier branch claims -- not pow2, not
+    // (c) Bluestein fallback: a size no earlier branch claims, so not pow2, not
     // codelet-supported, no valid split, not Rader-eligible. The first such size is
     // composite (134 = 2*67), not prime: Rader declines it for failing primality
     // while the split table has no entry for it.
@@ -365,7 +365,7 @@ TEST_CASE("estimated_plan_cost takes each modeled route", "[coverage][route]") {
 
 // Rader's codelet inner kind. Unlike the other two it is gated on the CATALOG, not on
 // the size: rader_supported rejects exactly the primes the catalog covers, and
-// pick_inner picks `codelet` only when p-1 is itself a catalog member -- so a witness
+// pick_inner picks `codelet` only when p-1 is itself a catalog member, so a witness
 // needs a catalog size L with L+1 prime beyond the contiguous range. The default
 // catalog's only extra is 120 (121 = 11^2), so there is no witness by default; add
 // one with e.g. -DADM_CODELET_EXTRA_SIZES="120;66" (66 -> p=67), as validate.sh's
@@ -414,7 +414,7 @@ TEMPLATE_TEST_CASE("forced Bluestein with a codelet-catalog pad", "[coverage][ro
 
     // The padded inner transform runs a catalog codelet iff
     // is_codelet_catalog(bit_ceil(2N-1)); N=17 gives pad 64, always compiled in a
-    // default build but off the sanitizer cap ([2..16]) -- skip with the reason.
+    // default build but off the sanitizer cap ([2..16]), so skip with the reason.
     constexpr std::size_t n = 17;
     if (!is_codelet_catalog(std::bit_ceil(2 * n - 1)))
         SKIP("pad 64 is outside this build's codelet catalog (sanitizer cap)");

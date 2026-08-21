@@ -1,5 +1,5 @@
-# 3.25 for add_subdirectory(SYSTEM), which CPMAddPackage(SYSTEM YES) forwards: it
-# is what keeps dependency headers out of our -Werror profile. Deliberately below
+# 3.25 for add_subdirectory(SYSTEM), which CPMAddPackage(SYSTEM YES) forwards. The
+# SYSTEM flag keeps dependency headers out of the -Werror profile. Deliberately below
 # 3.28, where CMP0155 turns on a per-TU C++20 module scan this project has no use
 # for (verified: zero cppdyndeps/.ddi edges in build.ninja).
 cmake_minimum_required(VERSION 3.25)
@@ -47,14 +47,14 @@ set(ADM_TARGET_ARCH "native" CACHE STRING
 set(ADM_SANITIZER "none" CACHE STRING "Sanitizers: none, address, undefined, address+undefined, thread")
 set_property(CACHE ADM_SANITIZER PROPERTY STRINGS none address undefined address+undefined thread)
 
-# Off in every preset, including release: LTO measured a mean speedup of 1.000 over
+# Off in every preset, release included. LTO measures a mean speedup of 1.000 over
 # 24 cells, it re-optimizes the whole library on each link, and it makes GCC put
 # GIMPLE rather than machine code in the installed archives. Experiments only.
 option(ADM_ENABLE_LTO "Enable link-time optimization" OFF)
 
-# Measures as a build-time win (see the PCH block in src/CMakeLists.txt) but a stale
-# .gch after a flag change can only be cleared by wiping the build directory, so
-# this is opt-in rather than something that can surprise you.
+# Measures as a build-time win (see the PCH block in src/CMakeLists.txt). After a flag
+# change, only wiping the build directory clears the stale .gch, so this is opt-in
+# rather than a default that can surprise a consumer.
 option(ADM_ENABLE_PCH "Use precompiled headers for the library targets" OFF)
 
 # No BUILD_SHARED_LIBS: adm_add_surface always emits both a SHARED library and a
@@ -80,7 +80,7 @@ include(Sanitizers)         # project_sanitizers, only when ADM_SANITIZER is not
 
 add_subdirectory(src)
 
-# Benchmarks before tests: ninja starts edges in declaration order, so the
+# Benchmarks before tests. ninja starts edges in declaration order, so the
 # benchmark TUs (the slowest in the tree) are enqueued first and hide behind
 # everything else.
 if(ADM_BUILD_BENCHMARKS)

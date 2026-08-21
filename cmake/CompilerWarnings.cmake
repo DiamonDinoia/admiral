@@ -45,7 +45,7 @@ function(set_project_warnings target_name)
         -Wformat=2
         -Wimplicit-fallthrough
         -Wsuggest-override
-        # Additional flags — zero-warning-clean on both compilers:
+        # Additional flags, zero-warning-clean on both compilers:
         -Wcast-qual          # drop-const casts
         # -Wfloat-equal is OFF: butterfly.hpp uses if constexpr(w.c == 0.0) for
         # compile-time special-case detection; those are exact constant comparisons,
@@ -57,7 +57,7 @@ function(set_project_warnings target_name)
 
     set(CLANG_WARNINGS
         ${COMMON_WARNINGS}
-        # Clang-only (not supported by GCC as standalone flags):
+        # Clang-only (GCC does not accept these as standalone flags):
         -Wzero-as-null-pointer-constant  # literal 0 used as null pointer
         -Wextra-semi                     # redundant semicolons after definitions
         # -Wpedantic above makes clang 22 reject Catch2's __COUNTER__ as a C2y extension,

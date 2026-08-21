@@ -43,7 +43,7 @@ constexpr double default_accuracy_tol() {
 // time up to a cap. Epochs map to `reps`; min_iters>0 forces exact
 // minEpochIterations and disables adaptation.
 // us = best-epoch wall-clock (display only). cyc = best-epoch per-process CPU
-// cycles (0 if counters unavailable) — the trustworthy metric: the counter advances
+// cycles (0 if counters unavailable), the trustworthy metric: the counter advances
 // only while THIS process runs, invariant to frequency drift and core stealing.
 // err = MdAPE of the metric the ratio uses; wall conflates work with clock.
 struct NbStat { double us; double cyc; double err; };
@@ -97,7 +97,7 @@ inline double median_of(std::vector<double> v) {
     return v[static_cast<std::size_t>(mid)];
 }
 
-// Median absolute deviation about the median — robust spread, in the ratio's own units.
+// Median absolute deviation about the median: a robust spread, in the ratio's own units.
 inline double mad_of(const std::vector<double>& v) {
     const double m = median_of(v);
     std::vector<double> d;
@@ -125,7 +125,7 @@ struct ab_engine { std::function<void()> fwd, rt; };
 // Core: two engine makers already wired to their I/O. Prints one line; returns the
 // sqrt-cancelled fwd A/B ratio (<1 => A faster); spread_out gets the noise floor.
 // force_wall: on threaded engines cpucycles counts the calling thread only, so wall
-// is the correct metric — labelled differently from the counters-missing case.
+// is the correct metric. Labelled differently from the counters-missing case.
 template<typename MakeA, typename MakeB>
 double engine_ab_core(const char* tag, const std::string& shape_str, const char* prec,
                       const char* nameA, const char* nameB,
@@ -184,7 +184,7 @@ double engine_ab_core(const char* tag, const std::string& shape_str, const char*
               << " rt=" << std::setw(6) << mrt
               << " | rounds=" << rounds << "x2 spread=" << std::setprecision(1)
               << (spread * 100.0) << "%  <== " << verdict
-              << (counters_lost ? "  [perf counters UNAVAILABLE — wall, NOT trustworthy]" : "")
+              << (counters_lost ? "  [perf counters UNAVAILABLE: wall, NOT trustworthy]" : "")
               << std::defaultfloat << "\n";
     return mfwd;
 }
@@ -214,7 +214,7 @@ template<typename T>
 bool compare_nd_r2c_robust(const std::vector<std::size_t>& shape, int rounds, int reps, long inner,
                            int nthreads = 1);
 
-// Defined in bench_nd.cpp — declared extern so including this header costs a
+// Defined in bench_nd.cpp, declared extern so including this header costs a
 // declaration, not the nd_plan/col_dif_dispatch instantiation chain.
 extern template bool compare_nd<float>(const std::vector<std::size_t>&, int, long, int);
 extern template bool compare_nd<double>(const std::vector<std::size_t>&, int, long, int);
@@ -230,7 +230,7 @@ extern template bool compare_nd_r2c_robust<double>(const std::vector<std::size_t
 
 #ifdef ADM_BENCH_FFTW
 // FFTW_MEASURE by default: ESTIMATE is an untuned heuristic plan, while a real
-// FFTW user plans with MEASURE/PATIENT and caches wisdom — the honest opponent.
+// FFTW user plans with MEASURE/PATIENT and caches wisdom, the honest opponent.
 // ADM_BENCH_FFTW_ESTIMATE=1 selects ESTIMATE for shapes whose MEASURE planning is
 // too slow; label such runs as ESTIMATE.
 inline unsigned fftw_plan_flag() {
@@ -298,7 +298,7 @@ inline void fftw_plan_threads(std::size_t nthreads) {
 }
 #endif
 
-// Reusable FFTW c2c plans for a shape and precision T, built once in the ctor —
+// Reusable FFTW c2c plans for a shape and precision T, built once in the ctor,
 // the fair analogue of ducc0's internal plan cache. fftw_complex/fftwf_complex are
 // layout-compatible with std::complex<T>, so buffers reinterpret_cast in place.
 // Inverse is scaled by 1/N to match the library's (and ducc0's) convention.
@@ -347,7 +347,7 @@ public:
         return out_;
     }
     // Copy-free forward: FFTW's new-array execute on the caller's buffer. Use it
-    // whenever the other arm is copy-free — forward() pays an N-complex copy inside
+    // whenever the other arm is copy-free: forward() pays an N-complex copy inside
     // the timed region. Legal only at matching alignment; ask alignment_ok() first
     // (assert() is compiled out in the Release build that benchmarks).
     const std::vector<std::complex<T>>& forward_into(const std::vector<std::complex<T>>& x) {

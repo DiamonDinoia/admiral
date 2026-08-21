@@ -1,10 +1,10 @@
-# Dependencies.cmake — external dependency management (CPM).
+# Dependencies.cmake: external dependency management (CPM).
 
 include_guard(GLOBAL)
 
 # Third-party code is not held to the project's -Werror profile: silence its own
-# build. (Its headers are handled by CPMAddPackage(SYSTEM YES), which forwards
-# add_subdirectory(SYSTEM) so consumers see them as system includes.)
+# build. (CPMAddPackage(SYSTEM YES) handles its headers and forwards
+# add_subdirectory(SYSTEM), so consumers see them as system includes.)
 function(adm_silence_target)
     foreach(target IN LISTS ARGN)
         if(TARGET ${target})
@@ -23,13 +23,13 @@ endfunction()
 # N-thread plan against ducc0(N) / FFTW(N).
 option(ADM_BENCH_THREADS "Link threading into the benchmark references (ducc0/FFTW)" OFF)
 
-# ducc0 - reference FFT implementation, benchmarks only (the tests are
-# self-contained: analytical references + round-trip identities).
+# ducc0 is the reference FFT implementation, used by the benchmarks only. The
+# tests are self-contained, on analytical references plus round-trip identities.
 if(ADM_BUILD_BENCHMARKS)
 
 # Pinned to a commit, not the branch: every speedup in README.md is a ratio against
 # this exact reference. CPM's cache directory name is a hash of these arguments, not
-# the git sha — read .git/HEAD in the source dir for what was actually built.
+# the git sha. Read .git/HEAD in the source dir for the sha the build used.
 # Bumping the pin is a benchmark-methodology change: re-run the sweep and update the
 # README table in the same commit.
 CPMAddPackage(
@@ -95,7 +95,7 @@ endif()
 endif()  # ADM_BUILD_BENCHMARKS (ducc0)
 
 # ============================================================================
-# Catch2 - Testing framework (only if building tests)
+# Catch2, the testing framework. Configured only when the tests are built.
 # ============================================================================
 
 if(ADM_BUILD_TESTS)
@@ -118,26 +118,33 @@ if(ADM_BUILD_TESTS)
 endif()
 
 # ============================================================================
-# xsimd - SIMD vectorization (header-only)
+# xsimd carries every vector type and operation. Header-only.
 # ============================================================================
 
 # Features admiral relies on: compile-time masked load, make_sized_batch_t/is_void
 # for exactly-r-wide batches, and constant/prefix masks that lower to plain moves on
-# both AVX2 and AVX-512 — the masked tails (dif_passes.hpp, codelet.hpp,
+# both AVX2 and AVX-512. The masked tails (dif_passes.hpp, codelet.hpp,
 # good_thomas) hit exactly those kernels. After any bump: asm-audit the AoS/SoA
 # permute paths per ISA (zip vpermt2, shuffle deinterleave, transpose networks).
 # Reuse a parent-provided xsimd rather than fetch a second, conflicting copy.
 #
-# Upstream master, not the newest release tag (14.3.0): 14.3.0 lacks "make scalar
-# fms fused", so its scalar `fms` rounds differently from the vector batch overload
-# and two ISAs of different width disagree. Move to a tag once one carries it.
+# Upstream master, not the newest release tag: "make scalar fms fused" landed
+# 2026-08-01, after 14.3.0 (2026-07-15), so NO release carries it. Lacking the fix, a
+# scalar `fms` rounds differently from the vector batch overload, and two ISAs of
+# different width disagree. Kernels avoid `fms` outright (piece_fnma / piece_fma,
+# simd_swizzle.hpp), because the branch below accepts a parent-provided xsimd that may
+# predate the fix. Move to a tag once one carries the fix.
+#
+# Tracking master costs nothing here: over the 481 changed lines from 67e96b04 to this
+# tag, `libadmiral.so` is byte-identical at x86-64-v3 and x86-64-v4 for both gcc-14 and
+# clang-19, and the suite passes on both. Only scalar `fms` moved, which no kernel calls.
 if(NOT TARGET xsimd)
     CPMAddPackage(
         NAME xsimd
         GITHUB_REPOSITORY xtensor-stack/xsimd
-        GIT_TAG 67e96b04f9c0ed530326fb189907cf68ca4030b7  # master: scalar fms fused
+        GIT_TAG e3cdb6aee0fe0676d2eea50016d4b340acb56709  # master 2026-08-13
         SYSTEM YES
-        EXCLUDE_FROM_ALL YES   # its install() rules must not land in our prefix
+        EXCLUDE_FROM_ALL YES   # its install() rules must not land in the prefix
         OPTIONS
             "BUILD_TESTS OFF"
             "BUILD_BENCHMARK OFF"
@@ -145,14 +152,14 @@ if(NOT TARGET xsimd)
     )
 
     if(xsimd_ADDED)
-        message(STATUS "xsimd: xtensor-stack/xsimd 67e96b04 (master + fused scalar fms)")
+        message(STATUS "xsimd: xtensor-stack/xsimd e3cdb6ae (master + fused scalar fms)")
     endif()
 else()
     message(STATUS "xsimd: reusing parent-provided target")
 endif()
 
 # ============================================================================
-# poet - compile-time unroll + runtime->compile-time dispatch (header-only)
+# poet carries compile-time unrolling and runtime->compile-time dispatch. Header-only.
 # ============================================================================
 
 # Reuse a parent-provided poet (target poet::poet) when admiral is a subproject.
@@ -162,7 +169,7 @@ if(NOT TARGET poet::poet AND NOT TARGET poet)
         GITHUB_REPOSITORY DiamonDinoia/poet
         VERSION 0.0.1
         SYSTEM YES
-        EXCLUDE_FROM_ALL YES   # its install() rules must not land in our prefix
+        EXCLUDE_FROM_ALL YES   # its install() rules must not land in the prefix
         OPTIONS
             "POET_STRICT_WARNINGS OFF"
             "POET_BUILD_TESTS OFF"
@@ -191,7 +198,7 @@ foreach(_hdr_only xsimd poet)
 endforeach()
 
 # ============================================================================
-# nanobench - robust microbenchmarking (median, MdAPE noise) for benchmarks
+# nanobench times the benchmarks and reports a median plus MdAPE noise.
 # ============================================================================
 
 if(ADM_BUILD_BENCHMARKS)
@@ -207,7 +214,7 @@ endif()
 endif()
 
 # ============================================================================
-# FFTW - optional in-bench reference (system lib via pkg-config)
+# FFTW is an optional in-bench reference, found as a system library by pkg-config.
 # ============================================================================
 
 # Opt-in: -DADM_BENCH_FFTW=ON adds an FFTW path to admiral_benchmark alongside

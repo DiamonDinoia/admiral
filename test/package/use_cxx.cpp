@@ -1,4 +1,4 @@
-// Installed C++ surface: only <admiral/admiral.hpp>, no detail headers, no xsimd,
+// Installed C++ interface: only <admiral/admiral.hpp>, no detail headers, no xsimd,
 // no poet. A single unit spike transforms to a pure tone, so a wrong sign, a wrong
 // scale factor, or a plan that silently did nothing all fail here.
 #include <admiral/admiral.hpp>
@@ -49,7 +49,7 @@ int main() {
     rc |= check<double>("f64", 1024, 3);
     rc |= check<float>("f32", 1024, 3);
     rc |= check<double>("f64", 1050, 7);  // not a power of two
-    // Free-function surface, and the two-thread path.
+    // Free functions, and the two-thread path.
     std::vector<std::complex<double>> a(512, {1, 0}), b(512);
     admiral::forward<double>(a, b, {.nthreads = 2});
     const double dc_tol = 512.0 * 32.0 * std::numeric_limits<double>::epsilon();

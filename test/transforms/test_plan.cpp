@@ -19,15 +19,12 @@ TEST_CASE("Plan creation and basic properties", "[plan]") {
     SECTION("Reports its size") { REQUIRE(admiral::plan<double>(128).size() == 128); }
 
     SECTION("Various sizes") {
-        // Power of 2
         auto plan1 = admiral::plan<float>(64);
         REQUIRE(plan1.size() == 64);
 
-        // Prime
         auto plan2 = admiral::plan<float>(13);
         REQUIRE(plan2.size() == 13);
 
-        // Composite
         auto plan3 = admiral::plan<float>(24);
         REQUIRE(plan3.size() == 24);
     }
@@ -44,14 +41,12 @@ TEST_CASE("Plan move semantics", "[plan]") {
     auto plan1 = admiral::plan<double>(64);
     REQUIRE(plan1.size() == 64);
 
-    // Move construct
     auto plan2 = std::move(plan1);
     REQUIRE(plan2.size() == 64);
     auto got = in;
     plan2.forward(std::span(got));
     REQUIRE(got == want);
 
-    // Move assign
     auto plan3 = admiral::plan<double>(32);
     REQUIRE(plan3.size() == 32);
     plan3 = std::move(plan2);
@@ -64,18 +59,15 @@ TEST_CASE("Plan move semantics", "[plan]") {
 TEST_CASE("Plan execution produces correct results", "[plan]") {
     const std::size_t N = 16;
 
-    // Create test data
     std::vector<std::complex<double>> input(N);
     for (std::size_t i = 0; i < N; ++i) {
         input[i] = std::complex<double>(std::sin(2.0 * std::numbers::pi * double(i) / double(N)),
                                         std::cos(2.0 * std::numbers::pi * double(i) / double(N)));
     }
 
-    // Create plans
     auto fwd_plan = admiral::plan<double>(N);
     auto inv_plan = admiral::plan<double>(N);
 
-    // Execute plan-based transform
     std::vector<std::complex<double>> plan_data = input;
     fwd_plan.forward(std::span(plan_data));
 
@@ -83,7 +75,6 @@ TEST_CASE("Plan execution produces correct results", "[plan]") {
     std::copy(plan_data.begin(), plan_data.end(), plan_recovered.begin());
     inv_plan.inverse(std::span(plan_recovered));
 
-    // Execute non-plan transform for comparison
     std::vector<std::complex<double>> direct_data(N);
     std::vector<std::complex<double>> input_copy = input;
     admiral::forward(std::span<const std::complex<double>>(input_copy), std::span(direct_data));
@@ -91,29 +82,24 @@ TEST_CASE("Plan execution produces correct results", "[plan]") {
     std::vector<std::complex<double>> direct_recovered(N);
     admiral::inverse(std::span<const std::complex<double>>(direct_data), std::span(direct_recovered));
 
-    // Plan and direct should give same results
     require_close(plan_data, direct_data, fft_tol<double>());
     require_close(plan_recovered, direct_recovered, fft_tol<double>());
 
-    // Should recover original
     require_close(input, plan_recovered, fft_tol<double>(2.0));  // round trip compounds
 }
 
 TEMPLATE_TEST_CASE("Plan round-trip (power-of-2 sizes)", "[plan][roundtrip]", float, double) {
     using T = TestType;
     auto test_roundtrip = [&](std::size_t N) {
-        // Create test input
         std::vector<std::complex<T>> input(N);
         for (std::size_t i = 0; i < N; ++i) {
             input[i] = std::complex<T>(std::sin(T(2) * std::numbers::pi_v<T> * T(i) / T(N)),
                                        std::cos(T(2) * std::numbers::pi_v<T> * T(i) / T(N)));
         }
 
-        // Create plans
         auto fwd_plan = admiral::plan<T>(N);
         auto inv_plan = admiral::plan<T>(N);
 
-        // Forward then inverse should recover input
         std::vector<std::complex<T>> data = input;
         fwd_plan.forward(std::span(data));
         inv_plan.inverse(std::span(data));
@@ -133,17 +119,14 @@ TEMPLATE_TEST_CASE("Plan round-trip (power-of-2 sizes)", "[plan][roundtrip]", fl
 TEMPLATE_TEST_CASE("Plan round-trip (prime sizes)", "[plan][roundtrip][prime]", float, double) {
     using T = TestType;
     auto test_roundtrip = [&](std::size_t N) {
-        // Create test input
         std::vector<std::complex<T>> input(N);
         for (std::size_t i = 0; i < N; ++i) {
             input[i] = std::complex<T>(T(i + 1), T(N - i));
         }
 
-        // Create plans
         auto fwd_plan = admiral::plan<T>(N);
         auto inv_plan = admiral::plan<T>(N);
 
-        // Forward then inverse should recover input
         std::vector<std::complex<T>> data = input;
         fwd_plan.forward(std::span(data));
         inv_plan.inverse(std::span(data));
@@ -163,17 +146,14 @@ TEMPLATE_TEST_CASE("Plan round-trip (prime sizes)", "[plan][roundtrip][prime]", 
 TEMPLATE_TEST_CASE("Plan round-trip (composite sizes)", "[plan][roundtrip][composite]", float, double) {
     using T = TestType;
     auto test_roundtrip = [&](std::size_t N) {
-        // Create test input
         std::vector<std::complex<T>> input(N);
         for (std::size_t i = 0; i < N; ++i) {
             input[i] = std::complex<T>(std::cos(T(i)), std::sin(T(i) * T(0.5)));
         }
 
-        // Create plans
         auto fwd_plan = admiral::plan<T>(N);
         auto inv_plan = admiral::plan<T>(N);
 
-        // Forward then inverse should recover input
         std::vector<std::complex<T>> data = input;
         fwd_plan.forward(std::span(data));
         inv_plan.inverse(std::span(data));
@@ -193,10 +173,8 @@ TEMPLATE_TEST_CASE("Plan round-trip (composite sizes)", "[plan][roundtrip][compo
 TEST_CASE("Plan reuse with different data", "[plan][reuse]") {
     const std::size_t N = 32;
 
-    // Create plan once for both directions
     auto plan = admiral::plan<double>(N);
 
-    // Use plan multiple times with different data
     for (int batch = 0; batch < 10; ++batch) {
         std::vector<std::complex<double>> input(N);
         for (std::size_t i = 0; i < N; ++i) {
@@ -218,7 +196,7 @@ TEST_CASE("Plan error handling", "[plan][error]") {
     auto fwd_plan = admiral::plan<double>(32);
 
     SECTION("Wrong size data") {
-        std::vector<std::complex<double>> data(16);  // Wrong size
+        std::vector<std::complex<double>> data(16);
         REQUIRE_THROWS_AS(fwd_plan.forward(std::span(data)), std::invalid_argument);
     }
 
@@ -276,26 +254,22 @@ TEST_CASE("plan_r2c span overloads validate both extents", "[plan][error]") {
 
 namespace {
 
-// Catalog sizes: compare forward output against O(N^2) reference DFT, then
-// verify round-trip. Accurate because N<=64 keeps reference error negligible.
+// N<=64 keeps the O(N^2) reference's own error negligible, so it is a usable oracle.
 template<typename T>
 void check_catalog_size(std::size_t N) {
     const auto input = make_input<T>(N);
 
-    // --- Forward via admiral::forward free function ---
     std::vector<std::complex<T>> out(N);
     admiral::forward(std::span<const std::complex<T>>(input), std::span(out));
     require_close(out, reference_dft<T>(input, true), fft_tol<T>());
 
-    // --- Inverse: apply to forward output, expect the input back ---
     std::vector<std::complex<T>> rt(N);
     admiral::inverse(std::span<const std::complex<T>>(out), std::span(rt));
     require_close(rt, input, fft_tol<T>(2.0));  // two transforms compound
 }
 
-// Non-catalog sizes: the O(N^2) direct DFT is a poor oracle at large N due to
-// accumulation error. Use a round-trip (forward then inverse) check instead —
-// a valid end-to-end correctness test independent of any external reference.
+// Past the catalog the O(N^2) reference accumulates too much error to be an oracle,
+// so these sizes check a round-trip instead.
 template<typename T>
 void check_noncatalog_size_roundtrip(std::size_t N) {
     const auto input = make_input<T>(N);
@@ -310,9 +284,9 @@ void check_noncatalog_size_roundtrip(std::size_t N) {
 
 } // namespace
 
-TEST_CASE("Codelet catalog routing — public API correctness (double)", "[codelet][catalog][plan]") {
+TEST_CASE("Codelet catalog routing: public API correctness (double)", "[codelet][catalog][plan]") {
     // The catalog is every integer in [2,64] (incl. primes 11..61 and composites
-    // with a factor >7 like 22,26,33,55,62) — the O(N^2) oracle is accurate there.
+    // with a factor >7 like 22,26,33,55,62), where the O(N^2) oracle is accurate.
     for (std::size_t N = 2; N <= 64; ++N) {
         CAPTURE(N);
         check_catalog_size<double>(N);
@@ -328,7 +302,7 @@ TEST_CASE("Codelet catalog routing — public API correctness (double)", "[codel
     }
 }
 
-TEST_CASE("Codelet catalog routing — public API correctness (float)", "[codelet][catalog][plan]") {
+TEST_CASE("Codelet catalog routing: public API correctness (float)", "[codelet][catalog][plan]") {
     // Every catalog size in [2,64]: reference DFT + round-trip.
     for (std::size_t N = 2; N <= 64; ++N) {
         CAPTURE(N);
@@ -343,11 +317,11 @@ TEST_CASE("Codelet catalog routing — public API correctness (float)", "[codele
 }
 
 // Multi-pass pow2 / 7-smooth path: verify forward output against the O(N^2)
-// reference DFT (not just round-trip — that can't catch a matching fwd/inv sign
-// error). Sizes that factor into two catalog factors and route through the
+// reference DFT, since a round-trip cannot catch a matching fwd/inv sign
+// error. Sizes that factor into two catalog factors and route through the
 // iterative DIF pass-chain: 100=10*10, 128=8*16, 144=12*12, 256=16*16. O(N^2)
 // reference stays accurate enough for double at these N.
-TEST_CASE("Multi-pass path — forward vs reference DFT (double)", "[multipass][plan]") {
+TEST_CASE("Multi-pass path: forward vs reference DFT (double)", "[multipass][plan]") {
     for (std::size_t N : {100u, 128u, 144u, 256u}) {
         CAPTURE(N);
         check_catalog_size<double>(N);
@@ -373,7 +347,7 @@ TEMPLATE_TEST_CASE("Plan precision (forward+inverse)", "[plan][precision]", floa
 }
 
 // Out-of-place execute: dst gets the same result as the in-place path and src
-// is preserved. Every route is copy-free OOP; sizes cover each route family:
+// stays unchanged. Every route is copy-free OOP; sizes cover each route family:
 // degenerate (1), codelet (31), good_thomas masked-tail (15, 30),
 // good_thomas/dif (60), catalog-extra codelet (120), rader (127),
 // four_step[_batched] (256), bluestein (10007), iterative_dif (4096).
@@ -462,8 +436,8 @@ TEMPLATE_TEST_CASE("plan with effort::measure picks a working route", "[plan][me
 
 // The chain race elects a radix chain the cost model never ranked first: a different
 // factorization, and then a permutation of it (measure_route stages 2 and 3). Both are
-// only shape-checked, so a legal-but-wrong chain would ship silently. Cross-check against
-// the estimate plan, whose chain is a different one by construction -- an O(N log N)
+// only shape-checked there, so a legal-but-wrong chain would ship silently. Cross-check against
+// the estimate plan, whose chain is a different one by construction: an O(N log N)
 // oracle where reference_dft's O(N^2) cannot reach.
 TEMPLATE_TEST_CASE("effort::measure elects a chain that agrees with estimate",
                    "[plan][measure]", float, double) {
@@ -493,8 +467,8 @@ TEST_CASE("measure_batch spans the sample interval at every execution cost",
     using admiral::detail::kMeasureSampleNs;
     using admiral::detail::measure_batch;
 
-    // An execution that already spans the interval is sampled singly: the large-N races
-    // must keep the sampling they had.
+    // The race samples an execution that already spans the interval once. The large-N
+    // races must keep the sampling they had.
     REQUIRE(measure_batch(kMeasureSampleNs) == 1);
     REQUIRE(measure_batch(kMeasureSampleNs * 100) == 1);
 
@@ -515,8 +489,8 @@ TEST_CASE("measure_batch spans the sample interval at every execution cost",
         REQUIRE(measure_batch(one) >= measure_batch(one + 1));
 }
 
-// With ADM_MEASURE=OFF the knob must be accepted and behave exactly like
-// estimate (hint semantics, FFTW-style) -- same correct result.
+// With ADM_MEASURE=OFF the API must accept the knob and behave like estimate
+// (hint semantics, FFTW-style), with the same correct result.
 TEMPLATE_TEST_CASE("plan with effort::measure at N=1 and N=2 stays exact", "[plan][measure]",
                    float, double) {
     using T = TestType;

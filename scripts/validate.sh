@@ -2,8 +2,8 @@
 # One entry point for "does admiral build clean and pass everywhere".
 #
 # Every arm is a real configure + build + ctest, and each asserts against
-# compile_commands.json that the flags it asked for actually arrived. That assertion
-# is the point: CMake accepts an unknown -D name in silence.
+# compile_commands.json that the flags it asked for arrived. That assertion is the
+# point, because CMake accepts an unknown -D name in silence.
 #
 # usage: scripts/validate.sh [arm...]        (default: every arm)
 #   isa         x86-64 / -v2 / -v3 / -v4 at Release
@@ -35,7 +35,7 @@ pass=0
 declare -a failed=()
 
 # checks are "want:<pat>" / "not:<pat>" over the compile database. Both directions
-# matter: our -march is only in force if nothing appended a second one after it.
+# matter: the -march is in force only if nothing appended a second one after it.
 check_flags() {
     local dir=$1 spec pat n rc=0
     shift
@@ -92,11 +92,11 @@ arm_compilers() {
 
 arm_sanitize() {
     # Compiler per sanitizer and a pinned ISA, like CI. Peak compiler RSS tracks SIMD
-    # width, so unpinning the ISA multiplies the per-TU footprint several-fold -- the
-    # reason for the -j cap below (per_tu=3 GB). gcc ASan is excluded deliberately: the
-    # one combination that does not fit a small machine.
+    # width, so unpinning the ISA multiplies the per-TU footprint several-fold. That is
+    # the reason for the -j cap below (per_tu=3 GB). This arm excludes gcc ASan on
+    # purpose, the one combination that does not fit a small machine.
     #
-    # `local jobs` is deliberate — bash scopes dynamically, so it shadows the global for
+    # `local jobs` is deliberate. Bash scopes dynamically, so it shadows the global for
     # run_arm as well.
     local cap=$jobs per_tu=3 avail
     avail=$(awk '/^MemAvailable:/{print int($2/1048576)}' /proc/meminfo 2>/dev/null)
@@ -125,14 +125,14 @@ arm_sanitize() {
 }
 
 # The codelet catalog is four cache variables (MIN_N/MAX_N/EXTRA/EXCLUDE) and nothing else
-# here builds a non-default one, so a knob users are invited to turn had no test at all.
+# here builds a non-default one, so a knob the docs invite users to turn had no test.
 # Adding 66 makes p=67 the first Rader prime whose p-1 is a catalog member, which is the
-# only way rader_inner_kind::codelet is reachable — see the catalog test in
+# only way rader_inner_kind::codelet is reachable. See the catalog test in
 # test_route_forced.cpp, which SKIPs without such a size.
 #
 # The flag check is on the generated TU rather than on a -D name: cmake accepts an unknown
-# -D in silence, but src/codelet_66.cpp only exists if the catalog really grew, and its
-# presence is exactly what makes the test find its witness instead of skipping.
+# -D in silence, but src/codelet_66.cpp only exists once the catalog has grown, and its
+# presence is what makes the test find its witness instead of skipping.
 arm_catalog() {
     run_arm catalog "want:codelet_66" "want:-march=x86-64-v3" -- \
         -DCMAKE_BUILD_TYPE=Release -DADM_TARGET_ARCH=x86-64-v3 \
@@ -140,10 +140,10 @@ arm_catalog() {
         -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF
 }
 
-# Valgrind cannot decode AVX-512, so this arm must be x86-64-v2 — a native build would
+# Valgrind cannot decode AVX-512, so this arm must be x86-64-v2. A native build would
 # report SIGILL, not bugs. fast-math off so the numeric assertions mean what they say.
-# ctest -T memcheck is not used: it needs include(CTest), and running the binaries
-# directly keeps the exit status attributable to valgrind rather than to ctest.
+# This arm does not use ctest -T memcheck. That needs include(CTest), and running the
+# binaries directly keeps the exit status attributable to valgrind rather than to ctest.
 arm_valgrind() {
     local dir=$out/valgrind log=$out/valgrind.log rc=0
     echo "=== valgrind"
@@ -160,7 +160,7 @@ arm_valgrind() {
         # ~[ulp]: those cases spend all their time in an O(N^2) long-double reference,
         # which valgrind turns into minutes of pure arithmetic it has nothing to say about.
         # test_ulp is [ulp] end to end, so the filter leaves it with nothing to run and
-        # Catch2 exits 4 — which read as a valgrind error. Skip the binary, not the tag.
+        # Catch2 exits 4, which reads as a valgrind error. Skip the binary, not the tag.
         [[ $(basename "$bin") == test_ulp ]] && continue
         echo "--- $(basename "$bin")" >>"$log"
         valgrind --error-exitcode=1 --errors-for-leak-kinds=definite \
@@ -170,9 +170,9 @@ arm_valgrind() {
 }
 
 # Run clang-tidy against the non-template source files.
-# Uses a fresh clang++ configure (tests off — no ctest, just compile_commands.json).
+# Uses a fresh clang++ configure (tests off, so no ctest, just compile_commands.json).
 # Assertions: compile_commands uses clang++, .clang-tidy has HeaderFilterRegex.
-# The HeaderFilterRegex check is load-bearing: without it, every xsimd/poet/catch2 header
+# The HeaderFilterRegex check is required: without it, every xsimd/poet/catch2 header
 # fires hundreds of diagnostics and the arm is useless as a regression gate.
 arm_tidy() {
     local dir=$out/tidy log=$out/tidy.log rc=0
@@ -193,8 +193,8 @@ arm_tidy() {
     # Scope to the two non-template implementation files. The extern-template
     # instantiation TUs (inst_*.cpp) are thin wrappers; running tidy on them
     # would take O(hours) parsing the same template specialisations repeatedly.
-    # HeaderFilterRegex '.*admiral.*' ensures all admiral/ headers reachable from
-    # these TUs still get checked.
+    # HeaderFilterRegex '.*admiral.*' keeps every admiral/ header reachable from
+    # these TUs under the checks.
     clang-tidy -p "$dir" --quiet \
         "$src/src/c_api.cpp" "$src/src/fftw_compat.cpp" >>"$log" 2>&1 || rc=1
     ((rc == 0)) && { echo "  OK"; ((pass++)); rm -rf "$dir"; } ||
@@ -202,7 +202,7 @@ arm_tidy() {
 }
 
 # Quoted "${@:-a b c}" would expand the default as ONE word, and an unknown arm name
-# would otherwise pass silently, so both cases fail loudly below.
+# would otherwise pass silently, so both cases fail below.
 arms=("$@")
 ((${#arms[@]})) || arms=(isa compilers catalog sanitize valgrind tidy)
 for arm in "${arms[@]}"; do

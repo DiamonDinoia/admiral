@@ -1,6 +1,6 @@
 // N-D and r2c paired compares against ducc0 (and FFTW when built).
 //
-// Split out of bench_fft.cpp for compile time: this instantiates the
+// Split out of bench_fft.cpp for compile time. This instantiates the
 // nd_plan -> col_dif_dispatch chain for c2c and r2c at both precisions.
 // Explicitly instantiated at the bottom; bench_harness.hpp declares the
 // instantiations extern so the rest of the benchmark sees declarations only.
@@ -34,12 +34,12 @@ std::string shape_to_string(const std::vector<std::size_t>& shape) {
 }
 
 // N-D ducc0 c2c over all axes (row-major, axes={0..rank-1}). The tensor is
-// contiguous, last axis fastest — the layout the library's N-D plan transforms.
+// contiguous, last axis fastest, the layout the library's N-D plan transforms.
 // fct=1 (forward) / 1/Ntot (inverse) matches the library's scaling.
 //
 // The caller owns `out`: a per-rep allocation plus first-touch of the output must
-// not be billed to ducc0 while the library arm writes into a hoisted buffer.
-// `in == out` runs ducc0 in place, matching the library's round-trip inverse.
+// not land in ducc0's time while the library arm writes into a hoisted buffer.
+// `in == out` runs ducc0 in place, as the library's round-trip inverse does.
 template<typename T>
 void ducc0_c2c_nd(const std::complex<T>* in, std::complex<T>* out,
                   const std::vector<std::size_t>& shape, bool forward, size_t nthreads = 1) {
@@ -122,7 +122,7 @@ bool compare_nd(const std::vector<std::size_t>& shape, int reps, long inner, int
         sink += buf[Ntot / 2].real();
     });
     // Identity control: a second plan and buffer at a different allocation position,
-    // timed exactly like the first. A ratio other than ~1 is harness spread, and
+    // timed the same way as the first. A ratio other than ~1 is harness spread, and
     // every ratio below is that spread wide.
     admiral::plan<T> p2(std::span<const std::size_t>(shape.data(), shape.size()), {.nthreads = nt});
     std::vector<std::complex<T>> buf2(Ntot);
@@ -149,7 +149,7 @@ bool compare_nd(const std::vector<std::size_t>& shape, int reps, long inner, int
 #endif
     (void)sink;
 
-    // Threaded (nthreads>1): force wall-clock — the per-process cycle counter only
+    // Threaded (nthreads>1): force wall-clock, because the per-process cycle counter only
     // sees the calling thread and undercounts the workers.
     const bool use_cyc = nthreads == 1
                       && fft_fwd.cyc > 0.0 && ducc_fwd.cyc > 0.0
@@ -186,7 +186,7 @@ bool compare_nd(const std::vector<std::size_t>& shape, int reps, long inner, int
     std::cout << " ident=" << std::setprecision(3) << std::setw(6) << ident
               << " err=" << std::setprecision(1) << std::setw(4) << (max_err * 100.0) << "%"
               << (unstable ? "  <== UNSTABLE" : "")
-              << (!ident_ok ? "  <== IDENTITY CONTROL REJECTED — harness untrustworthy" : "")
+              << (!ident_ok ? "  <== IDENTITY CONTROL REJECTED: harness untrustworthy" : "")
               << (lose ? "  <== LOSE (vs ducc0)" : "")
               << "\n";
     // A rejected control invalidates every ratio on the line, the LOSE verdict included.
@@ -243,7 +243,7 @@ bool compare_nd_r2c(const std::vector<std::size_t>& shape, int reps, long inner,
         sink += rbuf[Nreal / 2];
     });
     // Identity control: a second plan and buffer at a different allocation position,
-    // timed exactly like the first — its ratio bounds the harness spread.
+    // timed the same way as the first, so its ratio bounds the harness spread.
     admiral::plan_r2c<T> p2(std::span<const std::size_t>(shape.data(), shape.size()),
                             {.nthreads = nt});
     std::vector<std::complex<T>> cbuf2(Nc);
@@ -271,7 +271,7 @@ bool compare_nd_r2c(const std::vector<std::size_t>& shape, int reps, long inner,
 #endif
     (void)sink;
 
-    // Threaded (nthreads>1): force wall-clock — the per-process cycle counter only
+    // Threaded (nthreads>1): force wall-clock, because the per-process cycle counter only
     // sees the calling thread and undercounts the workers.
     const bool use_cyc = nthreads == 1
                       && fft_fwd.cyc > 0.0 && ducc_fwd.cyc > 0.0
@@ -309,7 +309,7 @@ bool compare_nd_r2c(const std::vector<std::size_t>& shape, int reps, long inner,
               << std::defaultfloat
               << " ident=" << std::fixed << std::setprecision(3) << std::setw(6) << ident
               << (unstable ? "  <== UNSTABLE" : "")
-              << (!ident_ok ? "  <== IDENTITY CONTROL REJECTED — harness untrustworthy" : "")
+              << (!ident_ok ? "  <== IDENTITY CONTROL REJECTED: harness untrustworthy" : "")
               << (lose ? "  <== LOSE (vs ducc0)" : "")
               << "\n";
     // A rejected control invalidates every ratio on the line, the LOSE verdict included.
@@ -383,7 +383,7 @@ bool compare_nd_robust(const std::vector<std::size_t>& shape, int rounds, int re
     const bool id_ok = std::abs(id - 1.0) <= std::max(kIdentControlTol, 2.0 * id_spread);
     if (!id_ok)
         std::cout << "  <== IDENTITY CONTROL REJECTED (ours/ours=" << std::fixed
-                  << std::setprecision(3) << id << ", must be ~1.000) — harness untrustworthy\n";
+                  << std::setprecision(3) << id << ", must be ~1.000): harness untrustworthy\n";
     return id_ok;
 }
 
@@ -457,7 +457,7 @@ bool compare_nd_r2c_robust(const std::vector<std::size_t>& shape, int rounds, in
     const bool id_ok = std::abs(id - 1.0) <= std::max(kIdentControlTol, 2.0 * id_spread);
     if (!id_ok)
         std::cout << "  <== IDENTITY CONTROL REJECTED (ours/ours=" << std::fixed
-                  << std::setprecision(3) << id << ", must be ~1.000) — harness untrustworthy\n";
+                  << std::setprecision(3) << id << ", must be ~1.000): harness untrustworthy\n";
     return id_ok;
 }
 

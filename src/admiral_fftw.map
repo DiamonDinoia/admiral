@@ -1,4 +1,4 @@
-/* Exported ABI of libadmiral_fftw.so: the fftw3.h drop-in surface, nothing else.
+/* Exported ABI of libadmiral_fftw.so: the fftw3.h drop-in interface, nothing else.
    Same RTTI leak as admiral_c.map documents. */
 {
     global:

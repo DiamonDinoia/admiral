@@ -19,18 +19,16 @@ TEMPLATE_TEST_CASE("FFT size 1", "[fft][edge]", float, double) {
 
     admiral::forward(std::span<const std::complex<T>>(input), std::span(output));
 
-    // N=1 is the identity, so this is exact — not "within 1e-6".
+    // N=1 is the identity, so this is exact, not "within 1e-6".
     REQUIRE(output.size() == 1);
     REQUIRE(output[0] == input[0]);
 }
 
 // Round-trip batteries for the free API live in accuracy/test_sweeps.cpp (N=2..512
-// vs the naive DFT); the plan-surface batteries are in transforms/test_plan.cpp.
+// vs the naive DFT); the plan batteries are in transforms/test_plan.cpp.
 
 TEMPLATE_TEST_CASE("FFT known values (size 4)", "[fft][known]", float, double) {
     using T = TestType;
-    // Test case: input = [1, 0, 0, 0]
-    // FFT should give [1, 1, 1, 1]
     std::vector<std::complex<T>> input = {
         {T(1), T(0)}, {T(0), T(0)}, {T(0), T(0)}, {T(0), T(0)}
     };
@@ -43,8 +41,6 @@ TEMPLATE_TEST_CASE("FFT known values (size 4)", "[fft][known]", float, double) {
 
 TEMPLATE_TEST_CASE("FFT known values (size 4, impulse)", "[fft][known]", float, double) {
     using T = TestType;
-    // Test case: input = [1, 1, 1, 1]
-    // FFT should give [4, 0, 0, 0]
     std::vector<std::complex<T>> input = {
         {T(1), T(0)}, {T(1), T(0)}, {T(1), T(0)}, {T(1), T(0)}
     };
@@ -72,7 +68,7 @@ TEMPLATE_TEST_CASE("FFT Parseval's theorem", "[fft][properties]", float, double)
         std::vector<std::complex<T>> fft_result(N);
         admiral::forward(std::span(input), std::span(fft_result));
 
-        // scale 1 keeps the same 32eps stringency the local check had.
+        // scale 1 asks require_parseval for its 32eps bound.
         require_parseval<T>(input, fft_result, N, 1.0);
     };
 
@@ -114,13 +110,11 @@ TEMPLATE_TEST_CASE("FFT linearity", "[fft][properties]", float, double) {
         linear_combo[i] = a * fft_x[i] + b * fft_y[i];
     }
 
-    // They should be equal
     require_close(fft_combined, linear_combo, fft_tol<T>());
 }
 
 TEMPLATE_TEST_CASE("In-place transform", "[fft][inplace]", float, double) {
     using T = TestType;
-    // Test that input=output works (in-place transform)
     const std::size_t N = 16;
 
     std::vector<std::complex<T>> data(N);
@@ -128,16 +122,12 @@ TEMPLATE_TEST_CASE("In-place transform", "[fft][inplace]", float, double) {
         data[i] = std::complex<T>(std::sin(T(i)), std::cos(T(i)));
     }
 
-    // Save original for comparison
     std::vector<std::complex<T>> original = data;
 
-    // In-place forward FFT
     admiral::forward(std::span(data), std::span(data));
 
-    // Data should have changed
     REQUIRE(relerrtwonorm(original, data) > fft_tol<T>());
 
-    // In-place inverse FFT should recover original
     admiral::inverse(std::span(data), std::span(data));
 
     require_close(data, original, fft_tol<T>());
@@ -149,7 +139,7 @@ TEMPLATE_TEST_CASE("one-shot validation", "[fft][oneshot]", float, double) {
     const auto cin = std::span<const std::complex<T>>(in);
 
     // A size mismatch throws instead of overrunning the short span, and it throws the
-    // same std::invalid_argument every other span-count check on this surface throws.
+    // same std::invalid_argument every other span-count check on this API throws.
     REQUIRE_THROWS_AS(admiral::forward(cin, std::span(short_out)), std::invalid_argument);
     REQUIRE_THROWS_AS(admiral::inverse(cin, std::span(short_out)), std::invalid_argument);
 
@@ -198,7 +188,7 @@ TEMPLATE_TEST_CASE("N-D one-shot with nthreads transforms correctly",
     require_close(y, x, fft_tol<T>());
 }
 
-// options::debug only prints: a traced run must produce bitwise the same numbers as a
+// options::debug only prints. A traced run must produce bitwise the same numbers as a
 // silent one. Both runs use the SAME buffer because peel and masking key on the data
 // pointer's alignment, so two distinct allocations of the same input may differ in the
 // last bit. 1024 sits outside the cost model's domain, 60 and 32x24 inside, so both

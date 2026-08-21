@@ -94,7 +94,7 @@ ADM_ALWAYS_INLINE void radix_sym_dft(const V (&xr)[IP],
 //   in  (Ruritanian): x[n1][n2] = t[(n1*N2 + n2*N1) % IP]
 //   out (CRT):        emit at the k with k%N1==k1 and k%N2==k2
 //
-// The CRT index is a constexpr search, not a modular inverse -- one less identity
+// The CRT index is a constexpr search, not a modular inverse, which is one less identity
 // to keep right. K1/K2 are template parameters so the search runs inside the emit
 // lambda (lambda parameters are not constant expressions in a nested lambda).
 // ----------------------------------------------------------------------------
@@ -170,8 +170,8 @@ ADM_ALWAYS_INLINE void pfa_dif_butterfly(const V (&tr)[N1 * N2],
     return n2 * sym_dft_ops(n1) + n1 * sym_dft_ops(n2) + 6 * (n1 - 1) * (n2 - 1);
 }
 
-// Cooley-Tukey factor pair for an odd radix with NO coprime split -- an odd
-// prime power, where the twiddle-free PFA does not apply -- taken only when the
+// Cooley-Tukey factor pair for an odd radix with NO coprime split, an odd
+// prime power where the twiddle-free PFA does not apply. Taken only when the
 // split's flop count beats the flat symmetric kernel. Smallest factor first, so
 // stage B (which carries the emit) runs the fewer, larger sub-DFTs.
 //
@@ -327,7 +327,7 @@ inline constexpr bool dif_butterfly_wants_reload =
 //   pow2 IP >= 4          -> pow2_dif_butterfly (recursive Cooley-Tukey DIF)
 //   even IP (2,6)         -> naive DFT matrix (W folds to +-1/+-i adds)
 // emit(integral_constant<size_t,k>, yr, yi) per un-twiddled output k, NOT in
-// ascending k -- pow2_dif_butterfly permutes.
+// ascending k, since pow2_dif_butterfly permutes.
 // V = batch<T> or T (scalar tail).
 template<typename T, std::size_t IP, typename V, typename Emit>
 ADM_ALWAYS_INLINE void dif_butterfly(const V (&tr)[IP],
@@ -336,7 +336,7 @@ ADM_ALWAYS_INLINE void dif_butterfly(const V (&tr)[IP],
     constexpr auto ct = odd_ct_split(IP);
     // Even composite radix (10 = 5*2, 20 = 5*4): coprime, so the twiddle-free PFA
     // applies and costs N2*sym(N1) + N1*pow2(N2) against the flat kernel's O(IP^2).
-    // Odd IP is excluded on purpose -- an odd coprime radix keeps the flat kernel
+    // Odd IP is excluded on purpose: an odd coprime radix keeps the flat kernel
     // in a middle pass and takes the PFA only at the terminal (dif_butterfly_terminal),
     // and that split is deliberate; this branch must not silently re-route it.
     constexpr auto pf = coprime_split(IP);
@@ -365,8 +365,8 @@ ADM_ALWAYS_INLINE void dif_butterfly(const V (&tr)[IP],
 
 // Same contract as dif_butterfly, for the *last* radix of a pass group, where
 // emit is a bare store: the butterfly's own arithmetic dominates, so an odd radix
-// with a coprime split takes the twiddle-free PFA. Interior passes must NOT:
-// the PFA's serial stage-A -> stage-B chain exposes latency that the flat per-k
+// with a coprime split takes the twiddle-free PFA. Interior passes must NOT. The
+// PFA's serial stage-A -> stage-B chain exposes latency that the flat per-k
 // structure of radix_sym_dft hides.
 template<typename T, std::size_t IP, typename V, typename Emit>
 ADM_ALWAYS_INLINE void dif_butterfly_terminal(const V (&tr)[IP],

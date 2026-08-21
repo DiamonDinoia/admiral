@@ -1,7 +1,7 @@
 // The routing cost model's structural helpers, against independent oracles.
 //
 // base_cost_model.hpp decides every route for 2 <= N <= 512, and it scores a plan with
-// lpf_nfac, balanced_split and chain_work from math.hpp — the same definitions
+// lpf_nfac, balanced_split and chain_work from math.hpp, the same definitions
 // tools/fit_cost_model.cpp fits the coefficients with. A single shared definition can
 // still be uniformly wrong, which sharing cannot catch.
 //
@@ -22,7 +22,7 @@ namespace {
 
 // Every value here is an integer held in a double: the lane count (m + w - 1) / w, and
 // chain_work sums those, all far below 2^53. So the comparisons below are exact equality
-// on purpose -- a tolerance would hide exactly the drift this file exists for.
+// on purpose. A tolerance would hide the drift this file exists for.
 double chain_work_recursive(std::size_t n, std::size_t w, std::size_t regs,
                             std::map<std::size_t, double>& memo) {
     if (n <= 1) return 0.0;
@@ -41,15 +41,15 @@ double chain_work_recursive(std::size_t n, std::size_t w, std::size_t regs,
     return best;
 }
 
-// (W, regs) pairs spanning every target in the receipt set the coefficients are pooled
-// over, so the DP is checked where the fitter actually evaluates it and not only at this
-// build's width: f64/f32 at W=2..16, narrow and wide radix sets both.
+// (W, regs) pairs over every target in the receipt set the fitter pools, so this case
+// checks the DP where the fitter evaluates it and not only at this build's width: f64/f32
+// at W=2..16, narrow and wide radix sets both.
 constexpr std::pair<std::size_t, std::size_t> kTargets[] = {
     {2, 16}, {4, 16}, {8, 16}, {8, 32}, {16, 32}};
 
 }  // namespace
 
-// chain_work is called past BASE_MODEL_NMAX: the bluestein feature passes the convolution
+// The model calls chain_work past BASE_MODEL_NMAX. The bluestein feature passes the convolution
 // pad, which reaches ~1024 for n=512, so the range follows the caller rather than the
 // model's own domain.
 TEST_CASE("cost model: chain_work DP equals the recursion it replaced") {

@@ -37,8 +37,8 @@ inline constexpr std::size_t kFusedTileBytes = 16u * 1024u;
 
 // Cache sizes (bytes), probed once (function-local static). sysconf on Linux,
 // sysctl on macOS/BSD; otherwise uses the fallbacks below. l3_cores counts the
-// CPUs sharing the L3 that `l3` measures: threaded per-worker footprints must be
-// divided by that count, not by a machine-wide thread count.
+// CPUs sharing the L3 that `l3` measures. A caller divides a threaded per-worker
+// footprint by that count, not by a machine-wide thread count.
 // 0 = "unknown" = divide by nthreads verbatim.
 // Used when the OS reports nothing: a mid-range workstation's L2 and LLC.
 inline constexpr std::size_t kFallbackL2Bytes = std::size_t{2} << 20;

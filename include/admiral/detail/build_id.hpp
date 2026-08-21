@@ -2,14 +2,14 @@
 
 // Identity of the current build, as the routing cost model keys it.
 //
-// (arch, compiler, major, W, regs, sizeof T) -- deliberately NOT an ISA
+// (arch, compiler, major, W, regs, sizeof T), deliberately NOT an ISA
 // revision. The model's features only ever read the vector width and the
 // architectural register count, so the same key works on NEON, SVE or RVV
 // without a new enumeration; an unswept target finds no match and runs
 // on the shared coefficients. The compiler is part of the key because the
-// corrections encode codegen quality, which does not port. The architecture is
+// coefficients encode codegen quality, which does not port. The architecture is
 // part of it for the same reason: SVE at 512 bits has the same (W, regs) as AVX-512
-// and would otherwise silently inherit x86 codegen corrections.
+// and would otherwise silently inherit the x86 coefficients.
 
 #include <cstddef>
 #include <string_view>
@@ -63,8 +63,8 @@ inline constexpr int build_compiler_major =
 
 // Microarchitecture the codegen targets, part of a sweep receipt's filename:
 // two CPUs running identical binaries (at the same x86-64-v* level) can disagree
-// on the best route at the same size, so without it their measurements would land
-// in one file and be pooled as if they agreed.
+// on the best route at the same size. Without it their measurements would land in
+// one file, and the fitter would pool them as if they agreed.
 // "generic" = no uarch identity (-march=x86-64-v* / distro builds).
 inline constexpr std::string_view build_uarch =
 #if defined(__znver5__)    // newer first: gcc/clang define exactly one

@@ -47,7 +47,7 @@ struct four_step_split {
 
 // kFourStepLeafMax, the codelet cost tables and four_step_cost live in math.hpp: the routing
 // cost model and its offline fitter price every codelet-terminated form off that one
-// measured table, and neither can include this header (xsimd) or duplicate it -- a
+// measured table, and neither can include this header (xsimd) or duplicate it, so a
 // header/fitter drift is silent. The definitions must exist exactly once.
 
 // Cost-optimal two-factor split N=N1*N2 with both in catalog (<= kFourStepLeafMax).
@@ -70,8 +70,8 @@ struct four_step_split {
 }
 
 // Stride penalty weight (cycles per element per saturated stride unit), and the stride
-// length it saturates at. f64 W=2 uses weight 0 -- it keeps the plain symmetric model,
-// there is no headroom there.
+// length it saturates at. f64 W=2 uses weight 0 and keeps the plain symmetric model,
+// because there is no headroom there.
 inline constexpr double kStridePenaltyF32 = 8.0;
 inline constexpr double kStridePenaltyF64 = 4.0;  // W >= 4 only
 inline constexpr std::size_t kStrideSatF32 = 12;
@@ -80,7 +80,7 @@ inline constexpr std::size_t kStrideSatF64 = 10;
 // Execution-time split: adds the stride penalty min(n1,L)+min(n2,L), which four_step_cost
 // omits, so a split that reads better wins over one that only counts leaf work. The
 // penalty is symmetric in (n1,n2) like the leaf terms, so no objective here can rank the
-// two memory orders -- the search stops at sqrt(N) and always elects the smaller factor
+// two memory orders: the search stops at sqrt(N) and always elects the smaller factor
 // first.
 template<typename T>
 [[nodiscard]] inline four_step_split choose_four_step_split_exec(std::size_t N) {
@@ -111,7 +111,7 @@ template<typename T>
 
 // True iff N can be executed by a single (non-recursive) four-step: existence, not cost,
 // so it asks choose_four_step_split() the same question without needing a precision. The
-// size guard is not redundant -- a small composite has an admissible split too, and this
+// size guard is not redundant: a small composite has an admissible split too, and this
 // route only exists above the leaf ceiling.
 [[nodiscard]] inline bool four_step_supported(std::size_t N) {
     return N > kFourStepLeafMax && choose_four_step_split(N).valid();
@@ -276,11 +276,11 @@ void four_step_batched_ct(const T* in_re, const T* in_im, T* out_re, T* out_im,
 
 // ============================================================================
 // Batched four-step route (f32 only): N in {128,256,384,448,512,640,768}.
-// f32 wins where iterative_dif underutilizes the 8-wide register.
+// f32 wins where iterative_dif leaves the 8-wide register partly idle.
 // f64 table is empty; both W=4 and W=8 fall back to iterative_dif.
 // ============================================================================
 
-// f32 split table (W=8 only, 128–768). {0,0} = not a batched-four-step size.
+// f32 split table (W=8 only, 128-768). {0,0} = not a batched-four-step size.
 // W=4 (SSE2/NEON): off. W=16: splits not multiples of 16, also off.
 // Single source of truth for fsb_split_for and the dispatch below.
 inline constexpr std::array<four_step_split, 7> fsb_splits{{

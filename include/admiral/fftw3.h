@@ -4,7 +4,7 @@
 // FFTW3-compatible header for Admiral.
 //
 // Include this instead of <fftw3.h> and link admiral::fftw. Existing FFTW code
-// that stays inside the surface below compiles and runs unchanged — same
+// that stays inside the list below compiles and runs unchanged: same
 // spellings, same sign convention, same row-major layout, same unscaled result
 // in both directions.
 //
@@ -24,29 +24,29 @@
 //   the fftwf_ single-precision mirror of all of the above
 //
 // What is not
-//   Real transforms (r2c, c2r, r2r) — use admiral::plan_r2c<T> from
+//   Real transforms (r2c, c2r, r2r). Use admiral::plan_r2c<T> from
 //   <admiral/admiral.hpp>. The guru, advanced and split interfaces. Wisdom.
-//   fftw_plan_with_nthreads — pass a thread count to admiral::plan instead.
+//   fftw_plan_with_nthreads. Pass a thread count to admiral::plan instead.
 //   Nothing here silently degrades: an impossible call does not compile.
 //
 // Where the behaviour differs from FFTW
-//   The planning flags are honoured, the rest are accepted and ignored.
+//   The shim honours the planning flags, and it accepts and ignores the rest.
 //   FFTW_ESTIMATE picks from the fitted cost model with no search; every other
 //   flag combination (the default FFTW_MEASURE included) races the model's
 //   candidates. The engine has one search budget, so FFTW_PATIENT and
-//   FFTW_EXHAUSTIVE buy nothing extra. Planning never reads or writes the
+//   FFTW_EXHAUSTIVE add nothing. Planning never reads or writes the
 //   arrays, so a measuring flag cannot clobber data already filled in, and
 //   every plan behaves as FFTW_PRESERVE_INPUT.
 //
 //   fftw_execute() replays the pointers and direction the plan was created
 //   with, as in FFTW. fftw_execute_dft() runs the same plan on other arrays;
 //   their alignment and in/out-of-place character need not match the plan.
-//   FFTW_WISDOM_ONLY is ignored; the call still returns a live plan. An
+//   The shim ignores FFTW_WISDOM_ONLY; the call still returns a live plan. An
 //   out-of-range `sign` computes a backward transform, the same as FFTW.
-//   Rank-0 plans are rejected (NULL); FFTW defines rank 0 as a scalar copy.
+//   The shim rejects a rank-0 plan (NULL); FFTW defines rank 0 as a scalar copy.
 //
-//   Plans are single-threaded here. Calling one plan from two threads at once is
-//   not supported; separate plans are independent.
+//   Plans are single-threaded here. Do not call one plan from two threads at the
+//   same time; separate plans are independent.
 //
 //   in == out is in place. Arrays that partially overlap are undefined
 //   behaviour, as in FFTW.
@@ -54,7 +54,7 @@
 
 #include <stddef.h>
 
-// The build hides every symbol by default, so these opt back in explicitly.
+// The build hides every symbol by default, so these opt back in.
 #if defined(_WIN32) || defined(__CYGWIN__)
 #  define FFTW_C_API __declspec(dllexport)
 #elif defined(__GNUC__) || defined(__clang__)
@@ -80,8 +80,8 @@ typedef struct fftwf_plan_s* fftwf_plan;
 #define FFTW_FORWARD  (-1)
 #define FFTW_BACKWARD (+1)
 
-// ESTIMATE / MEASURE / PATIENT / EXHAUSTIVE pick the planning effort; the rest are
-// accepted and ignored. See the header note.
+// ESTIMATE / MEASURE / PATIENT / EXHAUSTIVE pick the planning effort, and the shim
+// accepts and ignores the rest. See the header note.
 #define FFTW_MEASURE         (0U)
 #define FFTW_DESTROY_INPUT   (1U << 0)
 #define FFTW_UNALIGNED       (1U << 1)
@@ -97,7 +97,7 @@ typedef struct fftwf_plan_s* fftwf_plan;
 // failure. Executing or destroying NULL is safe and does nothing.
 // The alloc_* helpers return 64-byte aligned memory; free it with fftw_free.
 // fftw_cleanup() is a no-op: there is no wisdom cache or other global state, so
-// everything a plan owns is released by fftw_destroy_plan.
+// fftw_destroy_plan releases everything a plan owns.
 FFTW_C_API fftw_plan fftw_plan_dft_1d(int n0, fftw_complex* in, fftw_complex* out,
                                       int sign, unsigned flags);
 FFTW_C_API fftw_plan fftw_plan_dft_2d(int n0, int n1, fftw_complex* in, fftw_complex* out,

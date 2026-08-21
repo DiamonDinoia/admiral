@@ -138,7 +138,7 @@ template<typename T>
 // of this, so the first seven columns mean the same thing on both ISAs. The r25
 // column is NOT a measured cost: it is priced above the two r5 passes it replaces
 // so the DP can never prefer it, leaving kValleyPenalty as the only pull. Never
-// price r25 from its isolated measurement — the isolated-vs-in-chain trap.
+// price r25 from its isolated measurement: that is the isolated-vs-in-chain trap.
 inline constexpr std::array<std::size_t, 12> dif_cost_radices{2, 3, 4, 5, 7, 8, 11, 16, 32, 9, 15, 25};
 
 [[nodiscard]] constexpr std::size_t dif_cost_index(std::size_t radix) {
@@ -283,7 +283,7 @@ inline constexpr std::size_t kSurfaceL2Bytes  = 2u * 1024u * 1024u;
 
 // Level-aware footprint charge: additive cpe steps at those breaks. Radix-flat inside
 // the band; past L2 a sqrt(A_r) part enters for in-table radices. Merged and generic
-// radices have no arith[] column and pay the flat charge only -- the idx bound below is
+// radices have no arith[] column and pay the flat charge only. The idx bound below is
 // not decorative.
 template<typename T>
 [[nodiscard]] constexpr double footprint_cache_level_cpe(std::size_t radix,
@@ -305,7 +305,7 @@ template<typename T>
            / static_cast<double>(span);
 }
 
-// Terminal (ido == 1) pass: sublinear in span. The level charge is NOT here --
+// Terminal (ido == 1) pass: sublinear in span. The level charge is NOT here.
 // dif_stage_cost adds it to the terminal too, because dif_pass_last streams at big spans.
 template<typename T>
 [[nodiscard]] constexpr double terminal_pass_cpe(std::size_t radix, std::size_t span) {
@@ -334,17 +334,17 @@ inline constexpr std::size_t kResidentBytes = 128u * 1024u;
     return m4;
 }
 
-// Placement admissibility -- structural, not calibration: an additive per-pass table
+// Placement admissibility is structural, not calibration: an additive per-pass table
 // cannot rank WHERE in a chain a radix sits. The two devices differ in kind: the
 // valley is a hard tier the model cannot outvote, the interior-kernel surcharge a
 // finite multiplier it can.
 
 // A pass vectorises over ido, so 1 < ido < W never fills the width and is never the
-// cheaper placement -- hence a tier, unconditional over the whole range. It is a veto,
+// cheaper placement, hence a tier, unconditional over the whole range. It is a veto,
 // not a price: repricing it as a graded lane fill loses.
 inline constexpr double kValleyPenalty = 1e9;
 
-// What an interior pass costs over the terminal one: a multiplier, not a tier -- a
+// What an interior pass costs over the terminal one: a multiplier, not a tier. A
 // chain with both a wide pow2 and a coprime odd can give the terminal slot to only
 // one, and a tier makes that choice arbitrarily. Graded by register overflow ratio
 // (a pow2 radix-r butterfly holds 2r live batches), not a radix threshold, so it
@@ -360,7 +360,7 @@ inline constexpr double kValleyPenalty = 1e9;
 }
 
 // Multiplies the pass cost; the model can outvote it. Only the valley stays a
-// hard tier -- a part-width pass is never the cheaper placement.
+// hard tier: a part-width pass is never the cheaper placement.
 template<typename T>
 [[nodiscard]] constexpr double dif_placement_mult(std::size_t N, std::size_t ido,
                                                   std::size_t radix) {
@@ -389,7 +389,7 @@ template<typename T>
 
 // Applies to the COLUMN driver too: dif_col_pass vectorises over the orthogonal axis,
 // so ido does not control lane fill there, but every col pass is a full sweep of the
-// slab -- PASS COUNT dominates and the veto is what merges 5*5 into r25. Pricing
+// slab. PASS COUNT dominates and the veto is what merges 5*5 into r25. Pricing
 // cannot replace it: the r25 column is quoted above two r5 passes on purpose.
 // One flat valley tier cannot rank two chains that each hold exactly ONE valley pass:
 // the tier cancels and the residual decides. A wide radix's per-block twiddle reload
@@ -407,7 +407,7 @@ template<typename T>
 // A generic prime this large with a part-width tail loses to Bluestein outright: the
 // chiplet is cheap per element, so the tail's lane fill decides. The route-time veto
 // (dif_chain_supported) and the election price (dif_generic_stage_cost) ask this one
-// predicate -- the two must not drift apart. The bound is measured, not structural:
+// predicate, and the two must not drift apart. The bound is measured, not structural:
 // widening the veto vetoes valley passes that still beat Bluestein.
 // test_factor_plan.cpp pins the band from both sides.
 inline constexpr std::size_t kGenericStarvedTailMinRadix = 47;
@@ -466,9 +466,9 @@ template<typename T>
 
 // Tie-break weight on every stage cost: equal-cost permutations of one radix multiset
 // are unrankable by an additive model, yet order matters on hardware. The weight sits
-// far below real cost, so it cannot flip a base-cost decision. Load-bearing on the
-// ESTIMATE path (the race absorbs ordering differences; the estimate arm cannot), so
-// do not delete it on the strength of the measure arm. 32-reg ISAs nudge the FIRST
+// far below real cost, so it cannot flip a base-cost decision. The ESTIMATE path needs
+// it (the race absorbs ordering differences; the estimate arm cannot), so do not delete
+// it on the strength of the measure arm. 32-reg ISAs nudge the FIRST
 // pass only.
 [[nodiscard]] constexpr double dif_order_eps(std::size_t N, std::size_t n, std::size_t radix) {
     if (poet::vector_register_count() >= 32 && n != N) return 0.0;
@@ -484,7 +484,7 @@ template<typename T>
     const std::size_t ido = n / radix;
     constexpr std::size_t W = xsimd::batch<T>::size;
     const dif_cost_row row = dif_measured_cost<T>(radix);
-    // A few measured entries invert the physics (valley cheaper than vec) -- a probe
+    // A few measured entries invert the physics (valley cheaper than vec), a probe
     // artifact that routes a narrow radix INTO the valley. Floor at vec*(W/ido) capped
     // at 2, scoped to pentanomial N.
     const bool pentanomial = is_pentanomial(N);
@@ -513,7 +513,7 @@ template<typename T>
     if constexpr (dif_surface_is_analytic<T>) {
         // An out-of-table coprime-merged radix (10 = 5*2) is priced as the SUM of the
         // two factor plateaus at the REAL ido = n/radix. Never recurse dif_stage_cost
-        // on the factors: that prices each at the undivided n -- wrong idos, double
+        // on the factors: that prices each at the undivided n: wrong idos, double
         // launch charge, and the valley veto never fires. 15 is measured; it must NOT
         // split into 5+3.
         if (dif_cost_index(radix) >= dif_cost_radices.size()) {
@@ -546,7 +546,7 @@ template<typename T>
         const double per_elem =
             kernel + footprint_cache_level_cpe<T>(radix, B)
             + (ido == 1 ? 0.0 : amortized_launch_cpe<T>(N));
-        // No lane-tail surcharge here -- it sits below the surface's own fit error. No
+        // No lane-tail surcharge here: it sits below the surface's own fit error. No
         // valley lane-floor either: kappa/ido is the grid-measured underfill price, not
         // the probe artifact the tape column needed patching for.
         return (per_elem + dif_valley_penalty<T>(ido, radix)) * static_cast<double>(N)
@@ -557,8 +557,8 @@ template<typename T>
 }
 
 // Modeled cost in cycles of RUNNING chain p at N: the same per-pass prices the DP
-// minimizes, summed over the chain that will actually execute (reordered, raced or
-// pow2-enumerated -- not necessarily the one the additive DP walked).
+// minimizes, summed over the chain that will execute (reordered, raced or
+// pow2-enumerated, not necessarily the one the additive DP walked).
 template<typename T>
 [[nodiscard]] inline double dif_chain_cost(std::size_t N, const dif_factor_plan& p) {
     double      total = 0.0;
@@ -645,7 +645,7 @@ dif_fusion_schedule(std::size_t N, const std::vector<std::size_t>& radices) {
 // cost. Past the cap the saved round-trips are L3 hits rather than DRAM and the
 // wide-radix chain wins, so the discount is exactly 1.0 there, not fitted. The
 // discount is a ranking discriminator: validate the chains it elects, not its value.
-// Never calibrate it from the fuse_packed on/off ratio -- that holds the chain fixed
+// Never calibrate it from the fuse_packed on/off ratio: that holds the chain fixed
 // and measures what a pair saves, not which chain to elect.
 inline constexpr std::size_t kDifFuseDiscountMaxNF64 = 16384;
 inline constexpr std::size_t kDifFuseDiscountMaxNF32 = 131072;
@@ -681,8 +681,8 @@ inline constexpr std::size_t kDifBeam = kDifCandidates;
 struct dif_chain_list {
     std::array<dif_factor_plan, kDifCandidates> chain{};
     std::size_t count = 0;
-    // How many slots this list actually wants. `estimate` needs one -- it consumes only the
-    // argmin -- and a list that keeps 16 costs 8-23x the DP time of one that keeps 1.
+    // How many slots this list wants. `estimate` needs one, since it consumes only
+    // the argmin. A list that keeps 16 costs 8-23x the DP time of one that keeps 1.
     std::size_t cap = kDifCandidates;
 
     // For an ascending producer (the DP): first offer of a multiset is its cheapest.
@@ -725,7 +725,7 @@ private:
 };
 
 // Whole-chain pow2 selection for the fusion band (N >= kDifFuseMinN): fused2/
-// fused3 gates are cross-pass — the additive DP can't see them. Exhaustively
+// fused3 gates are cross-pass, so the additive DP cannot see them. Exhaustively
 // scores every ordered composition of log2(N) over the admitted radix set:
 //   cost = sum dif_stage_cost, fused-group members discounted by dif_fuse_discount.
 // dif_fusion_schedule supplies the real driver gates. Below the fusion band
@@ -789,7 +789,7 @@ template<typename T>
             // Generic pass availability is middle positions ONLY: the first pass
             // is AoS->SoA and the last is SoA->AoS; both are static-kernel shaped.
             // The DP never emits those, but the no-chain fallback factorization
-            // (returned by the DP as a live feature-test channel) does -- reject
+            // (returned by the DP as a live feature-test channel) does. Reject
             // them here (e.g. bare 13 -> [13], 26 -> [2,13]).
             if (!dif_is_generic_radix(r)) return false;
             if (i == 0 || i + 1 == p.count) return false;
@@ -859,10 +859,10 @@ template<typename T>
         return static_cast<std::size_t>(std::ranges::lower_bound(divisors, n) - divisors.begin());
     };
 
-    // divisors[0] == 1 has cost 0, and is the base case rather than a stored entry:
-    // writing dp[0] instead trips -Wnull-dereference (gcc-14 -Werror), which cannot
+    // divisors[0] == 1 has cost 0, and is the base case rather than a stored entry.
+    // Writing dp[0] instead trips -Wnull-dereference (gcc-14 -Werror), which cannot
     // prove a vector sized from an opaque count has a non-null buffer. Rows are sized
-    // to the beam actually asked for, not to kDifBeam -- the want=1 DP is what
+    // to the beam asked for and not to kDifBeam, because the want=1 DP is what
     // estimate and every twiddle build pay.
     std::vector<entry> dp(divisors.size() * beam);
     const auto row = [&dp, beam](std::size_t i) { return std::span<entry>(&dp[i * beam], beam); };
@@ -924,7 +924,7 @@ template<typename T>
             if (rest == 1) return offer(n, row(i), {stage, radix, 0, rmix(radix)});
             const std::span<const entry> sub = row(state(rest));
             // Both rows are cost-ascending, so once one combination costs more than the beam's
-            // worst kept entry, every later one does too. Exact prune -- strict > because
+            // worst kept entry, every later one does too. Exact prune, strict > because
             // offer's tie rule can still take an equal-cost entry.
             for (std::size_t j = 0; j < beam && sub[j].cost < kUnreachable; ++j) {
                 if (stage + sub[j].cost > row(i)[beam - 1].cost) break;
@@ -978,15 +978,15 @@ template<typename T>
 }
 
 
-// The chain that will EXECUTE: the model's cheapest candidate the engine can actually
-// run. The shape vetoes are properties of a chain, not of N, so a cell whose argmin they
-// condemn is rescued by the next candidate rather than by a table entry naming the size.
+// The chain that will EXECUTE: the model's cheapest candidate the engine can
+// run. The shape vetoes are properties of a chain, not of N, so the next candidate
+// rescues a cell whose argmin they condemn, rather than a table entry naming the size.
 // Route availability and twiddle construction both come through here, so they cannot
 // disagree about which chain the plan is for.
 template<typename T>
 [[nodiscard]] inline dif_factor_plan dif_elected_chain(std::size_t N) {
     // The argmin runs at all but a handful of sizes, and asking for one candidate is the
-    // 1-best DP: pay for the wide beam only where the vetoes actually bite.
+    // 1-best DP: pay for the wide beam only where the vetoes apply.
     const dif_factor_plan best = dif_chain_candidates<T>(N, 1)[0];
     if (dif_chain_shape_ok<T>(N, best)) return best;
     const dif_chain_list c = dif_chain_candidates<T>(N);
@@ -994,7 +994,7 @@ template<typename T>
         if (dif_chain_shape_ok<T>(N, c[i])) return c[i];
     // Nothing runnable: hand back the argmin, which for such an N is the trivial
     // factorization the DP emits as its "not batchable" feature-test channel. Callers
-    // that must not build an unrunnable chain ask dif_chain_shape_ok -- route
+    // that must not build an unrunnable chain ask dif_chain_shape_ok, and route
     // availability does exactly that.
     return best;
 }
@@ -1036,7 +1036,7 @@ template<typename T>
 struct dif_twiddle_set {
     // Each pass: pair of (re, im) flat vectors, length (ip-1)*ido.
     // On a row-form set (fuse_packed=true), f2head/f2tail passes have EMPTY
-    // plain tables — their twiddles live only in packed_pair[head].
+    // plain tables; their twiddles live only in packed_pair[head].
     std::vector<std::pair<std::vector<T>, std::vector<T>>> passes;
     // Radix for each pass (in factorization order).
     std::vector<std::size_t> radices;
@@ -1090,7 +1090,7 @@ template<typename T>
     const dif_factor_plan planned = override_plan ? *override_plan : dif_elected_chain<T>(N);
     // Same for a forced chain's radices: every pass dispatches over dif_radix_set, which is
     // register-parametric, so a radix outside it would SKIP the pass instead of running it.
-    // Only a forced chain can be wrong here -- the DP draws from the set.
+    // Only a forced chain can be wrong here: the DP draws from the set.
     if (override_plan)
         for (std::size_t p = 0; p < planned.count; ++p) {
             if (!in_seq(dif_radix_set{}, planned[p]) && !dif_is_generic_radix(planned[p]))
@@ -1159,7 +1159,7 @@ template<typename T>
     // Row form: repack each fused2 pair into one consumption-order stream (layout at
     // dif_twiddle_set::packed_pair) and drop the pair's plain tables, so one
     // representation is stored and the footprint is unchanged. fused3 keeps plain
-    // tables -- dif_pass_fused3 reads its three layers separately.
+    // tables, since dif_pass_fused3 reads its three layers separately.
     s.packed_pair.resize(s.passes.size());  // all empty by default
     s.sched = fuse_packed ? dif_fusion_schedule<T>(N, s.radices)
                           : std::vector<dif_fuse>(s.radices.size(), dif_fuse::plain);
@@ -1201,7 +1201,7 @@ template<typename T>
                     }
                 }
                 s.packed_pair[p] = std::move(packed);
-                // Drop plain copies — row driver never reads them.
+                // Drop plain copies: the row driver never reads them.
                 s.passes[p] = {};
                 s.passes[p + 1u] = {};
             }
@@ -1211,7 +1211,7 @@ template<typename T>
 
     // In-place election. A pass in ip_mask runs Gentleman-Sande IN PLACE: the store
     // index becomes col + IP*b instead of b + l1*k, landing on lines the pass just
-    // loaded -- 4N*T traffic per pass instead of 6N*T. Cost: that appends the new
+    // loaded, 4N*T traffic per pass instead of 6N*T. Cost: that appends the new
     // digit at the LOW end of the block word, permuting it; rowperm undoes it in the
     // last pass's GATHER BASE only, where each row is still an IP-element contiguous
     // run and the RFO-carrying store side is untouched.
@@ -1233,8 +1233,8 @@ template<typename T>
             if (s.sched[p] != dif_fuse::plain) break;
             // A wants_reload radix cannot go in-place here: the two-sweep restage re-
             // reads input columns the even sweep already overwrote, spilling more than
-            // the in-place saving buys. It CAN go in place on the split-column kernel
-            // -- second loop below.
+            // the in-place saving buys. It CAN go in place on the split-column kernel,
+            // the second loop below.
             if (dif_is_generic_radix(s.radices[p])) break;  // Stockham only: no in-place kernel
             if (butterfly_wants_reload(s.radices[p], poet::vector_register_count())) break;
             // No ido gate: `ido >= W` is the right line only while the in-place tail is
@@ -1253,7 +1253,7 @@ template<typename T>
         // The split-column kernel (dif_passes.hpp, kSplitCols) DOES take a wants_reload
         // radix in place: phase A stores a+b and (a-b)*W^n, phase B runs two half-radix
         // butterflies over disjoint halves, so nothing spills. Two measured gates:
-        // (1) Not the last intermediate pass -- its digit is the most significant in the
+        // (1) Not the last intermediate pass: its digit is the most significant in the
         //     block word, so moving it to the bottom permutes the full range instead of
         //     staying inside the gather window. Needs >= 4 passes to fire at all.
         // (2) The phase-A store / phase-B reload block, ido*IP*2*sizeof(T) <= 32 KB.
@@ -1271,11 +1271,11 @@ template<typename T>
     if (s.ip_mask != 0) {
         // rowperm[logical] = physical, by running both block-index recurrences over the
         // same digit tuple. A Stockham pass appends its digit HIGH (b + l1*k), an in-place
-        // pass LOW (col + r*b) -- and a wants_reload radix appends the split column
+        // pass LOW (col + r*b), and a wants_reload radix appends the split column
         // (k&1)*(r/2) + k/2, since each half-butterfly writes back only the r/2 columns it
         // read. NOT the (2, r/2) radix-pair expansion "two in-place passes" suggests: that
         // decomposes k as odd*(r/2) + Kc, the kernel needs 2*Kc + odd.
-        // Materialized flat over all l1_last rows -- the last pass reads it sequentially in
+        // Materialized flat over all l1_last rows: the last pass reads it sequentially in
         // b, one 4-byte load per IP*2*sizeof(T) of payload, cheaper than a runtime div/mod
         // by a possibly-odd L.
         const std::size_t K = s.radices.size() - 1;  // every pass but the last

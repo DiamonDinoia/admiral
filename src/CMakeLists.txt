@@ -1,4 +1,4 @@
-# The library targets. Declaration order matters here — see the notes below.
+# The library targets. Declaration order matters here; see the notes below.
 #
 #   admiral_engine    one object per heavy route instantiation, plus the C++ API
 #   admiral_codelets  one archive of straight-line kernel<N> codelets
@@ -13,29 +13,29 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/CodeletCatalog.cmake)
 # ============================================================================
 # Engine instantiation objects
 # ============================================================================
-# OBJECT, not STATIC: weak explicit-instantiation symbols never force archive
-# member extraction, so a .a would be silently dropped by the linker. Consumers
+# OBJECT, not STATIC. Weak explicit-instantiation symbols never force archive
+# member extraction, so the linker would silently drop a .a. Consumers
 # get these objects directly through the admiral / admiral_c link interfaces.
 #
 # Longest TUs first, because ninja starts edges in declaration order, and a -jN build's
-# wall is set by its single longest edge. The heavy engines are inst_col_* (batched column
+# wall follows its single longest edge. The heavy engines are inst_col_* (batched column
 # engine) and inst_dif_* (1-D mixed-radix); both are split per direction, which halves that
 # edge at no cost in codegen (leaf symbols are byte-identical across the split). inst_plan_*
-# is NOT split -- its two route trees share nearly all sub-instantiations, so splitting
+# is NOT split. Its two route trees share nearly all sub-instantiations, so splitting
 # measured slower. Whether a direction split pays is per-TU and must be measured.
 #
-# inst_gt_* is an ENGINE split, not a direction split: the Good-Thomas catalog expands
+# inst_gt_* is an ENGINE split, not a direction split. The Good-Thomas catalog expands
 # 9 tuples times two aliasing arms per direction, and hosting that inside inst_plan_*
 # exhausted GCC's per-TU inline budget partway through, which spilled the largest
 # kernels. Its own TU compiles them all at the default budget.
 #
 # The direction split alone compiles the direction-FREE families twice per precision. Every
-# one of them (dif_thunk: mid-pass body plain and chiplet, in-place pass, fused pair and
-# triple) is instantiated once in inst_dif_thunks_*, which is why the per-direction TUs are
-# the smaller half; hosting the second copy in the shipped archive also grew libadmiral.a.
+# inst_dif_thunks_* instantiates each of them once (dif_thunk: mid-pass body plain and
+# chiplet, in-place pass, fused pair and triple), which is why the per-direction TUs are
+# the smaller half. Hosting the second copy in the shipped archive also grew libadmiral.a.
 #
-# inst_api_* are here rather than with the C++ surface because both C shims call
-# that same public API, so every surface needs its objects.
+# inst_api_* are here rather than with the C++ interface because both C shims call
+# that same public API, so every interface needs its objects.
 add_library(admiral_engine OBJECT
     inst_col_f_fwd.cpp inst_col_f_inv.cpp inst_col_d_fwd.cpp inst_col_d_inv.cpp
     inst_dif_f_fwd.cpp inst_dif_f_inv.cpp inst_dif_d_fwd.cpp inst_dif_d_inv.cpp
@@ -56,14 +56,14 @@ adm_apply_build_profile(admiral_engine)
 # ============================================================================
 # Compiled codelet archive
 # ============================================================================
-# STATIC, not OBJECT: admiral_tests links BOTH admiral::admiral and
+# STATIC, not OBJECT. admiral_tests links BOTH admiral::admiral and
 # admiral::admiral_c, and a pure OBJECT library attached to both would inject its
 # objects twice into that one executable (duplicate codelet_dispatch<T>). An
-# archive is pulled once.
+# archive gets pulled once.
 #
-# Declared after admiral_engine on purpose: the 64 sized codelet TUs are seconds each
-# and would otherwise fill every job slot while the engine TUs — minutes each, and the
-# head of the critical path — sit queued behind them.
+# Declared after admiral_engine on purpose. The 64 sized codelet TUs are seconds each
+# and would otherwise fill every job slot while the engine TUs sit queued behind them.
+# Those TUs take minutes each and head the critical path.
 add_library(admiral_codelets STATIC
     ${ADM_CODELET_GENERATED}
     ${CMAKE_CURRENT_BINARY_DIR}/codelet_dispatch.cpp)
@@ -74,7 +74,7 @@ target_include_directories(admiral_codelets PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}           # codelet_apply.hpp
     ${ADM_GENERATED_INCLUDE_DIR})         # admiral/detail/codelet_max.hpp
 target_link_libraries(admiral_codelets PUBLIC xsimd poet::poet)
-# PUBLIC arch flags: without -march the codelets fall back to SSE2 and are slow,
+# PUBLIC arch flags. Without -march the codelets fall back to SSE2 and are slow,
 # so a consumer compiling against them needs the same flags.
 adm_apply_build_profile(admiral_codelets PUBLIC)
 
@@ -82,7 +82,7 @@ adm_apply_build_profile(admiral_codelets PUBLIC)
 # Public surfaces (see adm_add_surface in cmake/AdmiralTargets.cmake)
 # ============================================================================
 
-# No source of its own -- inst_api_* are in admiral_engine above.
+# No source of its own. inst_api_* are in admiral_engine above.
 adm_add_surface(admiral
     VERSION_SCRIPT admiral.map
     EXPORT_NAME admiral)
@@ -124,11 +124,11 @@ endif()
 # ============================================================================
 # Precompiled headers (-DADM_ENABLE_PCH=ON)
 # ============================================================================
-# Opt-in, not default: a .gch that goes stale against its flags fails the build with an
+# Opt-in, not default. A .gch that goes stale against its flags fails the build with an
 # error the user can only clear by deleting the build tree, which is a bad trade for
 # seconds. It pays on the codelet TUs, which are almost all <xsimd/xsimd.hpp> parse
 # (1.74s -> 0.20s per TU). It barely helps the engine TUs, which are instantiation-bound,
-# and it measured a LOSS on the test suite. The C surfaces parse neither dependency.
+# and it measured a LOSS on the test suite. The C interfaces parse neither dependency.
 if(ADM_ENABLE_PCH)
     foreach(target admiral_engine admiral_codelets)
         target_precompile_headers(${target} PRIVATE <xsimd/xsimd.hpp> <poet/poet.hpp>)

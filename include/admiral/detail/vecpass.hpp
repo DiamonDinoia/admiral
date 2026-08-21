@@ -5,8 +5,8 @@
 //
 // This is phase 2 of the three-phase ducc0 cfftp_vecpass architecture for
 // N = W*M. Phases 1 and 3 (the pack and the per-lane W_N^{l*k2} twist + size-W
-// cross-lane DFT) have no plan-side route; they are exercised by the benchmark's
-// --vpass probe.
+// cross-lane DFT) have no plan-side route. The benchmark's --vpass probe exercises
+// them.
 
 #include <admiral/detail/butterfly.hpp>    // dif_butterfly<T,IP,V> (forward-only)
 #include <admiral/detail/twiddles.hpp>     // build_dif_factor_plan, dif_factor_plan
@@ -78,8 +78,8 @@ namespace detail {
 //   Twiddle: tw_re/im[(j-1)*ido + a] = W_M^{j*l1*a}, broadcast to V.
 //
 // dif_butterfly is forward-only; the inverse runs it in swapped domain,
-// swap(fwd(swap x)) == inv(x). The swap cannot be hoisted to the chain boundary
-// here: that boundary is real data (im == 0), where exchanging planes would zero
+// swap(fwd(swap x)) == inv(x). The swap cannot move to the chain boundary
+// here. That boundary is real data (im == 0), where exchanging planes would zero
 // the real part. The twiddle multiply therefore moves INSIDE the swapped emit
 // (swap(w*t) is the conjugated multiply), which is what makes one forward table
 // serve both directions.

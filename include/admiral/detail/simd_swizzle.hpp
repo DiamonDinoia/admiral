@@ -23,7 +23,7 @@ namespace detail {
 // passes need them as planar batch<T> pairs and back.
 //   deinterleave (AoS->SoA): 2-source shuffle per plane (even->re, odd->im).
 //   interleave (SoA->AoS): zip_lo/zip_hi.
-// Pure xsimd primitives; ISA lowering chosen by xsimd dispatch (AVX2 needs a shuffle
+// Pure xsimd operations. xsimd dispatch picks the ISA lowering (AVX2 needs a shuffle
 // plus a cross-lane permute; no single AVX2 instruction avoids it).
 
 // Permute-index generators for xsimd::make_batch_constant: lane i reads get(i)
@@ -78,7 +78,7 @@ ADM_ALWAYS_INLINE void aos_deinterleave(const T* ADM_RESTRICT src, Batch& re, Ba
 // E.g. make_sized_batch_t<float,2> is void → f32: 7=4+1+1+1, f64: 7=4+2+1.
 // Shared by both DIF drivers: the row driver's small-ido pieces and the column
 // driver's sub-batch tail are the same problem in different index dimensions.
-// A PW-wide piece also fixes the AoS footprint for free -- aos_deinterleave with a
+// A PW-wide piece also fixes the AoS footprint for free: aos_deinterleave with a
 // narrower Batch touches exactly 2*PW reals, so a partial block neither over-reads
 // past the axis buffer nor needs a mask.
 template<typename T, std::size_t N>
@@ -93,10 +93,9 @@ template<typename T, std::size_t PW>
 using sized_piece_t = std::conditional_t<PW == 1, T, xsimd::make_sized_batch_t<T, PW>>;
 
 // Load/store one PW-wide piece of a planar array; PW == 1 is the scalar piece.
-// xsimd's arithmetic and fma/fnma have FUSED scalar overloads, so one V-generic
-// body serves every width down to and including PW == 1. Never fms: its scalar
-// overload is unfused `a*b - c` while the batch one is vfmsub, so a single
-// expression would round differently in a tail than in the row it belongs to.
+// xsimd's arithmetic has scalar overloads, so one V-generic body serves every width
+// down to and including PW == 1. Route the multiply-accumulate through piece_fnma /
+// piece_fma below rather than xsimd::fma directly, and never through fms.
 template<typename T, std::size_t PW>
 [[nodiscard]] ADM_ALWAYS_INLINE sized_piece_t<T, PW> load_piece(const T* p) {
     if constexpr (PW == 1) { return *p; } else { return sized_piece_t<T, PW>::load_unaligned(p); }
@@ -107,8 +106,33 @@ ADM_ALWAYS_INLINE void store_piece(T* p, sized_piece_t<T, PW> v) {
     if constexpr (PW == 1) { *p = v; } else { v.store_unaligned(p); }
 }
 
+// True where one instruction computes a*b + c. Where the flag is false, xsimd's scalar
+// fma and fnma are std::fma, which is a libm CALL, and xsimd's generic batch fnma is
+// negate-mul-add, one op longer than the plain expression. piece_fnma and piece_fma are
+// the only readers of the flag, so no kernel carries an ISA test of its own.
+inline constexpr bool kFusedFma = XSIMD_WITH_FMA3_SSE || XSIMD_WITH_FMA3_AVX
+                                 || XSIMD_WITH_FMA3_AVX2 || XSIMD_WITH_FMA4
+                                 || XSIMD_WITH_AVX512F || XSIMD_WITH_NEON64
+                                 || XSIMD_WITH_SVE || XSIMD_WITH_RVV || XSIMD_WITH_VSX
+                                 || XSIMD_WITH_VXE;
+
+// c - a*b and a*b + c over a piece of any width, PW == 1 included. On FMA hardware the
+// explicit call pins ONE association at every width. gcc contracts the plain form as
+// vfnmadd in the vector body but as vfmsub in the PW == 1 tail, so a tail rounds
+// differently from the row it belongs to. Off FMA hardware nothing contracts, so the
+// plain form holds one association at every width and is the shorter sequence.
+template<typename V>
+[[nodiscard]] ADM_ALWAYS_INLINE V piece_fnma(V a, V b, V c) {
+    if constexpr (kFusedFma) { return xsimd::fnma(a, b, c); } else { return c - a * b; }
+}
+
+template<typename V>
+[[nodiscard]] ADM_ALWAYS_INLINE V piece_fma(V a, V b, V c) {
+    if constexpr (kFusedFma) { return xsimd::fma(a, b, c); } else { return a * b + c; }
+}
+
 // Bit w set iff xsimd can materialise a piece of exactly width w. Bit 1 is the
-// scalar piece, always available. f64: 1,2,4,8; f32: 1,4,8,16 — there is no
+// scalar piece, always available. f64: 1,2,4,8; f32: 1,4,8,16. There is no
 // 2-wide float, which is why the tail policy below cannot be width-agnostic.
 // 64-bit: W >= 32 would shift a 32-bit mask out of range (no shipped ISA is
 // that wide; this keeps the constant total).
@@ -164,7 +188,7 @@ ADM_ALWAYS_INLINE void aos_interleave(T* ADM_RESTRICT dst, Batch re, Batch im) {
 }
 
 // PW-wide AoS<->SoA piece. A lone complex is already two adjacent reals, so the
-// scalar piece needs no swizzle. Either way exactly 2*PW reals are touched, so a
+// scalar piece needs no swizzle. Either way the piece touches exactly 2*PW reals, so a
 // partial block neither over-reads past the axis buffer nor needs a mask.
 template<typename T, std::size_t PW>
 ADM_ALWAYS_INLINE void aos_deinterleave_piece(const T* ADM_RESTRICT src,
@@ -214,7 +238,7 @@ template<typename T>
     return batch::load_unaligned(seq.data()) < batch(static_cast<T>(n));
 }
 
-// Store the first R (1<=R<=W) planar complex as AoS (2*R reals) — partial-block
+// Store the first R (1<=R<=W) planar complex as AoS (2*R reals), the partial-block
 // store for dif_pass_last masked tail. Compile-time prefix masks lower to plain
 // moves (e.g. R=3 at W=4 f32: movups+movsd rather than vmaskmov).
 template<std::size_t R, typename T, typename Batch = xsimd::batch<T>>
@@ -258,7 +282,7 @@ ADM_ALWAYS_INLINE std::size_t aos_store_align_peel(const std::complex<T>* data,
     }
 }
 
-// Store the last (W-M0) planar complex as AoS — partial-block suffix store,
+// Store the last (W-M0) planar complex as AoS, the partial-block suffix store,
 // mirror of aos_interleave_prefix. Compile-time suffix masks lower to plain moves.
 template<std::size_t M0, typename T, typename Batch = xsimd::batch<T>>
 ADM_ALWAYS_INLINE void aos_interleave_suffix(T* ADM_RESTRICT dst, Batch re, Batch im) {
@@ -297,7 +321,7 @@ template<typename T>
 }
 
 // Compile-time twin of the above, same .lo/.hi shape so the masked helpers below take either.
-// Which form is cheaper is an ISA property, not a preference -- see kRuntimeTailMask in
+// Which form is cheaper is an ISA property, not a preference; see kRuntimeTailMask in
 // dif_col_pass.hpp. `hi` is all-false when the block does not reach the second zip half, and
 // that arm is then dead by HiHalf rather than by testing the mask.
 template<std::size_t R, typename T>
@@ -373,9 +397,9 @@ struct real_run_copy {
 };
 
 // Runtime prefix/suffix stores for the column last pass's misaligned head (prefix [0,n))
-// and ragged tail (suffix [m0,W)): the loop-invariant runtime bound is dispatched to a
-// compile-time batch_bool_constant store via static_for; each arm is a fully specialised
-// masked store the compiler lowers to plain moves. Kept out of the aligned-bulk store
+// and ragged tail (suffix [m0,W)): static_for dispatches the loop-invariant runtime bound
+// to a compile-time batch_bool_constant store, and each arm is a fully specialised masked
+// store the compiler lowers to plain moves. Kept out of the aligned-bulk store
 // (plain aos_interleave) so the hot path carries none of this dispatch.
 //
 // ALWAYS_INLINE: the peel runs per column block, not per execute, so a call here sits on

@@ -37,7 +37,7 @@ void pass_microbench(unsigned IP, std::size_t ido, std::size_t l1, bool last,
     }
     volatile T sink = T(0);
     auto mid = [&]<std::size_t IPv>() {
-        // A middle SoA pass carries no direction: the inverse rides the same code in
+        // A middle SoA pass carries no direction. The inverse rides the same code in
         // swapped domain (butterfly.hpp). Only the boundary passes still take Forward.
         admiral::detail::dif_pass<T, IPv>(ccre.data(), ccim.data(), chre.data(),
                                           chim.data(), l1, ido, twre.data(), twim.data(),

@@ -10,16 +10,16 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # ============================================================================
-# Optimization Flags Interface Library
+# Optimization flags interface library
 # ============================================================================
 
 add_library(admiral_optimization_flags INTERFACE)
 
 # Fast math, on its OWN target and never propagated to consumers.
 #
-# Separate from the arch flags: a consumer MUST share -march (W = xsimd::batch<T>::size
-# is the ISA) and MUST NOT share -ffast-math — the test suite's long-double reference
-# DFT would otherwise be reassociated into being no more exact than what it judges.
+# Separate from the arch flags. A consumer MUST share -march (W = xsimd::batch<T>::size
+# is the ISA) and MUST NOT share -ffast-math. Otherwise the compiler reassociates the
+# test suite's long-double reference DFT into being no more exact than what it judges.
 # adm_apply_build_profile links this PRIVATE always.
 add_library(admiral_fast_math_flags INTERFACE)
 if(ADM_USE_FAST_MATH)
@@ -37,7 +37,7 @@ else()
     message(STATUS "Fast math: DISABLED (enable with -DADM_USE_FAST_MATH=ON)")
 endif()
 
-# Target architecture: the only place an arch flag is set, so nothing can append a
+# Target architecture: the only place that sets an arch flag, so nothing can append a
 # second one and win.
 #
 # The flag SPELLING is per-target, and a wrong one is a hard error:
@@ -45,7 +45,7 @@ endif()
 #   ppc64le  -mcpu=power8          OK, -march=power8  REJECTED
 #   aarch64  -march=armv8-a        OK  (also takes -mcpu=)
 #   riscv64  -march=rv64gc         OK, -mcpu=generic  REJECTED
-# All four reject native: there is no host to query when cross-compiling.
+# All four reject native. Cross-compiling has no host to query.
 if(ADM_TARGET_ARCH STREQUAL "none")
     message(STATUS "Target arch: none (compiler default)")
 elseif(CMAKE_CROSSCOMPILING AND ADM_TARGET_ARCH STREQUAL "native")
@@ -78,7 +78,7 @@ else()
 endif()
 
 # Link-time optimization: opt-in only, never on in a preset. It re-optimizes the
-# whole library on every link — and GCC writes GIMPLE instead of machine code into
+# whole library on every link, and GCC writes GIMPLE instead of machine code into
 # the installed archives, readable only by this exact compiler.
 # Available for experiments via -DADM_ENABLE_LTO=ON.
 if(ADM_ENABLE_LTO)
@@ -102,10 +102,10 @@ else()
 endif()
 
 # ============================================================================
-# Build Type Specific Flags
+# Build-type specific flags
 # ============================================================================
 
-# Additional Release optimizations
+# Additional release optimizations
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         # -funroll-loops deliberately absent: unrolling here is explicit
@@ -132,7 +132,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif()
 
 # ============================================================================
-# User Override Support
+# User override support
 # ============================================================================
 
 # Allow users to add custom flags via:

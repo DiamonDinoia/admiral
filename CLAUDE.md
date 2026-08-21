@@ -6,31 +6,31 @@ what an agent gets wrong first.
 
 ## Build
 
-- `module load gcc/14.2.0` — the system g++ is 8.5 and cannot compile C++20.
-- **`unset NINJA_STATUS`** before any `cmake --build`. A placeholder this ninja
+- `module load gcc/14.2.0`. The system g++ is 8.5 and cannot compile C++20.
+- `unset NINJA_STATUS` before any `cmake --build`. A placeholder this ninja
   rejects aborts the build with an error unrelated to the code; `scripts/validate.sh`
   already does it.
 - Seven usable presets over a shared `base`: `debug`, `asan`, `tsan`, `coverage`,
   `dev`, `release`, `relwithdebinfo`. Benchmark only `release`.
 - `scripts/validate.sh [isa|compilers|catalog|sanitize|valgrind]` is the one entry
   point for "does it build clean and pass everywhere". Every arm asserts against
-  `compile_commands.json` that the flags it asked for actually arrived — CMake accepts
+  `compile_commands.json` that the flags it asked for actually arrived. CMake accepts
   an unknown `-D` name in silence, which is how a previous sweep ran four "sanitizer"
   builds carrying no `-fsanitize` at all.
 - `coverage` is clang source-based coverage (`-fprofile-instr-generate
   -fcoverage-mapping`, -O1; report with llvm-profdata/llvm-cov). Do not resurrect
-  the gcov preset: gcc's --coverage build here is **assembler**-bound (one TU took
+  the gcov preset: gcc's --coverage build here is ASSEMBLER-bound (one TU took
   1 h 50 m in single-threaded GNU `as`), clang's instrumented build is an ordinary
   compile.
 
 ## SIMD and dispatch
 
-- All vector code goes through **xsimd**, all dispatch and unrolling through **poet**.
+- All vector code goes through xsimd, all dispatch and unrolling through poet.
   There are zero raw `_mm*_` intrinsics in `include/` or `src/`; keep it that way.
-  `xsimd::batch<std::complex<T>>` is banned — use split re/im.
+  `xsimd::batch<std::complex<T>>` is banned. Use split re/im.
 - `alignas` takes the arch alignment (`batch_t::arch_type::alignment()`), never a
   literal. The single non-arch constant, `kCacheLine` in `cache.hpp`, is documented.
-- Never `(void)x` to silence a warning — delete the dead thing or use
+- Never `(void)x` to silence a warning. Delete the dead thing or use
   `[[maybe_unused]]`.
 
 ## Compile-time architecture
@@ -41,24 +41,24 @@ not a template axis. The trampoline is the *only* place its two leaves are named
 one `extern template` per precision keeps a whole engine tree out of every TU that
 merely routes to it (`src/inst_*.cpp`, one TU per engine per direction; the comment in
 `src/CMakeLists.txt` records which splits paid off). Do not mark such a
-trampoline always-inline — that pastes both arms, engine included, into every call
+trampoline always-inline. That pastes both arms, engine included, into every call
 site.
 
 ## Measuring
 
 - Wall time cannot resolve small effects here: within-arm spread reaches 17 % on the
-  compile side and 1.17× on the run side. Use **differenced retired counters** (two
-  rep counts, subtract) and rotate arm order.
+  compile side and 1.17× on the run side. Use differenced retired counters, two
+  rep counts subtracted, and rotate arm order.
 - Static asm cannot count executed work. In a hand-versioned function the object holds
   every version while the run executes one, so summed spill counts across versions are
   not comparable. Frames here are realigned to `%rbp`, so a `%rsp` spill regex reads a
   false zero.
-- `.clang-format` is `ColumnLimit: 100`, but the tree is **not** format-clean — 188 lines
+- `.clang-format` is `ColumnLimit: 100`, but the tree is NOT format-clean: 188 lines
   exceed it (90 `include/`, 65 `benchmark/`, 26 `test/`, 7 `src/`). Re-measure rather than
   trusting that number: `find <dir> -type f \( -name '*.hpp' -o -name '*.cpp' -o -name
   '*.h' \) -print0 | xargs -0 awk 'length($0)>100' | wc -l`. Never run `clang-format -i`
-  over a whole file — it rewrites unrelated hand-tuned layout. Format only the lines you
-  touched, and do not add new violations.
+  over a whole file. It rewrites unrelated hand-tuned layout. Format only the lines the change
+  touches, and do not add new violations.
 
 ## Cost model
 
@@ -66,19 +66,19 @@ The routing cost model header (`include/admiral/detail/base_cost_model.hpp`) is
 GENERATED, not handwritten: `cmake -DADM_FIT_COST_MODEL=ON`, targets
 `admiral_cost_sweep` (re-measure this build, ~2 min) then `admiral_cost_model`
 (refit from all receipts in `ADM_COST_MODEL_DATA`). The fitter is C++20 stdlib-only
-(`tools/fit_cost_model.cpp`) — no Python. The refit overwrites the tracked header
+(`tools/fit_cost_model.cpp`), with no Python. The refit overwrites the tracked header
 by default; dry-run with `-DADM_COST_MODEL_OUT=<path>`.
 
-It is **coefficients only** — 38 of them, one sparse lasso per form, pooled over
+It is COEFFICIENTS ONLY: 38 of them, one sparse lasso per form, pooled over
 every swept build. There is no per-(machine, size) correction table: there used to
 be 316 rows, and pricing each form off what the engine actually runs (the measured
 per-precision leaf table, `bluestein_choose_pad`, length-(p−1) Rader) beat them
-outright — 6.10% → 4.16% mean route regret on all 16 swept builds (same metric, rows
+outright: 6.10% → 4.16% mean route regret on all 16 swept builds (same metric, rows
 off both sides), 0.80 geomean runtime on the 77 cells whose route moved, and 0.95
 plan time inside 2..512 because nothing walks a row table any more. 12 of 8190 cells
 are worse at `effort::estimate` (worst 3.4x, N=67 f32); `effort::automatic` recovers
 all 12 to 1.02 geomean with zero cells above their own noise. That is the trade the
-rows were hiding — a table keyed to machines someone happened to sweep cannot race
+rows were hiding. A table keyed to machines someone happened to sweep cannot race
 candidates at plan time, and this model does not have to.
 
 So onboarding a machine is just: sweep it (lands
@@ -98,20 +98,20 @@ directory; `base_cost_gnu14_x86_64_9a65e7f8.txt` and znver4 are deliberately out
 ### The COMPILER is a model feature; the machine is not
 
 One feature slot is keyed to the compiler. Build identity reaches the model nowhere
-else except `log2(W)`, `log(bytes)` and the `regs` argument `chain_work` takes — and
+else except `log2(W)`, `log(bytes)` and the `regs` argument `chain_work` takes.
 `regs` is collinear with `W` across every swept row, so it is not separately
-identifiable. The compiler slot is there because a paired sweep — one host, one tree,
-one kernel vintage, back to back under one lock — reads the `four_step`-versus-
-`iterative_dif` contrast 1.25x apart between gcc and clang, and that pair is the
-dominant route below 512. The slot alone takes pooled route regret from 66.1 to 56.7
-over the 16 rows shared with the previous header, and 56.5 as shipped (the slot plus
-the fresh clang-19 receipt), halving both worst rows
+identifiable. The compiler slot is there because of a paired sweep: one host, one
+tree, one kernel vintage, back to back under one lock. That sweep reads the
+`four_step`-versus-`iterative_dif` contrast 1.25x apart between gcc and clang, and
+that pair is the dominant route below 512. The slot alone takes pooled route regret
+from 66.1 to 56.7 over the 16 rows shared with the previous header, and 56.5 as
+shipped (the slot plus the fresh clang-19 receipt), halving both worst rows
 (clang-18 f32 W=4: 9.5 → 4.8; clang-18 f64 W=8: 10.3 → 5.8). Scored against each
 receipt's MEASURED forms at AVX-512, it moves 37 cells under clang for a large net win
 (f64 regret 2.34% → 1.45%, f32 2.39% → 1.36%, best cells 2.7x and 1.64x) and 10 cells
 under gcc, where f32 improves slightly and f64 does not (0.97% → 1.13%). The two
-compilers move the same pairs in OPPOSITE directions at equal width — which no width or
-machine key can express. An unswept compiler (icx, msvc) takes the gcc branch.
+compilers move the same pairs in OPPOSITE directions at equal width. No width or
+machine key can express that. An unswept compiler (icx, msvc) takes the gcc branch.
 
 The gcc f64 cost is real and measured: at `effort::estimate` three cells regress beyond
 their own round-to-round spread (N=91 1.25x, N=169 1.30x, N=366 1.19x, all
@@ -128,7 +128,7 @@ vintage; the machine is not.
 
 A refit is only comparable inside ONE tree. The fitter prices each form off
 `math.hpp`'s leaf tables through the shared helpers, so the same receipts fitted on
-two trees give different coefficients — reproduce the tracked header on the tree the
+two trees give different coefficients. Reproduce the tracked header on the tree the
 change starts from before believing anything about the tree it ends on.
 
 Only the two SPR receipts (`base_cost_gnu14_x86_64_e18facfb.txt` and the clang-19
@@ -142,7 +142,7 @@ closes it.
 Four pairs of rows carry identical model inputs and differ only in receipt vintage
 (`major` and `uarch` are not features, so each pair scores identically). The stale row
 of each pair carries 2.7x the regret: 1.9/1.5, 4.0/1.0, 1.8/1.1, 5.8/1.4. Nothing
-coefficient-shaped reaches that — the model already fits the fresh rows to 1.0-1.5%,
+coefficient-shaped reaches that. The model already fits the fresh rows to 1.0-1.5%,
 which is the sweep's own repeatability.
 
 So a pooled regret sum is a majority vote by receipt count, and stale rows outnumber
@@ -150,11 +150,11 @@ fresh ones 14 to 4. A bluestein pad slot (`log2(pad2/M)`, the smooth-pad saving 
 `bit_ceil`) was rejected on exactly this: it took the pooled sum 56.5 → 49.9, gained
 on stale rows only, and lost on all four fresh ones, re-routing nine cells on the
 shipped build for 3 wins and 5 losses (worst 1.74x, f32 N=251). A junk n-keyed control
-gains exactly zero, so the metric is sound — the DATA is what is mixed. Split regret by
+gains exactly zero, so the metric is sound. The DATA is what is mixed. Split regret by
 vintage before believing a new slot, and confirm on the shipped build with a route diff
 filtered to the receipt's MEASURED forms.
 
-### The leaf-cost table is measured, and its FRAME is load-bearing
+### The leaf-cost table is measured, and its absolute scale decides routes
 
 `codelet_cost_cyc_f64` / `_f32` / `_extra` in `include/admiral/detail/math.hpp` hold
 absolute measured cycles, not relative weights. `iterative_dif` carries no leaf term,
@@ -171,7 +171,7 @@ Refresh protocol, after a kernel change re-prices a leaf:
 2. Take per-entry medians. A single sweep moves an entry by ~46%.
 3. Move only entries whose RATIO between the two builds departs from 1 beyond their
    own spread. The ratio cancels the frame; an absolute reading does not.
-4. Confirm every mover against a codegen diff — `nm --defined-only -S` over both
+4. Confirm every mover against a codegen diff: `nm --defined-only -S` over both
    `libadmiral.so`, `codelet_apply` specialisations. An entry whose symbol size is
    byte-identical did not change, whatever the timer says. That check killed 10 of 27
    candidate movers in the 2026-08 integration.
@@ -187,11 +187,11 @@ were fitted against, and refreshing it de-calibrated that band by 1.63 geomean o
 The `kLargeRoute*` constants in `include/admiral/detail/four_step_large.hpp` are the one
 family of hand-fit numbers the cost model does not cover: the model's domain stops below
 this band, so these lines are read off crossovers instead of fitted. A threshold and the
-quantity it was fitted against are one artifact — change either and BOTH have to be
+quantity it was fitted against are one artifact. Change either and BOTH have to be
 re-derived, together, in the same run.
 
 Re-derive by A/B-ing `four_step_large` against the serial DIF chain across the byte range,
-one arm per route, and reading the crossover — not by nudging a constant until a cell
+one arm per route, and reading the crossover, not by nudging a constant until a cell
 passes. The serial f32 line is a WINDOW (the DIF chain wins again from 64 MiB), so a sweep
 that stops at 32 MiB reads only its lower edge. The threaded line is a budget over
 `nthreads` clamped by a floor, so it needs a thread sweep and not a single thread count;

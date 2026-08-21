@@ -1,7 +1,7 @@
 #pragma once
 
 // ============================================================================
-// Admiral C++ API — complex and real FFTs, 1-D and N-D, float or double.
+// Admiral C++ API: complex and real FFTs, 1-D and N-D, float or double.
 //
 //   #include <admiral/admiral.hpp>
 //
@@ -17,7 +17,7 @@
 // Everything is in namespace admiral; namespace admiral::detail is internal and
 // has no stability guarantee.
 //
-// Layout. Contiguous row-major, last axis fastest — the same layout as FFTW.
+// Layout. Contiguous row-major, last axis fastest, the same layout as FFTW.
 // Strided data, mdspan and non-contiguous views are not supported.
 //
 // Sign and scale. Forward uses exp(-2*pi*i*k*n/N) and is unscaled. Inverse uses
@@ -27,7 +27,7 @@
 //
 // Aliasing. The (src, dst) overloads are out of place when src != dst and in
 // place when src == dst. Buffers that partially overlap are undefined
-// behaviour — the engine never stages a copy to hide it.
+// behaviour. The engine never stages a copy to hide it.
 //
 // Errors. Span overloads check the element count and throw
 // std::invalid_argument on a mismatch. Pointer overloads trust the caller.
@@ -47,8 +47,8 @@
 // Plan or one-shot. A plan holds the twiddle tables and the worker threads, so
 // reuse one whenever the same shape transforms more than once. The free
 // forward()/inverse() functions build and discard a plan per call, so they
-// always route with effort::estimate: a measuring effort cannot repay on a
-// discarded plan, and opts.eff is ignored there.
+// always route with effort::estimate. A measuring effort cannot repay on a discarded
+// plan, so opts.eff is ignored there.
 // ============================================================================
 
 #include <complex>
@@ -171,8 +171,8 @@ public:
     // transform in place, or (src, dst) which is out of place when src != dst
     // and leaves src untouched.
     //
-    // Prefer (src, dst) over a manual copy — the engine reads the source during
-    // its first pass rather than in a separate sweep, saving one pass over the data.
+    // Prefer (src, dst) over a manual copy. The engine reads the source during
+    // its first pass rather than in a separate sweep, which saves one pass over the data.
     void forward(std::span<std::complex<T>> data, std::optional<T> fct = std::nullopt) const {
         check_size(data.size());
         run(true, data.data(), scale(fct));
@@ -289,7 +289,7 @@ void inverse(std::complex<T>* data, std::initializer_list<std::size_t> shape,
 // Real transforms (r2c / c2r), N-D, out of place
 //
 // `shape` gives the extents of the REAL tensor. A real signal has a conjugate-
-// symmetric spectrum, so only half of it is stored: the complex tensor keeps
+// symmetric spectrum, so a buffer holds only half of it. The complex tensor keeps
 // every extent except the innermost, which becomes shape[Dim-1]/2 + 1. That is
 // FFTW's and ducc0's half-spectrum layout, so buffers port directly. Use
 // cplx_size() rather than computing it yourself.
@@ -374,10 +374,10 @@ void inverse(std::complex<T>* spec, T* out, std::initializer_list<std::size_t> s
 // ============================================================================
 // Real-to-real transforms (DCT / DST), 1-D, out of place
 //
-// Costs one real FFT of the SAME length N -- not of the 2N even extension -- plus
+// Costs one real FFT of the SAME length N, not of the 2N even extension, plus
 // two O(N) passes, via Makhoul's shuffle.
 //
-// Normalization is the library's, not FFTW's: forward() is FFTW's unnormalized
+// Normalization is the library's, not FFTW's. forward() is FFTW's unnormalized
 // kind and inverse() is its exact inverse, so forward -> inverse round-trips to
 // the input. FFTW's own type-2/type-3 pair differs by 2N in that position; pass
 // fct for FFTW's convention.
@@ -388,7 +388,7 @@ class ADM_API plan_r2r {
 public:
     // `rows` contiguous lines of `size` reals each, one kind for all of them. Only
     // the innermost axis of a tensor is contiguous, so N-D needs a transpose the
-    // caller does -- there is no strided r2r here yet.
+    // caller does. There is no strided r2r here yet.
     [[nodiscard]] plan_r2r(std::size_t size, r2r_kind kind, std::size_t rows = 1,
                            const options& opts = {});
 

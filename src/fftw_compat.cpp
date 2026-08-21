@@ -1,5 +1,5 @@
 // FFTW3-compatible shim over admiral::plan<T>. See include/admiral/fftw3.h for the
-// covered surface and conventions (unnormalized both directions; flags ignored).
+// covered API and conventions (unnormalized both directions; flags ignored).
 
 #include "admiral/fftw3.h"
 #include "admiral/admiral.hpp"
@@ -31,8 +31,8 @@ struct fftw_handle {
     void* out;
 };
 
-// The two names fftw3.h declares. Separate types are what makes fftw_execute()
-// on an fftwf_plan a compile error rather than a silent no-op.
+// The two names fftw3.h declares. Separate types make fftw_execute() on an
+// fftwf_plan a compile error rather than a silent no-op.
 struct fftw_plan_s  : fftw_handle<double> { using fftw_handle<double>::fftw_handle; };
 struct fftwf_plan_s : fftw_handle<float>  { using fftw_handle<float>::fftw_handle; };
 
@@ -76,9 +76,9 @@ H* make_plan(int rank, const int* n, void* in, void* out, int sign, unsigned fla
         if (n[i] < 1) return nullptr;
         shape[i] = static_cast<size_t>(n[i]);
     }
-    // FFTW_MEASURE is zero, so estimate is the flag to detect: it opts out of the
+    // FFTW_MEASURE is zero, so estimate is the flag to detect. It opts out of the
     // candidate race. Everything else, PATIENT/EXHAUSTIVE included, takes
-    // effort::automatic — the engine has one search budget (admiral.hpp).
+    // effort::automatic, because the engine has one search budget (admiral.hpp).
     const admiral::effort eff =
         (flags & FFTW_ESTIMATE) ? admiral::effort::estimate : admiral::effort::automatic;
     try {

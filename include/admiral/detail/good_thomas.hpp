@@ -8,11 +8,11 @@
 // Index maps, derived at compile time from the factors:
 //   in  (Ruritanian): in_idx(n1,n2,n3) = (n1*N/N1 + n2*N/N2 + n3*N/N3) % N
 //   out (CRT):        k -> (k%N1, k%N2, k%N3), applied directly in the output
-//                     permutation table -- no modular inverse needed.
+//                     permutation table, with no modular inverse needed.
 // Butterflies run dif_butterfly; gathers are binary two-input shuffle trees
 // (GatherMasks / good_thomas_gather). Inverse via conjugate identity:
 // IDFT(x) = conj(FWD(conj(x))). UN-normalized; caller applies 1/N for inverse.
-// Every extent, index and factor here is std::size_t -- the natural type leaves nothing
+// Every extent, index and factor here is std::size_t: the natural type leaves nothing
 // to cast.
 //
 // Ref: Good, "The interaction algorithm and practical Fourier analysis", J. R.
@@ -45,7 +45,7 @@ namespace detail {
 // Natural input index from cube coordinates: Ruritanian map, coeff_i = N/Ni.
 // constexpr, not consteval: the stage-A mask lambda calls it with runtime-typed
 // parameters inside a consteval table builder, where an immediate invocation is
-// ill-formed (gcc rejects it, clang-18 accepts it -- keep it constexpr for gcc).
+// ill-formed (gcc rejects it, clang-18 accepts it), so keep it constexpr for gcc.
 template<std::size_t N1, std::size_t N2, std::size_t N3>
 [[nodiscard]] constexpr std::size_t good_thomas_in_idx(std::size_t n1, std::size_t n2,
                                                        std::size_t n3) noexcept {
@@ -78,7 +78,7 @@ constexpr std::size_t gt_split_left(std::size_t S) noexcept { return std::bit_fl
 
 // Shuffle mask for one tree node: a=[lo,lo+L), b=[lo+L,lo+L+R).
 // Leaf contributes lane slane; subtree holds value at lane i.
-// Don't-care lanes fold to b (subtree-a node) or identity (leaf) — overwritten higher up.
+// Don't-care lanes fold to b (subtree-a node) or identity (leaf), overwritten higher up.
 template<std::size_t W, typename U>
 consteval std::array<U, W> gt_combine_mask(std::array<std::size_t, W> sid,
                                            std::array<std::size_t, W> slane,
@@ -156,7 +156,7 @@ ADM_ALWAYS_INLINE void good_thomas_apply_dft(std::array<Batch, S>& xr,
                                              std::array<Batch, S>& xi) noexcept {
     if constexpr (Radix >= 2) {
         // Gather arm slots, run dif_butterfly (butterfly.hpp, forward-only), scatter back.
-        // PFA inverse via conjugation — always forward here.
+        // PFA inverse via conjugation, so this stays forward.
         using T = typename Batch::value_type;
         Batch tr[Radix], ti[Radix];
         poet::static_for<Radix>([&](auto K) { tr[K] = xr[K*B+Z]; ti[K] = xi[K*B+Z]; });
@@ -454,7 +454,7 @@ ADM_NOINLINE void good_thomas_execute(const std::complex<T>* in,
             };
             constexpr auto m = xsimd::make_batch_bool_constant<T, in_bounds, Arch>();
             v.store(op + O, m, xsimd::unaligned_mode{});
-        }  // O >= 2N: whole batch past the end — nothing to store
+        }  // O >= 2N: whole batch past the end, nothing to store
     };
     poet::static_for<0, NS>([&](const auto s) {
         store_tail(std::integral_constant<std::size_t, s * W * 2>{}, xsimd::zip_lo(Or[s], Oi[s]));
@@ -463,9 +463,9 @@ ADM_NOINLINE void good_thomas_execute(const std::complex<T>* in,
 }
 
 // ============================================================================
-// PFA catalog: one good_thomas_desc per routed size. Eligibility and dispatch
-// are generated from this pack; add/remove is a one-line diff.
-// Per-cell precision routing delegated to base_cost_model.hpp.
+// PFA catalog: one good_thomas_desc per routed size. This pack generates the
+// eligibility predicate and the dispatch, so adding or removing a size is a one-line
+// diff. base_cost_model.hpp owns per-cell precision routing.
 // ============================================================================
 template<std::size_t N1, std::size_t N2, std::size_t N3>
 struct good_thomas_desc {
@@ -507,7 +507,7 @@ using good_thomas_catalog = good_thomas_catalog_t<
     good_thomas_desc<3, 4, 5>>;        // 60
 
 // Trampoline: one extern template per precision and direction keeps the whole
-// PFA kernel tree out of every TU that merely routes to it. Defined in
+// PFA kernel tree out of every TU that only routes to it. Defined in
 // inst_gt_f.cpp / inst_gt_d.cpp.
 template<typename T, bool Forward>
 void good_thomas_run(const std::complex<T>* in, std::complex<T>* out, std::size_t n) noexcept {

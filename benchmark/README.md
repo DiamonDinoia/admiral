@@ -1,7 +1,7 @@
 # Benchmarks
 
-`admiral_benchmark` times Admiral against **ducc0** under a nanobench harness,
-and against **FFTW** when built with `-DADM_BENCH_FFTW=ON`. Not installed.
+`admiral_benchmark` times Admiral against ducc0 with nanobench,
+and against FFTW when built with `-DADM_BENCH_FFTW=ON`. Not installed.
 
 ## Build and run
 
@@ -19,7 +19,7 @@ Main modes:
 | `--compare` | 1-D ratio vs ducc0 (and FFTW), per size, both precisions |
 | `--compare-nd` / `--compare-2d` | The same for N-D shapes; `--r2c` switches to real transforms |
 | `--verify` | Correctness sweep only, nonzero exit on failure |
-| `--fftw-ab` | Interleaved Admiral↔FFTW A/B (needs `-DADM_BENCH_FFTW=ON`) |
+| `--fftw-ab` | Interleaved Admiral vs FFTW A/B (needs `-DADM_BENCH_FFTW=ON`) |
 | `--size=N` | Single-size profiling of the library alone |
 | `--factors-ab=A:B` | In-process A/B of two DIF factorizations of the same N |
 
@@ -27,22 +27,22 @@ Every mode takes `--prec=f32|f64|both`, `--reps`, `--inner`, and most take
 `--sizes=`/`--shapes=`. The remaining modes are development diagnostics
 (`--pass`, `--codelet-sweep`, `--base-cost`, `--chain-sweep`, `--factor-sweep`,
 `--model-dump`, `--decomp-report`, `--cost-audit`, `--route-ab-dif`,
-`--fs-split-sweep`); each is documented in a comment at the top of its block in
-`bench_fft.cpp`.
+`--fs-split-sweep`). A comment at the top of each block in `bench_fft.cpp`
+documents that mode.
 
 ## Build options
 
-- `ADM_BENCH_FFTW=ON` — add the FFTW reference arm. Needs system `fftw3` and
+- `ADM_BENCH_FFTW=ON` adds the FFTW reference arm. Needs system `fftw3` and
   `fftw3f`, found through pkg-config.
-- `ADM_BENCH_THREADS=ON` — thread the reference libraries too (ducc0's pool, and
+- `ADM_BENCH_THREADS=ON` threads the reference libraries too (ducc0's pool, and
   FFTW's `fftw3_threads` companions under `--nthreads=N`).
 
 Threaded scaling, same host, `--compare-nd --nthreads=t` (`fft_fwd_us`, min
-across rounds): threading is flat up to ~25k elements (1.0–1.1×), pays from 32k
-(32³: 2.9–4.2×), and ramps to 9–11× at 128³ with 16 threads. Rectangles split on
-the innermost extent: 64×4096 reaches 6.9×, 4096×64 only 2.6–5.3×. The
+across rounds): threading is flat up to ~25k elements (1.0-1.1×), pays from 32k
+(32³: 2.9-4.2×), and ramps to 9-11× at 128³ with 16 threads. Rectangles split on
+the innermost extent: 64×4096 reaches 6.9×, 4096×64 only 2.6-5.3×. The
 `nthreads = 0` auto heuristic (`kAutoSerialElems` / `kAutoElemsPerThread` in
-`thread_pool.hpp`) is fitted from this sweep.
+`thread_pool.hpp`) comes from this sweep.
 
 ## Measurement conventions
 
@@ -55,7 +55,7 @@ the innermost extent: 64×4096 reaches 6.9×, 4096×64 only 2.6–5.3×. The
   report the median plus the round-to-round spread; `--robust` adds an identity
   control. A delta inside the spread is a tie.
 - FFTW arms plan with `FFTW_MEASURE`. `ADM_BENCH_FFTW_ESTIMATE=1` switches them
-  to the heuristic plan — that leaves FFTW untuned and flatters Admiral, so it
+  to the heuristic plan. That leaves FFTW untuned and flatters Admiral, so it
   is not the default.
 
 ## The headline numbers in the README

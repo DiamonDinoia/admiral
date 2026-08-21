@@ -11,20 +11,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # The ISA levels are the point of this job: a GitHub runner is one microarchitecture,
+  # The ISA levels are the point of this job. A GitHub runner is one microarchitecture,
   # so -march=native there proves nothing about anyone else's machine. x86-64-v4 has
-  # no row here: it lives entirely in the v4-sde leg below, which compiles the same
-  # -DADM_TARGET_ARCH=x86-64-v4 with the same g++-14 AND executes it, so a build-only
-  # row was a strict subset. It was also the one row that OOMed -- `cmake --build`
-  # with no -j lets ninja pick cores+2 = 6 concurrent v4 engine TUs, and the runner
-  # died with a shutdown signal (exit 143) partway through inst_col_d_*. v4-sde
-  # survives the same work because it builds at -j $(nproc).
+  # no row here. The v4-sde leg below compiles the same -DADM_TARGET_ARCH=x86-64-v4
+  # with the same g++-14 AND executes it, so a build-only row adds nothing.
   #
-  # The aarch64 row is the non-x86 guard, and it is a native runner rather than qemu:
-  # it costs a normal build instead of a 10-50x emulated one. It also covers the
+  # The aarch64 row is the non-x86 guard, and it is a native runner rather than qemu.
+  # It costs a normal build instead of a 10-50x emulated one. It also covers the
   # -march=/-mcpu= split in CompilerOptions.cmake, which x86-only CI cannot see.
-  # ppc64le and riscv64 are validated out-of-band: no hosted runner exists, and gcc
-  # 14.2 ICEs on -march=rv64gcv (a compiler bug, not ours).
+  # Validation for ppc64le and riscv64 happens out-of-band. No hosted runner exists, and gcc
+  # 14.2 ICEs on -march=rv64gcv (a compiler bug, not an admiral one).
   build:
     strategy:
       fail-fast: false
@@ -56,8 +52,8 @@ jobs:
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
       - name: Assert the flags arrived
         # CMake accepts unknown -D names in silence and a second arch flag would win, so
-        # the configuration is asserted rather than assumed. See scripts/validate.sh.
-        # Matched without the flag prefix: CompilerOptions.cmake emits -mcpu= on
+        # this step asserts the configuration rather than assuming it. See scripts/validate.sh.
+        # Matched without the flag prefix. CompilerOptions.cmake emits -mcpu= on
         # arm/powerpc and -march= elsewhere, so hardcoding -march= here would be a
         # false green on any non-x86 row.
         if: matrix.arch != 'none'
@@ -75,11 +71,11 @@ jobs:
   #   gcc  undefined         >15.8 GB, 630 s    gcc  address+undefined  >19.3 GB, 2044 s
   #   clang address+undefined  8.0 GB, 370 s    gcc  thread              6.9 GB,  425 s
   #
-  # gcc's ASan is out at every ISA, not just at native (where that TU needed >60 GB and
+  # gcc's ASan is out at every ISA, native included (there that TU needed >60 GB and
   # 58 min). clang's costs 14% over the no-sanitizer control, so the ASan row runs clang
-  # and keeps the full sanitizer set on the real code -- nothing dropped or narrowed. The
+  # and keeps the full sanitizer set on the real code, nothing dropped or narrowed. The
   # thread row stays on gcc because gcc TSan already fits, and clang TSan is unmeasured
-  # here; that also buys compiler diversity for free.
+  # here; that also gives compiler diversity at no cost.
   sanitizers:
     strategy:
       fail-fast: false
@@ -108,7 +104,7 @@ jobs:
           grep -qF -- '-O1' build/${{ matrix.preset }}/compile_commands.json
           grep -qF -- '=x86-64-v2' build/${{ matrix.preset }}/compile_commands.json
           ! grep -qF -- '=native' build/${{ matrix.preset }}/compile_commands.json
-      # -j 4, not ninja's default of cores+2: the worst sanitized engine TU peaked at
+      # -j 4, not ninja's default of cores+2. The worst sanitized engine TU peaked at
       # 2.1 GB (clang ASan+UBSan, x86-64-v2, on the pre-direction-split inst_col_f), and
       # six of those would sit at 12.7 GB on a 16 GB runner with the rest of the job's
       # memory on top.
@@ -126,7 +122,7 @@ jobs:
         with: {key: valgrind}
       # A standard hosted runner ships 14 GB of workspace, and this job ran it out:
       # `ld: final link failed: No space left on device` on the last few test binaries
-      # and `ranlib: error reading codelet_41.cpp.o: No space left on device` -- always
+      # and `ranlib: error reading codelet_41.cpp.o: No space left on device`, always
       # at the end of the build, never in a compile. Every test executable statically
       # links all 16 engine objects plus 65 codelets, so the tail of the build is where
       # the bytes land. These trees are preinstalled toolchains this job never touches.
@@ -144,7 +140,7 @@ jobs:
             -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF
           cmake --build build
       - name: Memcheck
-        # test_ulp is skipped for the reason scripts/validate.sh skips it: its O(N^2)
+        # This leg skips test_ulp for the reason scripts/validate.sh skips it. Its O(N^2)
         # long-double reference makes the binary minutes of pure arithmetic under
         # valgrind, and an empty filtered run exits 4 (Catch2's no-match code).
         run: |
@@ -156,7 +152,7 @@ jobs:
               --errors-for-leak-kinds=definite "$t"
           done
 
-  # clang source-based coverage (llvm-cov), not gcov: gcc's --coverage build is
+  # clang source-based coverage (llvm-cov), not gcov. gcc's --coverage build is
   # assembler-bound on this tree (single-threaded GNU as; one TU took 1h50m),
   # while the clang instrumented build is an ordinary compile, and the
   # region/branch mapping survives -O1.
@@ -173,7 +169,7 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
                       /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
-      # -D on the command line, not `env: CXX`: the preset pins CMAKE_CXX_COMPILER, and
+      # -D on the command line, not `env: CXX`. The preset pins CMAKE_CXX_COMPILER, and
       # a cacheVariable beats the environment, so CXX here was silently doing nothing and
       # the job depended on an unversioned /usr/bin/clang++ existing on the image.
       - run: cmake --preset coverage -DCMAKE_CXX_COMPILER=clang++-18
@@ -182,8 +178,8 @@ jobs:
           grep -qF -- '-fcoverage-mapping' build/coverage/compile_commands.json
           ! grep -qF -- '=native' build/coverage/compile_commands.json
       - run: cmake --build --preset coverage
-      # One profraw per binary: sharing the default path would silently corrupt the
-      # profile across link-moduled objects.
+      # Each binary writes its own profraw. Sharing the default path would silently corrupt
+      # the profile across link-moduled objects.
       - run: ctest --preset coverage
         env: {LLVM_PROFILE_FILE: "build/coverage/profraw/%m.profraw"}
       - name: Report
@@ -199,10 +195,10 @@ jobs:
         with: {name: coverage, path: cov.profdata}
 
   install:
-    # A consumer sees the installed package, not the build tree: this catches an export
+    # A consumer sees the installed package, not the build tree. This catches an export
     # set that only resolves in-tree and a C driver missing the C++ runtime.
-    # Not a linkage matrix: both linkages always ship, and test/package links all
-    # six targets -- shared and static, C++ / C / FFTW -- from this one prefix.
+    # Not a linkage matrix. Both linkages always ship, and test/package links all
+    # six targets from this one prefix: shared and static, C++ / C / FFTW.
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -224,7 +220,7 @@ jobs:
           ctest --test-dir build-pkg --output-on-failure
 
   # x86-64-v4 execution coverage. GitHub runners are not guaranteed AVX-512, so
-  # the v4 build is run under Intel SDE (-spr); without this leg the W==8/W==16
+  # this leg runs the v4 build under Intel SDE (-spr). Without it the W==8/W==16
   # pin rows, wide-radix tables and fused sweeps are CI-invisible.
   v4-sde:
     runs-on: ubuntu-24.04
@@ -233,16 +229,15 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build
       # Third-party single-purpose action; pinned by sha.
       - uses: petarpetrovt/setup-sde@31aa4a8e85e109bef00f1d838613fcc6ec421271  # v5.0
-      # A wrapper script, not "sde64;-spr" list syntax: list-form emulator values
+      # A wrapper script, not "sde64;-spr" list syntax. List-form emulator values
       # reach Catch2's test discovery mangled (sde runs with no args at all).
       - name: SDE wrapper
         run: |
           printf '#!/bin/sh\nexec "%s/sde64" -spr -- "$@"\n' "$SDE_PATH" | sudo tee /usr/local/bin/sde-spr
           sudo chmod +x /usr/local/bin/sde-spr
       - name: Build v4
-        # -j $(nproc) is load-bearing, not decoration: ninja's own default is cores+2,
-        # and six concurrent v4 engine TUs OOM the runner (that is what killed the
-        # build matrix's old v4 row). Do not drop the -j.
+        # -j $(nproc) is required. ninja's own default is cores+2, and six
+        # concurrent v4 engine TUs OOM the runner. Do not drop the -j.
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_COMPILER=g++-14 -DADM_TARGET_ARCH=x86-64-v4 \
@@ -283,7 +278,7 @@ jobs:
           cmake --build build
           ctest --test-dir build --output-on-failure
 
-  # The benchmark binary doubles as the codelet-scale verifier: --verify sweeps the
+  # The benchmark binary is also the codelet-scale verifier. --verify sweeps the
   # whole codelet catalog [2..64] plus the large-N decomposition sizes, covering
   # catalog TUs 17..64 that sanitizer builds cap out of. Cheap: one Release x86-64-v2
   # build, minutes of runtime.

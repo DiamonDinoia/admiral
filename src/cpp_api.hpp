@@ -22,9 +22,9 @@ namespace admiral {
 namespace detail {
 
 // Each state takes the public options aggregate whole rather than one parameter
-// per field: it is the only thing a plan is built from, and resolve_nthreads is
-// applied here because routing depends on the real worker count, not on the
-// 0-means-auto sentinel. Threading then lives INSIDE the engine plans
+// per field: it is the only thing a plan is built from, and resolve_nthreads runs
+// here because routing depends on the real worker count, not on the 0-means-auto
+// sentinel. Threading then lives INSIDE the engine plans
 // (plan-owned pools); no state here. options::debug is the one field the engine
 // plan does not keep, so each state holds it and replays it per execute.
 
@@ -91,7 +91,7 @@ struct axis_state {
         // serially inside/instead of it. prod(shape[d != axis]) bounds that
         // loop's unit count for both the contiguous and the strided form, so a
         // single-line box (finufft with ntrans == 1) hands the axis the real
-        // thread count -- four_step_large is the only route that reads nthreads
+        // thread count: four_step_large is the only route that reads nthreads
         // and the only one that threads its own passes.
         const std::size_t units = *total / shape[axis];
         const bool threads_above = units >= 2 && *total >= kThreadMinElems;
@@ -159,7 +159,7 @@ void one_shot_nd(std::complex<T>* data, std::span<const std::size_t> shape, bool
 
 }  // namespace
 
-// The type_identity_t wrapper is part of the signature -- see admiral.hpp.
+// The type_identity_t wrapper is part of the signature; see admiral.hpp.
 template<detail::precision T>
 void forward(std::type_identity_t<std::span<const std::complex<T>>> input,
              std::span<std::complex<T>> output, const options& opts, std::optional<T> fct) {
@@ -304,7 +304,7 @@ void axis_plan<T>::execute_bands(std::complex<T>* data, std::span<const std::siz
 
     if (m->innermost) {   // contiguous rows of length len
         // base_of(i) is base_of(0) + i*len exactly when every batch dim but the slowest
-        // is spanned whole -- the mixed-radix digits then enumerate consecutive lines,
+        // is spanned whole: the mixed-radix digits then enumerate consecutive lines,
         // so the run needs neither the per-line index decode nor a per-line dispatch.
         bool dense = true;
         for (std::size_t k = 1; k < m->bd.size(); ++k)

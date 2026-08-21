@@ -2,8 +2,8 @@
 # Callers guard on TARGET project_sanitizers rather than on the option, so there is one
 # source of truth for whether sanitizing is on.
 #
-# ADM_SANITIZER is validated before going into -fsanitize=: an unknown value must
-# stop the configure rather than silently build without a sanitizer.
+# This file validates ADM_SANITIZER before it reaches -fsanitize=. An unknown value
+# must stop the configure rather than silently build without a sanitizer.
 
 if(ADM_SANITIZER STREQUAL "none")
     return()

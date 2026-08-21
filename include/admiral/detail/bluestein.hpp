@@ -72,7 +72,7 @@ class bluestein_plan {
         // (mutually exclusive with bl_dif: one inner engine per plan). execute() is
         // const with no plan-owned mutable state (four_step_large.hpp contract), so
         // the plan stays copyable and re-entrant. The inverse delegate's DEFAULT
-        // scale is exactly 1/pad (P2 folds 1/n2, P4 1/n1 — see four_step_large),
+        // scale is exactly 1/pad (P2 folds 1/n2, P4 1/n1, see four_step_large),
         // matching the in-place arm's last-pass 1/pad.
         std::optional<four_step_large_plan<T>> six_fwd, six_inv;
     } m;
@@ -128,7 +128,7 @@ public:
         const std::size_t N = m.size;
 
         // Multiply input by chirp and zero-pad. soa_scratch is uninitialized, so
-        // only the pad tail [N, padded) is zeroed -- a std::vector value-inits all
+        // only the pad tail [N, padded) is zeroed: a std::vector value-inits all
         // of it and the chirp sweep then overwrites [0, N), making that half of the
         // memset pure waste.
         soa_scratch<T, 1> scratch(2 * m.padded_size);

@@ -1,9 +1,9 @@
 #pragma once
 
-// Private implementation header — included only by per-N TUs and codelet_dispatch.cpp.
+// Private implementation header, included only by per-N TUs and codelet_dispatch.cpp.
 // Defines codelet_apply<N,T,Forward>: deinterleave -> kernel<N>::apply -> reinterleave.
 // in == out is in-place; in != out reads `in` (preserved) and writes `out`.
-// Un-normalized (does NOT apply 1/N).  N <= CODELET_CATALOG_MAX is guaranteed by routing.
+// Un-normalized (does NOT apply 1/N).  Routing guarantees N <= CODELET_CATALOG_MAX.
 
 #include <bit>
 #include <complex>
@@ -17,9 +17,9 @@ namespace admiral {
 namespace detail {
 
 // Output sink for kernel<N>::apply_sink: interleaves the emitted (re,im) pairs
-// straight to AoS `out` — no SoA output round-trip. The inverse's exit conjugation
-// rides the sign here (see the conj-trick comment below); chunks arrive with j in
-// ascending order, each output index emitted exactly once.
+// straight to AoS `out`, with no SoA output round-trip. The inverse's exit conjugation
+// rides the sign here (see the conj-trick comment below). Chunks arrive with j in
+// ascending order, and each output index arrives exactly once.
 template<typename T, bool Forward>
 struct aos_sink {
     std::complex<T>* out;
@@ -66,7 +66,7 @@ void codelet_apply(const std::complex<T>* in, std::complex<T>* out) {
     // W=16 (f32/AVX-512), where 120 = 7*16 + 8. The scalar residue loops below
     // cannot run for either: the descent binary-decomposes any even residue
     // exactly, so a scalar remainder needs an odd N >= 64, which the catalog has
-    // none of. They stay because they are what makes this correct if one is added.
+    // none of. They stay because they keep this correct if the catalog gains such an N.
     const T* src = reinterpret_cast<const T*>(in);
     std::size_t i = 0;
     for (; i + W <= N; i += W) {
@@ -94,8 +94,8 @@ void codelet_apply(const std::complex<T>* in, std::complex<T>* out) {
     }
 
     // Inverse via the conjugate identity  inv(x) = conj(fwd(conj(x)))  so only
-    // the forward kernel is instantiated (halves the codelet catalog's heavy
-    // per-N instantiation). Entry conj negates the imaginary SoA lane; the exit
+    // the build instantiates the forward kernel (which halves the codelet catalog's
+    // heavy per-N instantiation). Entry conj negates the imaginary SoA lane; the exit
     // conj rides the sign in aos_sink.
     if constexpr (!Forward) for (std::size_t k = 0; k < N; ++k) xim[k] = -xim[k];
     kernel<N, T, true>::apply_sink(xre, xim, 1, yre, yim, aos_sink<T, Forward>{out});
@@ -110,10 +110,10 @@ void codelet_apply(const std::complex<T>* in, std::complex<T>* out) {
 // the next line and aos_interleave_prefix never writes past it, so a tile needs no
 // padding and the last full tile is not a special case.
 //
-// SCALED (unlike codelet_apply): `fct` folds into the output, replacing the run's second
-// pass. Inverse rides the same forward kernel_batched via conj(fwd(conj(x))) -- the
-// output conjugation is just the sign of the imaginary scale -- so only the Forward
-// instantiation of the heavy batched kernel is ever compiled.
+// SCALED (unlike codelet_apply): `fct` folds into the output and replaces the run's
+// second pass. Inverse rides the same forward kernel_batched via conj(fwd(conj(x))).
+// The output conjugation is the sign of the imaginary scale, so the build compiles
+// only the Forward instantiation of the heavy batched kernel.
 //
 // N in {2,4} keeps the per-line loop: there kernel<N> is a register-resident pow2
 // dif_butterfly with no twiddle table and no memory round-trip, cheaper than the tile's

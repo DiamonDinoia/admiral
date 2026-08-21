@@ -4,7 +4,7 @@
 // Fixed fork-join thread pool for N-D batch loops.
 //
 // All work units are equal (rows/columns/tiles), so static contiguous chunking
-// is optimal; a general task-graph scheduler buys nothing.
+// is optimal; a general task-graph scheduler adds nothing.
 // ponytail: hand-rolled. Add a dependency only if profiling shows a win from
 // work-stealing or irregular scheduling.
 //
@@ -17,7 +17,7 @@
 // nthreads==1: byte-identical serial path, zero threads spawned.
 // Not re-entrant; no concurrent parallel_for calls (one dispatcher).
 //
-// ADM_THREADS==0 (CMake -DADM_ENABLE_THREADS=OFF): no worker pool at all — no
+// ADM_THREADS==0 (CMake -DADM_ENABLE_THREADS=OFF): no worker pool at all, and no
 // <thread>/Threads dependency. resolve_nthreads collapses to 1 so callers never
 // build a pool and parallel_for runs inline; the class stays a complete type.
 // ============================================================================
@@ -61,7 +61,7 @@ inline void cpu_relax() noexcept {
 
 namespace admiral::detail {
 // body(begin, end, tid): callers iterate [begin,end), allocate per-chunk scratch once.
-// Concept ensures wrong lambda signatures fail at the call site.
+// The concept makes a wrong lambda signature fail at the call site.
 template<typename F>
 concept ChunkBody = std::invocable<F&, std::size_t, std::size_t, std::size_t>;
 }  // namespace admiral::detail
@@ -74,8 +74,8 @@ inline constexpr std::size_t kThreadMinElems = std::size_t{1} << 15;
 
 #if ADM_THREADS
 
-// Ceiling for nthreads=0 auto-selection: tiny transforms never gain from over
-// subscribing a big machine, and the pool spins, so cap the auto count.
+// Ceiling for nthreads=0 auto-selection: tiny transforms never gain from
+// oversubscribing a big machine, and the pool spins, so cap the auto count.
 inline constexpr std::size_t kMaxAutoThreads = 16;
 
 // Auto-selection heuristic: a pool costs more than it saves below
@@ -88,7 +88,7 @@ inline constexpr std::size_t kAutoElemsPerThread = std::size_t{1} << 12;
 
 // Distinct physical cores among the CPUs this process is allowed to run on
 // (Linux topology + affinity mask; same method as finufft's getOptimalThreadCount).
-// hardware_concurrency counts SMT siblings, which share execution resources -- the
+// hardware_concurrency counts SMT siblings, which share execution resources: the
 // wrong count for a spinning pool on unbalanced splits. Falls back to
 // hardware_concurrency where topology is absent.
 [[nodiscard]] inline std::size_t allowed_physical_cores() {
@@ -129,9 +129,9 @@ inline constexpr std::size_t kAutoElemsPerThread = std::size_t{1} << 12;
     return std::clamp(total / kAutoElemsPerThread, std::size_t{1}, resolve_nthreads(0));
 }
 
-// Saturating product for total-element estimates: an overflowing shape simply
-// resolves to the full auto count, and the plan constructor reports the bad
-// shape on its own path.
+// Saturating product for total-element estimates: an overflowing shape resolves
+// to the full auto count, and the plan constructor reports the bad shape on its
+// own path.
 [[nodiscard]] inline std::size_t sat_elems(std::size_t a, std::size_t b) noexcept {
     return b != 0 && a > std::numeric_limits<std::size_t>::max() / b
                ? std::numeric_limits<std::size_t>::max()
@@ -222,7 +222,7 @@ private:
                         return epoch_.load(std::memory_order_acquire) != seen
                             || stopping_.load(std::memory_order_acquire);
                     });
-                    break;   // epoch changed or stopping — re-evaluate at the top
+                    break;   // epoch changed or stopping, so re-evaluate at the top
                 }
             }
             if (stopping_.load(std::memory_order_acquire)) return;
@@ -247,7 +247,7 @@ private:
     std::atomic<std::uint64_t> epoch_{0};    // bumped per dispatch; workers run when it changes
     std::atomic<bool> stopping_{false};
 
-    // Own line: every participant fetch_sub's it and caller spins on it —
+    // Own line: every participant fetch_sub's it and the caller spins on it, so
     // exclusive churn would bounce the read-mostly dispatch line (false sharing).
     alignas(kCacheLine) std::atomic<std::uint64_t> pending_{0};  // participants still running
 
@@ -257,7 +257,7 @@ private:
     std::exception_ptr first_exc_;
 };
 
-#else   // !ADM_THREADS — serial build, no worker pool.
+#else   // !ADM_THREADS: serial build, no worker pool.
 
 [[nodiscard]] inline std::size_t resolve_nthreads(std::size_t) noexcept { return 1; }
 [[nodiscard]] inline std::size_t resolve_nthreads(std::size_t, std::size_t) noexcept { return 1; }

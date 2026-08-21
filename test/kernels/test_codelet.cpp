@@ -1,6 +1,6 @@
 // Correctness tests for the generic metaprogrammed codelet kernel<N, T, Forward>.
-// Each instantiation is checked against a direct O(N^2) reference DFT, which is
-// the ground truth the generic Cooley-Tukey recursion must reproduce.
+// Each case checks one instantiation against a direct O(N^2) reference DFT, the
+// ground truth the generic Cooley-Tukey recursion must reproduce.
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -28,7 +28,7 @@ static_assert(!cofactor_simd_profitable<float, 8>(cofactor_batch_width<float, 8>
 // The six above all take the Wc == R exit, so they never reach the width gate. R=3 gives
 // Wc > R for both precisions, which routes an even_m cofactor through a masked load. Which
 // masked-load arm is live follows the ISA, so tie the assertion to Wc rather than to a
-// literal: a 16-byte Wc is cheap and admits any even M, a 32-byte one first has to clear
+// literal. A 16-byte Wc is cheap and admits any even M, a 32-byte one first has to clear
 // R*M >= kMaskedLoad256MinWork.
 constexpr bool kMasked256F64 = cofactor_batch_width<double, 3>() * sizeof(double) > 16;
 static_assert(kMasked256F64 == !cofactor_simd_profitable<double, 3>(8));  // 3*8 < 27
@@ -192,8 +192,8 @@ TEST_CASE("batched four-step matches reference DFT (composition of kernels, N>64
     check_four_step<32, 64, float>();    // 2048
 }
 
-// kernel<N>::apply_sink: every output index is emitted exactly once through the
-// sink (mixed scalar T and sized-batch V chunks). got starts poisoned, so a
+// kernel<N>::apply_sink: the sink emits every output index exactly once (mixed
+// scalar T and sized-batch V chunks). got starts poisoned, so a
 // skipped or double-emitted index surfaces; values go against reference_dft and
 // apply()'s own output within tolerance (the two paths reassociate differently
 // under fast-math, so bitwise equality is not a property of the interface).

@@ -15,7 +15,7 @@ jobs:
   fftw-snapshot:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build libfftw3-dev python3
       - run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
@@ -36,7 +36,7 @@ jobs:
           python3 scripts/ci_perf_ab.py build/benchmark/admiral_benchmark \
             build/benchmark/admiral_benchmark --rounds 4 --grid ci \
             --json self.json | tee self_table.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: perf-master
           retention-days: 90

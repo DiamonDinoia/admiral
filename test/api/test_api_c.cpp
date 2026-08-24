@@ -21,10 +21,10 @@ TEST_CASE("C API forward/inverse transforms (double)", "[c_api]") {
 
     std::vector<adm_complex> original = input;
 
-    adm_status status = adm_forward(input.data(), N, NULL);
+    adm_status status = adm_forward(input.data(), N, nullptr);
     REQUIRE(status == ADM_SUCCESS);
 
-    status = adm_inverse(input.data(), N, NULL);
+    status = adm_inverse(input.data(), N, nullptr);
     REQUIRE(status == ADM_SUCCESS);
 
     require_close_c(input.data(), original.data(), N, fft_tol<double>());
@@ -41,10 +41,10 @@ TEST_CASE("C API forward/inverse transforms (float)", "[c_api]") {
 
     std::vector<admf_complex> original = input;
 
-    adm_status status = admf_forward(input.data(), N, NULL);
+    adm_status status = admf_forward(input.data(), N, nullptr);
     REQUIRE(status == ADM_SUCCESS);
 
-    status = admf_inverse(input.data(), N, NULL);
+    status = admf_inverse(input.data(), N, nullptr);
     REQUIRE(status == ADM_SUCCESS);
 
     require_close_c(input.data(), original.data(), N, fft_tol<float>());
@@ -54,13 +54,13 @@ TEST_CASE("C API error handling for transforms", "[c_api]") {
     std::vector<adm_complex> data(16);
 
     SECTION("Null pointer") {
-        REQUIRE(adm_forward(nullptr, 16, NULL) == ADM_ERROR_NULL_POINTER);
-        REQUIRE(adm_inverse(nullptr, 16, NULL) == ADM_ERROR_NULL_POINTER);
+        REQUIRE(adm_forward(nullptr, 16, nullptr) == ADM_ERROR_NULL_POINTER);
+        REQUIRE(adm_inverse(nullptr, 16, nullptr) == ADM_ERROR_NULL_POINTER);
     }
 
     SECTION("Zero size") {
-        REQUIRE(adm_forward(data.data(), 0, NULL) == ADM_ERROR_INVALID_SIZE);
-        REQUIRE(adm_inverse(data.data(), 0, NULL) == ADM_ERROR_INVALID_SIZE);
+        REQUIRE(adm_forward(data.data(), 0, nullptr) == ADM_ERROR_INVALID_SIZE);
+        REQUIRE(adm_inverse(data.data(), 0, nullptr) == ADM_ERROR_INVALID_SIZE);
     }
 }
 
@@ -68,7 +68,7 @@ TEST_CASE("C API bidirectional plan (double)", "[c_api][plan]") {
     const size_t N = 32;
 
     adm_plan plan = nullptr;
-    adm_status status = adm_plan_1d(&plan, N, NULL);
+    adm_status status = adm_plan_1d(&plan, N, nullptr);
     REQUIRE(status == ADM_SUCCESS);
     REQUIRE(plan != nullptr);
     REQUIRE(adm_plan_size(plan) == N);
@@ -96,7 +96,7 @@ TEST_CASE("C API plan round-trip (float)", "[c_api][plan]") {
     const size_t N = 64;
 
     adm_plan plan = nullptr;
-    adm_status status = admf_plan_1d(&plan, N, NULL);
+    adm_status status = admf_plan_1d(&plan, N, nullptr);
     REQUIRE(status == ADM_SUCCESS);
 
     std::vector<admf_complex> input(N);
@@ -120,12 +120,13 @@ TEST_CASE("C API plan round-trip (float)", "[c_api][plan]") {
 
 TEST_CASE("C API plan error handling", "[c_api][plan]") {
     SECTION("Null plan pointer") {
-        REQUIRE(adm_plan_1d(nullptr, 32, NULL) == ADM_ERROR_NULL_POINTER);
+        REQUIRE(adm_plan_1d(nullptr, 32, nullptr) == ADM_ERROR_NULL_POINTER);
     }
 
     SECTION("Zero size") {
         adm_plan plan = nullptr;
-        REQUIRE(adm_plan_1d(&plan, 0, NULL) == ADM_ERROR_INVALID_SIZE);
+        REQUIRE(adm_plan_1d(&plan, 0, nullptr) == ADM_ERROR_INVALID_SIZE);
+        adm_plan_destroy(plan);   // a failure still writes an owned error record
     }
 
     SECTION("Null plan in execute") {
@@ -136,7 +137,7 @@ TEST_CASE("C API plan error handling", "[c_api][plan]") {
 
     SECTION("Null data in execute") {
         adm_plan plan = nullptr;
-        REQUIRE(adm_plan_1d(&plan, 32, NULL) == ADM_SUCCESS);
+        REQUIRE(adm_plan_1d(&plan, 32, nullptr) == ADM_SUCCESS);
         REQUIRE(adm_plan_execute_forward(plan, nullptr) == ADM_ERROR_NULL_POINTER);
         REQUIRE(adm_plan_execute_inverse(plan, nullptr) == ADM_ERROR_NULL_POINTER);
         adm_plan_destroy(plan);
@@ -147,7 +148,7 @@ TEST_CASE("C API plan reuse", "[c_api][plan]") {
     const size_t N = 32;
 
     adm_plan plan = nullptr;
-    adm_status status = adm_plan_1d(&plan, N, NULL);
+    adm_status status = adm_plan_1d(&plan, N, nullptr);
     REQUIRE(status == ADM_SUCCESS);
 
     for (size_t batch = 0; batch < 5; ++batch) {
@@ -190,8 +191,8 @@ TEST_CASE("C API round-trip size sweep (double)", "[c_api][sweep]") {
         }
         std::vector<adm_complex> original = input;
 
-        REQUIRE(adm_forward(input.data(), N, NULL) == ADM_SUCCESS);
-        REQUIRE(adm_inverse(input.data(), N, NULL) == ADM_SUCCESS);
+        REQUIRE(adm_forward(input.data(), N, nullptr) == ADM_SUCCESS);
+        REQUIRE(adm_inverse(input.data(), N, nullptr) == ADM_SUCCESS);
 
         require_close_c(input.data(), original.data(), N, fft_tol<double>());
     }
@@ -207,8 +208,8 @@ TEST_CASE("C API round-trip size sweep (float)", "[c_api][sweep]") {
         }
         std::vector<admf_complex> original = input;
 
-        REQUIRE(admf_forward(input.data(), N, NULL) == ADM_SUCCESS);
-        REQUIRE(admf_inverse(input.data(), N, NULL) == ADM_SUCCESS);
+        REQUIRE(admf_forward(input.data(), N, nullptr) == ADM_SUCCESS);
+        REQUIRE(admf_inverse(input.data(), N, nullptr) == ADM_SUCCESS);
 
         require_close_c(input.data(), original.data(), N, fft_tol<float>());
     }
@@ -233,8 +234,8 @@ TEST_CASE("C API N-D round-trip identity (double)", "[c_api][nd]") {
         }
         std::vector<adm_complex> original = input;
 
-        REQUIRE(adm_forward_nd(input.data(), shape.data(), shape.size(), NULL) == ADM_SUCCESS);
-        REQUIRE(adm_inverse_nd(input.data(), shape.data(), shape.size(), NULL) == ADM_SUCCESS);
+        REQUIRE(adm_forward_nd(input.data(), shape.data(), shape.size(), nullptr) == ADM_SUCCESS);
+        REQUIRE(adm_inverse_nd(input.data(), shape.data(), shape.size(), nullptr) == ADM_SUCCESS);
         require_close_c(input.data(), original.data(), Ntot, fft_tol<double>());
     }
 }
@@ -252,8 +253,8 @@ TEST_CASE("C API N-D round-trip identity (float)", "[c_api][nd]") {
         }
         std::vector<admf_complex> original = input;
 
-        REQUIRE(admf_forward_nd(input.data(), shape.data(), shape.size(), NULL) == ADM_SUCCESS);
-        REQUIRE(admf_inverse_nd(input.data(), shape.data(), shape.size(), NULL) == ADM_SUCCESS);
+        REQUIRE(admf_forward_nd(input.data(), shape.data(), shape.size(), nullptr) == ADM_SUCCESS);
+        REQUIRE(admf_inverse_nd(input.data(), shape.data(), shape.size(), nullptr) == ADM_SUCCESS);
         require_close_c(input.data(), original.data(), Ntot, fft_tol<float>());
     }
 }
@@ -271,12 +272,12 @@ TEST_CASE("C API N-D shape {1,N}/{N,1} matches 1D (double)", "[c_api][nd]") {
         }
 
         std::vector<adm_complex> one_d = base;
-        REQUIRE(adm_forward(one_d.data(), N, NULL) == ADM_SUCCESS);
+        REQUIRE(adm_forward(one_d.data(), N, nullptr) == ADM_SUCCESS);
 
         for (const std::vector<size_t>& shape : {std::vector<size_t>{1, N},
                                                  std::vector<size_t>{N, 1}}) {
             std::vector<adm_complex> nd = base;
-            REQUIRE(adm_forward_nd(nd.data(), shape.data(), shape.size(), NULL) == ADM_SUCCESS);
+            REQUIRE(adm_forward_nd(nd.data(), shape.data(), shape.size(), nullptr) == ADM_SUCCESS);
             require_close_c(nd.data(), one_d.data(), N, fft_tol<double>());
         }
     }
@@ -293,14 +294,14 @@ TEST_CASE("C API N-D reusable plan matches one-shot (double)", "[c_api][nd][plan
     }
 
     adm_plan plan = nullptr;
-    REQUIRE(adm_plan_nd(&plan, shape.data(), shape.size(), NULL) == ADM_SUCCESS);
+    REQUIRE(adm_plan_nd(&plan, shape.data(), shape.size(), nullptr) == ADM_SUCCESS);
     REQUIRE(plan != nullptr);
     REQUIRE(adm_plan_size(plan) == Ntot);
 
     std::vector<adm_complex> via_plan = base;
     std::vector<adm_complex> via_oneshot = base;
     REQUIRE(adm_plan_execute_forward(plan, via_plan.data()) == ADM_SUCCESS);
-    REQUIRE(adm_forward_nd(via_oneshot.data(), shape.data(), shape.size(), NULL) == ADM_SUCCESS);
+    REQUIRE(adm_forward_nd(via_oneshot.data(), shape.data(), shape.size(), nullptr) == ADM_SUCCESS);
     require_close_c(via_plan.data(), via_oneshot.data(), Ntot, fft_tol<double>());
 
     // Round-trip through the same reusable plan returns the original.
@@ -315,15 +316,17 @@ TEST_CASE("C API N-D rejects invalid arguments", "[c_api][nd]") {
     const size_t bad_shape[2] = {8, 0};  // zero extent
     std::vector<adm_complex> data(64);
 
-    REQUIRE(adm_forward_nd(nullptr, shape, 2, NULL) == ADM_ERROR_NULL_POINTER);
-    REQUIRE(adm_forward_nd(data.data(), nullptr, 2, NULL) == ADM_ERROR_INVALID_SIZE);
-    REQUIRE(adm_forward_nd(data.data(), shape, 0, NULL) == ADM_ERROR_INVALID_SIZE);
-    REQUIRE(adm_forward_nd(data.data(), bad_shape, 2, NULL) == ADM_ERROR_INVALID_SIZE);
+    REQUIRE(adm_forward_nd(nullptr, shape, 2, nullptr) == ADM_ERROR_NULL_POINTER);
+    REQUIRE(adm_forward_nd(data.data(), nullptr, 2, nullptr) == ADM_ERROR_INVALID_SIZE);
+    REQUIRE(adm_forward_nd(data.data(), shape, 0, nullptr) == ADM_ERROR_INVALID_SIZE);
+    REQUIRE(adm_forward_nd(data.data(), bad_shape, 2, nullptr) == ADM_ERROR_INVALID_SIZE);
 
     adm_plan plan = nullptr;
-    REQUIRE(adm_plan_nd(nullptr, shape, 2, NULL) == ADM_ERROR_NULL_POINTER);
-    REQUIRE(adm_plan_nd(&plan, bad_shape, 2, NULL) == ADM_ERROR_INVALID_SIZE);
-    REQUIRE(adm_plan_nd(&plan, shape, 0, NULL) == ADM_ERROR_INVALID_SIZE);
+    REQUIRE(adm_plan_nd(nullptr, shape, 2, nullptr) == ADM_ERROR_NULL_POINTER);
+    REQUIRE(adm_plan_nd(&plan, bad_shape, 2, nullptr) == ADM_ERROR_INVALID_SIZE);
+    adm_plan_destroy(plan);   // each failed call overwrote the previous record
+    REQUIRE(adm_plan_nd(&plan, shape, 0, nullptr) == ADM_ERROR_INVALID_SIZE);
+    adm_plan_destroy(plan);
 }
 
 TEST_CASE("C API N-D reusable plan matches one-shot (float)", "[c_api][nd][plan]") {
@@ -337,14 +340,14 @@ TEST_CASE("C API N-D reusable plan matches one-shot (float)", "[c_api][nd][plan]
     }
 
     adm_plan plan = nullptr;
-    REQUIRE(admf_plan_nd(&plan, shape.data(), shape.size(), NULL) == ADM_SUCCESS);
+    REQUIRE(admf_plan_nd(&plan, shape.data(), shape.size(), nullptr) == ADM_SUCCESS);
     REQUIRE(plan != nullptr);
     REQUIRE(adm_plan_size(plan) == Ntot);
 
     std::vector<admf_complex> via_plan = base;
     std::vector<admf_complex> via_oneshot = base;
     REQUIRE(admf_plan_execute_forward(plan, via_plan.data()) == ADM_SUCCESS);
-    REQUIRE(admf_forward_nd(via_oneshot.data(), shape.data(), shape.size(), NULL) == ADM_SUCCESS);
+    REQUIRE(admf_forward_nd(via_oneshot.data(), shape.data(), shape.size(), nullptr) == ADM_SUCCESS);
     require_close_c(via_plan.data(), via_oneshot.data(), Ntot, fft_tol<float>());
 
     REQUIRE(admf_plan_execute_inverse(plan, via_plan.data()) == ADM_SUCCESS);
@@ -363,21 +366,21 @@ TEST_CASE("C API threaded plans (double)", "[c_api][plan][threads]") {
         in[i].imag = std::cos(0.3 * double(i)) + 0.2;
     }
     adm_plan p1 = nullptr, p4 = nullptr;
-    REQUIRE(adm_plan_1d(&p1, N, NULL) == ADM_SUCCESS);
-    REQUIRE(adm_plan_1d(&p4, N, NULL) == ADM_SUCCESS);
+    REQUIRE(adm_plan_1d(&p1, N, nullptr) == ADM_SUCCESS);
+    REQUIRE(adm_plan_1d(&p4, N, nullptr) == ADM_SUCCESS);
     std::vector<adm_complex> a = in, b = in;
     REQUIRE(adm_plan_execute_forward(p1, a.data()) == ADM_SUCCESS);
     REQUIRE(adm_plan_execute_forward(p4, b.data()) == ADM_SUCCESS);
     require_close_c(b.data(), a.data(), N, fft_tol<double>(8));
     adm_plan pa = nullptr;
-    REQUIRE(adm_plan_1d(&pa, N, NULL) == ADM_SUCCESS);
+    REQUIRE(adm_plan_1d(&pa, N, nullptr) == ADM_SUCCESS);
     std::vector<adm_complex> c = in;
     REQUIRE(adm_plan_execute_forward(pa, c.data()) == ADM_SUCCESS);
     require_close_c(c.data(), a.data(), N, fft_tol<double>(8));
     // Threaded N-D: the nd runtime owns one pool per plan.
     adm_plan pn = nullptr;
     const size_t shape[2] = {64, 512};
-    REQUIRE(adm_plan_nd(&pn, shape, 2, NULL) == ADM_SUCCESS);
+    REQUIRE(adm_plan_nd(&pn, shape, 2, nullptr) == ADM_SUCCESS);
     std::vector<adm_complex> d(64 * 512);
     for (size_t i = 0; i < d.size(); ++i) {
         d[i].real = std::sin(0.1 * double(i));

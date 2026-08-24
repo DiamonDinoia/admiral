@@ -17,6 +17,11 @@
 #include <string>
 #include <vector>
 
+// With ADM_THREADS=0 the pool is a serial inline stub, so every nthreads>1
+// expectation below is meaningless there. Guard the whole TU off; Catch2's
+// discovery on an empty file exits 4, which the presets register as skip.
+#if ADM_THREADS
+
 // Multithreading correctness gate: nthreads=1 (the tuned serial path) and
 // nthreads=4 must agree to the FFT's own rounding floor. Threading changes the
 // ORDER in which a SIMD column/tile pass groups its FMAs (chunk vs full sweep),
@@ -212,3 +217,4 @@ TEST_CASE("threaded out-of-place four_step_large matches serial (double)",
     p4.forward(in.data(), o4.data());
     require_close(o4, o1, forecast_tol<double>(N));
 }
+#endif  // ADM_THREADS

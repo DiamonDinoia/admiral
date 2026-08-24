@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [master, 'ci/*']
   pull_request:
   workflow_dispatch:
 
@@ -35,7 +35,7 @@ jobs:
     name: ${{ matrix.cxx }} ${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install Ninja
         # Not preinstalled on either runner image.
         run: ${{ runner.os == 'macOS' && 'brew install ninja' || 'sudo apt-get update && sudo apt-get install -y ninja-build' }}
@@ -86,7 +86,7 @@ jobs:
     name: ${{ matrix.preset }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y ninja-build
       - uses: hendrikmuhs/ccache-action@v1
         with:
@@ -109,14 +109,21 @@ jobs:
       # six of those would sit at 12.7 GB on a 16 GB runner with the rest of the job's
       # memory on top.
       - run: cmake --build --preset ${{ matrix.preset }} -- -j 4
+      # handle_segv=0: on the CI runners TSan's own SEGV handler crashes nested
+      # (a cascade of "ThreadSanitizer:DEADLYSIGNAL" with no race report) on
+      # example_quickstart, while the same binary survives 700 runs (normal and
+      # 4-core-affinity-pinned) under TSan on a workstation. Never seen with a
+      # race stack, so it is the runtime's handler, not an app race. With the
+      # handler off, a genuine app crash still fails the test via its SIGSEGV.
       - run: ctest --preset ${{ matrix.preset }}
+        env: {TSAN_OPTIONS: "handle_segv=0"}
 
   # x86-64-v2 and no fast-math: valgrind cannot decode AVX-512, and a relaxed-FP build
   # makes the numeric assertions mean less than they say.
   valgrind:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y valgrind ninja-build
       - uses: hendrikmuhs/ccache-action@v1
         with: {key: valgrind}
@@ -133,10 +140,14 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
                       /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
+      # g++-14 like every other gcc leg: the image default is gcc-13, whose
+      # consteval handling rejects test_codelet.cpp (cofactor_simd_profitable
+      # "used before its definition"). Valgrind correctness is the point of this
+      # leg, not compiler-floor coverage.
       - name: Configure and build
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DADM_TARGET_ARCH=x86-64-v2 -DADM_USE_FAST_MATH=OFF \
+            -DCMAKE_CXX_COMPILER=g++-14 -DADM_TARGET_ARCH=x86-64-v2 -DADM_USE_FAST_MATH=OFF \
             -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF
           cmake --build build
       - name: Memcheck
@@ -159,7 +170,7 @@ jobs:
   coverage:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y clang-18 llvm-18 ninja-build
       - uses: hendrikmuhs/ccache-action@v1
         with: {key: coverage}
@@ -179,13 +190,14 @@ jobs:
           ! grep -qF -- '=native' build/coverage/compile_commands.json
       - run: cmake --build --preset coverage
       # Each binary writes its own profraw. Sharing the default path would silently corrupt
-      # the profile across link-moduled objects. %m needs the directory to exist: the
-      # profile runtime does not create it and the write fails silently without this.
+      # the profile across link-moduled objects. Absolute path: the profile runtime resolves
+      # it against each test's working directory, not the workflow's, and %m needs the
+      # directory to exist — the write fails silently otherwise.
       - name: Test
         run: |
           mkdir -p build/coverage/profraw
           ctest --preset coverage
-        env: {LLVM_PROFILE_FILE: "build/coverage/profraw/%m.profraw"}
+        env: {LLVM_PROFILE_FILE: "${{ github.workspace }}/build/coverage/profraw/%m.profraw"}
       - name: Report
         # Region/line coverage over the test binaries (the engine is templates; its
         # instantiation profile lives in the test objects, not the archives).
@@ -196,13 +208,15 @@ jobs:
           args=$(for o in $objs; do printf -- '-object %s ' "$o"; done)
           llvm-cov-18 report $args -instr-profile=cov.profdata
           llvm-cov-18 export $args -instr-profile=cov.profdata -format=lcov > coverage.lcov
-      - uses: codecov/codecov-action@v5
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v7
         with:
-          # Public repo: tokenless upload. A lcov.export is what upload-artifact
-          # cannot render; artifacts keep the raw profile for llvm-cov reruns.
+          token: ${{ secrets.CODECOV_TOKEN }}
+          # A lcov.export is what upload-artifact cannot render; the artifact
+          # keeps the raw profile for llvm-cov reruns.
           files: coverage.lcov
           fail_ci_if_error: false
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: coverage
           path: |
@@ -216,7 +230,7 @@ jobs:
     # six targets from this one prefix: shared and static, C++ / C / FFTW.
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y ninja-build
       - uses: hendrikmuhs/ccache-action@v1
         with:
@@ -240,10 +254,10 @@ jobs:
   v4-sde:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build
       # Third-party single-purpose action; pinned by sha.
-      - uses: petarpetrovt/setup-sde@31aa4a8e85e109bef00f1d838613fcc6ec421271  # v5.0
+      - uses: petarpetrovt/setup-sde@6d2773bc0ef3005fd52e0ae0bb91782321793aec  # v6.0
       # A wrapper script, not "sde64;-spr" list syntax. List-form emulator values
       # reach Catch2's test discovery mangled (sde runs with no args at all).
       - name: SDE wrapper
@@ -272,7 +286,7 @@ jobs:
   catalog:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build
       - run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
@@ -285,7 +299,7 @@ jobs:
   nothreads:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build
       - run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
@@ -300,7 +314,7 @@ jobs:
   bench-verify:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build
       - run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \

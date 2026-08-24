@@ -72,6 +72,15 @@ namespace detail {
 // Threading floor: dispatch cost dominates below this element count.
 inline constexpr std::size_t kThreadMinElems = std::size_t{1} << 15;
 
+// Saturating product for total-element estimates: an overflowing shape resolves
+// to the full auto count, and the plan constructor reports the bad shape on its
+// own path. Usable in both threading modes (the serial stub has no resolve to feed).
+[[nodiscard]] inline std::size_t sat_elems(std::size_t a, std::size_t b) noexcept {
+    return b != 0 && a > std::numeric_limits<std::size_t>::max() / b
+               ? std::numeric_limits<std::size_t>::max()
+               : a * b;
+}
+
 #if ADM_THREADS
 
 // Ceiling for nthreads=0 auto-selection: tiny transforms never gain from
@@ -127,15 +136,6 @@ inline constexpr std::size_t kAutoElemsPerThread = std::size_t{1} << 12;
     if (n != 0) return n;
     if (total < kAutoSerialElems) return 1;
     return std::clamp(total / kAutoElemsPerThread, std::size_t{1}, resolve_nthreads(0));
-}
-
-// Saturating product for total-element estimates: an overflowing shape resolves
-// to the full auto count, and the plan constructor reports the bad shape on its
-// own path.
-[[nodiscard]] inline std::size_t sat_elems(std::size_t a, std::size_t b) noexcept {
-    return b != 0 && a > std::numeric_limits<std::size_t>::max() / b
-               ? std::numeric_limits<std::size_t>::max()
-               : a * b;
 }
 
 // ~kSpinIters * (pause latency) should exceed a typical inter-dispatch gap so

@@ -44,6 +44,13 @@ set(ADM_TEST_SOURCES
     accuracy/test_analytical.cpp
 )
 
+if(NOT ADM_ENABLE_THREADS)
+    # Every case in test_threads.cpp assumes a real pool; against the serial stub
+    # they fail, and an empty test binary makes catch_discover_tests register the
+    # NOT_BUILT placeholder, which ctest reports as a suite failure.
+    list(REMOVE_ITEM ADM_TEST_SOURCES transforms/test_threads.cpp)
+endif()
+
 # Discover tests using Catch2's CMake integration
 list(APPEND CMAKE_MODULE_PATH ${Catch2_SOURCE_DIR}/extras)
 include(Catch)

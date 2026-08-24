@@ -31,6 +31,14 @@ foreach(i RANGE 0 ${ADM_LAST} 2)
     # Consumer code: no project_warnings. The C examples additionally link libm
     # only for their own sin/fabs, not because the shims need it.
     target_link_libraries(example_${name} PRIVATE admiral::${surface})
+    # A sanitized INSTRUMENTED libadmiral.so keeps its runtime out, so an
+    # unsanitized example link fails (asan) or — worse for tsan — links but has
+    # the runtime deep in the link map, where glibc 2.39 never populates the
+    # TLS slot and the first instrumented worker call SEGVs. Half-sanitized
+    # examples are fine to run: the runtime comes on the exe's own link line.
+    if(TARGET project_sanitizers)
+        target_link_libraries(example_${name} PRIVATE project_sanitizers)
+    endif()
     if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${name}.c)
         target_link_libraries(example_${name} PRIVATE m)
     endif()

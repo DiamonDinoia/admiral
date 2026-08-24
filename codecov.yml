@@ -1,0 +1,23 @@
+# The coverage job measures the engine, not the harness that drives it. Test and
+# benchmark sources carry their own regions and would otherwise dominate the total.
+ignore:
+  - "test/**"
+  - "benchmark/**"
+  - "examples/**"
+  - "tools/**"
+
+coverage:
+  status:
+    # Informational: a coverage delta reports, it never fails a check. The engine is
+    # templates, so a route that stops being instantiated moves the number without any
+    # line changing.
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+
+comment:
+  layout: "reach, diff, files"
+  require_changes: true

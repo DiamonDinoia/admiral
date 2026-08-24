@@ -50,6 +50,26 @@ and up (128³: 10-11×, 509²: 10-12×). Rectangles split on the innermost exten
 (`kAutoSerialElems` / `kAutoElemsPerThread` in `thread_pool.hpp`) comes from
 this sweep.
 
+1-D threading is the one late case: the threaded route (four_step_large) admits
+a size only past its byte budget line (~512 KiB floor at 16 threads), so below
+~32k elements a 1-D plan is the serial one and threading changes nothing. Past
+that, 16 threads versus threaded ducc0 (ducc0's 1-D does thread from ~1M) split
+the wins on the current admission rules (geomean of ducc0 time over Admiral
+time, `--compare --nthreads=16 --adm-nthreads=16`):
+
+| N | f64 | f32 |
+|---|-----|-----|
+| 1M | 0.82× | 1.36× |
+| 2M | 0.33× | 0.42× |
+| 4M | 1.56× | 0.90× |
+| 8M | 0.36× | 0.36× |
+| 16M | 1.82× | 1.72× |
+
+The mixed rows are the six-step admission check (`n2 % n1`) rejecting a threaded
+split and dropping the size to the serial DIF chain while ducc0 threads. Sizes
+whose split is divisible engage the threaded route and win. Widening the
+admission is tracked as a follow-up.
+
 ## Measurement conventions
 
 - Nanobench, min across repetitions; `--inner=0` lets it auto-tune the epoch.

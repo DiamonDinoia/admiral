@@ -23,6 +23,7 @@ install(FILES
     ${PROJECT_SOURCE_DIR}/include/admiral/admiral.hpp
     ${PROJECT_SOURCE_DIR}/include/admiral/admiral.h
     ${PROJECT_SOURCE_DIR}/include/admiral/fftw3.h
+    ${PROJECT_SOURCE_DIR}/include/admiral/errors.hpp
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/admiral)
 
 install(EXPORT admiralTargets NAMESPACE admiral::

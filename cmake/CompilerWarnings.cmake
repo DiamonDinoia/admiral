@@ -60,11 +60,20 @@ function(set_project_warnings target_name)
         # Clang-only (GCC does not accept these as standalone flags):
         -Wzero-as-null-pointer-constant  # literal 0 used as null pointer
         -Wextra-semi                     # redundant semicolons after definitions
-        # -Wpedantic above makes clang 22 reject Catch2's __COUNTER__ as a C2y extension,
-        # reported against the test files where its macros expand. This must follow
-        # -Wpedantic, or -Wpedantic re-enables the diagnostic.
-        -Wno-c2y-extensions
     )
+
+    # -Wpedantic above makes clang 22 reject Catch2's __COUNTER__ as a C2y extension,
+    # reported against the test files where its macros expand. This must follow
+    # -Wpedantic, or -Wpedantic re-enables the diagnostic. Older clang (18 tested)
+    # does not know the spelling and errors on the unknown option under -Werror, so
+    # probe instead of assuming the option exists. The probe needs -Werror: without
+    # it clang reports unknown -Wno- options only when some other diagnostic fires,
+    # so a bare check would false-positive.
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag("-Werror -Wno-c2y-extensions" ADM_HAVE_WNO_C2Y_EXTENSIONS)
+    if(ADM_HAVE_WNO_C2Y_EXTENSIONS)
+        list(APPEND CLANG_WARNINGS -Wno-c2y-extensions)
+    endif()
 
     set(GCC_WARNINGS
         ${COMMON_WARNINGS}

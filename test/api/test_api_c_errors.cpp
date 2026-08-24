@@ -35,7 +35,7 @@ TEST_CASE("C API plan handle carries the creation failure", "[coverage][c_api]")
     // A failed creation writes an error record the caller can query and must
     // destroy, not a null handle.
     adm_plan p = nullptr;
-    REQUIRE(adm_plan_1d(&p, 0, NULL) == ADM_ERROR_INVALID_SIZE);
+    REQUIRE(adm_plan_1d(&p, 0, nullptr) == ADM_ERROR_INVALID_SIZE);
     REQUIRE(p != nullptr);
     REQUIRE(adm_plan_status(p) == ADM_ERROR_INVALID_SIZE);
     REQUIRE(std::string(adm_plan_error_message(p)).find("greater than 0") != std::string::npos);
@@ -45,7 +45,7 @@ TEST_CASE("C API plan handle carries the creation failure", "[coverage][c_api]")
     adm_plan_destroy(p);
 
     adm_plan good = nullptr;
-    REQUIRE(adm_plan_1d(&good, 64, NULL) == ADM_SUCCESS);
+    REQUIRE(adm_plan_1d(&good, 64, nullptr) == ADM_SUCCESS);
     REQUIRE(good != nullptr);
     REQUIRE(adm_plan_status(good) == ADM_SUCCESS);
     REQUIRE(std::string(adm_plan_error_message(good)).empty());
@@ -59,17 +59,17 @@ TEST_CASE("C API transform argument validation", "[coverage][c_api]") {
     admf_complex f{1, 0};
     adm_complex d{1, 0};
 
-    REQUIRE(admf_forward(nullptr, 4, NULL) == ADM_ERROR_NULL_POINTER);
-    REQUIRE(admf_forward(&f, 0, NULL) == ADM_ERROR_INVALID_SIZE);
-    REQUIRE(admf_inverse(nullptr, 4, NULL) == ADM_ERROR_NULL_POINTER);
-    REQUIRE(admf_inverse(&f, 0, NULL) == ADM_ERROR_INVALID_SIZE);
-    REQUIRE(adm_forward(nullptr, 4, NULL) == ADM_ERROR_NULL_POINTER);
-    REQUIRE(adm_forward(&d, 0, NULL) == ADM_ERROR_INVALID_SIZE);
-    REQUIRE(adm_inverse(nullptr, 4, NULL) == ADM_ERROR_NULL_POINTER);
-    REQUIRE(adm_inverse(&d, 0, NULL) == ADM_ERROR_INVALID_SIZE);
+    REQUIRE(admf_forward(nullptr, 4, nullptr) == ADM_ERROR_NULL_POINTER);
+    REQUIRE(admf_forward(&f, 0, nullptr) == ADM_ERROR_INVALID_SIZE);
+    REQUIRE(admf_inverse(nullptr, 4, nullptr) == ADM_ERROR_NULL_POINTER);
+    REQUIRE(admf_inverse(&f, 0, nullptr) == ADM_ERROR_INVALID_SIZE);
+    REQUIRE(adm_forward(nullptr, 4, nullptr) == ADM_ERROR_NULL_POINTER);
+    REQUIRE(adm_forward(&d, 0, nullptr) == ADM_ERROR_INVALID_SIZE);
+    REQUIRE(adm_inverse(nullptr, 4, nullptr) == ADM_ERROR_NULL_POINTER);
+    REQUIRE(adm_inverse(&d, 0, nullptr) == ADM_ERROR_INVALID_SIZE);
 
     // A valid single-element float transform (exercises the success path too).
-    REQUIRE(admf_forward(&f, 1, NULL) == ADM_SUCCESS);
+    REQUIRE(admf_forward(&f, 1, nullptr) == ADM_SUCCESS);
 }
 
 TEST_CASE("C API N-D and plan argument validation", "[coverage][c_api]") {
@@ -77,27 +77,27 @@ TEST_CASE("C API N-D and plan argument validation", "[coverage][c_api]") {
     const std::array<size_t, 2> bad = {4, 0};
     std::vector<adm_complex> buf(16);
 
-    REQUIRE(adm_forward_nd(nullptr, shape.data(), 2, NULL) == ADM_ERROR_NULL_POINTER);
-    REQUIRE(adm_forward_nd(buf.data(), nullptr, 2, NULL) == ADM_ERROR_INVALID_SIZE);
-    REQUIRE(adm_forward_nd(buf.data(), shape.data(), 0, NULL) == ADM_ERROR_INVALID_SIZE);
-    REQUIRE(adm_forward_nd(buf.data(), bad.data(), 2, NULL) == ADM_ERROR_INVALID_SIZE);
-    REQUIRE(admf_inverse_nd(nullptr, shape.data(), 2, NULL) == ADM_ERROR_NULL_POINTER);
+    REQUIRE(adm_forward_nd(nullptr, shape.data(), 2, nullptr) == ADM_ERROR_NULL_POINTER);
+    REQUIRE(adm_forward_nd(buf.data(), nullptr, 2, nullptr) == ADM_ERROR_INVALID_SIZE);
+    REQUIRE(adm_forward_nd(buf.data(), shape.data(), 0, nullptr) == ADM_ERROR_INVALID_SIZE);
+    REQUIRE(adm_forward_nd(buf.data(), bad.data(), 2, nullptr) == ADM_ERROR_INVALID_SIZE);
+    REQUIRE(admf_inverse_nd(nullptr, shape.data(), 2, nullptr) == ADM_ERROR_NULL_POINTER);
 
     // Plan constructors: a failure does not leave null; it writes a queryable
     // error record (covered by "plan handle carries the creation failure"),
     // which each call here destroys.
     adm_plan p = nullptr;
-    REQUIRE(admf_plan_1d(nullptr, 4, NULL) == ADM_ERROR_NULL_POINTER);
-    REQUIRE(admf_plan_1d(&p, 0, NULL) == ADM_ERROR_INVALID_SIZE);
+    REQUIRE(admf_plan_1d(nullptr, 4, nullptr) == ADM_ERROR_NULL_POINTER);
+    REQUIRE(admf_plan_1d(&p, 0, nullptr) == ADM_ERROR_INVALID_SIZE);
     adm_plan_destroy(p);
-    REQUIRE(adm_plan_1d(nullptr, 4, NULL) == ADM_ERROR_NULL_POINTER);
-    REQUIRE(adm_plan_1d(&p, 0, NULL) == ADM_ERROR_INVALID_SIZE);
+    REQUIRE(adm_plan_1d(nullptr, 4, nullptr) == ADM_ERROR_NULL_POINTER);
+    REQUIRE(adm_plan_1d(&p, 0, nullptr) == ADM_ERROR_INVALID_SIZE);
     adm_plan_destroy(p);
-    REQUIRE(admf_plan_nd(nullptr, shape.data(), 2, NULL) == ADM_ERROR_NULL_POINTER);
-    REQUIRE(admf_plan_nd(&p, bad.data(), 2, NULL) == ADM_ERROR_INVALID_SIZE);
+    REQUIRE(admf_plan_nd(nullptr, shape.data(), 2, nullptr) == ADM_ERROR_NULL_POINTER);
+    REQUIRE(admf_plan_nd(&p, bad.data(), 2, nullptr) == ADM_ERROR_INVALID_SIZE);
     adm_plan_destroy(p);
-    REQUIRE(adm_plan_nd(nullptr, shape.data(), 2, NULL) == ADM_ERROR_NULL_POINTER);
-    REQUIRE(adm_plan_nd(&p, bad.data(), 2, NULL) == ADM_ERROR_INVALID_SIZE);
+    REQUIRE(adm_plan_nd(nullptr, shape.data(), 2, nullptr) == ADM_ERROR_NULL_POINTER);
+    REQUIRE(adm_plan_nd(&p, bad.data(), 2, nullptr) == ADM_ERROR_INVALID_SIZE);
     adm_plan_destroy(p);
 
     // Execute with a null / null-data / wrong-type plan.
@@ -107,7 +107,7 @@ TEST_CASE("C API N-D and plan argument validation", "[coverage][c_api]") {
     REQUIRE(adm_plan_execute_inverse(nullptr, &ddata) == ADM_ERROR_INVALID_PLAN);
 
     adm_plan dplan = nullptr;
-    REQUIRE(adm_plan_1d(&dplan, 4, NULL) == ADM_SUCCESS);
+    REQUIRE(adm_plan_1d(&dplan, 4, nullptr) == ADM_SUCCESS);
     REQUIRE(admf_plan_execute_forward(dplan, &fdata) == ADM_ERROR_INVALID_PLAN);   // wrong type
     REQUIRE(admf_plan_execute_inverse(dplan, &fdata) == ADM_ERROR_INVALID_PLAN);   // wrong type
     REQUIRE(adm_plan_execute_forward(dplan, nullptr) == ADM_ERROR_NULL_POINTER);   // null data
@@ -132,11 +132,11 @@ TEMPLATE_TEST_CASE("C API r2c/c2r round-trip and validation", "[coverage][c_api]
 
     adm_status s_fwd, s_inv;
     if constexpr (std::is_same_v<T, float>) {
-        s_fwd = admf_r2c_nd(in.data(), spec.data(), shape.data(), 2, NULL);
-        s_inv = admf_c2r_nd(spec.data(), out.data(), shape.data(), 2, NULL);
+        s_fwd = admf_r2c_nd(in.data(), spec.data(), shape.data(), 2, nullptr);
+        s_inv = admf_c2r_nd(spec.data(), out.data(), shape.data(), 2, nullptr);
     } else {
-        s_fwd = adm_r2c_nd(in.data(), spec.data(), shape.data(), 2, NULL);
-        s_inv = adm_c2r_nd(spec.data(), out.data(), shape.data(), 2, NULL);
+        s_fwd = adm_r2c_nd(in.data(), spec.data(), shape.data(), 2, nullptr);
+        s_inv = adm_c2r_nd(spec.data(), out.data(), shape.data(), 2, nullptr);
     }
     REQUIRE(s_fwd == ADM_SUCCESS);
     REQUIRE(s_inv == ADM_SUCCESS);
@@ -145,22 +145,22 @@ TEMPLATE_TEST_CASE("C API r2c/c2r round-trip and validation", "[coverage][c_api]
     // Argument validation (null + degenerate shape).
     const std::array<size_t, 2> bad = {4, 0};
     if constexpr (std::is_same_v<T, float>) {
-        REQUIRE(admf_r2c_nd(nullptr, spec.data(), shape.data(), 2, NULL) == ADM_ERROR_NULL_POINTER);
-        REQUIRE(admf_r2c_nd(in.data(), nullptr, shape.data(), 2, NULL) == ADM_ERROR_NULL_POINTER);
-        REQUIRE(admf_r2c_nd(in.data(), spec.data(), bad.data(), 2, NULL) == ADM_ERROR_INVALID_SIZE);
-        REQUIRE(admf_c2r_nd(nullptr, out.data(), shape.data(), 2, NULL) == ADM_ERROR_NULL_POINTER);
-        REQUIRE(admf_c2r_nd(spec.data(), out.data(), bad.data(), 2, NULL)
+        REQUIRE(admf_r2c_nd(nullptr, spec.data(), shape.data(), 2, nullptr) == ADM_ERROR_NULL_POINTER);
+        REQUIRE(admf_r2c_nd(in.data(), nullptr, shape.data(), 2, nullptr) == ADM_ERROR_NULL_POINTER);
+        REQUIRE(admf_r2c_nd(in.data(), spec.data(), bad.data(), 2, nullptr) == ADM_ERROR_INVALID_SIZE);
+        REQUIRE(admf_c2r_nd(nullptr, out.data(), shape.data(), 2, nullptr) == ADM_ERROR_NULL_POINTER);
+        REQUIRE(admf_c2r_nd(spec.data(), out.data(), bad.data(), 2, nullptr)
                 == ADM_ERROR_INVALID_SIZE);
     } else {
-        REQUIRE(adm_r2c_nd(nullptr, spec.data(), shape.data(), 2, NULL) == ADM_ERROR_NULL_POINTER);
-        REQUIRE(adm_r2c_nd(in.data(), nullptr, shape.data(), 2, NULL) == ADM_ERROR_NULL_POINTER);
-        REQUIRE(adm_r2c_nd(in.data(), spec.data(), bad.data(), 2, NULL) == ADM_ERROR_INVALID_SIZE);
-        REQUIRE(adm_c2r_nd(nullptr, out.data(), shape.data(), 2, NULL) == ADM_ERROR_NULL_POINTER);
-        REQUIRE(adm_c2r_nd(spec.data(), out.data(), bad.data(), 2, NULL) == ADM_ERROR_INVALID_SIZE);
+        REQUIRE(adm_r2c_nd(nullptr, spec.data(), shape.data(), 2, nullptr) == ADM_ERROR_NULL_POINTER);
+        REQUIRE(adm_r2c_nd(in.data(), nullptr, shape.data(), 2, nullptr) == ADM_ERROR_NULL_POINTER);
+        REQUIRE(adm_r2c_nd(in.data(), spec.data(), bad.data(), 2, nullptr) == ADM_ERROR_INVALID_SIZE);
+        REQUIRE(adm_c2r_nd(nullptr, out.data(), shape.data(), 2, nullptr) == ADM_ERROR_NULL_POINTER);
+        REQUIRE(adm_c2r_nd(spec.data(), out.data(), bad.data(), 2, nullptr) == ADM_ERROR_INVALID_SIZE);
     }
 }
 
-// adm_options is the C mirror of admiral::options: same three knobs, NULL for the
+// adm_options is the C mirror of admiral::options: same three knobs, nullptr for the
 // defaults. The C layer must reject an eff outside the enum rather than cast it,
 // because C cannot stop a caller from inventing one.
 TEST_CASE("adm_options reaches threads, effort and debug", "[c_api][options]") {
@@ -192,5 +192,6 @@ TEST_CASE("adm_options reaches threads, effort and debug", "[c_api][options]") {
     const adm_options bad = {.nthreads = 1, .eff = static_cast<adm_effort>(3), .debug = 0};
     REQUIRE(adm_forward(data.data(), N, &bad) == ADM_ERROR_INVALID_OPTION);
     REQUIRE(adm_plan_1d(&plan, N, &bad) == ADM_ERROR_INVALID_OPTION);
+    adm_plan_destroy(plan);   // even an options reject writes an error record
     REQUIRE(std::string(adm_error_string(ADM_ERROR_INVALID_OPTION)) != "Unknown error");
 }

@@ -98,9 +98,14 @@ Against ducc0 (`c4dda23`), over 61 1-D lengths and 27 N-D shapes per precision:
 
 | | 1 thread | 16 threads |
 |-|----------|------------|
-| 1-D | 2.18× (f64), 2.70× (f32) | n/a |
+| 1-D | 2.18× (f64), 2.70× (f32) | n/a* |
 | 2-D | 1.12× (f64), 1.41× (f32) | 1.27× / 1.58× |
 | 3-D | 1.60× (f64), 1.67× (f32) | 2.67× / 3.53× |
+
+*1-D threading only engages past the byte floor (≥ ~32k elements); the 44-size
+1-D grid tops at 32768, so a 16-thread cell there would measure nothing. Big
+1-D transforms do thread and split wins with ducc0's threaded 1-D (measured
+detail in benchmark/README.md).
 
 Against FFTW (`FFTW_MEASURE`, single thread, both precisions): 1.34× at 1-D,
 1.43× at N-D.

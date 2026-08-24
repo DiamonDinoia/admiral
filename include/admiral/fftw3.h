@@ -67,12 +67,12 @@
 extern "C" {
 #endif
 
-// Interleaved [real, imag], as in FFTW and layout-compatible with std::complex.
+/// Interleaved [real, imag], as in FFTW and layout-compatible with std::complex.
 typedef double fftw_complex[2];
 typedef float  fftwf_complex[2];
 
-// Distinct incomplete types, as in FFTW, so passing a float plan to the double
-// API is a compile error instead of a silent failure at execute time.
+/// Distinct incomplete types, as in FFTW, so passing a float plan to the double
+/// API is a compile error instead of a silent failure at execute time.
 typedef struct fftw_plan_s*  fftw_plan;
 typedef struct fftwf_plan_s* fftwf_plan;
 
@@ -93,11 +93,11 @@ typedef struct fftwf_plan_s* fftwf_plan;
 #define FFTW_WISDOM_ONLY     (1U << 21)
 
 // ---- double precision -------------------------------------------------------
-// A plan call returns NULL on a bad rank, a non-positive extent, or allocation
-// failure. Executing or destroying NULL is safe and does nothing.
-// The alloc_* helpers return 64-byte aligned memory; free it with fftw_free.
-// fftw_cleanup() is a no-op: there is no wisdom cache or other global state, so
-// fftw_destroy_plan releases everything a plan owns.
+/// A plan call returns NULL on a bad rank, a non-positive extent, or allocation
+/// failure. Executing or destroying NULL is safe and does nothing.
+/// The alloc_* helpers return 64-byte aligned memory; free it with fftw_free.
+/// fftw_cleanup() is a no-op: there is no wisdom cache or other global state, so
+/// fftw_destroy_plan releases everything a plan owns.
 FFTW_C_API fftw_plan fftw_plan_dft_1d(int n0, fftw_complex* in, fftw_complex* out,
                                       int sign, unsigned flags);
 FFTW_C_API fftw_plan fftw_plan_dft_2d(int n0, int n1, fftw_complex* in, fftw_complex* out,

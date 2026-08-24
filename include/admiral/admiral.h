@@ -64,40 +64,40 @@
 extern "C" {
 #endif
 
-// Interleaved complex, layout-compatible with std::complex and FFTW's
-// double[2], so an existing buffer casts instead of copying.
+/// Interleaved complex, layout-compatible with std::complex and FFTW's
+/// double[2], so an existing buffer casts instead of copying.
 typedef struct { float real; float imag; } admf_complex;
 typedef struct { double real; double imag; } adm_complex;
 
 typedef enum {
     ADM_SUCCESS = 0,
     ADM_ERROR_NULL_POINTER = -1,
-    ADM_ERROR_INVALID_SIZE = -2,   // null shape, zero size/extent, or extents overflow size_t
+    ADM_ERROR_INVALID_SIZE = -2,   ///< null shape, zero size/extent, or extents overflow size_t
     ADM_ERROR_OUT_OF_MEMORY = -3,
-    ADM_ERROR_INVALID_PLAN = -4,   // null plan, or wrong precision for this call
-    ADM_ERROR_INVALID_OPTION = -5  // an adm_options field is outside its range
+    ADM_ERROR_INVALID_PLAN = -4,   ///< null plan, or wrong precision for this call
+    ADM_ERROR_INVALID_OPTION = -5  ///< an adm_options field is outside its range
 } adm_status;
 
-// How hard the planner works before it commits to a route. estimate ranks
-// candidates with a cost model; the measuring efforts time them, which costs plan
-// time and is not reproducible across machines.
+/// How hard the planner works before it commits to a route. estimate ranks
+/// candidates with a cost model; the measuring efforts time them, which costs plan
+/// time and is not reproducible across machines.
 typedef enum {
     ADM_EFFORT_ESTIMATE = 0,
     ADM_EFFORT_AUTOMATIC = 1,
     ADM_EFFORT_MEASURE = 2
 } adm_effort;
 
-// Everything a plan is built with. Pass NULL for the defaults, or name every field,
-// since C leaves the rest indeterminate. A zeroed struct IS the default: nthreads 0
-// is auto, eff 0 is ADM_EFFORT_ESTIMATE, debug 0 is silent.
-//   const adm_options o = {.nthreads = 8, .eff = ADM_EFFORT_AUTOMATIC, .debug = 0};
+/// Everything a plan is built with. Pass NULL for the defaults, or name every field,
+/// since C leaves the rest indeterminate. A zeroed struct IS the default: nthreads 0
+/// is auto, eff 0 is ADM_EFFORT_ESTIMATE, debug 0 is silent.
+///   const adm_options o = {.nthreads = 8, .eff = ADM_EFFORT_AUTOMATIC, .debug = 0};
 typedef struct {
-    size_t nthreads;   // 0 auto (size-aware, capped at one per physical core), 1 serial
+    size_t nthreads;   ///< 0 auto (size-aware, capped at one per physical core), 1 serial
     adm_effort eff;
-    unsigned debug;    // stderr trace verbosity: 0 silent, 1 route, 2 route + shape
+    unsigned debug;    ///< stderr trace: 0 silent, 1 route, 2 + shape, 3 + cost ranking
 } adm_options;
 
-// Never null; unknown codes give "Unknown error".
+/// Never null; unknown codes give "Unknown error".
 ADM_NODISCARD ADM_C_API const char* adm_error_string(adm_status status);
 
 // ============================================================================
@@ -111,7 +111,7 @@ ADM_NODISCARD ADM_C_API const char* adm_error_string(adm_status status);
 // one-shots treat an empty span as a no-op.
 // ============================================================================
 
-// 1-D, in place. `size` is the number of complex elements.
+/// 1-D, in place. `size` is the number of complex elements.
 ADM_NODISCARD ADM_C_API adm_status admf_forward(admf_complex* data, size_t size,
                                                 const adm_options* opts);
 ADM_NODISCARD ADM_C_API adm_status adm_forward(adm_complex* data, size_t size,
@@ -121,8 +121,8 @@ ADM_NODISCARD ADM_C_API adm_status admf_inverse(admf_complex* data, size_t size,
 ADM_NODISCARD ADM_C_API adm_status adm_inverse(adm_complex* data, size_t size,
                                                const adm_options* opts);
 
-// N-D, in place. `shape` lists `ndim` extents and `data` holds their product in
-// complex elements.
+/// N-D, in place. `shape` lists `ndim` extents and `data` holds their product in
+/// complex elements.
 ADM_NODISCARD ADM_C_API adm_status admf_forward_nd(admf_complex* data, const size_t* shape,
                                                    size_t ndim, const adm_options* opts);
 ADM_NODISCARD ADM_C_API adm_status adm_forward_nd(adm_complex* data, const size_t* shape,
@@ -169,27 +169,27 @@ ADM_NODISCARD ADM_C_API adm_status adm_c2r_nd(adm_complex* spec, double* out, co
 
 typedef struct adm_plan_s* adm_plan;
 
-// 1-D plan over `n` complex elements.
+/// 1-D plan over `n` complex elements.
 ADM_NODISCARD ADM_C_API adm_status admf_plan_1d(adm_plan* plan, size_t n, const adm_options* opts);
 ADM_NODISCARD ADM_C_API adm_status adm_plan_1d(adm_plan* plan, size_t n, const adm_options* opts);
 
-// N-D plan over `shape[ndim]`. ndim == 1 is the same plan adm_plan_1d builds.
+/// N-D plan over `shape[ndim]`. ndim == 1 is the same plan adm_plan_1d builds.
 ADM_NODISCARD ADM_C_API adm_status admf_plan_nd(adm_plan* plan, const size_t* shape, size_t ndim,
                                                 const adm_options* opts);
 ADM_NODISCARD ADM_C_API adm_status adm_plan_nd(adm_plan* plan, const size_t* shape, size_t ndim,
                                                const adm_options* opts);
 
-// Transform `data` in place. The precision must match the one the plan was
-// created with, or the call returns ADM_ERROR_INVALID_PLAN.
+/// Transform `data` in place. The precision must match the one the plan was
+/// created with, or the call returns ADM_ERROR_INVALID_PLAN.
 ADM_NODISCARD ADM_C_API adm_status admf_plan_execute_forward(adm_plan plan, admf_complex* data);
 ADM_NODISCARD ADM_C_API adm_status adm_plan_execute_forward(adm_plan plan, adm_complex* data);
 ADM_NODISCARD ADM_C_API adm_status admf_plan_execute_inverse(adm_plan plan, admf_complex* data);
 ADM_NODISCARD ADM_C_API adm_status adm_plan_execute_inverse(adm_plan plan, adm_complex* data);
 
-// Total complex element count the plan expects. 0 for a null plan.
+/// Total complex element count the plan expects. 0 for a null plan.
 ADM_NODISCARD ADM_C_API size_t adm_plan_size(adm_plan plan);
 
-// Safe on a null plan.
+/// Safe on a null plan.
 ADM_C_API void adm_plan_destroy(adm_plan plan);
 
 #ifdef __cplusplus

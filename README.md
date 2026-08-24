@@ -7,9 +7,9 @@ interfaces: C++, C, and a drop-in FFTW subset.
 ## Quick start
 
 ```bash
-cmake --preset release        # or `dev` to include the tests
+cmake --preset release           # benchmarks on, tests off; `dev` swaps that
 cmake --build --preset release
-ctest --preset dev            # under the dev preset
+ctest --test-dir build/release   # runs the examples; `ctest --preset dev` runs the test suite
 ```
 
 ```cpp
@@ -30,7 +30,13 @@ admiral::forward<double>(x, x);   // one-shot, no plan
 The snippet above is [examples/quickstart.cpp](examples/quickstart.cpp), built
 and run by ctest; [examples/](examples/) also covers real transforms, DCT/DST,
 per-axis transforms, C, and the FFTW drop-in. [docs/cpp-api.md](docs/cpp-api.md)
-walks the C++ API.
+walks the C++ API; <https://diamondinoia.github.io/yafft/> renders the docs and
+an API reference generated from the public headers.
+
+The `release` preset also builds the benchmarks, which fetches ducc0 and
+nanobench; `-DADM_BUILD_BENCHMARKS=OFF` skips them. Configure warns that the
+default `-march=native` binaries may not run on other machines;
+`ADM_TARGET_ARCH` in [docs/build-options.md](docs/build-options.md) changes it.
 
 If ninja aborts with `fatal: unknown placeholder`, a site-set `NINJA_STATUS` is
 incompatible with the local ninja: `unset NINJA_STATUS`.
@@ -108,8 +114,11 @@ cmake --install build/release --prefix /your/prefix
 
 ```cmake
 find_package(admiral REQUIRED)   # needs CMAKE_PREFIX_PATH=/your/prefix
-target_link_libraries(app PRIVATE admiral::fftw)   # or admiral::admiral_c
+target_link_libraries(app PRIVATE admiral::admiral)   # C: admiral::admiral_c; FFTW shim: admiral::fftw
 ```
+
+To consume the checkout without installing, use `FetchContent` or
+`add_subdirectory`; [docs/install.md](docs/install.md) shows both.
 
 | Interface | Header | Link |
 |-----------|--------|------|
@@ -122,14 +131,14 @@ the standard library. The engine is compiled, so the C++ API ships for
 `std::complex<float>` and `std::complex<double>` only. The exported target
 requires C++20 at the call site.
 
-The archives are C++ behind a C API, so a C-only project must enable C++:
+The shared libraries need nothing extra; they record their own dependency on
+libstdc++, so a plain C project links `admiral::admiral_c` and runs. The static
+archives are C++ behind a C API, so a C-only project must enable C++ to link
+them:
 
 ```cmake
 project(app C CXX)       # or enable_language(CXX) before find_package
 ```
-
-The shared libraries need nothing. They record their own dependency on
-libstdc++.
 
 ## Usage
 

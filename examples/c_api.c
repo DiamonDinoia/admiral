@@ -14,8 +14,8 @@ int main(void) {
         data[i].real = sin(0.01 * (double)i);
         data[i].imag = 0.0;
     }
-    adm_plan_execute_forward(plan, data);
-    adm_plan_execute_inverse(plan, data);       /* divides by 1024 */
+    if (adm_plan_execute_forward(plan, data) != ADM_SUCCESS) return 1;
+    if (adm_plan_execute_inverse(plan, data) != ADM_SUCCESS) return 1;  /* divides by 1024 */
     adm_plan_destroy(plan);
 
     double err = 0;

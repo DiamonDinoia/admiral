@@ -60,7 +60,7 @@ this sweep.
   flatters the first arm), so A/B modes alternate arm order round by round and
   report the median plus the round-to-round spread; `--robust` adds an identity
   control. A delta inside the spread is a tie.
-- FFTW arms plan with `FFTW_MEASURE`. `ADM_BENCH_FFTW_ESTIMATE=1` switches them
+- FFTW arms plan with `FFTW_MEASURE`. Setting `ADM_BENCH_FFTW_ESTIMATE` (any value) switches them
   to the heuristic plan. That leaves FFTW untuned and flatters Admiral, so it
   is not the default.
 

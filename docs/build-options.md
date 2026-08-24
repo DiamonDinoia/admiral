@@ -5,7 +5,8 @@ threads, and plan-time measurement all on. Change these when packaging,
 cross-compiling, or debugging.
 
 All build options are CMake cache variables, so `-DNAME=value` on the configure
-line sets them.
+line sets them. [install.md](install.md) has the install-only, portable
+configure line packagers want.
 
 ## User-facing build options
 
@@ -25,7 +26,10 @@ line sets them.
 
 These face maintainers. The seven presets in `CMakePresets.json` cover the
 common combinations (`debug`, `asan`, `tsan`, `coverage`, `dev`, `release`,
-`relwithdebinfo`), and `scripts/validate.sh` sweeps them.
+`relwithdebinfo`), and `scripts/validate.sh` sweeps them. Every preset except
+`release` has a matching test preset: `release` builds no tests
+(`ADM_BUILD_TESTS=OFF`), so `ctest --preset dev` is the test entry point. `dev`
+is the same optimized build with tests on and benchmarks off.
 
 | Option | What it does | Default |
 |--------|--------------|---------|

@@ -89,34 +89,34 @@ template<typename T> struct r2r_state;
 
 }  // namespace detail
 
-// Which real-to-real basis plan_r2r uses. Named for the transform, not for FFTW's
-// REDFT/RODFT spelling: dct2 is REDFT10, dct3 is REDFT01, dst2 is RODFT10, dst3 is
-// RODFT01. Each kind's inverse() is its own exact inverse, so the type-2/type-3
-// pairing FFTW expresses by swapping kinds is here just forward vs inverse.
+/// Which real-to-real basis plan_r2r uses. Named for the transform, not for FFTW's
+/// REDFT/RODFT spelling: dct2 is REDFT10, dct3 is REDFT01, dst2 is RODFT10, dst3 is
+/// RODFT01. Each kind's inverse() is its own exact inverse, so the type-2/type-3
+/// pairing FFTW expresses by swapping kinds is here just forward vs inverse.
 enum class r2r_kind { dct2, dct3, dst2, dst3 };
 
-// How hard plan construction works to pick the execution path, like FFTW's
-// ESTIMATE/MEASURE:
-//   estimate   cost-model pick only. Fast and bitwise reproducible. Default.
-//   automatic  also time the model's top candidates and keep the fastest. Worth it
-//              when one plan serves many transforms (~10 us planning at N=64,
-//              ~0.1 s at N=200000). The elected plan depends on the machine.
-//   measure    identical to automatic; kept for the FFTW flag mapping. The engine
-//              has one search budget, so PATIENT/EXHAUSTIVE buy nothing extra.
-// With -DADM_MEASURE=OFF the measuring efforts are accepted and inert.
+/// How hard plan construction works to pick the execution path, like FFTW's
+/// ESTIMATE/MEASURE:
+///   estimate   cost-model pick only. Fast and bitwise reproducible. Default.
+///   automatic  also time the model's top candidates and keep the fastest. Worth it
+///              when one plan serves many transforms (~10 us planning at N=64,
+///              ~0.1 s at N=200000). The elected plan depends on the machine.
+///   measure    identical to automatic; kept for the FFTW flag mapping. The engine
+///              has one search budget, so PATIENT/EXHAUSTIVE buy nothing extra.
+/// With -DADM_MEASURE=OFF the measuring efforts are accepted and inert.
 enum class effort { estimate, automatic, measure };
 
-// Everything a plan is built with, in one aggregate so a call site names what it
-// sets and nothing else:
-//   admiral::plan<float> p(4096, {.nthreads = 0, .eff = admiral::effort::automatic});
-//
-// debug is a verbosity, not a flag: 0 prints nothing, 1 prints one line per execute
-// saying what ran, 2 adds the shape the route chose, 3 adds the cost-model ranking that
-// chose it (each form's modelled cycles and whether it was buildable). Tracing goes to
-// stderr and is fixed at construction, so a traced run and a silent one differ in no
-// other way.
+/// Everything a plan is built with, in one aggregate so a call site names what it
+/// sets and nothing else:
+///   admiral::plan<float> p(4096, {.nthreads = 0, .eff = admiral::effort::automatic});
+///
+/// debug is a verbosity, not a flag: 0 prints nothing, 1 prints one line per execute
+/// saying what ran, 2 adds the shape the route chose, 3 adds the cost-model ranking that
+/// chose it (each form's modelled cycles and whether it was buildable). Tracing goes to
+/// stderr and is fixed at construction, so a traced run and a silent one differ in no
+/// other way.
 struct options {
-    std::size_t nthreads = 0;   // 0 = auto (size-aware, capped at one per physical core)
+    std::size_t nthreads = 0;   ///< 0 = auto (size-aware, capped at one per physical core)
     effort eff = effort::estimate;
     unsigned debug = 0;
 };
@@ -125,15 +125,15 @@ struct options {
 // One-shot 1-D transforms
 // ============================================================================
 
-// Forward 1-D FFT, unscaled. `input` and `output` must have the same size; pass
-// the same span twice to transform in place.
-// T is deduced from `output` alone, so one overload serves every caller.
+/// Forward 1-D FFT, unscaled. `input` and `output` must have the same size; pass
+/// the same span twice to transform in place.
+/// T is deduced from `output` alone, so one overload serves every caller.
 template<detail::precision T>
 ADM_API void forward(std::type_identity_t<std::span<const std::complex<T>>> input,
                      std::span<std::complex<T>> output, const options& opts = {},
                      std::optional<T> fct = std::nullopt);
 
-// Inverse 1-D FFT, scaled by 1/N. Otherwise identical to forward().
+/// Inverse 1-D FFT, scaled by 1/N. Otherwise identical to forward().
 template<detail::precision T>
 ADM_API void inverse(std::type_identity_t<std::span<const std::complex<T>>> input,
                      std::span<std::complex<T>> output, const options& opts = {},
@@ -143,19 +143,19 @@ ADM_API void inverse(std::type_identity_t<std::span<const std::complex<T>>> inpu
 // Plans
 // ============================================================================
 
-// Complex plan, forward and inverse, any rank.
-//
-// The rank is a runtime property, so plan(1024) and plan({64, 64}) are the same
-// type. One plan serves both directions: build it once, then call forward() and
-// inverse() any number of times.
+/// Complex plan, forward and inverse, any rank.
+///
+/// The rank is a runtime property, so plan(1024) and plan({64, 64}) are the same
+/// type. One plan serves both directions: build it once, then call forward() and
+/// inverse() any number of times.
 template<detail::precision T>
 class ADM_API plan {
 public:
-    // 1-D over `size` complex elements.
+    /// 1-D over `size` complex elements.
     [[nodiscard]] explicit plan(std::size_t size, const options& opts = {})
         : plan(std::span<const std::size_t>(&size, 1), opts) {}
 
-    // N-D over `shape`, last axis fastest.
+    /// N-D over `shape`, last axis fastest.
     [[nodiscard]] explicit plan(std::span<const std::size_t> shape, const options& opts = {});
 
     [[nodiscard]] plan(std::initializer_list<std::size_t> shape, const options& opts = {})
@@ -167,12 +167,12 @@ public:
     plan(plan&&) noexcept;
     plan& operator=(plan&&) noexcept;
 
-    // Forward FFT, unscaled. Three ways to call it: a span or a pointer to
-    // transform in place, or (src, dst) which is out of place when src != dst
-    // and leaves src untouched.
-    //
-    // Prefer (src, dst) over a manual copy. The engine reads the source during
-    // its first pass rather than in a separate sweep, which saves one pass over the data.
+    /// Forward FFT, unscaled. Three ways to call it: a span or a pointer to
+    /// transform in place, or (src, dst) which is out of place when src != dst
+    /// and leaves src untouched.
+    ///
+    /// Prefer (src, dst) over a manual copy. The engine reads the source during
+    /// its first pass rather than in a separate sweep, which saves one pass over the data.
     void forward(std::span<std::complex<T>> data, std::optional<T> fct = std::nullopt) const {
         check_size(data.size());
         run(true, data.data(), scale(fct));
@@ -185,7 +185,7 @@ public:
         run(true, src, dst, scale(fct));
     }
 
-    // Inverse FFT, scaled by 1/Ntot. Same three overloads as forward().
+    /// Inverse FFT, scaled by 1/Ntot. Same three overloads as forward().
     void inverse(std::span<std::complex<T>> data, std::optional<T> fct = std::nullopt) const {
         check_size(data.size());
         run(false, data.data(), scale(fct));
@@ -198,7 +198,7 @@ public:
         run(false, src, dst, scale(fct));
     }
 
-    // Total complex element count, i.e. the product of the extents.
+    /// Total complex element count, i.e. the product of the extents.
     [[nodiscard]] std::size_t size() const noexcept;
 
 private:
@@ -220,10 +220,10 @@ private:
     std::unique_ptr<detail::plan_state<T>> m;
 };
 
-// Transform ONE axis of a fixed-shape tensor, in place, over a rectangular
-// sub-box. The transformed axis must be whole; the others may be bands. The
-// direction is fixed at construction. This is ducc0's
-// c2c(subarray(data, box), {axis}, forward, fct).
+/// Transform ONE axis of a fixed-shape tensor, in place, over a rectangular
+/// sub-box. The transformed axis must be whole; the others may be bands. The
+/// direction is fixed at construction. This is ducc0's
+/// c2c(subarray(data, box), {axis}, forward, fct).
 template<detail::precision T>
 class ADM_API axis_plan {
 public:
@@ -240,17 +240,17 @@ public:
     axis_plan(axis_plan&&) noexcept;
     axis_plan& operator=(axis_plan&&) noexcept;
 
-    // Half-open box: dimension d runs over lo[d]..hi[d]. An empty span means the
-    // full extent, and an empty box is a no-op. The transformed axis must be
-    // whole, so lo[axis] = 0 and hi[axis] = shape[axis]. fct defaults to 1 for
-    // forward and 1/len for inverse.
+    /// Half-open box: dimension d runs over lo[d]..hi[d]. An empty span means the
+    /// full extent, and an empty box is a no-op. The transformed axis must be
+    /// whole, so lo[axis] = 0 and hi[axis] = shape[axis]. fct defaults to 1 for
+    /// forward and 1/len for inverse.
     void execute(std::complex<T>* data, std::span<const std::size_t> lo,
                  std::span<const std::size_t> hi, std::optional<T> fct = std::nullopt) const;
 
-    // Two disjoint bands of the LAST dimension in one call: the box as given, plus
-    // [lo2_last, hi2_last) on the last dimension with every other dimension shared.
-    // Equivalent to two execute() calls, but cheaper for narrow bands, which the
-    // planner can pack into one pass chain. lo2_last == hi2_last is execute().
+    /// Two disjoint bands of the LAST dimension in one call: the box as given, plus
+    /// [lo2_last, hi2_last) on the last dimension with every other dimension shared.
+    /// Equivalent to two execute() calls, but cheaper for narrow bands, which the
+    /// planner can pack into one pass chain. lo2_last == hi2_last is execute().
     void execute_bands(std::complex<T>* data, std::span<const std::size_t> lo,
                        std::span<const std::size_t> hi, std::size_t lo2_last,
                        std::size_t hi2_last, std::optional<T> fct = std::nullopt) const;
@@ -263,7 +263,7 @@ private:
 // One-shot N-D transforms, in place. For repeated transforms use plan<T>(shape).
 // ============================================================================
 
-// Forward N-D FFT, unscaled.
+/// Forward N-D FFT, unscaled.
 template<detail::precision T>
 ADM_API void forward(std::complex<T>* data, std::span<const std::size_t> shape,
                      const options& opts = {}, std::optional<T> fct = std::nullopt);
@@ -274,7 +274,7 @@ void forward(std::complex<T>* data, std::initializer_list<std::size_t> shape,
     forward(data, std::span<const std::size_t>(shape.begin(), shape.size()), opts, fct);
 }
 
-// Inverse N-D FFT, scaled by 1/Ntot.
+/// Inverse N-D FFT, scaled by 1/Ntot.
 template<detail::precision T>
 ADM_API void inverse(std::complex<T>* data, std::span<const std::size_t> shape,
                      const options& opts = {}, std::optional<T> fct = std::nullopt);
@@ -298,15 +298,15 @@ void inverse(std::complex<T>* data, std::initializer_list<std::size_t> shape,
 // its input spectrum.
 // ============================================================================
 
-// Real plan, r2c and c2r, any rank.
+/// Real plan, r2c and c2r, any rank.
 template<detail::precision T>
 class ADM_API plan_r2c {
 public:
-    // 1-D over `size` REAL elements.
+    /// 1-D over `size` REAL elements.
     [[nodiscard]] explicit plan_r2c(std::size_t size, const options& opts = {})
         : plan_r2c(std::span<const std::size_t>(&size, 1), opts) {}
 
-    // N-D over `shape`, last axis fastest.
+    /// N-D over `shape`, last axis fastest.
     [[nodiscard]] explicit plan_r2c(std::span<const std::size_t> shape, const options& opts = {});
     [[nodiscard]] plan_r2c(std::initializer_list<std::size_t> shape, const options& opts = {})
         : plan_r2c(std::span<const std::size_t>(shape.begin(), shape.size()), opts) {}
@@ -317,14 +317,14 @@ public:
     plan_r2c(plan_r2c&&) noexcept;
     plan_r2c& operator=(plan_r2c&&) noexcept;
 
-    // `in` holds real_size() reals, `out` holds cplx_size() complex elements.
+    /// `in` holds real_size() reals, `out` holds cplx_size() complex elements.
     void forward(const T* in, std::complex<T>* out, std::optional<T> fct = std::nullopt) const;
-    // `spec` is overwritten.
+    /// `spec` is overwritten.
     void inverse(std::complex<T>* spec, T* out, std::optional<T> fct = std::nullopt) const;
 
-    // Span overloads, as on plan<T>: they exist for the size check, since the two
-    // buffers here have DIFFERENT lengths (real_size() vs cplx_size() == n/2+1 on the
-    // last axis) and swapping them is the mistake the pointer form cannot catch.
+    /// Span overloads, as on plan<T>: they exist for the size check, since the two
+    /// buffers here have DIFFERENT lengths (real_size() vs cplx_size() == n/2+1 on the
+    /// last axis) and swapping them is the mistake the pointer form cannot catch.
     void forward(std::span<const T> in, std::span<std::complex<T>> out,
                  std::optional<T> fct = std::nullopt) const {
         check_sizes(in.size(), out.size());
@@ -336,7 +336,7 @@ public:
         inverse(spec.data(), out.data(), fct);
     }
 
-    // Buffer sizes in elements: the real tensor and the complex half-spectrum.
+    /// Buffer sizes in elements: the real tensor and the complex half-spectrum.
     [[nodiscard]] std::size_t real_size() const noexcept;
     [[nodiscard]] std::size_t cplx_size() const noexcept;
 
@@ -348,8 +348,8 @@ private:
     std::unique_ptr<detail::real_state<T>> m;
 };
 
-// One-shot r2c, unscaled. The real `in` pointer is what picks this over the
-// complex forward() above.
+/// One-shot r2c, unscaled. The real `in` pointer is what picks this over the
+/// complex forward() above.
 template<detail::precision T>
 ADM_API void forward(const T* in, std::complex<T>* out, std::span<const std::size_t> shape,
                      const options& opts = {}, std::optional<T> fct = std::nullopt);
@@ -360,7 +360,7 @@ void forward(const T* in, std::complex<T>* out, std::initializer_list<std::size_
     forward(in, out, std::span<const std::size_t>(shape.begin(), shape.size()), opts, fct);
 }
 
-// One-shot c2r, scaled by 1/Ntot. `spec` is overwritten.
+/// One-shot c2r, scaled by 1/Ntot. `spec` is overwritten.
 template<detail::precision T>
 ADM_API void inverse(std::complex<T>* spec, T* out, std::span<const std::size_t> shape,
                      const options& opts = {}, std::optional<T> fct = std::nullopt);
@@ -386,9 +386,9 @@ void inverse(std::complex<T>* spec, T* out, std::initializer_list<std::size_t> s
 template<detail::precision T>
 class ADM_API plan_r2r {
 public:
-    // `rows` contiguous lines of `size` reals each, one kind for all of them. Only
-    // the innermost axis of a tensor is contiguous, so N-D needs a transpose the
-    // caller does. There is no strided r2r here yet.
+    /// `rows` contiguous lines of `size` reals each, one kind for all of them. Only
+    /// the innermost axis of a tensor is contiguous, so N-D needs a transpose the
+    /// caller does. There is no strided r2r here yet.
     [[nodiscard]] plan_r2r(std::size_t size, r2r_kind kind, std::size_t rows = 1,
                            const options& opts = {});
 
@@ -398,8 +398,8 @@ public:
     plan_r2r(plan_r2r&&) noexcept;
     plan_r2r& operator=(plan_r2r&&) noexcept;
 
-    // Both buffers hold size() reals. `out == in` is allowed: both directions stage
-    // the entire input into scratch before storing anything.
+    /// Both buffers hold size() reals. `out == in` is allowed: both directions stage
+    /// the entire input into scratch before storing anything.
     void forward(const T* in, T* out, std::optional<T> fct = std::nullopt) const;
     void inverse(const T* in, T* out, std::optional<T> fct = std::nullopt) const;
 
@@ -414,7 +414,7 @@ public:
         inverse(in.data(), out.data(), fct);
     }
 
-    // Elements per buffer: size * rows.
+    /// Elements per buffer: size * rows.
     [[nodiscard]] std::size_t size() const noexcept;
 
 private:

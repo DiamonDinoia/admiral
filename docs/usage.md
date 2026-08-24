@@ -30,17 +30,27 @@ cannot repay a plan-time race.
 #include <admiral/admiral.h>
 
 adm_plan plan;
-adm_plan_1d(&plan, 1024, NULL);           // default options; N-D: adm_plan_nd
-adm_plan_execute_forward(plan, data);     // data: adm_complex[1024], in place
-adm_plan_execute_inverse(plan, data);
+if (adm_plan_1d(&plan, 1024, NULL) != ADM_SUCCESS)   // default options; N-D: adm_plan_nd
+    return 1;
+if (adm_plan_execute_forward(plan, data) != ADM_SUCCESS)  // data: adm_complex[1024], in place
+    return 1;
+if (adm_plan_execute_inverse(plan, data) != ADM_SUCCESS)
+    return 1;
 adm_plan_destroy(plan);
 ```
 
-Runnable: [../examples/c_api.c](../examples/c_api.c).
+Runnable: [examples/c_api.c](https://github.com/DiamonDinoia/yafft/blob/master/examples/c_api.c).
 
 Double precision keeps the plain name, single precision prefixes `admf_`. Every
-call returns an `adm_status` (`ADM_SUCCESS` is 0, nodiscard). A zeroed options
-struct means the defaults, so partial initializers are safe.
+call returns an `adm_status` (`ADM_SUCCESS` is 0, nodiscard);
+`adm_error_string()` turns a status into text. A zeroed options struct means
+the defaults, so partial initializers are safe; the `eff` field takes
+`ADM_EFFORT_ESTIMATE` / `ADM_EFFORT_AUTOMATIC` / `ADM_EFFORT_MEASURE`.
+
+One-shots skip the plan: `adm_forward` / `adm_inverse` (1-D),
+`adm_forward_nd` / `adm_inverse_nd`, and the real-transform pairs
+`adm_r2c_nd` / `adm_c2r_nd`, each with an `admf_` mirror. `adm_plan_size()`
+returns the element count a plan expects. The header documents every call.
 
 ## FFTW
 
@@ -52,7 +62,7 @@ fftw_execute(p);
 fftw_destroy_plan(p);
 ```
 
-Runnable: [../examples/fftw_dropin.c](../examples/fftw_dropin.c).
+Runnable: [examples/fftw_dropin.c](https://github.com/DiamonDinoia/yafft/blob/master/examples/fftw_dropin.c).
 Both directions are unscaled, matching FFTW, so a round trip multiplies the
 input by N.
 

@@ -241,7 +241,16 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
     // one complex out of each 64-byte line and the transform evicts them before the
     // next column reuses them; batching reads each line once. The group is capped so
     // its scratch stays L2-resident.
-    const std::size_t group = transpose_group<T>(len, run_len);
+    std::size_t group = transpose_group<T>(len, run_len);
+    // A pool with fewer work units than threads runs the axis serially. Keep at
+    // least ~2 units per thread; shrink the move width toward one cache line of
+    // complex, below which a group re-reads its lines and the move stops paying.
+    if (pool && nruns * ((run_len + group - 1) / group) < 2 * nthreads) {
+        constexpr std::size_t kLine = kCacheLine / sizeof(std::complex<T>);
+        const std::size_t target =
+            ((run_len + 2 * nthreads - 1) / (2 * nthreads) + kLine - 1) / kLine * kLine;
+        group = std::min(group, std::max(kLine, target));
+    }
     const std::size_t ngroups = (run_len + group - 1) / group;
     const std::size_t nunits = nruns * ngroups;
     const exec_options<T> opts{.fct = fct};

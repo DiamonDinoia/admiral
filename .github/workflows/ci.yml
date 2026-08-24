@@ -179,8 +179,12 @@ jobs:
           ! grep -qF -- '=native' build/coverage/compile_commands.json
       - run: cmake --build --preset coverage
       # Each binary writes its own profraw. Sharing the default path would silently corrupt
-      # the profile across link-moduled objects.
-      - run: ctest --preset coverage
+      # the profile across link-moduled objects. %m needs the directory to exist: the
+      # profile runtime does not create it and the write fails silently without this.
+      - name: Test
+        run: |
+          mkdir -p build/coverage/profraw
+          ctest --preset coverage
         env: {LLVM_PROFILE_FILE: "build/coverage/profraw/%m.profraw"}
       - name: Report
         # Region/line coverage over the test binaries (the engine is templates; its
@@ -191,8 +195,17 @@ jobs:
           objs=$(find build/coverage/test -maxdepth 1 -type f -name 'test_*' ! -name '*.*')
           args=$(for o in $objs; do printf -- '-object %s ' "$o"; done)
           llvm-cov-18 report $args -instr-profile=cov.profdata
+          llvm-cov-18 export $args -instr-profile=cov.profdata -format=lcov > coverage.lcov
+      - uses: codecov/codecov-action@v5
+        with:
+          # Public repo: tokenless upload. A lcov.export is what upload-artifact
+          # cannot render; artifacts keep the raw profile for llvm-cov reruns.
+          files: coverage.lcov
+          fail_ci_if_error: false
       - uses: actions/upload-artifact@v4
-        with: {name: coverage, path: cov.profdata}
+        with: {name: coverage, path: |
+                cov.profdata
+                coverage.lcov}
 
   install:
     # A consumer sees the installed package, not the build tree. This catches an export

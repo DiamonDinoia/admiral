@@ -1,5 +1,9 @@
 # Admiral
 
+[![CI](https://github.com/DiamonDinoia/admiral/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/DiamonDinoia/admiral/actions/workflows/ci.yml)
+[![Docs](https://github.com/DiamonDinoia/admiral/actions/workflows/docs.yml/badge.svg?branch=master)](https://diamondinoia.com/admiral/)
+[![codecov](https://codecov.io/gh/DiamonDinoia/admiral/graph/badge.svg)](https://codecov.io/gh/DiamonDinoia/admiral)
+
 A C++20 FFT library: complex and real transforms, any size, 1-D and N-D, float
 or double, with optional multithreading. One compiled engine behind three
 interfaces: C++, C, and a drop-in FFTW subset.

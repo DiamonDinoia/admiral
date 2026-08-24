@@ -4,39 +4,7 @@ A C++20 FFT library: complex and real transforms, any size, 1-D and N-D, float
 or double, with optional multithreading. One compiled engine behind three
 interfaces: C++, C, and a drop-in FFTW subset.
 
-## Performance
-
-Measured on a Xeon w5-3435X (16 physical cores, AVX-512, `-march=native`).
-Speedup is their time over Admiral's, so above 1 Admiral is faster.
-[benchmark/](benchmark/README.md) covers how these numbers are measured and how to
-rerun them.
-
-Against ducc0 (`c4dda23`), over 61 1-D lengths and 27 N-D shapes per precision:
-
-| | 1 thread | 16 threads |
-|-|----------|------------|
-| 1-D | 1.99× (f64), 2.78× (f32) | n/a |
-| 2-D | 1.24× (f64), 1.40× (f32) | 1.68× / 1.82× |
-| 3-D | 1.36× (f64), 1.61× (f32) | 5.96× / 5.09× |
-
-Against FFTW (`FFTW_MEASURE`, single thread, both precisions): 1.04× at 1-D,
-1.35× at N-D.
-
-Threading pays from about 32k elements upward: 2-4× at 192²/32³, 5-7× at
-512²/64³, and 9-11× from 1024²/128³ up, on 16 cores. Below ~25k elements there
-is no gain, so the default `nthreads = 0` heuristic keeps those transforms
-serial and ramps the pool with size. For rectangles the innermost extent
-matters: 64×4096 scales 6.9×, its transpose 4096×64 only 2.6-5.3×.
-
-## Requirements
-
-- CMake 3.25+, and Ninja or Make
-- A C++20 compiler; GCC 14+ or Clang 19+ recommended. Older C++20 compilers
-  build and pass the tests but generate worse code
-- xsimd and poet, fetched automatically; header-only, and the only dependencies
-  of the library itself
-
-## Build
+## Quick start
 
 ```bash
 cmake --preset release        # or `dev` to include the tests
@@ -44,15 +12,93 @@ cmake --build --preset release
 ctest --preset dev            # under the dev preset
 ```
 
-Or configure by hand:
+```cpp
+#include <admiral/admiral.hpp>
 
-```bash
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+std::vector<std::complex<double>> x(1024);
+
+admiral::plan<double> p(x.size());
+p.forward(x);                  // in place
+p.inverse(x);                  // divides by 1024
+
+admiral::plan<double> p2d({64, 64});              // N-D; r2c/DCT too, see header
+admiral::plan<double> p8(1 << 20, {.nthreads = 8});
+
+admiral::forward<double>(x, x);   // one-shot, no plan
 ```
+
+The snippet above is [examples/quickstart.cpp](examples/quickstart.cpp), built
+and run by ctest; [examples/](examples/) also covers real transforms, DCT/DST,
+per-axis transforms, C, and the FFTW drop-in. [docs/cpp-api.md](docs/cpp-api.md)
+walks the C++ API.
 
 If ninja aborts with `fatal: unknown placeholder`, a site-set `NINJA_STATUS` is
 incompatible with the local ninja: `unset NINJA_STATUS`.
+
+Requirements: CMake 3.25+, Ninja (or Make), and a C++20 compiler. GCC 14+ or
+Clang 19+ recommended; older C++20 compilers build and pass the tests but
+generate worse code. xsimd and poet are fetched automatically and are the only
+dependencies of the library itself.
+
+## Warning
+
+This project was not originally intended to be a library or something that others
+would use. This was originally a collection of homeworks and kernels written
+in asm, c and c++ with the sole purpose of learning how to write performing code.
+Why FFT? Because FFTW and MKL are hard to beat, so the baseline to compare
+against is meaningful. In the end, I asked Claude to see if by using `poet` and
+`xsimd` it is possible to match the inline assembly and instantiate codelets up
+to size 64. Claude also tuned my handcrafted cost model to decompose large
+transforms and route the best kernel. I also asked Claude to refine the
+interface into something usable, though for this I gave specifications so that
+it resembles something I like. Is this the best FFT? Probably not. Do I claim I
+have the fastest FFT out there? I don't think so. But it was a fun exercise and
+since I found it useful I decided to allow others to see it. Am I proud of
+everything you see in here? No. Any constructive feedback is welcome. I tried to
+remove all AI slop from this project, but I do not like writing good
+documentation, and sometimes AI parsed some rough notes in code comments, and
+the code is likely more verbose than it should. If you have any good
+suggestions, feel free to improve the project.
+
+If it takes a long time to compile, just wait, it will compile eventually.
+Use a recent compiler if you don't want to leave performance on the table.
+
+## Why Admiral
+
+- Fast on stock hardware. At 1 thread it beats FFTW_MEASURE by 1.34× (1-D) and
+  1.43× (N-D), and ducc0 by 2.2-2.7× at 1-D, on a Xeon w5-3435X at
+  `-march=native`.
+- Any size, any rank. Compiled codelets up to radix 64, so primes and awkward
+  composites route through the same engine as powers of two.
+- Plans pick their own route. A fitted cost model at `effort::estimate`, a
+  plan-time race at `automatic`. No wisdom files, no tuning step.
+- Existing FFTW code drops in. Recompile against `<admiral/fftw3.h>` and keep
+  the same calls, flags included.
+- Threads stay serial below ~32k elements, where the pool would cost more than
+  it saves. The `nthreads = 0` default ramps the pool with transform size.
+
+## Performance
+
+Measured on a Xeon w5-3435X (16 physical cores, AVX-512, `-march=native`).
+Speedup is the reference's time over Admiral's, so above 1 Admiral is faster.
+[benchmark/](benchmark/README.md) covers how these numbers are measured and how
+to rerun them.
+
+Against ducc0 (`c4dda23`), over 61 1-D lengths and 27 N-D shapes per precision:
+
+| | 1 thread | 16 threads |
+|-|----------|------------|
+| 1-D | 2.18× (f64), 2.70× (f32) | n/a |
+| 2-D | 1.12× (f64), 1.41× (f32) | 1.27× / 1.58× |
+| 3-D | 1.60× (f64), 1.67× (f32) | 2.67× / 3.53× |
+
+Against FFTW (`FFTW_MEASURE`, single thread, both precisions): 1.34× at 1-D,
+1.43× at N-D.
+
+Threading pays from about 32k elements up and reaches 9-12× on large shapes on
+16 threads; below ~16k elements one thread beats sixteen. For rectangles the
+innermost extent decides. The shape-by-shape numbers and what they mean for the
+`nthreads = 0` default live in [benchmark/](benchmark/README.md#build-options).
 
 ## Install and consume
 
@@ -87,96 +133,18 @@ libstdc++.
 
 ## Usage
 
-Common to all three interfaces: data is contiguous row-major, last axis fastest.
-Forward uses exp(-2πikn/N) and is unscaled; inverse divides by the element
-count, so a round trip returns the input (`fct` overrides the scale on the C++
-interface). Each header above opens with its full contract: layout, scaling,
-errors, threading. The examples below are enough to start.
-
-### C++
-
-```cpp
-#include <admiral/admiral.hpp>
-
-std::vector<std::complex<double>> x(1024);
-
-admiral::plan<double> p(x.size());
-p.forward(x);                  // in place
-p.inverse(x);                  // divides by 1024
-
-admiral::plan<double> p8(x.size(), {.nthreads = 8});   // default 0 = auto
-admiral::plan<double> p2d({64, 64});                   // N-D; r2c/DCT too, see header
-
-admiral::forward<double>(x, x);   // one-shot, no plan. Plain containers need the
-                                  // precision named; std::span arguments deduce it.
-```
-
-### Options
-
-Every plan and one-shot takes an optional `admiral::options` aggregate, so a
-call site names what it sets and nothing else. The C API mirrors it as
-`adm_options`, passed by pointer, where `NULL` means the defaults.
-
-| field | default | what it does |
-|-------|---------|--------------|
-| `nthreads` | `0` | worker threads owned by the plan. `0` is auto: a size-aware heuristic, serial for small transforms, ramping to one per physical core at 1024²/64³ scale. `1` forces serial, `n` forces `n` |
-| `eff` | `estimate` | how hard construction works to pick a route. `estimate` uses the fitted cost model, so it is fast and reproducible. `automatic` also times the model's top candidates; pick it when one plan serves many transforms. `measure` is the same race, kept for the FFTW flag mapping |
-| `debug` | `0` | stderr trace per execute: `0` silent, `1` what ran, `2` adds the shape, `3` adds the cost-model ranking |
-
-`automatic` and `measure` elect from timings, so the picked route depends on the
-machine and the load; both are inert under `-DADM_MEASURE=OFF`. The one-shot
-functions ignore `eff` and always route with `estimate`, since a discarded plan
-cannot repay a plan-time race.
-
-### C
-
-```c
-#include <admiral/admiral.h>
-
-adm_plan plan;
-adm_plan_1d(&plan, 1024, NULL);           // default options; N-D: adm_plan_nd
-adm_plan_execute_forward(plan, data);     // data: adm_complex[1024], in place
-adm_plan_execute_inverse(plan, data);
-adm_plan_destroy(plan);
-```
-
-Double precision keeps the plain name, single precision prefixes `admf_`. Every
-call returns an `adm_status` (`ADM_SUCCESS` is 0, nodiscard). Pass a
-`const adm_options*` instead of `NULL` to set options. A zeroed struct means
-the defaults, so partial initializers are safe.
-
-### FFTW
-
-Existing FFTW code compiles unchanged against `<admiral/fftw3.h>`:
-
-```c
-fftw_plan p = fftw_plan_dft_1d(N, in, out, FFTW_FORWARD, FFTW_ESTIMATE);
-fftw_execute(p);
-fftw_destroy_plan(p);
-```
-
-Covered: `fftw_plan_dft` and its 1d/2d/3d forms, `fftw_execute` and
-`fftw_execute_dft`, destroy, the alloc helpers, `fftw_cleanup`, and the `fftwf_`
-mirror. Not covered: real/r2r transforms, guru and split interfaces, wisdom,
-`fftw_plan_with_nthreads`. An uncovered call does not compile rather than
-degrade. `FFTW_ESTIMATE` maps to `estimate`; every other flag, `FFTW_MEASURE`
-included, maps to the plan-time race. Shim plans are single-threaded, so make
-one plan per executing thread.
+The C++ snippet in Quick start covers most needs. Data is contiguous row-major,
+last axis fastest; forward is unscaled and inverse divides by the element count.
+[docs/usage.md](docs/usage.md) covers the options aggregate (`nthreads`, `eff`,
+`debug`), the C API, and what the FFTW shim does and does not implement; each
+interface header opens with the same contract in full.
 
 ## Build options
 
-| Option | What it does, and when to change it | Default |
-|--------|-------------------------------------|---------|
-| `ADM_BUILD_TESTS` | Builds the Catch2 test suite (see `test/`). On only when Admiral is the top-level project; turn off for an install-only build | `ON` as top-level project |
-| `ADM_BUILD_BENCHMARKS` | Builds `admiral_benchmark`, which fetches ducc0 and nanobench. Only needed to measure performance; see `benchmark/` | `ON` as top-level project |
-| `ADM_ENABLE_THREADS` | `OFF` makes every plan serial regardless of `nthreads` and drops the system threads library from the link. Turn off for a single-threaded environment | `ON` |
-| `ADM_MEASURE` | Compiles in plan-time route measurement (`effort::automatic`/`measure`, and FFTW's non-`ESTIMATE` flags). `OFF` leaves them accepted but inert: every plan routes by the cost model, so plans become bitwise reproducible across runs | `ON` |
-| `ADM_TARGET_ARCH` | The one `-march` the whole build uses. `native` is fastest on the build machine but the binaries may not run elsewhere; use `x86-64-v3` for portable binaries, `none` for the compiler baseline. Also the build-memory knob: one engine TU peaks near 12 GB at AVX-512 `native` versus ~2 GB at `x86-64-v2`. Do not also pass `-march` in `CMAKE_CXX_FLAGS` | `native` |
-| `ADM_USE_FAST_MATH` | Adds `-ffast-math`: faster transforms, but relaxed IEEE (reassociation, flushed denormals, no errno). Turn off when strict IEEE semantics matter | `ON` |
-
-The CMake sources document the remaining knobs (sanitizers, codelet catalog, LTO,
-PCH, the cost-model fit targets) where they declare them. Those knobs face
-development, not use.
+Every CMake option, the benchmark environment variables, and the runtime option
+fields live in [docs/build-options.md](docs/build-options.md) ([docs/](docs/README.md)
+is the index). The defaults ship a fast library; reach for the docs when
+packaging, cross-compiling, or developing Admiral itself.
 
 ## Dependencies
 

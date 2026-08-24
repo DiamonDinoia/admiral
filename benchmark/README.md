@@ -36,13 +36,19 @@ documents that mode.
   `fftw3f`, found through pkg-config.
 - `ADM_BENCH_THREADS=ON` threads the reference libraries too (ducc0's pool, and
   FFTW's `fftw3_threads` companions under `--nthreads=N`).
+- The FFTW arms read four environment variables (wisdom caching, plan-effort,
+  planner time limits); [../docs/build-options.md](../docs/build-options.md)
+  lists them.
 
-Threaded scaling, same host, `--compare-nd --nthreads=t` (`fft_fwd_us`, min
-across rounds): threading is flat up to ~25k elements (1.0-1.1×), pays from 32k
-(32³: 2.9-4.2×), and ramps to 9-11× at 128³ with 16 threads. Rectangles split on
-the innermost extent: 64×4096 reaches 6.9×, 4096×64 only 2.6-5.3×. The
-`nthreads = 0` auto heuristic (`kAutoSerialElems` / `kAutoElemsPerThread` in
-`thread_pool.hpp`) comes from this sweep.
+Threaded scaling, same host, `--compare-nd --nthreads=<t>` at t = 1, 2, 4, 8, 16
+(`fft_fwd_us`, min across rounds). Figures are Admiral's own single-thread time
+over its threaded time. At 16 threads, shapes under ~16k elements run slower
+than serial (0.7-1.0×). Threading pays from about 32k elements (32³: 4.2-6.4×,
+192²: 2.6-3.5×), reaches 6-7× at 512² and 8-9× at 64³, and 10-11× at 256³-scale
+and up (128³: 10-11×, 509²: 10-12×). Rectangles split on the innermost extent:
+64×4096 reaches 9×, 4096×64 only 2×. The `nthreads = 0` auto heuristic
+(`kAutoSerialElems` / `kAutoElemsPerThread` in `thread_pool.hpp`) comes from
+this sweep.
 
 ## Measurement conventions
 
@@ -60,7 +66,8 @@ the innermost extent: 64×4096 reaches 6.9×, 4096×64 only 2.6-5.3×. The
 
 ## The headline numbers in the README
 
-Measured on a Xeon w5-3435X (16 physical cores, AVX-512, `-march=native`):
+Measured on a Xeon w5-3435X (16 physical cores, AVX-512, `-march=native`), GCC
+14.2, sweep of 2026-08-24:
 
 - ducc0 comparison (`c4dda23`): `--compare` over 61 1-D lengths and
   `--compare-nd` over 27 N-D shapes, both precisions. Ratios are their time over

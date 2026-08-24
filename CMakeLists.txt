@@ -30,6 +30,7 @@ endforeach()
 # add_subdirectory (PROJECT_IS_TOP_LEVEL, set by project() above).
 option(ADM_BUILD_TESTS "Build unit tests" ${PROJECT_IS_TOP_LEVEL})
 option(ADM_BUILD_BENCHMARKS "Build benchmarks" ${PROJECT_IS_TOP_LEVEL})
+option(ADM_BUILD_EXAMPLES "Build the runnable examples" ${PROJECT_IS_TOP_LEVEL})
 option(ADM_ENABLE_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 option(ADM_ENABLE_THREADS "Multi-threaded plan execution (links Threads); OFF = serial no-op pool" ON)
 option(ADM_MEASURE "Compile in plan-time route measurement (admiral::effort::measure, FFTW_MEASURE)" ON)
@@ -90,6 +91,11 @@ endif()
 if(ADM_BUILD_TESTS)
     enable_testing()
     add_subdirectory(test)
+endif()
+
+if(ADM_BUILD_EXAMPLES)
+    enable_testing()
+    add_subdirectory(examples)
 endif()
 
 include(CostModel)          # admiral_cost_sweep / admiral_cost_model targets

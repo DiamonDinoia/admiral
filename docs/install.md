@@ -66,7 +66,7 @@ Or let CMake fetch it:
 include(FetchContent)
 FetchContent_Declare(
   admiral
-  GIT_REPOSITORY https://github.com/DiamonDinoia/yafft.git
+  GIT_REPOSITORY https://github.com/DiamonDinoia/admiral.git
   GIT_TAG master
 )
 FetchContent_MakeAvailable(admiral)

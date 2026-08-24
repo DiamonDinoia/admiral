@@ -30,7 +30,7 @@ admiral::forward<double>(x, x);   // one-shot, no plan
 The snippet above is [examples/quickstart.cpp](examples/quickstart.cpp), built
 and run by ctest; [examples/](examples/) also covers real transforms, DCT/DST,
 per-axis transforms, C, and the FFTW drop-in. [docs/cpp-api.md](docs/cpp-api.md)
-walks the C++ API; <https://diamondinoia.github.io/yafft/> renders the docs and
+walks the C++ API; <https://diamondinoia.com/admiral/> renders the docs and
 an API reference generated from the public headers.
 
 The `release` preset also builds the benchmarks, which fetches ducc0 and
@@ -170,3 +170,11 @@ All fetched by CPM.
 BSD 3-Clause Attribution License (SPDX `BSD-3-Clause-Attribution`), see
 [LICENSE](LICENSE). Permissive, with an attribution clause: redistributions must
 retain the acknowledgment naming the Admiral FFT library.
+
+## Why the name
+
+An admiral is a butterfly. The FFT decomposes one large transform into repeated
+two-term combines, and the signal-flow diagram of each combine is called a
+butterfly: two inputs enter, two scaled sums leave, and the crossing edges draw
+a pair of wings. The small kernels in this library carry the same name. One
+butterfly for the algorithm, one admiral for the library.

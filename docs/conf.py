@@ -70,7 +70,7 @@ html_theme_options = {
 html_context = {
     "display_github": True,
     "github_user": "DiamonDinoia",
-    "github_repo": "yafft",
+    "github_repo": "admiral",
     "github_version": "master",
     "conf_py_path": "/docs/",
 }

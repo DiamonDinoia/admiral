@@ -8,9 +8,9 @@ three interfaces: C++, C, and a drop-in FFTW subset.
 Project links
 -------------
 
-- `GitHub repository <https://github.com/DiamonDinoia/yafft>`_
-- `Issue tracker <https://github.com/DiamonDinoia/yafft/issues>`_
-- `License (BSD 3-Clause Attribution) <https://github.com/DiamonDinoia/yafft/blob/master/LICENSE>`_
+- `GitHub repository <https://github.com/DiamonDinoia/admiral>`_
+- `Issue tracker <https://github.com/DiamonDinoia/admiral/issues>`_
+- `License (BSD 3-Clause Attribution) <https://github.com/DiamonDinoia/admiral/blob/master/LICENSE>`_
 
 Quick start
 -----------
@@ -31,9 +31,9 @@ Quick start
    admiral::forward<double>(x, x);   // one-shot, no plan
 
 The snippet is `examples/quickstart.cpp
-<https://github.com/DiamonDinoia/yafft/blob/master/examples/quickstart.cpp>`_,
+<https://github.com/DiamonDinoia/admiral/blob/master/examples/quickstart.cpp>`_,
 built and run by ctest; `examples/
-<https://github.com/DiamonDinoia/yafft/tree/master/examples>`_ also covers real
+<https://github.com/DiamonDinoia/admiral/tree/master/examples>`_ also covers real
 transforms, DCT/DST, per-axis transforms, C, and the FFTW drop-in.
 
 Next reads

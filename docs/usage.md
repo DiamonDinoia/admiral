@@ -39,7 +39,7 @@ if (adm_plan_execute_inverse(plan, data) != ADM_SUCCESS)
 adm_plan_destroy(plan);
 ```
 
-Runnable: [examples/c_api.c](https://github.com/DiamonDinoia/yafft/blob/master/examples/c_api.c).
+Runnable: [examples/c_api.c](https://github.com/DiamonDinoia/admiral/blob/master/examples/c_api.c).
 
 Double precision keeps the plain name, single precision prefixes `admf_`. Every
 call returns an `adm_status` (`ADM_SUCCESS` is 0, nodiscard);
@@ -62,7 +62,7 @@ fftw_execute(p);
 fftw_destroy_plan(p);
 ```
 
-Runnable: [examples/fftw_dropin.c](https://github.com/DiamonDinoia/yafft/blob/master/examples/fftw_dropin.c).
+Runnable: [examples/fftw_dropin.c](https://github.com/DiamonDinoia/admiral/blob/master/examples/fftw_dropin.c).
 Both directions are unscaled, matching FFTW, so a round trip multiplies the
 input by N.
 

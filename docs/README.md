@@ -1,6 +1,6 @@
 # Admiral docs
 
-Rendered site: <https://diamondinoia.github.io/yafft/> (built by
+Rendered site: <https://diamondinoia.com/admiral/> (built by
 [.github/workflows/docs.yml](../.github/workflows/docs.yml); [install.md](install.md#build-these-docs-locally)
 says how to build it locally).
 

@@ -203,9 +203,11 @@ jobs:
           files: coverage.lcov
           fail_ci_if_error: false
       - uses: actions/upload-artifact@v4
-        with: {name: coverage, path: |
-                cov.profdata
-                coverage.lcov}
+        with:
+          name: coverage
+          path: |
+            cov.profdata
+            coverage.lcov
 
   install:
     # A consumer sees the installed package, not the build tree. This catches an export

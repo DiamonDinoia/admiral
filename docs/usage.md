@@ -43,11 +43,25 @@ Runnable: [examples/c_api.c](https://github.com/DiamonDinoia/admiral/blob/master
 
 Double precision keeps the plain name, single precision prefixes `admf_`. Every
 call returns an `adm_status` (`ADM_SUCCESS` is 0, nodiscard);
-`adm_error_string()` turns a status into text, and `adm_last_error_message()`
-returns the reason of the last failed call on this thread (the rejection reason,
-or the caught exception's message). `ADM_ERROR_INTERNAL` marks a fault outside
-the caller's arguments; everything else names the argument that caused it. A
-zeroed options struct means the defaults, so partial initializers are safe; the
+`adm_error_string()` turns a status into text. A failed plan construction still
+writes a handle that carries the failure in place of NULL:
+`adm_plan_status()` re-reads it, `adm_plan_error_message()` gives the reason
+(the rejection text or the caught exception's message), `adm_plan_destroy()`
+releases it, and executing it re-returns the recorded status.
+`ADM_ERROR_INTERNAL` marks a fault outside the caller's arguments; everything
+else names the argument that caused it.
+
+| status | cause |
+|--------|-------|
+| `ADM_SUCCESS` | call performed |
+| `ADM_ERROR_NULL_POINTER` | a pointer argument was null |
+| `ADM_ERROR_INVALID_SIZE` | zero size/rank/extent, extent product overflow, span/plan size mismatch |
+| `ADM_ERROR_OUT_OF_MEMORY` | an allocation failed |
+| `ADM_ERROR_INVALID_PLAN` | null plan, float/double precision mismatch, or a replayed creation failure |
+| `ADM_ERROR_INVALID_OPTION` | an options field outside its enum |
+| `ADM_ERROR_INTERNAL` | fault not caused by the arguments; please report |
+
+A zeroed options struct means the defaults, so partial initializers are safe; the
 `eff` field takes `ADM_EFFORT_ESTIMATE` / `ADM_EFFORT_AUTOMATIC` /
 `ADM_EFFORT_MEASURE`.
 
@@ -77,3 +91,7 @@ mirror. Not covered: real/r2r transforms, guru and split interfaces, wisdom,
 degrade. `FFTW_ESTIMATE` maps to `estimate`; every other flag, `FFTW_MEASURE`
 included, maps to the plan-time race. Shim plans are single-threaded, so make
 one plan per executing thread.
+
+A plan call fails with NULL, as in FFTW; NULL alone carries no reason. For the
+reason, plan the same shape through the C API: a failed `adm_plan_1d` writes a
+handle that reports it via `adm_plan_error_message()`.

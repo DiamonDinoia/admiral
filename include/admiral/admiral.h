@@ -76,7 +76,7 @@ typedef enum {
     ADM_ERROR_OUT_OF_MEMORY = -3,
     ADM_ERROR_INVALID_PLAN = -4,   ///< null plan, or wrong precision for this call
     ADM_ERROR_INVALID_OPTION = -5, ///< an adm_options field is outside its range
-    ADM_ERROR_INTERNAL = -6        ///< a fault outside the caller's arguments; adm_last_error_message() has the detail
+    ADM_ERROR_INTERNAL = -6        ///< a fault outside the caller's arguments; a failed plan reports the detail via adm_plan_error_message()
 } adm_status;
 
 /// How hard the planner works before it commits to a route. estimate ranks
@@ -100,12 +100,6 @@ typedef struct {
 
 /// Never null; unknown codes give "Unknown error".
 ADM_NODISCARD ADM_C_API const char* adm_error_string(adm_status status);
-
-/// The reason of the last FAILED adm_* call on this thread: the rejection
-/// reason, or the caught exception's what(). Empty string if no call has failed
-/// yet. Thread-local; a successful call does not overwrite it, the next failing
-/// call does.
-ADM_NODISCARD ADM_C_API const char* adm_last_error_message(void);
 
 // ============================================================================
 // One-shot transforms
@@ -171,7 +165,8 @@ ADM_NODISCARD ADM_C_API adm_status adm_c2r_nd(adm_complex* spec, double* out, co
 // A plan holds the twiddle tables, the routing decision and the worker threads
 // for one shape. It runs both directions, so create it once and call
 // execute_forward and execute_inverse any number of times. Destroy it with
-// adm_plan_destroy.
+// adm_plan_destroy. Failed creation still writes a handle carrying the failure
+// (adm_plan_status, adm_plan_error_message), never a hidden null to execute.
 // ============================================================================
 
 typedef struct adm_plan_s* adm_plan;
@@ -193,8 +188,20 @@ ADM_NODISCARD ADM_C_API adm_status adm_plan_execute_forward(adm_plan plan, adm_c
 ADM_NODISCARD ADM_C_API adm_status admf_plan_execute_inverse(adm_plan plan, admf_complex* data);
 ADM_NODISCARD ADM_C_API adm_status adm_plan_execute_inverse(adm_plan plan, adm_complex* data);
 
-/// Total complex element count the plan expects. 0 for a null plan.
+/// Total complex element count the plan expects. 0 for a null plan or a failed
+/// creation.
 ADM_NODISCARD ADM_C_API size_t adm_plan_size(adm_plan plan);
+
+/// Status of the plan: ADM_SUCCESS when usable. A FAILED creation still writes
+/// a handle that carries the failure instead of NULL: re-read its status here,
+/// read the reason with adm_plan_error_message(), destroy as usual. Passing the
+/// handle to execute re-returns the creation failure.
+ADM_NODISCARD ADM_C_API adm_status adm_plan_status(adm_plan plan);
+
+/// Reason for adm_plan_status() != ADM_SUCCESS (the rejection reason or the
+/// caught exception's message); "" for a healthy plan; "null plan" for NULL.
+/// Valid while the plan lives.
+ADM_NODISCARD ADM_C_API const char* adm_plan_error_message(adm_plan plan);
 
 /// Safe on a null plan.
 ADM_C_API void adm_plan_destroy(adm_plan plan);

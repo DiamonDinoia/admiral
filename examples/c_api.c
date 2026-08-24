@@ -8,7 +8,11 @@
 int main(void) {
     adm_plan plan;
     adm_complex data[1024];
-    if (adm_plan_1d(&plan, 1024, NULL) != ADM_SUCCESS) return 1;   /* NULL = defaults */
+    if (adm_plan_1d(&plan, 1024, NULL) != ADM_SUCCESS) {           /* NULL = defaults */
+        fprintf(stderr, "plan failed: %s\n", adm_plan_error_message(plan));
+        adm_plan_destroy(plan);                                    /* failure handle is still owned */
+        return 1;
+    }
 
     for (size_t i = 0; i < 1024; ++i) {
         data[i].real = sin(0.01 * (double)i);

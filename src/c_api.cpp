@@ -7,6 +7,7 @@
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <variant>
 
@@ -58,26 +59,6 @@ std::optional<admiral::options> to_cpp_options(const adm_options* opts) {
 // overflowing product throws inside the C++ API; guarded() maps those.
 bool bad_shape(const size_t* shape, size_t ndim) { return shape == nullptr || ndim == 0; }
 
-// The detail of the last failing call, per thread: the caught exception's
-// what(). Set only on failure so a successful call costs no string store.
-thread_local std::string last_error;
-
-void set_last_error(const char* what) noexcept {
-    try {
-        last_error = what;
-    } catch (...) {
-        // Assigning can itself fail under memory pressure; keep the old text.
-    }
-}
-
-// Validation failures return before any call into C++: record their reason here
-// so adm_last_error_message() has an answer for every failed call, not only the
-// exception-originated ones.
-adm_status fail(adm_status status, const char* reason) {
-    set_last_error(reason);
-    return status;
-}
-
 // Run `body` and translate what escapes it. The C++ side throws admiral::error
 // subclasses for caller-caused failures and std::bad_alloc for memory. A
 // caller-created shape can overflow an internal buffer, so a length_error from
@@ -89,22 +70,16 @@ adm_status guarded(F&& body) {
         body();
         return ADM_SUCCESS;
     } catch (const std::bad_alloc&) {
-        set_last_error("out of memory");
         return ADM_ERROR_OUT_OF_MEMORY;
-    } catch (const admiral::size_error& e) {
-        set_last_error(e.what());
+    } catch (const admiral::size_error&) {
         return ADM_ERROR_INVALID_SIZE;
-    } catch (const admiral::error& e) {  // unsupported_error / internal_error
-        set_last_error(e.what());
+    } catch (const admiral::error&) {  // unsupported_error / internal_error
         return ADM_ERROR_INTERNAL;
-    } catch (const std::length_error& e) {
-        set_last_error(e.what());
+    } catch (const std::length_error&) {
         return ADM_ERROR_INVALID_SIZE;
-    } catch (const std::exception& e) {
-        set_last_error(e.what());
+    } catch (const std::exception&) {
         return ADM_ERROR_INTERNAL;
     } catch (...) {
-        set_last_error("non-standard exception");
         return ADM_ERROR_INTERNAL;
     }
 }
@@ -113,14 +88,14 @@ adm_status guarded(F&& body) {
 template<typename F>
 adm_status guarded_with(const adm_options* opts, F&& body) {
     const auto o = to_cpp_options(opts);
-    if (!o) return fail(ADM_ERROR_INVALID_OPTION, "eff is outside the adm_effort enum");
+    if (!o) return ADM_ERROR_INVALID_OPTION;
     return guarded([&] { body(*o); });
 }
 
 template<typename T>
 adm_status run_1d(void* data, size_t size, bool forward, const adm_options* opts) {
-    if (data == nullptr) return fail(ADM_ERROR_NULL_POINTER, "null data pointer");
-    if (size == 0) return fail(ADM_ERROR_INVALID_SIZE, "size must be greater than 0");
+    if (data == nullptr) return ADM_ERROR_NULL_POINTER;
+    if (size == 0) return ADM_ERROR_INVALID_SIZE;
     return guarded_with(opts, [&](const admiral::options& o) {
         const auto span = to_cpp_span<T>(data, size);
         if (forward) admiral::forward(span, span, o);
@@ -131,8 +106,8 @@ adm_status run_1d(void* data, size_t size, bool forward, const adm_options* opts
 template<typename T>
 adm_status run_nd(void* data, const size_t* shape, size_t ndim, bool forward,
                   const adm_options* opts) {
-    if (data == nullptr) return fail(ADM_ERROR_NULL_POINTER, "null data pointer");
-    if (bad_shape(shape, ndim)) return fail(ADM_ERROR_INVALID_SIZE, "null shape or zero rank");
+    if (data == nullptr) return ADM_ERROR_NULL_POINTER;
+    if (bad_shape(shape, ndim)) return ADM_ERROR_INVALID_SIZE;
     return guarded_with(opts, [&](const admiral::options& o) {
         const std::span<const size_t> extents(shape, ndim);
         auto* const p = reinterpret_cast<std::complex<T>*>(data);
@@ -144,8 +119,8 @@ adm_status run_nd(void* data, const size_t* shape, size_t ndim, bool forward,
 template<typename T>
 adm_status run_r2c(const void* in, void* out, const size_t* shape, size_t ndim,
                    const adm_options* opts) {
-    if (in == nullptr || out == nullptr) return fail(ADM_ERROR_NULL_POINTER, "null in/out pointer");
-    if (bad_shape(shape, ndim)) return fail(ADM_ERROR_INVALID_SIZE, "null shape or zero rank");
+    if (in == nullptr || out == nullptr) return ADM_ERROR_NULL_POINTER;
+    if (bad_shape(shape, ndim)) return ADM_ERROR_INVALID_SIZE;
     return guarded_with(opts, [&](const admiral::options& o) {
         admiral::forward(reinterpret_cast<const T*>(in), reinterpret_cast<std::complex<T>*>(out),
                          std::span<const size_t>(shape, ndim), o);
@@ -155,8 +130,8 @@ adm_status run_r2c(const void* in, void* out, const size_t* shape, size_t ndim,
 template<typename T>
 adm_status run_c2r(void* spec, void* out, const size_t* shape, size_t ndim,
                    const adm_options* opts) {
-    if (spec == nullptr || out == nullptr) return fail(ADM_ERROR_NULL_POINTER, "null in/out pointer");
-    if (bad_shape(shape, ndim)) return fail(ADM_ERROR_INVALID_SIZE, "null shape or zero rank");
+    if (spec == nullptr || out == nullptr) return ADM_ERROR_NULL_POINTER;
+    if (bad_shape(shape, ndim)) return ADM_ERROR_INVALID_SIZE;
     return guarded_with(opts, [&](const admiral::options& o) {
         admiral::inverse(reinterpret_cast<std::complex<T>*>(spec), reinterpret_cast<T*>(out),
                          std::span<const size_t>(shape, ndim), o);
@@ -225,37 +200,83 @@ adm_status adm_c2r_nd(adm_complex* spec, double* out, const size_t* shape, size_
 // ============================================================================
 
 // The variant owns the plan, so which precision it holds IS the type tag: no
-// enum to keep in sync, no void* to cast back, no destructor to write.
+// enum to keep in sync, no void* to cast back, no destructor to write. The
+// monostate alternative is the error record a failed creation writes in place
+// of a plan, so the handle itself carries the failure (adm_plan_status,
+// adm_plan_error_message); execute on it re-returns the recorded status.
 struct adm_plan_s {
     template<typename P, typename... Args>
     explicit adm_plan_s(std::in_place_type_t<P> tag, Args&&... args)
         : plan(tag, std::forward<Args>(args)...) {}
+    adm_plan_s(adm_status status, const char* detail) : err(status), what(detail) {}
 
-    std::variant<admiral::plan<float>, admiral::plan<double>> plan;
+    std::variant<std::monostate, admiral::plan<float>, admiral::plan<double>> plan;
+    adm_status err = ADM_SUCCESS;
+    std::string what;  // empty on a healthy plan
 };
 
 namespace {
+
+// Record the failure on the handle and return its status. Even the error record
+// can fail to allocate under memory pressure: *out stays null then, and the
+// status return alone identifies the failure.
+adm_status plan_error(adm_plan* out, adm_status status, const char* detail) noexcept {
+    *out = nullptr;
+    try {
+        *out = new adm_plan_s(status, detail);
+    } catch (...) {
+    }
+    return status;
+}
 
 // admiral::plan<T> takes a runtime shape, so 1-D and N-D are the same
 // construction over a shape span and differ only in ndim.
 template<typename T>
 adm_status make_plan(adm_plan* plan, const size_t* shape, size_t ndim, const adm_options* opts) {
-    if (plan == nullptr) return fail(ADM_ERROR_NULL_POINTER, "null plan output pointer");
-    if (bad_shape(shape, ndim)) return fail(ADM_ERROR_INVALID_SIZE, "null shape or zero rank");
-    return guarded_with(opts, [&](const admiral::options& o) {
+    if (plan == nullptr) return ADM_ERROR_NULL_POINTER;
+    *plan = nullptr;
+    if (bad_shape(shape, ndim))
+        return plan_error(plan, ADM_ERROR_INVALID_SIZE, "null shape or zero rank");
+    const auto o = to_cpp_options(opts);
+    if (!o) return plan_error(plan, ADM_ERROR_INVALID_OPTION, "eff is outside the adm_effort enum");
+    // Not routed through guarded(): the detail must be copied while the
+    // exception is alive, so the catch lives here.
+    adm_status st;
+    std::string detail;
+    try {
         *plan = std::make_unique<adm_plan_s>(std::in_place_type<admiral::plan<T>>,
-                                             std::span<const size_t>(shape, ndim), o)
+                                             std::span<const size_t>(shape, ndim), *o)
                     .release();
-    });
+        return ADM_SUCCESS;
+    } catch (const std::bad_alloc&) {
+        st = ADM_ERROR_OUT_OF_MEMORY;
+    } catch (const admiral::size_error& e) {
+        st = ADM_ERROR_INVALID_SIZE;
+        detail = e.what();
+    } catch (const admiral::error& e) {  // unsupported_error / internal_error
+        st = ADM_ERROR_INTERNAL;
+        detail = e.what();
+    } catch (const std::length_error& e) {
+        st = ADM_ERROR_INVALID_SIZE;
+        detail = e.what();
+    } catch (const std::exception& e) {
+        st = ADM_ERROR_INTERNAL;
+        detail = e.what();
+    } catch (...) {
+        st = ADM_ERROR_INTERNAL;
+        detail = "non-standard exception";
+    }
+    return plan_error(plan, st, detail.empty() ? adm_error_string(st) : detail.c_str());
 }
 
-// The variant lookup is also the precision check.
+// The variant lookup is also the precision check; a monostate variant replays
+// the recorded creation failure.
 template<typename T>
 adm_status plan_execute(adm_plan plan, auto* data, bool forward) {
-    if (plan == nullptr) return fail(ADM_ERROR_INVALID_PLAN, "null plan");
-    if (data == nullptr) return fail(ADM_ERROR_NULL_POINTER, "null data pointer");
+    if (plan == nullptr) return ADM_ERROR_INVALID_PLAN;
+    if (data == nullptr) return ADM_ERROR_NULL_POINTER;
     auto* p = std::get_if<admiral::plan<T>>(&plan->plan);
-    if (p == nullptr) return fail(ADM_ERROR_INVALID_PLAN, "plan precision does not match this call");
+    if (p == nullptr) return plan->err != ADM_SUCCESS ? plan->err : ADM_ERROR_INVALID_PLAN;
     return guarded([&] {
         const auto span = to_cpp_span<T>(data, p->size());
         if (forward) p->forward(span);
@@ -299,7 +320,20 @@ void adm_plan_destroy(adm_plan plan) {
 
 size_t adm_plan_size(adm_plan plan) {
     if (plan == nullptr) return 0;
-    return std::visit([](const auto& p) { return p.size(); }, plan->plan);
+    return std::visit(
+        [](const auto& p) -> size_t {
+            if constexpr (std::is_same_v<std::decay_t<decltype(p)>, std::monostate>) return 0;
+            else return p.size();
+        },
+        plan->plan);
 }
 
-const char* adm_last_error_message() { return last_error.c_str(); }
+adm_status adm_plan_status(adm_plan plan) {
+    if (plan == nullptr) return ADM_ERROR_NULL_POINTER;
+    return plan->err;
+}
+
+const char* adm_plan_error_message(adm_plan plan) {
+    if (plan == nullptr) return "null plan";
+    return plan->what.c_str();
+}

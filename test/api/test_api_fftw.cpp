@@ -11,6 +11,8 @@
 
 #include "utils/reference.hpp"
 
+#include <string>
+
 namespace {
 std::vector<std::complex<double>> signal(int N) {
     std::vector<std::complex<double>> v(static_cast<std::size_t>(N));
@@ -117,7 +119,7 @@ TEST_CASE("fftw shim: rejects bad ranks and an overflowing shape", "[fftw]") {
     const int zero[2] = {4, 0};
     REQUIRE(fftw_plan_dft(2, zero, nullptr, nullptr, FFTW_FORWARD, FFTW_ESTIMATE) == nullptr);
     // 2^90 > SIZE_MAX: extent_product returns nullopt, the plan ctor throws
-    // invalid_argument, and make_plan must convert that to FFTW's null return rather
+    // size_error, and make_plan must convert that to FFTW's null return rather
     // than let it escape a C ABI. The ctor rejects it before any allocation.
     const int huge[3] = {1 << 30, 1 << 30, 1 << 30};
     REQUIRE(fftw_plan_dft(3, huge, nullptr, nullptr, FFTW_FORWARD, FFTW_ESTIMATE) == nullptr);

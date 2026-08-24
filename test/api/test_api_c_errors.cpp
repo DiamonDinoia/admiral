@@ -31,16 +31,28 @@ TEST_CASE("C API error strings cover every status", "[coverage][c_api]") {
     REQUIRE(std::string(adm_error_string(static_cast<adm_status>(3))) == "Unknown error");
 }
 
-TEST_CASE("C API last-error message", "[coverage][c_api]") {
-    // Validation failure: rejected before entering C++, reason recorded anyway.
-    REQUIRE(adm_forward(nullptr, 4, NULL) == ADM_ERROR_NULL_POINTER);
-    REQUIRE(std::string(adm_last_error_message()).find("null") != std::string::npos);
-
-    // Exception-originated failure: the record carries the engine's message.
-    const std::array<size_t, 2> bad = {4, 0};
+TEST_CASE("C API plan handle carries the creation failure", "[coverage][c_api]") {
+    // A failed creation writes an error record the caller can query and must
+    // destroy, not a null handle.
+    adm_plan p = nullptr;
+    REQUIRE(adm_plan_1d(&p, 0, NULL) == ADM_ERROR_INVALID_SIZE);
+    REQUIRE(p != nullptr);
+    REQUIRE(adm_plan_status(p) == ADM_ERROR_INVALID_SIZE);
+    REQUIRE(std::string(adm_plan_error_message(p)).find("greater than 0") != std::string::npos);
     std::vector<adm_complex> buf(8);
-    REQUIRE(adm_forward_nd(buf.data(), bad.data(), 2, NULL) == ADM_ERROR_INVALID_SIZE);
-    REQUIRE(std::string(adm_last_error_message()).find("greater than 0") != std::string::npos);
+    REQUIRE(adm_plan_execute_forward(p, buf.data()) == ADM_ERROR_INVALID_SIZE);  // replays err
+    REQUIRE(adm_plan_size(p) == 0);
+    adm_plan_destroy(p);
+
+    adm_plan good = nullptr;
+    REQUIRE(adm_plan_1d(&good, 64, NULL) == ADM_SUCCESS);
+    REQUIRE(good != nullptr);
+    REQUIRE(adm_plan_status(good) == ADM_SUCCESS);
+    REQUIRE(std::string(adm_plan_error_message(good)).empty());
+    adm_plan_destroy(good);
+
+    // A null handle: status reads as the pointer error.
+    REQUIRE(adm_plan_status(nullptr) == ADM_ERROR_NULL_POINTER);
 }
 
 TEST_CASE("C API transform argument validation", "[coverage][c_api]") {
@@ -71,16 +83,22 @@ TEST_CASE("C API N-D and plan argument validation", "[coverage][c_api]") {
     REQUIRE(adm_forward_nd(buf.data(), bad.data(), 2, NULL) == ADM_ERROR_INVALID_SIZE);
     REQUIRE(admf_inverse_nd(nullptr, shape.data(), 2, NULL) == ADM_ERROR_NULL_POINTER);
 
-    // Plan constructors.
+    // Plan constructors: a failure does not leave null; it writes a queryable
+    // error record (covered by "plan handle carries the creation failure"),
+    // which each call here destroys.
     adm_plan p = nullptr;
     REQUIRE(admf_plan_1d(nullptr, 4, NULL) == ADM_ERROR_NULL_POINTER);
     REQUIRE(admf_plan_1d(&p, 0, NULL) == ADM_ERROR_INVALID_SIZE);
+    adm_plan_destroy(p);
     REQUIRE(adm_plan_1d(nullptr, 4, NULL) == ADM_ERROR_NULL_POINTER);
     REQUIRE(adm_plan_1d(&p, 0, NULL) == ADM_ERROR_INVALID_SIZE);
+    adm_plan_destroy(p);
     REQUIRE(admf_plan_nd(nullptr, shape.data(), 2, NULL) == ADM_ERROR_NULL_POINTER);
     REQUIRE(admf_plan_nd(&p, bad.data(), 2, NULL) == ADM_ERROR_INVALID_SIZE);
+    adm_plan_destroy(p);
     REQUIRE(adm_plan_nd(nullptr, shape.data(), 2, NULL) == ADM_ERROR_NULL_POINTER);
     REQUIRE(adm_plan_nd(&p, bad.data(), 2, NULL) == ADM_ERROR_INVALID_SIZE);
+    adm_plan_destroy(p);
 
     // Execute with a null / null-data / wrong-type plan.
     admf_complex fdata{1, 0};

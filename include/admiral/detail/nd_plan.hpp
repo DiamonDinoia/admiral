@@ -26,6 +26,8 @@
 #include <stdexcept>
 #include <vector>
 
+#include <admiral/errors.hpp>  // size_error
+
 #include "simd.hpp"     // batch<T>::size (SIMD-lane block alignment)
 
 #include "dif_col_driver.hpp"  // col_dif_execute_ws, col_dif_dispatch, nd_col_block
@@ -443,7 +445,7 @@ nd_runtime_plan<T>::nd_runtime_plan(std::span<const std::size_t> shape, bool is_
     m.shape.assign(shape.begin(), shape.end());
     m.is_forward = is_forward;
     const auto total = extent_product(m.shape);
-    if (!total) [[unlikely]] throw std::invalid_argument("Plan size must be greater than 0");
+    if (!total) [[unlikely]] throw size_error("Plan size must be greater than 0");
     m.total = *total;
     // Every partial product below is <= m.total, so the strides cannot overflow.
     // inner = product of faster extents = this axis' stride (suffix product).

@@ -22,12 +22,25 @@ using namespace Catch::Matchers;
 TEST_CASE("C API error strings cover every status", "[coverage][c_api]") {
     REQUIRE(std::string(adm_error_string(ADM_SUCCESS)) == "Success");
     REQUIRE(std::string(adm_error_string(ADM_ERROR_NULL_POINTER)) == "Null pointer argument");
-    REQUIRE(std::string(adm_error_string(ADM_ERROR_INVALID_SIZE)) == "Invalid size (must be > 0)");
+    REQUIRE(std::string(adm_error_string(ADM_ERROR_INVALID_SIZE)) == "Invalid size or shape");
     REQUIRE(std::string(adm_error_string(ADM_ERROR_OUT_OF_MEMORY)) == "Out of memory");
     REQUIRE(std::string(adm_error_string(ADM_ERROR_INVALID_PLAN)) == "Invalid plan");
-    // 3 is inside adm_status' value range (enumerators -4..0 => 3 signed bits => -4..3)
+    REQUIRE(std::string(adm_error_string(ADM_ERROR_INTERNAL)) == "Internal error");
+    // 3 is inside adm_status' value range (enumerators -6..0 => 4 signed bits => -8..7)
     // but is not an enumerator, so this hits the default branch with defined behaviour.
     REQUIRE(std::string(adm_error_string(static_cast<adm_status>(3))) == "Unknown error");
+}
+
+TEST_CASE("C API last-error message", "[coverage][c_api]") {
+    // Validation failure: rejected before entering C++, reason recorded anyway.
+    REQUIRE(adm_forward(nullptr, 4, NULL) == ADM_ERROR_NULL_POINTER);
+    REQUIRE(std::string(adm_last_error_message()).find("null") != std::string::npos);
+
+    // Exception-originated failure: the record carries the engine's message.
+    const std::array<size_t, 2> bad = {4, 0};
+    std::vector<adm_complex> buf(8);
+    REQUIRE(adm_forward_nd(buf.data(), bad.data(), 2, NULL) == ADM_ERROR_INVALID_SIZE);
+    REQUIRE(std::string(adm_last_error_message()).find("greater than 0") != std::string::npos);
 }
 
 TEST_CASE("C API transform argument validation", "[coverage][c_api]") {

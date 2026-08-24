@@ -196,12 +196,12 @@ TEMPLATE_TEST_CASE("axis_plan rejects malformed shapes and boxes", "[axis]", flo
 
     // --- construction
     const std::vector<std::size_t> empty_shape{};
-    REQUIRE_THROWS_AS(axis_plan<T>(sp(empty_shape), 0, true), std::invalid_argument);
-    REQUIRE_THROWS_AS(axis_plan<T>({6, 8}, 2, true), std::invalid_argument);   // axis == rank
-    REQUIRE_THROWS_AS(axis_plan<T>({6, 0}, 0, true), std::invalid_argument);   // zero extent
+    REQUIRE_THROWS_AS(axis_plan<T>(sp(empty_shape), 0, true), admiral::size_error);
+    REQUIRE_THROWS_AS(axis_plan<T>({6, 8}, 2, true), admiral::size_error);   // axis == rank
+    REQUIRE_THROWS_AS(axis_plan<T>({6, 0}, 0, true), admiral::size_error);   // zero extent
     // Product overflows size_t, so it cannot be a valid tensor. Throws before allocating.
     REQUIRE_THROWS_AS(axis_plan<T>({std::numeric_limits<std::size_t>::max(), 2}, 0, true),
-                      std::invalid_argument);
+                      admiral::size_error);
 
     // --- box validation, on a plan over {6, 8} transforming the innermost axis
     const std::vector<std::size_t> shape{6, 8};
@@ -209,33 +209,33 @@ TEMPLATE_TEST_CASE("axis_plan rejects malformed shapes and boxes", "[axis]", flo
     axis_plan<T> ap(sp(shape), 1, true);
 
     const std::vector<std::size_t> short_lo{0}, ok_lo{0, 0}, ok_hi{6, 8};
-    REQUIRE_THROWS_AS(ap.execute(data.data(), sp(short_lo), sp(ok_hi)), std::invalid_argument);
-    REQUIRE_THROWS_AS(ap.execute(data.data(), sp(ok_lo), sp(short_lo)), std::invalid_argument);
+    REQUIRE_THROWS_AS(ap.execute(data.data(), sp(short_lo), sp(ok_hi)), admiral::size_error);
+    REQUIRE_THROWS_AS(ap.execute(data.data(), sp(ok_lo), sp(short_lo)), admiral::size_error);
 
     const std::vector<std::size_t> past_end{6, 9}, inverted_lo{4, 0}, inverted_hi{2, 8};
-    REQUIRE_THROWS_AS(ap.execute(data.data(), sp(ok_lo), sp(past_end)), std::invalid_argument);
+    REQUIRE_THROWS_AS(ap.execute(data.data(), sp(ok_lo), sp(past_end)), admiral::size_error);
     REQUIRE_THROWS_AS(ap.execute(data.data(), sp(inverted_lo), sp(inverted_hi)),
-                      std::invalid_argument);
+                      admiral::size_error);
 
     const std::vector<std::size_t> part_lo{0, 1}, part_hi{6, 7};
-    REQUIRE_THROWS_AS(ap.execute(data.data(), sp(ok_lo), sp(part_hi)), std::invalid_argument);
-    REQUIRE_THROWS_AS(ap.execute(data.data(), sp(part_lo), sp(ok_hi)), std::invalid_argument);
+    REQUIRE_THROWS_AS(ap.execute(data.data(), sp(ok_lo), sp(part_hi)), admiral::size_error);
+    REQUIRE_THROWS_AS(ap.execute(data.data(), sp(part_lo), sp(ok_hi)), admiral::size_error);
 
     // --- second band. ap transforms the last dim, so it can never carry one.
-    REQUIRE_THROWS_AS(ap.execute_bands(data.data(), none, none, 0, 1), std::invalid_argument);
+    REQUIRE_THROWS_AS(ap.execute_bands(data.data(), none, none, 0, 1), admiral::size_error);
 
     // A plan on the outer axis can: the last dim is free to be banded.
     axis_plan<T> col(sp(shape), 0, true);
     const std::vector<std::size_t> b_lo{0, 0}, b_hi{6, 3};
     REQUIRE_THROWS_AS(col.execute_bands(data.data(), sp(b_lo), sp(b_hi), 5, 9),
-                      std::invalid_argument);   // hi2 past the extent
+                      admiral::size_error);   // hi2 past the extent
     REQUIRE_THROWS_AS(col.execute_bands(data.data(), sp(b_lo), sp(b_hi), 7, 5),
-                      std::invalid_argument);   // inverted
+                      admiral::size_error);   // inverted
     REQUIRE_THROWS_AS(col.execute_bands(data.data(), sp(b_lo), sp(b_hi), 2, 6),
-                      std::invalid_argument);   // overlaps [0,3)
+                      admiral::size_error);   // overlaps [0,3)
     const std::vector<std::size_t> mt_lo{3, 0}, mt_hi{3, 3};
     REQUIRE_THROWS_AS(col.execute_bands(data.data(), sp(mt_lo), sp(mt_hi), 5, 8),
-                      std::invalid_argument);   // empty box cannot carry a band
+                      admiral::size_error);   // empty box cannot carry a band
 }
 
 TEMPLATE_TEST_CASE("axis_plan survives a move", "[axis]", float, double) {

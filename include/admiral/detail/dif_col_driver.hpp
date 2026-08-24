@@ -20,6 +20,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include <admiral/errors.hpp>  // internal_error
+
 #include <poet/poet.hpp>
 #include "simd.hpp"     // batch<T>::size (SIMD-lane block alignment)
 
@@ -122,7 +124,7 @@ void col_dif_execute_ws(std::complex<T>* data,
     // assert: an assert is nothing under NDEBUG, exactly the builds where a wrong
     // answer would ship. One entry branch against N*B element work.
     if (first_src != nullptr && first_src_stride == 0)
-        throw std::invalid_argument("col dif: first_src copy-in requires its own stride");
+        throw internal_error("col dif: first_src copy-in requires its own stride");
 
     const std::size_t B = batch_count;
     const std::size_t n_passes = dtw.radices.size();

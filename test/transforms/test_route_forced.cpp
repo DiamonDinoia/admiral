@@ -69,7 +69,7 @@ TEMPLATE_TEST_CASE("forced route names itself and round-trips", "[coverage][rout
         if (n == 0) {
             // Unavailable everywhere in the range: route_available must then
             // agree with the ctor, which is the property that matters.
-            REQUIRE_THROWS_AS(P(60u, true, route), std::invalid_argument);
+            REQUIRE_THROWS_AS(P(60u, true, route), admiral::unsupported_error);
             continue;
         }
         ++exercised;
@@ -102,8 +102,8 @@ TEMPLATE_TEST_CASE("forced route names itself and round-trips", "[coverage][rout
     // than silently swapping in one that works. 17 is prime, so it has no coprime
     // Good-Thomas factorization at any ISA.
     REQUIRE_FALSE(P::route_available(R::good_thomas, 17u));
-    REQUIRE_THROWS_AS(P(17u, true, R::good_thomas), std::invalid_argument);
-    REQUIRE_THROWS_AS(P(0u, true, R::bluestein), std::invalid_argument);
+    REQUIRE_THROWS_AS(P(17u, true, R::good_thomas), admiral::unsupported_error);
+    REQUIRE_THROWS_AS(P(0u, true, R::bluestein), admiral::size_error);
 }
 
 // Every size a forced four_step_large admits must round-trip, the ones pick()
@@ -272,20 +272,20 @@ TEMPLATE_TEST_CASE("plan rejects bad sizes and handles N==1", "[coverage][route]
                    float, double) {
     using P = admiral::detail::plan_impl<TestType>;
 
-    REQUIRE_THROWS_AS(P(0u, true), std::invalid_argument);
+    REQUIRE_THROWS_AS(P(0u, true), admiral::size_error);
     // Every effort, the default included. The delegating ctor resolves the route in its
     // argument, before the guard below can run, so each effort reaches the chain DP on its
     // own path. Size 0 has to throw rather than hang, since is_pentanomial(0) halves 0
     // forever, and a throws-check catches that only because a hang fails the test's timeout.
-    REQUIRE_THROWS_AS(P(0u, true, 1u, nullptr, admiral::effort::estimate), std::invalid_argument);
-    REQUIRE_THROWS_AS(P(0u, true, 1u, nullptr, admiral::effort::automatic), std::invalid_argument);
-    REQUIRE_THROWS_AS(P(0u, true, 1u, nullptr, admiral::effort::measure), std::invalid_argument);
+    REQUIRE_THROWS_AS(P(0u, true, 1u, nullptr, admiral::effort::estimate), admiral::size_error);
+    REQUIRE_THROWS_AS(P(0u, true, 1u, nullptr, admiral::effort::automatic), admiral::size_error);
+    REQUIRE_THROWS_AS(P(0u, true, 1u, nullptr, admiral::effort::measure), admiral::size_error);
 
     // A dif_factor_plan override can only represent an 11-smooth N (every radix
     // in dif_radix_set is), so forcing 13 must be rejected rather than silently
     // routed elsewhere and timed as a valid A/B baseline.
     const admiral::detail::dif_factor_plan chain;
-    REQUIRE_THROWS_AS(P(13u, true, 1u, &chain), std::invalid_argument);
+    REQUIRE_THROWS_AS(P(13u, true, 1u, &chain), admiral::unsupported_error);
 
     // N==1: the DFT is the identity times fct, and both execute overloads
     // shortcut before any kernel. execute_many also applies fct down a
@@ -293,7 +293,7 @@ TEMPLATE_TEST_CASE("plan rejects bad sizes and handles N==1", "[coverage][route]
     const P fwd(1u, true), inv(1u, false);
     std::vector<std::complex<TestType>> one{{TestType(3), TestType(-1)}};
     std::vector<std::complex<TestType>> two(2);
-    REQUIRE_THROWS_AS(fwd.execute(std::span(two)), std::invalid_argument);  // size mismatch
+    REQUIRE_THROWS_AS(fwd.execute(std::span(two)), admiral::size_error);  // size mismatch
     fwd.execute(std::span(one));
     REQUIRE(one[0] == std::complex<TestType>(TestType(3), TestType(-1)));
     inv.execute(std::span(one));  // inverse fct = 1/N = 1

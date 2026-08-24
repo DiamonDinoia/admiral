@@ -83,7 +83,7 @@ TEST_CASE("a forced radix outside dif_radix_set is rejected", "[iterative_dif]")
     dif_factor_plan plan;
     plan.push(6);  // excluded as never emitted, on every ISA
     plan.push(4);
-    REQUIRE_THROWS_AS(build_dif_twiddle_set<double>(24, &plan), std::invalid_argument);
+    REQUIRE_THROWS_AS(build_dif_twiddle_set<double>(24, &plan), admiral::unsupported_error);
 }
 
 // The pass reads the factored pass-0 row (dif_twiddle_set::p0_block) W lanes at a time
@@ -163,7 +163,7 @@ TEST_CASE("col dif: first_src copy-in requires its own stride", "[iterative][col
         (col_dif_execute_ws<double, true>(data.data(), N, 4, 4, cc0.data(), cc1.data(),
                                           cc2.data(), cc3.data(), dtw, 1.0,
                                           src.data(), 0)),
-        std::invalid_argument);
+        admiral::internal_error);
     REQUIRE_NOTHROW(
         (col_dif_execute_ws<double, true>(data.data(), N, 4, 4, cc0.data(), cc1.data(),
                                           cc2.data(), cc3.data(), dtw, 1.0, src.data(),

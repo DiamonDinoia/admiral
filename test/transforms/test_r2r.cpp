@@ -185,12 +185,12 @@ TEMPLATE_TEST_CASE("r2r runs in place", "[r2r]", float, double) {
 }
 
 TEST_CASE("plan_r2r rejects empty sizes and mismatched spans", "[r2r]") {
-    CHECK_THROWS_AS(admiral::plan_r2r<double>(0, admiral::r2r_kind::dct2), std::invalid_argument);
+    CHECK_THROWS_AS(admiral::plan_r2r<double>(0, admiral::r2r_kind::dct2), admiral::size_error);
     CHECK_THROWS_AS(admiral::plan_r2r<double>(8, admiral::r2r_kind::dct2, 0),
-                    std::invalid_argument);
+                    admiral::size_error);
     admiral::plan_r2r<double> p(8, admiral::r2r_kind::dct2, 2);
     CHECK(p.size() == 16);
     std::vector<double> a(16), b(8);
     CHECK_THROWS_AS(p.forward(std::span<const double>(a), std::span<double>(b)),
-                    std::invalid_argument);
+                    admiral::size_error);
 }

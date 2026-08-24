@@ -70,12 +70,11 @@ struct axis_state {
         : shape(extents.begin(), extents.end()), stride(extents.size()), axis(ax), forward(fwd),
           innermost(ax + 1 == extents.size()), debug(opts.debug) {
         if (shape.empty() || axis >= shape.size())
-            throw std::invalid_argument("axis_plan: axis out of range");
+            throw size_error("axis_plan: axis out of range");
         // Validate the full product once; every stride below is a factor of it.
         const auto total = extent_product(shape);
         if (!total)
-            throw std::invalid_argument(
-                "axis_plan: extents must be > 0 and their product must fit");
+            throw size_error("axis_plan: extents must be > 0 and their product must fit");
         const std::size_t nthreads = resolve_nthreads(opts.nthreads, *total);
         std::size_t s = 1;
         for (std::size_t di = 0; di < shape.size(); ++di) {
@@ -141,7 +140,7 @@ template<typename T>
 void one_shot_1d(std::span<const std::complex<T>> input, std::span<std::complex<T>> output,
                  bool is_forward, const options& opts, std::optional<T> fct) {
     if (input.size() != output.size()) [[unlikely]]
-        throw std::invalid_argument("Input and output sizes must match");
+        throw size_error("Input and output sizes must match");
     if (input.empty()) [[unlikely]] return;
     detail::plan_impl<T>(output.size(), is_forward,
                          detail::resolve_nthreads(opts.nthreads, output.size()), nullptr,
@@ -264,26 +263,26 @@ void axis_plan<T>::execute_bands(std::complex<T>* data, std::span<const std::siz
     // Resolve the box (empty span => full extent) and validate. Read through
     // accessors rather than materializing two vectors: this runs per call.
     if ((!lo.empty() && lo.size() != ndim) || (!hi.empty() && hi.size() != ndim))
-        throw std::invalid_argument("axis_plan: box rank must match shape");
+        throw size_error("axis_plan: box rank must match shape");
     const auto blo = [&](std::size_t d) { return lo.empty() ? std::size_t{0} : lo[d]; };
     const auto bhi = [&](std::size_t d) { return hi.empty() ? m->shape[d] : hi[d]; };
     bool empty_box = false;
     for (std::size_t d = 0; d < ndim; ++d) {
         if (bhi(d) > m->shape[d] || blo(d) > bhi(d))
-            throw std::invalid_argument("axis_plan: box out of range");
+            throw size_error("axis_plan: box out of range");
         empty_box |= (blo(d) == bhi(d));   // validate every dim before bailing out
     }
     if (blo(m->axis) != 0 || bhi(m->axis) != len)
-        throw std::invalid_argument("axis_plan: transformed axis must be full");
+        throw size_error("axis_plan: transformed axis must be full");
     // A second band rides the same lines as the box, so it differs only on the last
     // dim: non-empty, in range, disjoint from the first band, and not on the axis
     // itself (which must stay whole).
     if (lo2_last != hi2_last) {
         const std::size_t last = ndim - 1;
         if (hi2_last > m->shape[last] || lo2_last > hi2_last || m->axis == last || empty_box)
-            throw std::invalid_argument("axis_plan: second band out of range");
+            throw size_error("axis_plan: second band out of range");
         if (lo2_last < bhi(last) && blo(last) < hi2_last)
-            throw std::invalid_argument("axis_plan: bands overlap");
+            throw size_error("axis_plan: bands overlap");
     }
     if (empty_box || len <= 1) return;
 

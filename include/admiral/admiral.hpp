@@ -29,10 +29,11 @@
 // place when src == dst. Buffers that partially overlap are undefined
 // behaviour. The engine never stages a copy to hide it.
 //
-// Errors. Span overloads check the element count and throw
-// std::invalid_argument on a mismatch. Pointer overloads trust the caller.
-// Construction throws std::invalid_argument for a bad shape and std::bad_alloc
-// if scratch cannot be allocated.
+// Errors. Span overloads check the element count and throw admiral::size_error
+// on a mismatch. Pointer overloads trust the caller. Construction throws
+// admiral::size_error for a bad shape and std::bad_alloc if scratch cannot be
+// allocated. Every caller-caused failure derives from admiral::error and
+// carries an error_code; see <admiral/errors.hpp>.
 //
 // Options. Plans and one-shots alike take one optional `options` aggregate (see
 // its declaration below) rather than a parameter per knob.
@@ -59,6 +60,8 @@
 #include <span>
 #include <stdexcept>
 #include <type_traits>
+
+#include <admiral/errors.hpp>  // error, error_code, size_error
 
 // The library is built with hidden visibility; public symbols opt back in.
 #ifndef ADM_API
@@ -203,7 +206,7 @@ public:
 
 private:
     void check_size(std::size_t n) const {
-        if (n != size()) [[unlikely]] throw std::invalid_argument(detail::kSizeMismatch);
+        if (n != size()) [[unlikely]] throw size_error(detail::kSizeMismatch);
     }
     // In place and out of place are different passes in the engine, not one path
     // with src == dst.
@@ -343,7 +346,7 @@ public:
 private:
     void check_sizes(std::size_t nreal, std::size_t ncplx) const {
         if (nreal != real_size() || ncplx != cplx_size()) [[unlikely]]
-            throw std::invalid_argument(detail::kSizeMismatch);
+            throw size_error(detail::kSizeMismatch);
     }
     std::unique_ptr<detail::real_state<T>> m;
 };
@@ -420,7 +423,7 @@ public:
 private:
     void check_sizes(std::size_t nin, std::size_t nout) const {
         if (nin != size() || nout != size()) [[unlikely]]
-            throw std::invalid_argument(detail::kSizeMismatch);
+            throw size_error(detail::kSizeMismatch);
     }
     std::unique_ptr<detail::r2r_state<T>> m;
 };

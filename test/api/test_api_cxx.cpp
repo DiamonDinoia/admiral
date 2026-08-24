@@ -139,9 +139,9 @@ TEMPLATE_TEST_CASE("one-shot validation", "[fft][oneshot]", float, double) {
     const auto cin = std::span<const std::complex<T>>(in);
 
     // A size mismatch throws instead of overrunning the short span, and it throws the
-    // same std::invalid_argument every other span-count check on this API throws.
-    REQUIRE_THROWS_AS(admiral::forward(cin, std::span(short_out)), std::invalid_argument);
-    REQUIRE_THROWS_AS(admiral::inverse(cin, std::span(short_out)), std::invalid_argument);
+    // same admiral::size_error every other span-count check on this API throws.
+    REQUIRE_THROWS_AS(admiral::forward(cin, std::span(short_out)), admiral::size_error);
+    REQUIRE_THROWS_AS(admiral::inverse(cin, std::span(short_out)), admiral::size_error);
 
     // Empty spans are a legal no-op.
     std::vector<std::complex<T>> ein, eout;

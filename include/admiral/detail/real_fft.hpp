@@ -26,6 +26,8 @@
 #include <utility>     // std::pair
 #include <vector>
 
+#include <admiral/errors.hpp>  // size_error
+
 #include "nd_plan.hpp"        // nd_axis_state, make_nd_axis_state, nd_apply_axis
 #include "plan.hpp"           // plan_impl
 #include "portable_trig.hpp"  // sincos_turns
@@ -468,7 +470,7 @@ nd_real_plan<T>::nd_real_plan(std::span<const std::size_t> shape, std::size_t nt
     // Rank 0 has no innermost axis, and a wrapped product would become a buffer
     // size below. Same rejection as nd_runtime_plan.
     if (n == 0 || !extent_product(m.shape))
-        throw std::invalid_argument("Plan size must be greater than 0");
+        throw size_error("Plan size must be greater than 0");
     m.inner_len = m.shape.back();
     m.Nh = m.inner_len / 2 + 1;
     m.rp.emplace(m.inner_len, eff);

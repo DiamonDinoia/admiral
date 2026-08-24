@@ -197,13 +197,13 @@ TEST_CASE("Plan error handling", "[plan][error]") {
 
     SECTION("Wrong size data") {
         std::vector<std::complex<double>> data(16);
-        REQUIRE_THROWS_AS(fwd_plan.forward(std::span(data)), std::invalid_argument);
+        REQUIRE_THROWS_AS(fwd_plan.forward(std::span(data)), admiral::size_error);
     }
 
     SECTION("Zero size plan") {
         REQUIRE_THROWS_AS(
             admiral::plan<double>(0),
-            std::invalid_argument
+            admiral::size_error
         );
     }
 }
@@ -239,13 +239,13 @@ TEST_CASE("plan_r2c span overloads validate both extents", "[plan][error]") {
         std::vector<std::complex<double>> spec_bad(r.cplx_size() + 1);
         std::vector<double> real_bad(r.real_size() + 1);
         REQUIRE_THROWS_AS(r.forward(std::span<const double>(real), std::span(spec_bad)),
-                          std::invalid_argument);
+                          admiral::size_error);
         REQUIRE_THROWS_AS(r.forward(std::span<const double>(real_bad), std::span(spec)),
-                          std::invalid_argument);
+                          admiral::size_error);
         REQUIRE_THROWS_AS(r.inverse(std::span(spec_bad), std::span(back)),
-                          std::invalid_argument);
+                          admiral::size_error);
         REQUIRE_THROWS_AS(r.inverse(std::span(spec), std::span(real_bad)),
-                          std::invalid_argument);
+                          admiral::size_error);
     }
 }
 
@@ -385,11 +385,11 @@ TEMPLATE_TEST_CASE("Plan out-of-place execute (src preserved, matches in-place)"
 TEST_CASE("plan_r2c rejects an empty or overflowing shape", "[plan][error]") {
     // Rank 0: no innermost axis to transform.
     REQUIRE_THROWS_AS(admiral::plan_r2c<double>(std::span<const std::size_t>{}),
-                      std::invalid_argument);
-    REQUIRE_THROWS_AS(admiral::plan_r2c<float>({0}), std::invalid_argument);   // zero extent
+                      admiral::size_error);
+    REQUIRE_THROWS_AS(admiral::plan_r2c<float>({0}), admiral::size_error);   // zero extent
     REQUIRE_THROWS_AS(admiral::plan_r2c<double>(
                           std::initializer_list<std::size_t>{std::size_t(-1) / 2, 4}),
-                      std::invalid_argument);   // overflows size_t
+                      admiral::size_error);   // overflows size_t
 }
 
 TEMPLATE_TEST_CASE("plan_r2c of a 1- or 2-point signal is exact", "[plan][r2c][edge]",

@@ -72,10 +72,11 @@ typedef struct { double real; double imag; } adm_complex;
 typedef enum {
     ADM_SUCCESS = 0,
     ADM_ERROR_NULL_POINTER = -1,
-    ADM_ERROR_INVALID_SIZE = -2,   ///< null shape, zero size/extent, or extents overflow size_t
+    ADM_ERROR_INVALID_SIZE = -2,   ///< null shape, zero size/extent, size mismatch, or extents overflow size_t
     ADM_ERROR_OUT_OF_MEMORY = -3,
     ADM_ERROR_INVALID_PLAN = -4,   ///< null plan, or wrong precision for this call
-    ADM_ERROR_INVALID_OPTION = -5  ///< an adm_options field is outside its range
+    ADM_ERROR_INVALID_OPTION = -5, ///< an adm_options field is outside its range
+    ADM_ERROR_INTERNAL = -6        ///< a fault outside the caller's arguments; adm_last_error_message() has the detail
 } adm_status;
 
 /// How hard the planner works before it commits to a route. estimate ranks
@@ -99,6 +100,12 @@ typedef struct {
 
 /// Never null; unknown codes give "Unknown error".
 ADM_NODISCARD ADM_C_API const char* adm_error_string(adm_status status);
+
+/// The reason of the last FAILED adm_* call on this thread: the rejection
+/// reason, or the caught exception's what(). Empty string if no call has failed
+/// yet. Thread-local; a successful call does not overwrite it, the next failing
+/// call does.
+ADM_NODISCARD ADM_C_API const char* adm_last_error_message(void);
 
 // ============================================================================
 // One-shot transforms

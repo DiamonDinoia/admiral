@@ -75,6 +75,25 @@ ax0.execute(data.data(), {}, {});        // empty box = full extent
 dimension in one call; the header documents when that beats two `execute()`
 calls.
 
+## Errors
+
+Every failure the caller can cause derives from `admiral::error` and carries an
+`error_code`, so handling never parses `what()`:
+
+```cpp
+try {
+    admiral::plan<double> p(0);            // zero size
+} catch (const admiral::error& e) {
+    assert(e.code() == admiral::error_code::invalid_size);
+}
+```
+
+`size_error` (`invalid_size`) covers zero extents, span/plan size mismatches,
+and out-of-range axes; `unsupported_error` (`unsupported`) fires only on a
+forced route the size cannot take; `internal_error` (`internal`) marks an
+invariant break, never a bad argument. Allocation failure stays
+`std::bad_alloc`. Span overloads validate; pointer overloads trust the caller.
+
 ## Options
 
 `{.nthreads = N, .eff = .., .debug = ..}` on any plan or one-shot; see

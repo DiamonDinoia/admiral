@@ -85,7 +85,7 @@ private:
     // Called from the initializer list: rp_ is constructed before the constructor body
     // runs, so a zero has to be rejected before it reaches the inner real plan.
     [[nodiscard]] static std::size_t checked(std::size_t N, std::size_t rows) {
-        if (N == 0 || rows == 0) throw std::invalid_argument("Plan size must be greater than 0");
+        if (N == 0 || rows == 0) throw size_error("Plan size must be greater than 0");
         return N;
     }
 

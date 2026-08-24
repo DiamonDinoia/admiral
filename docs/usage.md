@@ -43,9 +43,13 @@ Runnable: [examples/c_api.c](https://github.com/DiamonDinoia/admiral/blob/master
 
 Double precision keeps the plain name, single precision prefixes `admf_`. Every
 call returns an `adm_status` (`ADM_SUCCESS` is 0, nodiscard);
-`adm_error_string()` turns a status into text. A zeroed options struct means
-the defaults, so partial initializers are safe; the `eff` field takes
-`ADM_EFFORT_ESTIMATE` / `ADM_EFFORT_AUTOMATIC` / `ADM_EFFORT_MEASURE`.
+`adm_error_string()` turns a status into text, and `adm_last_error_message()`
+returns the reason of the last failed call on this thread (the rejection reason,
+or the caught exception's message). `ADM_ERROR_INTERNAL` marks a fault outside
+the caller's arguments; everything else names the argument that caused it. A
+zeroed options struct means the defaults, so partial initializers are safe; the
+`eff` field takes `ADM_EFFORT_ESTIMATE` / `ADM_EFFORT_AUTOMATIC` /
+`ADM_EFFORT_MEASURE`.
 
 One-shots skip the plan: `adm_forward` / `adm_inverse` (1-D),
 `adm_forward_nd` / `adm_inverse_nd`, and the real-transform pairs

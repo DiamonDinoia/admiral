@@ -173,7 +173,7 @@ public:
     // whole route tree (~3.1 GiB peak per consumer TU). Runtime unchanged.
 
     // Test-only force-route ctor. Any route instantiable for (size, T) may be
-    // forced; unavailable routes throw std::invalid_argument.
+    // forced; unavailable routes throw admiral::unsupported_error.
     // Always serial (no pool): threaded routes are exercised through the
     // ctor below, which mirrors the public nthreads-at-creation API.
     plan_impl(std::size_t size, bool is_forward, route_kind forced, std::size_t nthreads = 1);
@@ -573,10 +573,10 @@ plan_impl<T>::plan_impl(std::size_t size, bool is_forward, route_kind forced,
         .pool = make_route_pool(nthreads, size, forced)}
 {
     if (size == 0) [[unlikely]]
-        throw std::invalid_argument("Plan size must be greater than 0");
+        throw size_error("Plan size must be greater than 0");
     // Force any instantiable route; reject unavailable (size, T) combinations.
     if (!route_available(forced, size))
-        throw std::invalid_argument("force-route: kernel unavailable for this size/precision");
+        throw unsupported_error("force-route: kernel unavailable for this size/precision");
     emplace_route_state(size, is_forward, nullptr);
 }
 
@@ -610,12 +610,12 @@ plan_impl<T>::plan_impl(std::size_t size, bool is_forward, std::size_t nthreads,
         .pool = make_route_pool(nthreads, size, choice.route)}
 {
     if (size == 0) [[unlikely]] {
-        throw std::invalid_argument("Plan size must be greater than 0");
+        throw size_error("Plan size must be greater than 0");
     }
     // Every radix in dif_radix_set is 11-smooth, so no chain can represent a
     // non-smooth N. Forcing one would time a garbage A/B baseline. Reject loudly.
     if (dif_override && !route_available(route_kind::iterative_dif, size))
-        throw std::invalid_argument("forced dif: size is not 11-smooth");
+        throw unsupported_error("forced dif: size is not 11-smooth");
     const dif_factor_plan* chain =
         dif_override != nullptr      ? dif_override
         : choice.dif_chain.count != 0 ? &choice.dif_chain
@@ -795,7 +795,7 @@ plan_impl<T>::measure_route(std::size_t size, bool is_forward, std::size_t nthre
 template<typename T>
 void plan_impl<T>::execute(std::span<std::complex<T>> data, const exec_options<T>& opts) const {
     if (data.size() != m.size) [[unlikely]] {
-        throw std::invalid_argument("Data size doesn't match plan size");
+        throw size_error("Data size doesn't match plan size");
     }
     execute(data.data(), data.data(), opts);
 }

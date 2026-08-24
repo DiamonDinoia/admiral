@@ -17,6 +17,8 @@
 #include <utility>
 #include <vector>
 
+#include <admiral/errors.hpp>  // unsupported_error
+
 #include <poet/poet.hpp>
 #include "simd.hpp"
 
@@ -1094,12 +1096,12 @@ template<typename T>
     if (override_plan)
         for (std::size_t p = 0; p < planned.count; ++p) {
             if (!in_seq(dif_radix_set{}, planned[p]) && !dif_is_generic_radix(planned[p]))
-                throw std::invalid_argument("forced dif: radix is not in dif_radix_set");
+                throw unsupported_error("forced dif: radix is not in dif_radix_set");
             // Generic passes only exist as middle passes (AoS/last shapes are static):
             // a boundary slot would throw from the dispatch at execute instead.
             if (dif_is_generic_radix(planned[p]) &&
                 (p == 0 || p + 1 == planned.count))
-                throw std::invalid_argument("forced dif: generic radix must be a middle pass");
+                throw unsupported_error("forced dif: generic radix must be a middle pass");
         }
 
     std::size_t l1 = 1;

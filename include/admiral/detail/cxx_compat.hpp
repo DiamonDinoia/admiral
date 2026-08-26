@@ -21,7 +21,8 @@
 //   detail::remove_cvref_t      std::remove_cvref_t, else remove_cv + remove_reference.
 //   detail::make_unique_for_overwrite   the C++20 call, else new T[n] (default-init,
 //                               which is what _for_overwrite means).
-//   detail::is_precision_v      the float-or-double test behind the precision concept.
+//   detail::is_precision_v      the element types the C++ API compiles for, and
+//   detail::is_simd_precision_v the two the SIMD engine has kernels for.
 //   detail::cmp_less            std::cmp_less, else the signedness comparison it spells.
 //   detail::const_find          std::find, which is constexpr only from C++20.
 //
@@ -100,7 +101,8 @@ using std::span;
 inline constexpr std::size_t dynamic_extent = std::numeric_limits<std::size_t>::max();
 
 // Dynamic-extent admiral::span subset: pointer+size, container and array construction,
-// span<T> -> span<const T> conversion, iteration. The tree uses no static extents.
+// span<T> -> span<const T> conversion, iteration and back(). The tree uses no static
+// extents, and nothing here needs subspan, front or the reverse iterators.
 // The trait is a class template: variable templates cannot be partially specialized
 // before C++20.
 template <class T, std::size_t Extent>
@@ -170,6 +172,7 @@ public:
     constexpr std::size_t size() const noexcept { return n_; }
     constexpr std::size_t size_bytes() const noexcept { return n_ * sizeof(T); }
     constexpr bool empty() const noexcept { return n_ == 0; }
+    constexpr T& back() const noexcept { return p_[n_ - 1]; }
     constexpr T& operator[](std::size_t i) const noexcept { return p_[i]; }
 };
 
@@ -258,11 +261,12 @@ inline constexpr long double ln2_ld = 0.693147180559945309417232121458176568L;
 inline constexpr long double log2e_ld = 1.442695040888963407359924681001892137L;
 }  // namespace impl
 inline constexpr double pi = static_cast<double>(impl::pi_ld);
-inline constexpr double sqrt2 = static_cast<double>(impl::sqrt2_ld);
 inline constexpr double ln2 = static_cast<double>(impl::ln2_ld);
 inline constexpr double log2e = static_cast<double>(impl::log2e_ld);
 template <class T>
 inline constexpr T pi_v = static_cast<T>(impl::pi_ld);
+template <class T>
+inline constexpr T sqrt2_v = static_cast<T>(impl::sqrt2_ld);
 }  // namespace numbers
 #endif
 
@@ -312,9 +316,13 @@ template <class A, class B>
 }
 #endif
 
-// The trait behind the `precision` concept: float or double, nothing else.
+// The traits behind the two precision gates. The SIMD engine has kernels for float
+// and double; long double reaches the scalar backend only.
 template <class T>
-inline constexpr bool is_precision_v = std::is_same_v<T, float> || std::is_same_v<T, double>;
+inline constexpr bool is_simd_precision_v =
+    std::is_same_v<T, float> || std::is_same_v<T, double>;
+template <class T>
+inline constexpr bool is_precision_v = is_simd_precision_v<T> || std::is_same_v<T, long double>;
 
 // std::find is constexpr only from C++20; constexpr cost-model helpers need a scan
 // during constant evaluation, so they walk the loop directly.

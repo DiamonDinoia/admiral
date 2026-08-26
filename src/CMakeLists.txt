@@ -44,7 +44,7 @@ add_library(admiral_engine OBJECT
     inst_gt_f.cpp inst_gt_d.cpp
     inst_nd_f.cpp inst_nd_d.cpp
     inst_real_f.cpp inst_real_d.cpp
-    inst_api_f.cpp inst_api_d.cpp)
+    inst_api_f.cpp inst_api_d.cpp inst_api_ld.cpp)
 target_compile_features(admiral_engine PRIVATE cxx_std_${ADM_CXX_STANDARD})
 target_include_directories(admiral_engine PRIVATE
     ${PROJECT_SOURCE_DIR}/include

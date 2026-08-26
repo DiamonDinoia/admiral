@@ -2,15 +2,14 @@
 
 // ============================================================================
 // Compile-time math shared by kernel<N> and the runtime DIF chain:
-//   ct_sincos_*                     : consteval sin/cos of a rational turn fraction.
+//   ct_sincos_*                     : ADM_CONSTEVAL sin/cos of a rational turn fraction.
 //   smallest_radix / codelet_radix  : radix to peel off N.
 // Split from codelet.hpp so DIF pass headers (butterfly, twiddles) avoid
 // re-instantiating kernel<N> in every consumer TU (it lives in admiral_codelets).
 // ============================================================================
 
-#include <bit>
 #include <cstddef>
-#include <numbers>
+#include <limits>
 #include <numeric>  // std::gcd
 #include <type_traits>
 #include <utility>  // std::pair
@@ -19,29 +18,39 @@
 namespace admiral {
 namespace detail {
 
-using detail::numbers::pi;  // double; the compile-time twiddle math below is double
-
 // ----------------------------------------------------------------------------
 // Compile-time sin/cos of angle 2*pi*num/den. Turn fractions allow exact integer
 // range-reduction before Taylor evaluation on a small residual.
+//
+// The fold runs in F. Every SIMD caller takes the default: double twiddles are
+// below the rounding of both float and double. Only the scalar long double
+// backend asks for more, and it must, because a double constant caps a transform
+// at 2^-53 and long double's own tolerance sits 11 bits under that.
 // ----------------------------------------------------------------------------
 
-// Always double regardless of T: twiddles at full double precision, cast at use.
-// Not templated on T, deliberately.
-struct ct_sincos_t {
-    double s;
-    double c;
-};
+// Fold precision for element type T: double up to double, long double past it.
+template<typename T>
+using ct_real_t = std::conditional_t<(std::numeric_limits<T>::digits > 53), long double, double>;
 
-// sin/cos of x for |x| <= pi/4, via Taylor series (full double precision there).
+template<typename F>
+struct ct_sincos_v {
+    F s;
+    F c;
+};
+using ct_sincos_t = ct_sincos_v<double>;
+
+// sin/cos of x for |x| <= pi/4, via Taylor series (full F precision there).
 // consteval: only ever used to fold compile-time twiddles (never runtime codegen).
-[[nodiscard]] ADM_CONSTEVAL ct_sincos_t ct_sincos_small(double x) {
-    const double x2 = x * x;
+template<typename F = double>
+[[nodiscard]] ADM_CONSTEVAL ct_sincos_v<F> ct_sincos_small(F x) {
+    const F x2 = x * x;
     // cos: sum (-1)^k x^(2k)/(2k)!   ;  sin: sum (-1)^k x^(2k+1)/(2k+1)!
-    // k counts in double: every factorial step below is an exact small integer.
-    double cterm = 1.0, csum = 1.0;
-    double sterm = x, ssum = x;
-    for (double k = 1.0; k <= 9.0; ++k) {
+    // k counts in F: every factorial step below is an exact small integer.
+    // The tail falls under eps(F) after 9 terms in double and 12 in long double.
+    constexpr F kTerms = std::numeric_limits<F>::digits > 53 ? F(12) : F(9);
+    F cterm = 1, csum = 1;
+    F sterm = x, ssum = x;
+    for (F k = 1; k <= kTerms; ++k) {
         cterm *= -x2 / ((2 * k - 1) * (2 * k));
         csum += cterm;
         sterm *= -x2 / ((2 * k) * (2 * k + 1));
@@ -55,30 +64,32 @@ struct ct_sincos_t {
 // pass their Forward flag straight through and keep num/den unsigned. Every
 // caller already holds unsigned values.
 // consteval: folds kernel<N>/butterfly twiddles at compile time only.
-[[nodiscard]] ADM_CONSTEVAL ct_sincos_t ct_sincos_turns(bool conjugate, std::size_t num,
-                                                    std::size_t den) {
+template<typename F = double>
+[[nodiscard]] ADM_CONSTEVAL ct_sincos_v<F> ct_sincos_turns(bool conjugate, std::size_t num,
+                                                           std::size_t den) {
     // reduce num into [0, den), then reflect for the conjugate
     num %= den;
     if (conjugate && num != 0) num = den - num;
     // Octant and residual entirely in integers: 8*num = oct*den + rem with
     // rem in [0, den), so res = 2*pi*num/den - oct*pi/4 = (pi/4)*rem/den, exactly.
-    // Subtracting the octant base in double instead cancels bits off the residual.
+    // Subtracting the octant base in F instead cancels bits off the residual.
     const std::size_t oct = (8 * num) / den;
     const std::size_t rem = 8 * num - oct * den;
-    const double res = static_cast<double>(rem) * (pi / (4.0 * static_cast<double>(den)));  // [0, pi/4)
-    const ct_sincos_t r = ct_sincos_small(res);
+    const F res = static_cast<F>(rem) *
+                  (detail::numbers::pi_v<F> / (F(4) * static_cast<F>(den)));  // [0, pi/4)
+    const ct_sincos_v<F> r = ct_sincos_small<F>(res);
     // Rotate by base (multiple of pi/4); inv_sqrt2 = sqrt2/2 (exact, no inv_sqrt2 literal).
-    constexpr double inv_sqrt2 = detail::numbers::sqrt2 / 2.0;
-    // C++17 constexpr functions may not declare uninitialized variables, hence {0,0}.
-    double bc = 0.0, bs = 0.0;
+    constexpr F inv_sqrt2 = detail::numbers::sqrt2_v<F> / F(2);
+    // C++17 constexpr functions may not declare an uninitialized variable, hence the 0s.
+    F bc = 0, bs = 0;
     switch (oct) {
-        case 0: bc = 1.0;          bs = 0.0;          break;
+        case 0: bc = 1;            bs = 0;            break;
         case 1: bc = inv_sqrt2;    bs = inv_sqrt2;    break;
-        case 2: bc = 0.0;          bs = 1.0;          break;
+        case 2: bc = 0;            bs = 1;            break;
         case 3: bc = -inv_sqrt2;   bs = inv_sqrt2;    break;
-        case 4: bc = -1.0;         bs = 0.0;          break;
+        case 4: bc = -1;           bs = 0;            break;
         case 5: bc = -inv_sqrt2;   bs = -inv_sqrt2;   break;
-        case 6: bc = 0.0;          bs = -1.0;         break;
+        case 6: bc = 0;            bs = -1;           break;
         default: bc = inv_sqrt2;   bs = -inv_sqrt2;   break;  // case 7
     }
     // {s, c} = (sin(base+res), cos(base+res)): rotate base by res

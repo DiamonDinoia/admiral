@@ -10,12 +10,13 @@
 
 #include <limits>
 #include <vector>
-#include "admiral/detail/cxx_compat.hpp"  // ADM_UNLIKELY, span, detail::type_identity_t
 
+#include "admiral/detail/cxx_compat.hpp"   // ADM_UNLIKELY, span, detail::type_identity_t
 #include "admiral/detail/nd_plan.hpp"      // nd_runtime_plan, nd_axis_state, apply_lines_*
 #include "admiral/detail/plan.hpp"         // plan_impl, exec_options
 #include "admiral/detail/r2r.hpp"          // r2r_plan
 #include "admiral/detail/real_fft.hpp"     // nd_real_plan
+#include "admiral/detail/scalar_fft.hpp"   // long double backend states
 #include "admiral/detail/thread_pool.hpp"  // thread_pool, resolve_nthreads
 
 namespace admiral {
@@ -39,6 +40,11 @@ namespace detail {
 }
 
 template<typename T>
+[[nodiscard]] std::optional<T> as_optional(const T* p) {
+    return p ? std::optional<T>{*p} : std::nullopt;
+}
+
+template<typename T>
 struct plan_state {
     nd_runtime_plan<T> fwd;
     nd_runtime_plan<T> inv;
@@ -48,6 +54,24 @@ struct plan_state {
         : fwd{shape, /*is_forward=*/true, resolve_auto(opts, shape), opts.eff},
           inv{shape, /*is_forward=*/false, resolve_auto(opts, shape), opts.eff},
           debug(opts.debug) {}
+
+    [[nodiscard]] std::size_t size() const noexcept { return fwd.size(); }
+    void run(bool is_forward, std::complex<T>* data, const T* fct) const {
+        (is_forward ? fwd : inv).execute(data, {as_optional(fct), debug});
+    }
+    void run(bool is_forward, const std::complex<T>* src, std::complex<T>* dst,
+             const T* fct) const {
+        (is_forward ? fwd : inv).execute(src, dst, {as_optional(fct), debug});
+    }
+};
+
+// long double runs the scalar backend, which has no route to choose and no
+// trace to print, so opts.eff and opts.debug do not apply. An auto thread count
+// fans out the line loops and the 1-D first level, as it does for the engine.
+template<>
+struct plan_state<long double> : scalar_plan_state<long double> {
+    plan_state(span<const std::size_t> shape, const admiral::options& opts)
+        : scalar_plan_state(shape, resolve_auto(opts, shape)) {}
 };
 
 template<typename T>
@@ -110,6 +134,22 @@ struct real_state {
 
     real_state(span<const std::size_t> shape, const admiral::options& opts)
         : plan{shape, resolve_auto(opts, shape), opts.eff}, debug(opts.debug) {}
+
+    void forward(const T* in, std::complex<T>* out, std::optional<T> fct) const {
+        plan.forward(in, out, {fct, debug});
+    }
+    void inverse(std::complex<T>* spec, T* out, std::optional<T> fct) const {
+        plan.inverse(spec, out, {fct, debug});
+    }
+    [[nodiscard]] std::size_t real_size() const noexcept { return plan.real_size(); }
+    [[nodiscard]] std::size_t cplx_size() const noexcept { return plan.cplx_size(); }
+};
+
+// long double: same as plan_state above.
+template<>
+struct real_state<long double> : scalar_real_state<long double> {
+    real_state(span<const std::size_t> shape, const admiral::options& opts)
+        : scalar_real_state(shape, resolve_auto(opts, shape)) {}
 };
 
 template<typename T>
@@ -119,11 +159,6 @@ struct r2r_state {
     r2r_state(std::size_t N, r2r_kind kind, std::size_t rows, const admiral::options& opts)
         : plan{N, kind, rows, opts.eff, resolve_nthreads(opts.nthreads, sat_elems(N, rows))} {}
 };
-
-template<typename T>
-[[nodiscard]] std::optional<T> as_optional(const T* p) {
-    return p ? std::optional<T>{*p} : std::nullopt;
-}
 
 }  // namespace detail
 
@@ -143,18 +178,30 @@ void one_shot_1d(span<const std::complex<T>> input, span<std::complex<T>> output
     if (input.size() != output.size()) ADM_UNLIKELY
         throw size_error("Input and output sizes must match");
     if (input.empty()) ADM_UNLIKELY return;
-    detail::plan_impl<T>(output.size(), is_forward,
-                         detail::resolve_nthreads(opts.nthreads, output.size()), nullptr,
-                         effort::estimate)
-        .execute(input.data(), output.data(), {fct, opts.debug});
+    if constexpr (std::is_same_v<T, long double>) {
+        // The scalar backend has no plan_impl, so a one-shot builds the state
+        // plan<long double> would build and runs it once.
+        const std::size_t n = output.size();
+        detail::plan_state<T>(span<const std::size_t>(&n, 1), opts)
+            .run(is_forward, input.data(), output.data(), fct ? &*fct : nullptr);
+    } else {
+        detail::plan_impl<T>(output.size(), is_forward,
+                             detail::resolve_nthreads(opts.nthreads, output.size()), nullptr,
+                             effort::estimate)
+            .execute(input.data(), output.data(), {fct, opts.debug});
+    }
 }
 
 template<typename T>
 void one_shot_nd(std::complex<T>* data, span<const std::size_t> shape, bool is_forward,
                  const options& opts, std::optional<T> fct) {
-    detail::nd_runtime_plan<T>(shape, is_forward, detail::resolve_auto(opts, shape),
-                               effort::estimate)
-        .execute(data, {fct, opts.debug});
+    if constexpr (std::is_same_v<T, long double>) {
+        detail::plan_state<T>(shape, opts).run(is_forward, data, fct ? &*fct : nullptr);
+    } else {
+        detail::nd_runtime_plan<T>(shape, is_forward, detail::resolve_auto(opts, shape),
+                                   effort::estimate)
+            .execute(data, {fct, opts.debug});
+    }
 }
 
 }  // namespace
@@ -217,8 +264,12 @@ detail::precision_void_t<T>
 #endif
 forward(const T* in, std::complex<T>* out, span<const std::size_t> shape,
         const options& opts, std::optional<T> fct) {
-    detail::nd_real_plan<T>(shape, detail::resolve_auto(opts, shape), effort::estimate)
-        .forward(in, out, {fct, opts.debug});
+    if constexpr (std::is_same_v<T, long double>) {
+        detail::real_state<T>(shape, opts).forward(in, out, fct);
+    } else {
+        detail::nd_real_plan<T>(shape, detail::resolve_auto(opts, shape), effort::estimate)
+            .forward(in, out, {fct, opts.debug});
+    }
 }
 
 #if ADM_CXX20
@@ -230,8 +281,12 @@ detail::precision_void_t<T>
 #endif
 inverse(std::complex<T>* spec, T* out, span<const std::size_t> shape,
         const options& opts, std::optional<T> fct) {
-    detail::nd_real_plan<T>(shape, detail::resolve_auto(opts, shape), effort::estimate)
-        .inverse(spec, out, {fct, opts.debug});
+    if constexpr (std::is_same_v<T, long double>) {
+        detail::real_state<T>(shape, opts).inverse(spec, out, fct);
+    } else {
+        detail::nd_real_plan<T>(shape, detail::resolve_auto(opts, shape), effort::estimate)
+            .inverse(spec, out, {fct, opts.debug});
+    }
 }
 
 // ============================================================================
@@ -251,20 +306,18 @@ plan<T>& plan<T>::operator=(plan&&) noexcept = default;
 
 template<typename T>
 std::size_t plan<T>::size() const noexcept {
-    return m->fwd.size();
+    return m->size();
 }
 
 template<typename T>
 void plan<T>::run(bool is_forward, std::complex<T>* data, const T* fct) const {
-    const auto& p = is_forward ? m->fwd : m->inv;
-    p.execute(data, {detail::as_optional(fct), m->debug});
+    m->run(is_forward, data, fct);
 }
 
 template<typename T>
 void plan<T>::run(bool is_forward, const std::complex<T>* src, std::complex<T>* dst,
                   const T* fct) const {
-    const auto& p = is_forward ? m->fwd : m->inv;
-    p.execute(src, dst, {detail::as_optional(fct), m->debug});
+    m->run(is_forward, src, dst, fct);
 }
 
 // ============================================================================
@@ -404,22 +457,22 @@ plan_r2c<T>& plan_r2c<T>::operator=(plan_r2c&&) noexcept = default;
 
 template<typename T>
 void plan_r2c<T>::forward(const T* in, std::complex<T>* out, std::optional<T> fct) const {
-    m->plan.forward(in, out, {fct, m->debug});
+    m->forward(in, out, fct);
 }
 
 template<typename T>
 void plan_r2c<T>::inverse(std::complex<T>* spec, T* out, std::optional<T> fct) const {
-    m->plan.inverse(spec, out, {fct, m->debug});
+    m->inverse(spec, out, fct);
 }
 
 template<typename T>
 std::size_t plan_r2c<T>::real_size() const noexcept {
-    return m->plan.real_size();
+    return m->real_size();
 }
 
 template<typename T>
 std::size_t plan_r2c<T>::cplx_size() const noexcept {
-    return m->plan.cplx_size();
+    return m->cplx_size();
 }
 
 // ============================================================================

@@ -10,9 +10,11 @@
 //   p.forward(x);                        // in place
 //   p.inverse(x);                        // divides by 1024
 //
-// Link admiral::admiral (shared) or admiral::admiral_static. T is float or
-// double, and nothing else compiles. The engine is opaque here, so this header
-// needs only the standard library.
+// Link admiral::admiral (shared) or admiral::admiral_static. T is float,
+// double or long double. long double runs a scalar backend, because no ISA has
+// 80-bit SIMD lanes, and only plan, plan_r2c and the one-shots offer it;
+// axis_plan and plan_r2r stay float and double. The engine is opaque here, so
+// this header needs only the standard library.
 //
 // Everything is in namespace admiral; namespace admiral::detail is internal and
 // has no stability guarantee.
@@ -57,14 +59,15 @@
 #include <initializer_list>
 #include <memory>
 #include <optional>
-// Span, the precision trait and the C++17 fallbacks come from here; C++20
-// toolchains get the std types by alias, so the API below keeps one spelling.
-#include "detail/cxx_compat.hpp"  // ADM_UNLIKELY, span, detail::type_identity_t,
-                                 // detail::is_precision_v
 #include <stdexcept>
 #include <type_traits>
 
-#include <admiral/errors.hpp>  // error, error_code, size_error
+#include <admiral/errors.hpp>     // error, error_code, size_error
+
+// A C++20 toolchain takes std::span and the other std spellings from here by
+// alias, so the API below carries one spelling of each.
+#include "detail/cxx_compat.hpp"  // ADM_UNLIKELY, span, detail::type_identity_t,
+                                  // detail::is_precision_v
 
 // The library is built with hidden visibility; public symbols opt back in.
 #ifndef ADM_API
@@ -81,11 +84,15 @@ namespace admiral {
 
 namespace detail {
 
-// The element types the engine has kernels for: float and double, nothing else.
-// The free functions constrain T on it so a wrong T leaves overload resolution:
-// the concept at C++20, and at C++17 `precision_void_t` as the return type, which
-// is `void` for those two and ill-formed for any other T. The class templates use
-// a static_assert in both standards, which names the offending T.
+// The element types the C++ API compiles for. The free functions, `plan` and
+// `plan_r2c` take all three; `axis_plan` and `plan_r2r` take the two the SIMD engine
+// has kernels for. long double runs the scalar backend (detail/scalar_fft.hpp),
+// because no ISA has 80-bit SIMD lanes.
+//
+// The free functions constrain T so a wrong T leaves overload resolution: the concept
+// at C++20, and at C++17 `precision_void_t` as the return type, which is `void` for a
+// supported T and ill-formed for any other. The class templates use a static_assert in
+// both standards, which names the offending T.
 #if ADM_CXX20
 template<typename T>
 concept precision = is_precision_v<T>;
@@ -176,7 +183,8 @@ inverse(detail::type_identity_t<span<const std::complex<T>>> input, span<std::co
 /// inverse() any number of times.
 template<typename T>
 class ADM_API plan {
-    static_assert(detail::is_precision_v<T>, "admiral: T must be float or double");
+    static_assert(detail::is_precision_v<T>,
+                  "admiral: T must be float, double or long double");
 public:
     /// 1-D over `size` complex elements.
     [[nodiscard]] explicit plan(std::size_t size, const options& opts = {})
@@ -253,7 +261,7 @@ private:
 /// c2c(subarray(data, box), {axis}, forward, fct).
 template<typename T>
 class ADM_API axis_plan {
-    static_assert(detail::is_precision_v<T>, "admiral: T must be float or double");
+    static_assert(detail::is_simd_precision_v<T>, "admiral: T must be float or double");
 public:
     [[nodiscard]] axis_plan(span<const std::size_t> shape, std::size_t axis, bool forward,
                             const options& opts = {});
@@ -299,8 +307,8 @@ ADM_API void
 template<typename T>
 ADM_API detail::precision_void_t<T>
 #endif
-forward(std::complex<T>* data, span<const std::size_t> shape,
-                     const options& opts = {}, std::optional<T> fct = std::nullopt);
+forward(std::complex<T>* data, span<const std::size_t> shape, const options& opts = {},
+        std::optional<T> fct = std::nullopt);
 
 #if ADM_CXX20
 template<detail::precision T>
@@ -310,7 +318,7 @@ template<typename T>
 detail::precision_void_t<T>
 #endif
 forward(std::complex<T>* data, std::initializer_list<std::size_t> shape,
-             const options& opts = {}, std::optional<T> fct = std::nullopt) {
+        const options& opts = {}, std::optional<T> fct = std::nullopt) {
     forward(data, span<const std::size_t>(shape.begin(), shape.size()), opts, fct);
 }
 
@@ -322,8 +330,8 @@ ADM_API void
 template<typename T>
 ADM_API detail::precision_void_t<T>
 #endif
-inverse(std::complex<T>* data, span<const std::size_t> shape,
-                     const options& opts = {}, std::optional<T> fct = std::nullopt);
+inverse(std::complex<T>* data, span<const std::size_t> shape, const options& opts = {},
+        std::optional<T> fct = std::nullopt);
 
 #if ADM_CXX20
 template<detail::precision T>
@@ -333,7 +341,7 @@ template<typename T>
 detail::precision_void_t<T>
 #endif
 inverse(std::complex<T>* data, std::initializer_list<std::size_t> shape,
-             const options& opts = {}, std::optional<T> fct = std::nullopt) {
+        const options& opts = {}, std::optional<T> fct = std::nullopt) {
     inverse(data, span<const std::size_t>(shape.begin(), shape.size()), opts, fct);
 }
 
@@ -353,7 +361,8 @@ inverse(std::complex<T>* data, std::initializer_list<std::size_t> shape,
 /// Real plan, r2c and c2r, any rank.
 template<typename T>
 class ADM_API plan_r2c {
-    static_assert(detail::is_precision_v<T>, "admiral: T must be float or double");
+    static_assert(detail::is_precision_v<T>,
+                  "admiral: T must be float, double or long double");
 public:
     /// 1-D over `size` REAL elements.
     [[nodiscard]] explicit plan_r2c(std::size_t size, const options& opts = {})
@@ -462,7 +471,7 @@ inverse(std::complex<T>* spec, T* out, std::initializer_list<std::size_t> shape,
 
 template<typename T>
 class ADM_API plan_r2r {
-    static_assert(detail::is_precision_v<T>, "admiral: T must be float or double");
+    static_assert(detail::is_simd_precision_v<T>, "admiral: T must be float or double");
 public:
     /// `rows` contiguous lines of `size` reals each, one kind for all of them. Only
     /// the innermost axis of a tensor is contiguous, so N-D needs a transpose the

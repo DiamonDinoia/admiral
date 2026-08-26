@@ -8,7 +8,6 @@
 #include <complex>
 #include <cmath>
 #include <limits>
-#include <numbers>
 
 using namespace Catch::Matchers;
 
@@ -20,7 +19,7 @@ namespace {
 template<typename T>
 std::vector<std::complex<T>> spectrum_of(const std::vector<std::complex<T>>& in) {
     std::vector<std::complex<T>> out(in.size());
-    admiral::forward(std::span(in), std::span(out));
+    admiral::forward(admiral::span(in), admiral::span(out));
     return out;
 }
 
@@ -68,14 +67,14 @@ TEMPLATE_TEST_CASE("FFT analytical: Gaussian spectrum matches its closed form",
     }
 
     std::vector<std::complex<T>> output(N);
-    admiral::forward(std::span(input), std::span(output));
+    admiral::forward(admiral::span(input), admiral::span(output));
 
-    const T peak = sigma * std::sqrt(T(2) * std::numbers::pi_v<T>);
+    const T peak = sigma * std::sqrt(T(2) * admiral::detail::numbers::pi_v<T>);
     // The test measures error against the peak rather than each bin, so the budget
     // covers the whole spectrum's accumulated rounding rather than one bin's.
     constexpr T kPeakRelTol = T(50);
     for (std::size_t k = 0; k <= N / 2; ++k) {
-        const T kk = T(2) * std::numbers::pi_v<T> * sigma * T(k) / T(N);
+        const T kk = T(2) * admiral::detail::numbers::pi_v<T> * sigma * T(k) / T(N);
         // The Gaussian peaks at INDEX N/2, and a half-period shift is a (-1)^k phase.
         const T want = ((k & 1) ? T(-1) : T(1)) * peak * std::exp(-kk * kk / T(2));
         if (std::abs(want) < peak * T(1e-30)) break;  // both sides have underflowed there
@@ -96,18 +95,18 @@ TEMPLATE_TEST_CASE("FFT round-trip with scaled tolerance", "[fft][roundtrip][ana
         for (std::size_t i = 0; i < N; ++i) {
             T t = T(i) / T(N);
             input[i] = std::complex<T>(
-                std::sin(T(2) * std::numbers::pi_v<T> * t * T(3)) + T(0.5) * std::cos(T(2) * std::numbers::pi_v<T> * t * T(7)),
-                std::cos(T(2) * std::numbers::pi_v<T> * t * T(5)) + T(0.3) * std::sin(T(2) * std::numbers::pi_v<T> * t * T(11))
+                std::sin(T(2) * admiral::detail::numbers::pi_v<T> * t * T(3)) + T(0.5) * std::cos(T(2) * admiral::detail::numbers::pi_v<T> * t * T(7)),
+                std::cos(T(2) * admiral::detail::numbers::pi_v<T> * t * T(5)) + T(0.3) * std::sin(T(2) * admiral::detail::numbers::pi_v<T> * t * T(11))
             );
         }
 
         std::vector<std::complex<T>> original = input;
 
         std::vector<std::complex<T>> freq(N);
-        admiral::forward(std::span(input), std::span(freq));
+        admiral::forward(admiral::span(input), admiral::span(freq));
 
         std::vector<std::complex<T>> recovered(N);
-        admiral::inverse(std::span(freq), std::span(recovered));
+        admiral::inverse(admiral::span(freq), admiral::span(recovered));
 
         require_close(original, recovered, tolerance);
     };
@@ -139,8 +138,8 @@ TEMPLATE_TEST_CASE("FFT convolution theorem", "[fft][analytical][properties]", f
     }
 
     std::vector<std::complex<T>> X(N), Y(N);
-    admiral::forward(std::span(x), std::span(X));
-    admiral::forward(std::span(y), std::span(Y));
+    admiral::forward(admiral::span(x), admiral::span(X));
+    admiral::forward(admiral::span(y), admiral::span(Y));
 
     std::vector<std::complex<T>> XY(N);
     for (std::size_t i = 0; i < N; ++i) {
@@ -148,7 +147,7 @@ TEMPLATE_TEST_CASE("FFT convolution theorem", "[fft][analytical][properties]", f
     }
 
     std::vector<std::complex<T>> conv_freq(N);
-    admiral::inverse(std::span(XY), std::span(conv_freq));
+    admiral::inverse(admiral::span(XY), admiral::span(conv_freq));
 
     require_close(conv_time, conv_freq, tolerance);
 }
@@ -171,8 +170,8 @@ TEMPLATE_TEST_CASE("FFT time shift property", "[fft][analytical][properties]", f
     }
 
     std::vector<std::complex<T>> X(N), X_shifted(N);
-    admiral::forward(std::span(x), std::span(X));
-    admiral::forward(std::span(x_shifted), std::span(X_shifted));
+    admiral::forward(admiral::span(x), admiral::span(X));
+    admiral::forward(admiral::span(x_shifted), admiral::span(X_shifted));
 
     std::vector<std::complex<T>> X_phase_shifted(N);
     for (std::size_t k = 0; k < N; ++k) {
@@ -193,7 +192,7 @@ TEMPLATE_TEST_CASE("FFT symmetry for real signals", "[fft][analytical][propertie
     }
 
     std::vector<std::complex<T>> output(N);
-    admiral::forward(std::span(input), std::span(output));
+    admiral::forward(admiral::span(input), admiral::span(output));
 
     // X[k] == conj(X[N-k]), compared as a whole spectrum. Relative L2 needs no
     // amplitude fudge for the O(N) bins. k=0 and k=N/2 map to themselves, so this

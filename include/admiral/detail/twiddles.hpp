@@ -5,14 +5,12 @@
 
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
 #include <limits>
 #include <ranges>
-#include <span>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -24,6 +22,7 @@
 
 #include "cache.hpp"      // cpu_cache (pass-0 twiddle residency gate)
 #include "ct_math.hpp"    // smallest_radix
+#include "cxx_compat.hpp"  // span, detail::bit_ceil, detail::has_single_bit, detail::const_find
 #include "math.hpp"
 #include "twiddle_row.hpp"    // geom_twiddle_row (W-wide twiddle row from an exact seed)
 #include "portable_trig.hpp"  // sincos_turns
@@ -84,7 +83,8 @@ using dif_generic_radix_seq =
                           61, 67, 71, 73, 79, 83, 89, 97>;
 inline constexpr auto dif_generic_radices = radix_seq_to_array(dif_generic_radix_seq{});
 [[nodiscard]] constexpr bool dif_is_generic_radix(std::size_t r) {
-    return std::ranges::find(dif_generic_radices, r) != dif_generic_radices.end();
+    return detail::const_find(dif_generic_radices.begin(), dif_generic_radices.end(), r)
+        != dif_generic_radices.end();
 }
 
 // In-place passes accept the full radix set; butterfly_wants_reload radices take the
@@ -113,7 +113,7 @@ template<typename T>
     constexpr std::size_t W = xsimd::batch<T>::size;
     constexpr std::size_t regs = poet::vector_register_count();
     constexpr double bytes_pe = 4.0 * sizeof(T);
-    const bool pow2 = std::has_single_bit(radix);
+    const bool pow2 = detail::has_single_bit(radix);
     const double flops = radix == 2 ? 5 : radix == 3 ? 8 : radix == 4 ? 8.5
                        : radix == 5 ? 12 : radix == 7 ? 16 : radix == 8 ? 12.5
                        : radix == 9 ? 19 : radix == 11 ? 22 : radix == 15 ? 34
@@ -144,8 +144,8 @@ template<typename T>
 inline constexpr std::array<std::size_t, 12> dif_cost_radices{2, 3, 4, 5, 7, 8, 11, 16, 32, 9, 15, 25};
 
 [[nodiscard]] constexpr std::size_t dif_cost_index(std::size_t radix) {
-    return static_cast<std::size_t>(
-        std::ranges::find(dif_cost_radices, radix) - dif_cost_radices.begin());
+    const auto* const first = dif_cost_radices.begin();
+    return static_cast<std::size_t>(const_find(first, dif_cost_radices.end(), radix) - first);
 }
 
 // Every candidate is measured or priced from its coprime factors (dif_measured_cost),
@@ -189,13 +189,29 @@ template<> struct dif_cost_table<4, 4, 16> {   // f32 SSE (no valley probe: vec 
         {99.0, 99.0, 99.0}, {99.0, 99.0, 99.0}, {99.0, 99.0, 99.0}};
 };
 
+#if !ADM_CXX20
+// Member detections for the C++17 arms of the two requires-expressions below.
+template<typename, typename = void>
+struct dif_cost_table_has_t : std::false_type {};
+template<typename X>
+struct dif_cost_table_has_t<X, std::void_t<decltype(X::t)>> : std::true_type {};
+template<typename, typename = void>
+struct dif_surface_has_c : std::false_type {};
+template<typename X>
+struct dif_surface_has_c<X, std::void_t<decltype(X::c)>> : std::true_type {};
+#endif
+
 // A merged coprime radix (10 = 5*2) has no measured column. Price it as the SUM of the
 // two passes it replaces: the PFA does both sub-DFTs' arithmetic, so the merge saves
 // only one ping-pong sweep, already expressed as one fewer stage to sum.
 template<typename T>
 [[nodiscard]] constexpr dif_cost_row dif_measured_cost(std::size_t radix) {
     using table = dif_cost_table<sizeof(T), xsimd::batch<T>::size, poet::vector_register_count()>;
+#if ADM_CXX20
     if constexpr (requires { table::t; }) {
+#else
+    if constexpr (dif_cost_table_has_t<table>::value) {
+#endif
         if (dif_cost_index(radix) < dif_cost_radices.size()) return table::t[dif_cost_index(radix)];
         // A radix that is neither measured nor coprime-splittable (a bare prime, say)
         // has no factors to sum; the analytical model is the only thing left, and the
@@ -245,8 +261,13 @@ template<> struct dif_surface<4, 16, 32> {  // f32 AVX-512
 // Surface alias for T on this build. A key is ANALYTIC when it carries fitted coefficients.
 template<typename T>
 using dif_surface_t = dif_surface<sizeof(T), xsimd::batch<T>::size, poet::vector_register_count()>;
+#if ADM_CXX20
 template<typename T>
 inline constexpr bool dif_surface_is_analytic = requires { dif_surface_t<T>::c; };
+#else
+template<typename T>
+inline constexpr bool dif_surface_is_analytic = dif_surface_has_c<dif_surface_t<T>>::value;
+#endif
 
 // 4 planes of span (SoA in/out re/im) + the (radix-1) twiddle streams of ido;
 // ido == 1 carries no twiddles (the fit's convention).
@@ -354,7 +375,7 @@ inline constexpr double kValleyPenalty = 1e9;
 // slot.
 [[nodiscard]] constexpr double dif_interior_kernel_mult(std::size_t radix) {
     constexpr double regs = static_cast<double>(poet::vector_register_count());
-    if (std::has_single_bit(radix) && radix >= 4) {
+    if (detail::has_single_bit(radix) && radix >= 4) {
         const double live = 2.0 * static_cast<double>(radix);
         return live > regs ? 1.0 + 0.5 * (live - regs) / regs : 1.0;
     }
@@ -819,7 +840,7 @@ template<typename T>
         const std::size_t known = d.size();
         for (std::size_t i = 0; i < known; ++i) d.push_back(d[i] * n);
     }
-    std::ranges::sort(d);
+    std::sort(d.begin(), d.end());
     return d;
 }
 
@@ -858,7 +879,9 @@ template<typename T>
     // every transition divides, so no other state is reachable.
     const std::vector<std::size_t> divisors = ascending_divisors(N);
     const auto state = [&divisors](std::size_t n) {
-        return static_cast<std::size_t>(std::ranges::lower_bound(divisors, n) - divisors.begin());
+        const auto* const first = divisors.data();
+        const auto* const at = std::lower_bound(first, first + divisors.size(), n);
+        return static_cast<std::size_t>(at - first);
     };
 
     // divisors[0] == 1 has cost 0, and is the base case rather than a stored entry.
@@ -867,7 +890,7 @@ template<typename T>
     // to the beam asked for and not to kDifBeam, because the want=1 DP is what
     // estimate and every twiddle build pay.
     std::vector<entry> dp(divisors.size() * beam);
-    const auto row = [&dp, beam](std::size_t i) { return std::span<entry>(&dp[i * beam], beam); };
+    const auto row = [&dp, beam](std::size_t i) { return span<entry>(&dp[i * beam], beam); };
 
     // Ascending insert; exact ties prefer the larger radix, the 1-best DP's own tie
     // rule. The SAME predicate picks a multiset's representative below.
@@ -888,7 +911,7 @@ template<typename T>
         std::sort(rs.begin(), rs.begin() + c);
         return std::pair{rs, c};
     };
-    const auto offer = [beam, &before, &sorted_chain](std::size_t n, std::span<entry> r,
+    const auto offer = [beam, &before, &sorted_chain](std::size_t n, span<entry> r,
                                                       const entry e) {
         // One slot per MULTISET, keeping its cheapest ordering: stage cost is
         // position-dependent (dif_stage_cost takes the remaining size), so without
@@ -924,7 +947,7 @@ template<typename T>
         const auto expand = [&](const std::size_t radix, const double stage) {
             const std::size_t rest = n / radix;  // a smaller divisor: already final
             if (rest == 1) return offer(n, row(i), {stage, radix, 0, rmix(radix)});
-            const std::span<const entry> sub = row(state(rest));
+            const span<const entry> sub = row(state(rest));
             // Both rows are cost-ascending, so once one combination costs more than the beam's
             // worst kept entry, every later one does too. Exact prune, strict > because
             // offer's tie rule can still take an equal-cost entry.

@@ -20,6 +20,42 @@
 
 namespace bench {
 
+// C++17 lambdas cannot take template parameters, so the three dispatch helpers are
+// namespace-scope structs. Calls invoke operator()<IPv>() either way.
+template<typename T>
+struct bench_mid {
+    const T* ccre; const T* ccim; T* chre; T* chim;
+    std::size_t l1, ido; const T* twre; const T* twim;
+    template<std::size_t IPv>
+    void operator()() const {
+        // A middle SoA pass carries no direction. The inverse rides the same code in
+        // swapped domain (butterfly.hpp). Only the boundary passes still take Forward.
+        admiral::detail::dif_pass<T, IPv>(ccre, ccim, chre, chim, l1, ido, twre, twim,
+                                          1, 1);  // contiguous SoA: unit element strides
+    }
+};
+
+template<typename T>
+struct bench_lst {
+    const T* ccre; const T* ccim; std::complex<T>* out;
+    std::size_t l1; const T* twre; const T* twim;
+    template<std::size_t IPv>
+    void operator()() const {
+        admiral::detail::dif_pass_last<T, true, IPv>(ccre, ccim, out, l1, 1, twre, twim);
+    }
+};
+
+template<typename T>
+struct bench_call {
+    const bench_mid<T>* mid; const bench_lst<T>* lst; bool last;
+    template<std::size_t IPv>
+    bool operator()() const {
+        if (last) (*lst).template operator()<IPv>();
+        else (*mid).template operator()<IPv>();
+        return true;
+    }
+};
+
 template<typename T>
 void pass_microbench(unsigned IP, std::size_t ido, std::size_t l1, bool last,
                      int reps, long inner, long perf_iters) {
@@ -36,26 +72,14 @@ void pass_microbench(unsigned IP, std::size_t ido, std::size_t l1, bool last,
         twre[i] = std::cos(T(i) * T(0.017)); twim[i] = std::sin(T(i) * T(0.017));
     }
     volatile T sink = T(0);
-    auto mid = [&]<std::size_t IPv>() {
-        // A middle SoA pass carries no direction. The inverse rides the same code in
-        // swapped domain (butterfly.hpp). Only the boundary passes still take Forward.
-        admiral::detail::dif_pass<T, IPv>(ccre.data(), ccim.data(), chre.data(),
-                                          chim.data(), l1, ido, twre.data(), twim.data(),
-                                          1, 1);  // contiguous SoA: unit element strides
-    };
-    auto lst = [&]<std::size_t IPv>() {
-        admiral::detail::dif_pass_last<T, true, IPv>(ccre.data(), ccim.data(), out.data(),
-                                                 l1, 1, twre.data(), twim.data());
-    };
+    const bench_mid<T> mid{ccre.data(), ccim.data(), chre.data(), chim.data(),
+                           l1, ido, twre.data(), twim.data()};
+    const bench_lst<T> lst{ccre.data(), ccim.data(), out.data(), l1, twre.data(), twim.data()};
     auto call = [&]() {
         // The engine's own radix set and dispatch: --pass measures what ships. An
         // unsupported radix is a command-line error to report, not an exception.
         const bool matched = poet::dispatch(
-            [&]<std::size_t IPv>() {
-                if (last) lst.template operator()<IPv>();
-                else mid.template operator()<IPv>();
-                return true;
-            },
+            bench_call<T>{&mid, &lst, last},
             poet::dispatch_param<admiral::detail::dif_radix_set>{IP});
         if (!matched) {
             std::cerr << "--pass: unsupported radix " << IP << "\n";

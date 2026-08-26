@@ -8,6 +8,7 @@
 #include <utility>      // std::index_sequence (piece-width mask), std::pair
 
 #include <poet/poet.hpp>  // poet::static_for (runtime bound -> compile-time mask dispatch)
+#include "cxx_compat.hpp"  // ADM_CONSTEVAL
 #include "simd.hpp"
 
 #include "cache.hpp"   // kCacheLine (AoS store peel)
@@ -82,7 +83,7 @@ ADM_ALWAYS_INLINE void aos_deinterleave(const T* ADM_RESTRICT src, Batch& re, Ba
 // narrower Batch touches exactly 2*PW reals, so a partial block neither over-reads
 // past the axis buffer nor needs a mask.
 template<typename T, std::size_t N>
-consteval std::size_t sized_piece_width() {
+ADM_CONSTEVAL std::size_t sized_piece_width() {
     if constexpr (N <= 1) return 1;
     else if constexpr (!std::is_void_v<xsimd::make_sized_batch_t<T, N>>) return N;
     else return sized_piece_width<T, N / 2>();
@@ -137,7 +138,7 @@ template<typename V>
 // 64-bit: W >= 32 would shift a 32-bit mask out of range (no shipped ISA is
 // that wide; this keeps the constant total).
 template<typename T, std::size_t... Ws>
-consteval std::uint64_t piece_width_mask(std::index_sequence<Ws...>) {
+ADM_CONSTEVAL std::uint64_t piece_width_mask(std::index_sequence<Ws...>) {
     return std::uint64_t{2} | ((sized_piece_width<T, Ws + 2>() == Ws + 2 ? std::uint64_t{1} << (Ws + 2)
                                                                           : std::uint64_t{0}) | ...);
 }
@@ -344,9 +345,9 @@ struct aos_ct_masks {
 // loop-invariant, so the caller picks the arm once per pass. NOT a runtime test on m.hi
 // being empty: a k0-masked vmovups is still a load uop, and `src + W` would be
 // past-the-end pointer arithmetic on a row of fewer than W/2 complex.
-template<bool HiHalf, typename T>
+template<bool HiHalf, typename T, typename Mask>
 ADM_ALWAYS_INLINE void aos_deinterleave_masked(const T* ADM_RESTRICT src, xsimd::batch<T>& re,
-                                               xsimd::batch<T>& im, const auto m) {
+                                               xsimd::batch<T>& im, const Mask m) {
     using batch = xsimd::batch<T>;
     using arch = typename batch::arch_type;
     using index = xsimd::as_unsigned_integer_t<T>;
@@ -358,9 +359,9 @@ ADM_ALWAYS_INLINE void aos_deinterleave_masked(const T* ADM_RESTRICT src, xsimd:
     im = xsimd::shuffle(lo, hi, xsimd::make_batch_constant<index, aos_odd_lane, arch>());
 }
 
-template<bool HiHalf, typename T>
+template<bool HiHalf, typename T, typename Mask>
 ADM_ALWAYS_INLINE void aos_interleave_masked(T* ADM_RESTRICT dst, xsimd::batch<T> re,
-                                             xsimd::batch<T> im, const auto m) {
+                                             xsimd::batch<T> im, const Mask m) {
     constexpr std::size_t W = xsimd::batch<T>::size;
     xsimd::zip_lo(re, im).store(dst, m.lo, xsimd::unaligned_mode{});
     if constexpr (HiHalf) xsimd::zip_hi(re, im).store(dst + W, m.hi, xsimd::unaligned_mode{});

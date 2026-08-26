@@ -13,8 +13,6 @@
 #include "utils/reference.hpp"
 
 #include <admiral/admiral.hpp>
-#include <numbers>
-#include <span>
 #include <vector>
 
 TEMPLATE_TEST_CASE("fct: default value equals nullopt path", "[fct]", float, double) {
@@ -24,13 +22,13 @@ TEMPLATE_TEST_CASE("fct: default value equals nullopt path", "[fct]", float, dou
         admiral::plan<T> p(N);
 
         std::vector<std::complex<T>> a = in, b = in;
-        p.forward(std::span(a));                       // nullopt -> unscaled
-        p.forward(std::span(b), T(1));                 // explicit default
+        p.forward(admiral::span(a));                       // nullopt -> unscaled
+        p.forward(admiral::span(b), T(1));                 // explicit default
         require_close(a, b, fft_tol<T>());
 
         a = in; b = in;
-        p.inverse(std::span(a));                       // nullopt -> 1/N
-        p.inverse(std::span(b), T(1) / T(N));          // explicit default
+        p.inverse(admiral::span(a));                       // nullopt -> 1/N
+        p.inverse(admiral::span(b), T(1) / T(N));          // explicit default
         require_close(a, b, fft_tol<T>());
     }
 }
@@ -43,8 +41,8 @@ TEMPLATE_TEST_CASE("fct: linear output scaling", "[fct]", float, double) {
         const T k = T(2.5);
 
         std::vector<std::complex<T>> base = in, scaled = in;
-        p.forward(std::span(base), T(1));
-        p.forward(std::span(scaled), k);
+        p.forward(admiral::span(base), T(1));
+        p.forward(admiral::span(scaled), k);
         for (auto& x : base) x *= k;
         require_close(base, scaled, fft_tol<T>());
     }
@@ -58,14 +56,14 @@ TEMPLATE_TEST_CASE("fct: unnormalized round-trip composes", "[fct]", float, doub
 
         // fwd(1) then inv(1/N) recovers the input.
         std::vector<std::complex<T>> rt = in;
-        p.forward(std::span(rt), T(1));
-        p.inverse(std::span(rt), T(1) / T(N));
+        p.forward(admiral::span(rt), T(1));
+        p.inverse(admiral::span(rt), T(1) / T(N));
         require_close(rt, in, fft_tol<T>(2));
 
         // fwd(1) then inv(1) yields N * input (both directions unscaled).
         std::vector<std::complex<T>> nrt = in;
-        p.forward(std::span(nrt), T(1));
-        p.inverse(std::span(nrt), T(1));
+        p.forward(admiral::span(nrt), T(1));
+        p.inverse(admiral::span(nrt), T(1));
         auto scaled_in = in;
         for (auto& x : scaled_in) x *= T(N);
         require_close(nrt, scaled_in, fft_tol<T>(2));
@@ -81,8 +79,8 @@ TEMPLATE_TEST_CASE("fct: N-D custom scale round-trip", "[fct][nd]", float, doubl
 
     admiral::plan<T> p(shape);
     std::vector<std::complex<T>> rt = in;
-    p.forward(std::span(rt), T(1));
-    p.inverse(std::span(rt), T(1) / T(Ntot));
+    p.forward(admiral::span(rt), T(1));
+    p.inverse(admiral::span(rt), T(1) / T(Ntot));
     require_close(rt, in, fft_tol<T>(2));
 }
 
@@ -98,7 +96,7 @@ TEMPLATE_TEST_CASE("fct: degenerate tensor scales out-of-place", "[fct][nd]",
     for (std::size_t rank = 1; rank <= 3; ++rank) {
         const std::vector<std::size_t> shape(rank, 1);   // {1}, {1,1}, {1,1,1}
         CAPTURE(rank);
-        admiral::plan<T> p(std::span<const std::size_t>(shape.data(), shape.size()));
+        admiral::plan<T> p(admiral::span<const std::size_t>(shape.data(), shape.size()));
         REQUIRE(p.size() == 1);
         std::complex<T> src = v, dst{};
         p.forward(&src, &dst, T(2));
@@ -174,13 +172,13 @@ TEST_CASE("fct: scale folding through four_step_large (double)", "[fct][fourstep
     admiral::plan<double> p(N);
 
     std::vector<std::complex<double>> a = in, b = in;
-    p.inverse(std::span(a));                     // nullopt -> 1/N, folded into P2/P4
-    p.inverse(std::span(b), 1.0 / double(N));    // explicit default, same fold site
+    p.inverse(admiral::span(a));                     // nullopt -> 1/N, folded into P2/P4
+    p.inverse(admiral::span(b), 1.0 / double(N));    // explicit default, same fold site
     for (std::size_t i = 0; i < N; ++i) REQUIRE(a[i] == b[i]);
 
     std::vector<std::complex<double>> base = in, scaled = in;
-    p.forward(std::span(base), 1.0);
-    p.forward(std::span(scaled), 2.0);
+    p.forward(admiral::span(base), 1.0);
+    p.forward(admiral::span(scaled), 2.0);
     for (auto& x : base) x *= 2.0;
     require_close(base, scaled, fft_tol<double>(2));
 }

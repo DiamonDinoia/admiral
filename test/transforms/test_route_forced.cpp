@@ -15,10 +15,8 @@
 
 #include "utils/reference.hpp"
 
-#include <bit>
 #include <complex>
 #include <cstddef>
-#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -89,8 +87,8 @@ TEMPLATE_TEST_CASE("forced route names itself and round-trips", "[coverage][rout
 
         const auto x = make_signal<TestType>(n);
         auto got = x;
-        fwd.execute(std::span(got));   // default fct: forward 1, inverse 1/n
-        inv.execute(std::span(got));
+        fwd.execute(admiral::span(got));   // default fct: forward 1, inverse 1/n
+        inv.execute(admiral::span(got));
         require_close(x, got, fft_tol<TestType>(2));
     }
 
@@ -121,8 +119,8 @@ TEMPLATE_TEST_CASE("forced four_step_large round-trips at every admitted size",
         CAPTURE(n);
         const auto x = make_signal<TestType>(n);
         auto got = x;
-        P(n, true, R::four_step_large).execute(std::span(got));
-        P(n, false, R::four_step_large).execute(std::span(got));
+        P(n, true, R::four_step_large).execute(admiral::span(got));
+        P(n, false, R::four_step_large).execute(admiral::span(got));
         require_close(x, got, fft_tol<TestType>(2));
         ++checked;
     }
@@ -151,14 +149,14 @@ TEMPLATE_TEST_CASE("threaded four_step_large round-trips forced and raced",
     const auto x = make_signal<TestType>(n);
 
     auto got = x;
-    P(n, true, R::four_step_large, threads).execute(std::span(got));
-    P(n, false, R::four_step_large, threads).execute(std::span(got));
+    P(n, true, R::four_step_large, threads).execute(admiral::span(got));
+    P(n, false, R::four_step_large, threads).execute(admiral::span(got));
     require_close(x, got, fft_tol<TestType>(2));
 
     // Whichever route the race elects has to be correct, pool or no pool.
     got = x;
-    P(n, true, threads, nullptr, admiral::effort::automatic).execute(std::span(got));
-    P(n, false, threads, nullptr, admiral::effort::automatic).execute(std::span(got));
+    P(n, true, threads, nullptr, admiral::effort::automatic).execute(admiral::span(got));
+    P(n, false, threads, nullptr, admiral::effort::automatic).execute(admiral::span(got));
     require_close(x, got, fft_tol<TestType>(2));
 }
 
@@ -182,8 +180,8 @@ TEMPLATE_TEST_CASE("raced route round-trips where the gate admits four_step_larg
 
     const auto x = make_signal<TestType>(n);
     auto got = x;
-    P(n, true, threads, nullptr, admiral::effort::automatic).execute(std::span(got));
-    P(n, false, threads, nullptr, admiral::effort::automatic).execute(std::span(got));
+    P(n, true, threads, nullptr, admiral::effort::automatic).execute(admiral::span(got));
+    P(n, false, threads, nullptr, admiral::effort::automatic).execute(admiral::span(got));
     require_close(x, got, fft_tol<TestType>(2));
 }
 
@@ -293,16 +291,16 @@ TEMPLATE_TEST_CASE("plan rejects bad sizes and handles N==1", "[coverage][route]
     const P fwd(1u, true), inv(1u, false);
     std::vector<std::complex<TestType>> one{{TestType(3), TestType(-1)}};
     std::vector<std::complex<TestType>> two(2);
-    REQUIRE_THROWS_AS(fwd.execute(std::span(two)), admiral::size_error);  // size mismatch
-    fwd.execute(std::span(one));
+    REQUIRE_THROWS_AS(fwd.execute(admiral::span(two)), admiral::size_error);  // size mismatch
+    fwd.execute(admiral::span(one));
     REQUIRE(one[0] == std::complex<TestType>(TestType(3), TestType(-1)));
-    inv.execute(std::span(one));  // inverse fct = 1/N = 1
+    inv.execute(admiral::span(one));  // inverse fct = 1/N = 1
     REQUIRE(one[0] == std::complex<TestType>(TestType(3), TestType(-1)));
 
     constexpr std::size_t rows = 4, stride = 3;
     std::vector<std::complex<TestType>> run(rows * stride, {TestType(0), TestType(0)});
     for (std::size_t r = 0; r < rows; ++r) run[r * stride] = {TestType(r + 1), TestType(0)};
-    fwd.execute_many(run.data(), rows, stride, {.fct = TestType(2)});
+    fwd.execute_many(run.data(), rows, stride, {TestType(2)});
     for (std::size_t r = 0; r < rows; ++r) {
         REQUIRE(run[r * stride].real() == TestType(2 * (r + 1)));
         REQUIRE(run[r * stride + 1] == std::complex<TestType>(TestType(0), TestType(0)));  // untouched
@@ -329,7 +327,7 @@ TEST_CASE("estimated_plan_cost takes each modeled route", "[coverage][route]") {
     // split that the model prefers to Bluestein.
     std::size_t n_fs = 0;
     for (std::size_t N = 65; N < 4096 && !n_fs; ++N) {
-        if (std::has_single_bit(N) || is_codelet_supported(N)) continue;
+        if (admiral::detail::has_single_bit(N) || is_codelet_supported(N)) continue;
         const four_step_split s = choose_four_step_split(N);
         if (s.valid() && gate_four_step_cost(s.n1, s.n2) < bluestein_model_cost(N)) n_fs = N;
     }
@@ -354,7 +352,7 @@ TEST_CASE("estimated_plan_cost takes each modeled route", "[coverage][route]") {
     // while the split table has no entry for it.
     std::size_t p_blue = 0;
     for (std::size_t p = 65; p < 100000 && !p_blue; ++p) {
-        if (std::has_single_bit(p) || is_codelet_supported(p)) continue;
+        if (admiral::detail::has_single_bit(p) || is_codelet_supported(p)) continue;
         if (choose_four_step_split(p).valid()) continue;
         if (rader_supported(p)) continue;
         p_blue = p;
@@ -396,7 +394,7 @@ TEMPLATE_TEST_CASE("Rader with a codelet inner transform", "[coverage][route][ca
         const P pl(p, forward, R::rader);
         REQUIRE(std::string(pl.route_name()) == "rader");
         auto got = x;
-        pl.execute(std::span(got));
+        pl.execute(admiral::span(got));
         auto ref = reference_dft(x, forward);
         if (!forward)
             for (auto& v : ref) v /= TestType(p);   // execute's default inverse fct is 1/n
@@ -416,7 +414,7 @@ TEMPLATE_TEST_CASE("forced Bluestein with a codelet-catalog pad", "[coverage][ro
     // is_codelet_catalog(bit_ceil(2N-1)); N=17 gives pad 64, always compiled in a
     // default build but off the sanitizer cap ([2..16]), so skip with the reason.
     constexpr std::size_t n = 17;
-    if (!is_codelet_catalog(std::bit_ceil(2 * n - 1)))
+    if (!is_codelet_catalog(admiral::detail::bit_ceil(2 * n - 1)))
         SKIP("pad 64 is outside this build's codelet catalog (sanitizer cap)");
     REQUIRE(P::route_available(R::bluestein, n));
     for (const bool forward : {true, false}) {
@@ -424,7 +422,7 @@ TEMPLATE_TEST_CASE("forced Bluestein with a codelet-catalog pad", "[coverage][ro
         REQUIRE(std::string(pl.route_name()) == "bluestein");
         auto x = make_signal<TestType>(n);
         auto got = x;
-        pl.execute(std::span(got));
+        pl.execute(admiral::span(got));
         auto ref = reference_dft(x, forward);
         if (!forward)
             for (auto& v : ref) v /= TestType(n);

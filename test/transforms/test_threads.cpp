@@ -12,7 +12,6 @@
 #include <complex>
 #include <cstddef>
 #include <limits>
-#include <span>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -77,10 +76,10 @@ TEMPLATE_TEST_CASE("c2c N-D nthreads=1 vs 4 agrees within the FFT rounding floor
         std::size_t Ntot = 1;
         for (auto e : shape) Ntot *= e;
         const auto in = make_input<T>(Ntot, 0xC2C0u);
-        const std::span<const std::size_t> sp(shape.data(), shape.size());
+        const admiral::span<const std::size_t> sp(shape.data(), shape.size());
 
         admiral::plan<T> serial(sp);
-        admiral::plan<T> threaded(sp, {.nthreads = kNthreads});
+        admiral::plan<T> threaded(sp, {kNthreads});
 
         const double tol = forecast_tol<T>(Ntot);
         auto a = in, b = in;
@@ -104,9 +103,9 @@ TEMPLATE_TEST_CASE("r2c/c2r N-D nthreads=1 vs 4 agrees within the FFT rounding f
     };
     for (const auto& shape : shapes) {
         INFO("shape=" << shape_str(shape) << " prec=" << (sizeof(T) == 4 ? "f32" : "f64"));
-        const std::span<const std::size_t> sp(shape.data(), shape.size());
+        const admiral::span<const std::size_t> sp(shape.data(), shape.size());
         admiral::plan_r2c<T> serial(sp);
-        admiral::plan_r2c<T> threaded(sp, {.nthreads = kNthreads});
+        admiral::plan_r2c<T> threaded(sp, {kNthreads});
 
         const auto rin = make_real_input<T>(serial.real_size(), 0x2C20u);
         const double tol = forecast_tol<T>(serial.real_size());
@@ -131,11 +130,11 @@ TEMPLATE_TEST_CASE("r2c/c2r N-D nthreads=1 vs 4 agrees within the FFT rounding f
 TEMPLATE_TEST_CASE("nthreads=0 auto-select matches serial", "[threads]", float, double) {
     using T = TestType;
     const std::vector<std::size_t> shape = {16, 8192};
-    const std::span<const std::size_t> sp(shape.data(), shape.size());
+    const admiral::span<const std::size_t> sp(shape.data(), shape.size());
     const auto in = make_input<T>(16 * 8192, 0xA705u);
 
     admiral::plan<T> serial(sp);
-    admiral::plan<T> autop(sp, {.nthreads = 0});   // 0 -> hardware_concurrency, capped
+    admiral::plan<T> autop(sp, {0});   // 0 -> hardware_concurrency, capped
 
     auto a = in, b = in;
     serial.forward(a.data());
@@ -195,13 +194,13 @@ TEST_CASE("threaded unfused four_step_large agrees across nthreads (double)",
     REQUIRE(std::string(admiral::detail::plan_impl<double>(N, true, 4).route_name())
             == "four_step_large");
     const auto in = make_input<double>(N, 1234u);
-    admiral::plan<double> p2({N}, {.nthreads = 2}), p4({N}, {.nthreads = 4});
+    admiral::plan<double> p2({N}, {2}), p4({N}, {4});
     auto a = in;
-    p2.forward(std::span(a));
+    p2.forward(admiral::span(a));
     auto b = in;
-    p4.forward(std::span(b));
+    p4.forward(admiral::span(b));
     require_close(b, a, forecast_tol<double>(N));
-    p4.inverse(std::span(b));
+    p4.inverse(admiral::span(b));
     require_close(b, in, forecast_tol<double>(N));
 }
 
@@ -211,7 +210,7 @@ TEST_CASE("threaded out-of-place four_step_large matches serial (double)",
           "[threads][fourstep]") {
     constexpr std::size_t N = 2097152;
     const auto in = make_input<double>(N, 77u);
-    admiral::plan<double> p1({N}), p4({N}, {.nthreads = 4});
+    admiral::plan<double> p1({N}), p4({N}, {4});
     std::vector<std::complex<double>> o1(N), o4(N);
     p1.forward(in.data(), o1.data());
     p4.forward(in.data(), o4.data());

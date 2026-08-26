@@ -24,13 +24,14 @@
 #include <admiral/detail/config.hpp>   // ADM_THREADS
 
 #include "cache.hpp"                   // kCacheLine (false-sharing padding)
+#include "cxx_compat.hpp"              // ADM_CXX20
 
 #include <algorithm>
-#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <thread>     // std::this_thread::yield fallback in cpu_relax (non-x86/aarch64)
+#include <type_traits>
 #include <utility>
 
 inline void cpu_relax() noexcept {
@@ -60,10 +61,16 @@ inline void cpu_relax() noexcept {
 #endif
 
 namespace admiral::detail {
-// body(begin, end, tid): callers iterate [begin,end), allocate per-chunk scratch once.
-// The concept makes a wrong lambda signature fail at the call site.
+// Every parallel_for body is called as body(begin, end, tid), and every
+// parallel_for constrains its body on this, so a wrong lambda signature fails at
+// the call site.
 template<typename F>
-concept ChunkBody = std::invocable<F&, std::size_t, std::size_t, std::size_t>;
+inline constexpr bool is_chunk_body_v =
+    std::is_invocable_v<F&, std::size_t, std::size_t, std::size_t>;
+#if ADM_CXX20
+template<typename F>
+concept ChunkBody = is_chunk_body_v<F>;
+#endif
 }  // namespace admiral::detail
 
 namespace admiral {
@@ -169,7 +176,11 @@ public:
 
     // Run body(begin,end,tid) over nthreads contiguous chunks of [0,n).
     // First exception wins; rethrown after join (no per-task futures).
+#if ADM_CXX20
     template<ChunkBody F>
+#else
+    template<typename F, std::enable_if_t<is_chunk_body_v<F>, int> = 0>
+#endif
     void parallel_for(std::size_t n, F&& body) {
         const std::size_t nt = nthreads_;
         const std::size_t chunk = (n + nt - 1) / nt;   // ceil, last chunk may be short/empty
@@ -268,8 +279,14 @@ class thread_pool {
 public:
     explicit thread_pool(std::size_t) {}
     [[nodiscard]] std::size_t size() const noexcept { return 1; }
+#if ADM_CXX20
     template<ChunkBody F>
-    void parallel_for(std::size_t n, F&& body) { body(std::size_t{0}, n, std::size_t{0}); }
+#else
+    template<typename F, std::enable_if_t<is_chunk_body_v<F>, int> = 0>
+#endif
+    void parallel_for(std::size_t n, F&& body) {
+        body(std::size_t{0}, n, std::size_t{0});
+    }
 };
 
 #endif  // ADM_THREADS
@@ -287,7 +304,11 @@ public:
     return pool_size(pool) > 1 && n >= 2 && total_elems >= kThreadMinElems;
 }
 
+#if ADM_CXX20
 template<ChunkBody F>
+#else
+template<typename F, std::enable_if_t<is_chunk_body_v<F>, int> = 0>
+#endif
 inline void parallel_for(thread_pool* pool, std::size_t n, std::size_t total_elems, F&& body) {
     if (will_thread(pool, n, total_elems)) {
         pool->parallel_for(n, std::forward<F>(body));

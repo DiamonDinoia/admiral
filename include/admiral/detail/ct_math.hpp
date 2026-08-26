@@ -14,11 +14,12 @@
 #include <numeric>  // std::gcd
 #include <type_traits>
 #include <utility>  // std::pair
+#include "cxx_compat.hpp"  // ADM_CONSTEVAL, detail::has_single_bit, detail::numbers
 
 namespace admiral {
 namespace detail {
 
-using std::numbers::pi;  // double; the compile-time twiddle math below is double
+using detail::numbers::pi;  // double; the compile-time twiddle math below is double
 
 // ----------------------------------------------------------------------------
 // Compile-time sin/cos of angle 2*pi*num/den. Turn fractions allow exact integer
@@ -34,7 +35,7 @@ struct ct_sincos_t {
 
 // sin/cos of x for |x| <= pi/4, via Taylor series (full double precision there).
 // consteval: only ever used to fold compile-time twiddles (never runtime codegen).
-[[nodiscard]] consteval ct_sincos_t ct_sincos_small(double x) {
+[[nodiscard]] ADM_CONSTEVAL ct_sincos_t ct_sincos_small(double x) {
     const double x2 = x * x;
     // cos: sum (-1)^k x^(2k)/(2k)!   ;  sin: sum (-1)^k x^(2k+1)/(2k+1)!
     // k counts in double: every factorial step below is an exact small integer.
@@ -54,7 +55,7 @@ struct ct_sincos_t {
 // pass their Forward flag straight through and keep num/den unsigned. Every
 // caller already holds unsigned values.
 // consteval: folds kernel<N>/butterfly twiddles at compile time only.
-[[nodiscard]] consteval ct_sincos_t ct_sincos_turns(bool conjugate, std::size_t num,
+[[nodiscard]] ADM_CONSTEVAL ct_sincos_t ct_sincos_turns(bool conjugate, std::size_t num,
                                                     std::size_t den) {
     // reduce num into [0, den), then reflect for the conjugate
     num %= den;
@@ -67,8 +68,9 @@ struct ct_sincos_t {
     const double res = static_cast<double>(rem) * (pi / (4.0 * static_cast<double>(den)));  // [0, pi/4)
     const ct_sincos_t r = ct_sincos_small(res);
     // Rotate by base (multiple of pi/4); inv_sqrt2 = sqrt2/2 (exact, no inv_sqrt2 literal).
-    constexpr double inv_sqrt2 = std::numbers::sqrt2 / 2.0;
-    double bc, bs;
+    constexpr double inv_sqrt2 = detail::numbers::sqrt2 / 2.0;
+    // C++17 constexpr functions may not declare uninitialized variables, hence {0,0}.
+    double bc = 0.0, bs = 0.0;
     switch (oct) {
         case 0: bc = 1.0;          bs = 0.0;          break;
         case 1: bc = inv_sqrt2;    bs = inv_sqrt2;    break;
@@ -129,7 +131,7 @@ struct ct_sincos_t {
 // ymm lanes). f64 must NOT (batch=4 < 6, falls scalar); f64 keeps r=2 where
 // M=27 fills the full 2-wide (Wc==R) batch.
 template<typename T>
-[[nodiscard]] consteval std::size_t codelet_radix_for(std::size_t N) {
+[[nodiscard]] ADM_CONSTEVAL std::size_t codelet_radix_for(std::size_t N) {
     if (N == 54 && std::is_same_v<T, float>) return 6;
     return codelet_radix(N);
 }
@@ -192,7 +194,7 @@ template<typename T>
 // The register count is a parameter so this header stays poet-free; callers
 // pass poet::vector_register_count().
 [[nodiscard]] constexpr bool butterfly_wants_reload(std::size_t IP, std::size_t vregs) {
-    return std::has_single_bit(IP) && IP >= 4 && 2u * IP >= vregs;
+    return detail::has_single_bit(IP) && IP >= 4 && 2u * IP >= vregs;
 }
 
 // A radix-IP butterfly holds 2*IP live batches plus its twiddles and addresses, so

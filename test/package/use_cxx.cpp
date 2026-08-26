@@ -8,7 +8,6 @@
 #include <complex>
 #include <cstdio>
 #include <limits>
-#include <numbers>
 #include <vector>
 
 namespace {
@@ -17,7 +16,7 @@ template<typename T>
 int check(const char* what, std::size_t n, std::size_t q) {
     std::vector<std::complex<T>> x(n), y(n);
     for (std::size_t i = 0; i < n; ++i) {
-        const auto phase = T(2) * std::numbers::pi_v<T> * T(q) * T(i) / T(n);
+        const auto phase = T(2) * admiral::detail::numbers::pi_v<T> * T(q) * T(i) / T(n);
         x[i] = {std::cos(phase), std::sin(phase)};
     }
     admiral::plan<T> p(n);
@@ -30,7 +29,7 @@ int check(const char* what, std::size_t n, std::size_t q) {
     }
     p.inverse(y.data(), x.data());  // round trip must return the spike
     for (std::size_t i = 0; i < n; ++i) {
-        const auto phase = T(2) * std::numbers::pi_v<T> * T(q) * T(i) / T(n);
+        const auto phase = T(2) * admiral::detail::numbers::pi_v<T> * T(q) * T(i) / T(n);
         worst = std::max(worst, std::abs(x[i] - std::complex<T>(std::cos(phase), std::sin(phase))));
     }
     // Componentwise absolute error against a spectrum whose peak is n, so the bound
@@ -51,7 +50,7 @@ int main() {
     rc |= check<double>("f64", 1050, 7);  // not a power of two
     // Free functions, and the two-thread path.
     std::vector<std::complex<double>> a(512, {1, 0}), b(512);
-    admiral::forward<double>(a, b, {.nthreads = 2});
+    admiral::forward<double>(a, b, {2});
     const double dc_tol = 512.0 * 32.0 * std::numeric_limits<double>::epsilon();
     if (std::abs(b[0] - std::complex<double>(512, 0)) > dc_tol) { std::puts("forward() wrong"); rc = 1; }
     std::puts(rc ? "FAIL" : "ok");

@@ -127,12 +127,19 @@ ADM_ALWAYS_INLINE void vpass_one(const V* src_re, const V* src_im,
 }
 
 // poet::dispatch adapter: maps runtime radix to compile-time IP of vpass_one.
+// A struct, not a lambda: C++17 lambdas cannot take template parameters, and
+// poet::dispatch calls f.template operator()<IP>(args...), which a member template
+// serves the same way.
 template<typename T, bool Forward, typename V>
-inline constexpr auto vpass_invoke = []<std::size_t IP>(
-        const V* src_re, const V* src_im, V* dst_re, V* dst_im,
-        std::size_t l1, std::size_t ido, const T* tw_re, const T* tw_im) {
-    vpass_one<IP, T, Forward, V>(src_re, src_im, dst_re, dst_im, l1, ido, tw_re, tw_im);
+struct vpass_invoke_t {
+    template<std::size_t IP>
+    void operator()(const V* src_re, const V* src_im, V* dst_re, V* dst_im,
+                    std::size_t l1, std::size_t ido, const T* tw_re, const T* tw_im) const {
+        vpass_one<IP, T, Forward, V>(src_re, src_im, dst_re, dst_im, l1, ido, tw_re, tw_im);
+    }
 };
+template<typename T, bool Forward, typename V>
+inline constexpr vpass_invoke_t<T, Forward, V> vpass_invoke{};
 
 template<typename T, bool Forward, typename V>
 ADM_ALWAYS_INLINE void vpass_dispatch(std::size_t ip,

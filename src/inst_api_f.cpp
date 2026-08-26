@@ -1,6 +1,7 @@
 // The float half of the exported ABI; see cpp_api.hpp for the definitions.
 
 #include "cpp_api.hpp"
+#include "admiral/detail/cxx_compat.hpp"  // span
 
 namespace admiral {
 
@@ -9,19 +10,19 @@ template class axis_plan<float>;
 template class plan_r2c<float>;
 template class plan_r2r<float>;
 
-template void forward<float>(std::span<const std::complex<float>>, std::span<std::complex<float>>,
+template void forward<float>(span<const std::complex<float>>, span<std::complex<float>>,
                              const options&, std::optional<float>);
-template void inverse<float>(std::span<const std::complex<float>>, std::span<std::complex<float>>,
+template void inverse<float>(span<const std::complex<float>>, span<std::complex<float>>,
                              const options&, std::optional<float>);
 
-template void forward<float>(std::complex<float>*, std::span<const std::size_t>, const options&,
+template void forward<float>(std::complex<float>*, span<const std::size_t>, const options&,
                              std::optional<float>);
-template void inverse<float>(std::complex<float>*, std::span<const std::size_t>, const options&,
+template void inverse<float>(std::complex<float>*, span<const std::size_t>, const options&,
                              std::optional<float>);
 
-template void forward<float>(const float*, std::complex<float>*, std::span<const std::size_t>,
+template void forward<float>(const float*, std::complex<float>*, span<const std::size_t>,
                              const options&, std::optional<float>);
-template void inverse<float>(std::complex<float>*, float*, std::span<const std::size_t>,
+template void inverse<float>(std::complex<float>*, float*, span<const std::size_t>,
                              const options&, std::optional<float>);
 
 }  // namespace admiral

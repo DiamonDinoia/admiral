@@ -16,7 +16,6 @@
 #include <array>
 #include <complex>
 #include <cstddef>
-#include <span>
 #include <vector>
 
 using namespace Catch::Matchers;
@@ -32,8 +31,8 @@ TEMPLATE_TEST_CASE("exhaustive integer-N round-trip and forward vs naive DFT",
         const auto in = make_signal<T>(N);
 
         std::vector<std::complex<T>> spec(N), recov(N);
-        admiral::forward(std::span<const std::complex<T>>(in), std::span(spec));
-        admiral::inverse(std::span<const std::complex<T>>(spec), std::span(recov));
+        admiral::forward(admiral::span<const std::complex<T>>(in), admiral::span(spec));
+        admiral::inverse(admiral::span<const std::complex<T>>(spec), admiral::span(recov));
         INFO("round-trip N=" << N);
         require_close(in, recov, fft_tol<T>(2));
 
@@ -60,7 +59,7 @@ TEMPLATE_TEST_CASE("known-answer impulse, DC, and Parseval", "[coverage][known]"
             std::vector<std::complex<T>> x(N, std::complex<T>(0, 0));
             x.at(0) = std::complex<T>(1, 0);  // .at(): checked, so no -Wnull-dereference
             std::vector<std::complex<T>> X(N);
-            admiral::forward(std::span<const std::complex<T>>(x), std::span(X));
+            admiral::forward(admiral::span<const std::complex<T>>(x), admiral::span(X));
             require_close(X, std::vector<std::complex<T>>(N, std::complex<T>(1, 0)), fft_tol<T>());
         }
 
@@ -68,7 +67,7 @@ TEMPLATE_TEST_CASE("known-answer impulse, DC, and Parseval", "[coverage][known]"
         {
             std::vector<std::complex<T>> x(N, std::complex<T>(T(2), T(0)));
             std::vector<std::complex<T>> X(N);
-            admiral::forward(std::span<const std::complex<T>>(x), std::span(X));
+            admiral::forward(admiral::span<const std::complex<T>>(x), admiral::span(X));
             std::vector<std::complex<T>> want(N, std::complex<T>(0, 0));
             want.at(0) = std::complex<T>(T(2) * T(N), T(0));
             require_close(X, want, fft_tol<T>());
@@ -78,7 +77,7 @@ TEMPLATE_TEST_CASE("known-answer impulse, DC, and Parseval", "[coverage][known]"
         {
             const auto x = make_signal<T>(N);
             std::vector<std::complex<T>> X(N);
-            admiral::forward(std::span<const std::complex<T>>(x), std::span(X));
+            admiral::forward(admiral::span<const std::complex<T>>(x), admiral::span(X));
             require_parseval<T>(x, X, N);
         }
     }
@@ -100,8 +99,8 @@ TEST_CASE("large-N round-trip (terminal DIF and deep Bluestein)", "[coverage][la
         INFO("N=" << N);
         const auto in = make_signal<T>(N);
         std::vector<std::complex<T>> spec(N), recov(N);
-        admiral::forward(std::span<const std::complex<T>>(in), std::span(spec));
-        admiral::inverse(std::span<const std::complex<T>>(spec), std::span(recov));
+        admiral::forward(admiral::span<const std::complex<T>>(in), admiral::span(spec));
+        admiral::inverse(admiral::span<const std::complex<T>>(spec), admiral::span(recov));
         require_close(in, recov, fft_tol<T>(4));
 
         require_parseval<T>(in, spec, N);
@@ -191,8 +190,8 @@ TEST_CASE("Public large gate requires a cycle-free split", "[coverage][large]") 
         INFO("N=" << N);
         const auto in = make_signal<double>(N);
         std::vector<std::complex<double>> spec(N), recov(N);
-        admiral::forward(std::span<const std::complex<double>>(in), std::span(spec));
-        admiral::inverse(std::span<const std::complex<double>>(spec), std::span(recov));
+        admiral::forward(admiral::span<const std::complex<double>>(in), admiral::span(spec));
+        admiral::inverse(admiral::span<const std::complex<double>>(spec), admiral::span(recov));
         require_close(in, recov, fft_tol<double>(4));
         require_parseval<double>(in, spec, N);
     }
@@ -200,8 +199,8 @@ TEST_CASE("Public large gate requires a cycle-free split", "[coverage][large]") 
         constexpr std::size_t N = 4194304;
         const auto in = make_signal<float>(N);
         std::vector<std::complex<float>> spec(N), recov(N);
-        admiral::forward(std::span<const std::complex<float>>(in), std::span(spec));
-        admiral::inverse(std::span<const std::complex<float>>(spec), std::span(recov));
+        admiral::forward(admiral::span<const std::complex<float>>(in), admiral::span(spec));
+        admiral::inverse(admiral::span<const std::complex<float>>(spec), admiral::span(recov));
         require_close(in, recov, fft_tol<float>(4));
         require_parseval<float>(in, spec, N);
     }
@@ -217,8 +216,8 @@ TEST_CASE("f32 small-ido pass cover", "[coverage][small_ido]") {
         INFO("N=" << N);
         const auto in = make_signal<T>(N);
         std::vector<std::complex<T>> spec(N), recov(N);
-        admiral::forward(std::span<const std::complex<T>>(in), std::span(spec));
-        admiral::inverse(std::span<const std::complex<T>>(spec), std::span(recov));
+        admiral::forward(admiral::span<const std::complex<T>>(in), admiral::span(spec));
+        admiral::inverse(admiral::span<const std::complex<T>>(spec), admiral::span(recov));
         require_close(in, recov, fft_tol<T>(4));
 
         require_parseval<T>(in, spec, N);
@@ -236,8 +235,8 @@ TEST_CASE("f32 batched four-step routed sizes", "[coverage][four_step]") {
         INFO("N=" << N);
         const auto in = make_signal<T>(N);
         std::vector<std::complex<T>> spec(N), recov(N);
-        admiral::forward(std::span<const std::complex<T>>(in), std::span(spec));
-        admiral::inverse(std::span<const std::complex<T>>(spec), std::span(recov));
+        admiral::forward(admiral::span<const std::complex<T>>(in), admiral::span(spec));
+        admiral::inverse(admiral::span<const std::complex<T>>(spec), admiral::span(recov));
         require_close(in, recov, fft_tol<T>(4));
         const auto ref = reference_dft<T>(in, /*forward=*/true);
         require_close(spec, ref, fft_tol<T>());

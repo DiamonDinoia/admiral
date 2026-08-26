@@ -1,11 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
+#include <admiral/detail/cxx_compat.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "utils/reference.hpp"
 
 #include <admiral/admiral.h>
 #include <cmath>
 #include <cstring>
-#include <numbers>
 #include <vector>
 
 using namespace Catch::Matchers;
@@ -15,8 +15,8 @@ TEST_CASE("C API forward/inverse transforms (double)", "[c_api]") {
 
     std::vector<adm_complex> input(N);
     for (size_t i = 0; i < N; ++i) {
-        input[i].real = std::sin(2.0 * std::numbers::pi * double(i) / double(N));
-        input[i].imag = std::cos(2.0 * std::numbers::pi * double(i) / double(N));
+        input[i].real = std::sin(2.0 * admiral::detail::numbers::pi * double(i) / double(N));
+        input[i].imag = std::cos(2.0 * admiral::detail::numbers::pi * double(i) / double(N));
     }
 
     std::vector<adm_complex> original = input;

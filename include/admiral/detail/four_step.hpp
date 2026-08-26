@@ -26,7 +26,6 @@
 // ============================================================================
 
 #include <array>
-#include <bit>
 #include <complex>
 #include <cstddef>
 #include <utility>

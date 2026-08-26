@@ -50,6 +50,7 @@
 
 #include <admiral/detail/build_id.hpp>
 #include <admiral/detail/math.hpp>
+#include "cxx_compat.hpp"  // detail::remove_cvref_t
 
 namespace admiral::detail {
 
@@ -267,8 +268,8 @@ inline constexpr std::size_t NFORM = std::tuple_size_v<forms>;
 template<typename M, typename T>
 [[nodiscard]] constexpr double score(std::size_t n) {
     const auto x = M::template features<T>(n);
-    static_assert(std::tuple_size_v<std::remove_cvref_t<decltype(x)>> ==
-                  std::tuple_size_v<std::remove_cvref_t<decltype(M::w)>>,
+    static_assert(std::tuple_size_v<admiral::detail::remove_cvref_t<decltype(x)>> ==
+                  std::tuple_size_v<admiral::detail::remove_cvref_t<decltype(M::w)>>,
                   "feature/coefficient count mismatch");
     double acc = M::bias;
     for (std::size_t i = 0; i < x.size(); ++i) acc += M::w[i] * x[i];

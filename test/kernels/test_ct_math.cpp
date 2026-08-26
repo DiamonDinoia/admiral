@@ -53,7 +53,7 @@ static_assert(!is_rader_prime(100));      // composite
 
 // g is a primitive root iff its powers hit every residue in [1,p) exactly once.
 // The constant evaluator checks it for the primes Rader plans.
-consteval bool generates_group(std::size_t p) {
+constexpr bool generates_group(std::size_t p) {
     const std::size_t g = ct_primitive_root(p);
     if (g < 2) return false;
     std::size_t x = 1;

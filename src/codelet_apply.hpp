@@ -5,9 +5,9 @@
 // in == out is in-place; in != out reads `in` (preserved) and writes `out`.
 // Un-normalized (does NOT apply 1/N).  Routing guarantees N <= CODELET_CATALOG_MAX.
 
-#include <bit>
 #include <complex>
 #include <cstddef>
+#include "admiral/detail/cxx_compat.hpp"  // detail::bit_width
 
 #include "admiral/detail/codelet.hpp"
 #include "admiral/detail/math.hpp"  // scale_inplace
@@ -75,7 +75,7 @@ void codelet_apply(const std::complex<T>* in, std::complex<T>* out) {
         re.store_unaligned(xre + i);
         im.store_unaligned(xim + i);
     }
-    poet::static_for<1, std::bit_width(W)>([&](auto S) {
+    poet::static_for<1, detail::bit_width(W)>([&](auto S) {
         constexpr std::size_t Wt = W >> S;
         using Vt = xsimd::make_sized_batch_t<T, Wt>;
         if constexpr (Wt >= 2 && !std::is_void_v<Vt>) {

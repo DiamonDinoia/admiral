@@ -57,7 +57,10 @@
 #include <initializer_list>
 #include <memory>
 #include <optional>
-#include <span>
+// Span, the precision trait and the C++17 fallbacks come from here; C++20
+// toolchains get the std types by alias, so the API below keeps one spelling.
+#include "detail/cxx_compat.hpp"  // ADM_UNLIKELY, span, detail::type_identity_t,
+                                 // detail::is_precision_v
 #include <stdexcept>
 #include <type_traits>
 
@@ -78,8 +81,18 @@ namespace admiral {
 
 namespace detail {
 
+// The element types the engine has kernels for: float and double, nothing else.
+// The free functions constrain T on it so a wrong T leaves overload resolution:
+// the concept at C++20, and at C++17 `precision_void_t` as the return type, which
+// is `void` for those two and ill-formed for any other T. The class templates use
+// a static_assert in both standards, which names the offending T.
+#if ADM_CXX20
 template<typename T>
-concept precision = std::is_same_v<T, float> || std::is_same_v<T, double>;
+concept precision = is_precision_v<T>;
+#else
+template<typename T>
+using precision_void_t = std::enable_if_t<is_precision_v<T>>;
+#endif
 
 // The one message every plan's span-extent check throws.
 inline constexpr char kSizeMismatch[] = "Data size doesn't match plan size";
@@ -131,16 +144,26 @@ struct options {
 /// Forward 1-D FFT, unscaled. `input` and `output` must have the same size; pass
 /// the same span twice to transform in place.
 /// T is deduced from `output` alone, so one overload serves every caller.
+#if ADM_CXX20
 template<detail::precision T>
-ADM_API void forward(std::type_identity_t<std::span<const std::complex<T>>> input,
-                     std::span<std::complex<T>> output, const options& opts = {},
-                     std::optional<T> fct = std::nullopt);
+ADM_API void
+#else
+template<typename T>
+ADM_API detail::precision_void_t<T>
+#endif
+forward(detail::type_identity_t<span<const std::complex<T>>> input, span<std::complex<T>> output,
+        const options& opts = {}, std::optional<T> fct = std::nullopt);
 
 /// Inverse 1-D FFT, scaled by 1/N. Otherwise identical to forward().
+#if ADM_CXX20
 template<detail::precision T>
-ADM_API void inverse(std::type_identity_t<std::span<const std::complex<T>>> input,
-                     std::span<std::complex<T>> output, const options& opts = {},
-                     std::optional<T> fct = std::nullopt);
+ADM_API void
+#else
+template<typename T>
+ADM_API detail::precision_void_t<T>
+#endif
+inverse(detail::type_identity_t<span<const std::complex<T>>> input, span<std::complex<T>> output,
+        const options& opts = {}, std::optional<T> fct = std::nullopt);
 
 // ============================================================================
 // Plans
@@ -151,18 +174,19 @@ ADM_API void inverse(std::type_identity_t<std::span<const std::complex<T>>> inpu
 /// The rank is a runtime property, so plan(1024) and plan({64, 64}) are the same
 /// type. One plan serves both directions: build it once, then call forward() and
 /// inverse() any number of times.
-template<detail::precision T>
+template<typename T>
 class ADM_API plan {
+    static_assert(detail::is_precision_v<T>, "admiral: T must be float or double");
 public:
     /// 1-D over `size` complex elements.
     [[nodiscard]] explicit plan(std::size_t size, const options& opts = {})
-        : plan(std::span<const std::size_t>(&size, 1), opts) {}
+        : plan(span<const std::size_t>(&size, 1), opts) {}
 
     /// N-D over `shape`, last axis fastest.
-    [[nodiscard]] explicit plan(std::span<const std::size_t> shape, const options& opts = {});
+    [[nodiscard]] explicit plan(span<const std::size_t> shape, const options& opts = {});
 
     [[nodiscard]] plan(std::initializer_list<std::size_t> shape, const options& opts = {})
-        : plan(std::span<const std::size_t>(shape.begin(), shape.size()), opts) {}
+        : plan(span<const std::size_t>(shape.begin(), shape.size()), opts) {}
 
     ~plan();
     plan(const plan&) = delete;
@@ -176,7 +200,7 @@ public:
     ///
     /// Prefer (src, dst) over a manual copy. The engine reads the source during
     /// its first pass rather than in a separate sweep, which saves one pass over the data.
-    void forward(std::span<std::complex<T>> data, std::optional<T> fct = std::nullopt) const {
+    void forward(span<std::complex<T>> data, std::optional<T> fct = std::nullopt) const {
         check_size(data.size());
         run(true, data.data(), scale(fct));
     }
@@ -189,7 +213,7 @@ public:
     }
 
     /// Inverse FFT, scaled by 1/Ntot. Same three overloads as forward().
-    void inverse(std::span<std::complex<T>> data, std::optional<T> fct = std::nullopt) const {
+    void inverse(span<std::complex<T>> data, std::optional<T> fct = std::nullopt) const {
         check_size(data.size());
         run(false, data.data(), scale(fct));
     }
@@ -206,7 +230,7 @@ public:
 
 private:
     void check_size(std::size_t n) const {
-        if (n != size()) [[unlikely]] throw size_error(detail::kSizeMismatch);
+        if (n != size()) ADM_UNLIKELY throw size_error(detail::kSizeMismatch);
     }
     // In place and out of place are different passes in the engine, not one path
     // with src == dst.
@@ -227,14 +251,15 @@ private:
 /// sub-box. The transformed axis must be whole; the others may be bands. The
 /// direction is fixed at construction. This is ducc0's
 /// c2c(subarray(data, box), {axis}, forward, fct).
-template<detail::precision T>
+template<typename T>
 class ADM_API axis_plan {
+    static_assert(detail::is_precision_v<T>, "admiral: T must be float or double");
 public:
-    [[nodiscard]] axis_plan(std::span<const std::size_t> shape, std::size_t axis, bool forward,
+    [[nodiscard]] axis_plan(span<const std::size_t> shape, std::size_t axis, bool forward,
                             const options& opts = {});
     [[nodiscard]] axis_plan(std::initializer_list<std::size_t> shape, std::size_t axis,
                             bool forward, const options& opts = {})
-        : axis_plan(std::span<const std::size_t>(shape.begin(), shape.size()), axis, forward,
+        : axis_plan(span<const std::size_t>(shape.begin(), shape.size()), axis, forward,
                     opts) {}
 
     ~axis_plan();
@@ -247,15 +272,15 @@ public:
     /// full extent, and an empty box is a no-op. The transformed axis must be
     /// whole, so lo[axis] = 0 and hi[axis] = shape[axis]. fct defaults to 1 for
     /// forward and 1/len for inverse.
-    void execute(std::complex<T>* data, std::span<const std::size_t> lo,
-                 std::span<const std::size_t> hi, std::optional<T> fct = std::nullopt) const;
+    void execute(std::complex<T>* data, span<const std::size_t> lo,
+                 span<const std::size_t> hi, std::optional<T> fct = std::nullopt) const;
 
     /// Two disjoint bands of the LAST dimension in one call: the box as given, plus
     /// [lo2_last, hi2_last) on the last dimension with every other dimension shared.
     /// Equivalent to two execute() calls, but cheaper for narrow bands, which the
     /// planner can pack into one pass chain. lo2_last == hi2_last is execute().
-    void execute_bands(std::complex<T>* data, std::span<const std::size_t> lo,
-                       std::span<const std::size_t> hi, std::size_t lo2_last,
+    void execute_bands(std::complex<T>* data, span<const std::size_t> lo,
+                       span<const std::size_t> hi, std::size_t lo2_last,
                        std::size_t hi2_last, std::optional<T> fct = std::nullopt) const;
 
 private:
@@ -267,25 +292,49 @@ private:
 // ============================================================================
 
 /// Forward N-D FFT, unscaled.
+#if ADM_CXX20
 template<detail::precision T>
-ADM_API void forward(std::complex<T>* data, std::span<const std::size_t> shape,
+ADM_API void
+#else
+template<typename T>
+ADM_API detail::precision_void_t<T>
+#endif
+forward(std::complex<T>* data, span<const std::size_t> shape,
                      const options& opts = {}, std::optional<T> fct = std::nullopt);
 
+#if ADM_CXX20
 template<detail::precision T>
-void forward(std::complex<T>* data, std::initializer_list<std::size_t> shape,
+void
+#else
+template<typename T>
+detail::precision_void_t<T>
+#endif
+forward(std::complex<T>* data, std::initializer_list<std::size_t> shape,
              const options& opts = {}, std::optional<T> fct = std::nullopt) {
-    forward(data, std::span<const std::size_t>(shape.begin(), shape.size()), opts, fct);
+    forward(data, span<const std::size_t>(shape.begin(), shape.size()), opts, fct);
 }
 
 /// Inverse N-D FFT, scaled by 1/Ntot.
+#if ADM_CXX20
 template<detail::precision T>
-ADM_API void inverse(std::complex<T>* data, std::span<const std::size_t> shape,
+ADM_API void
+#else
+template<typename T>
+ADM_API detail::precision_void_t<T>
+#endif
+inverse(std::complex<T>* data, span<const std::size_t> shape,
                      const options& opts = {}, std::optional<T> fct = std::nullopt);
 
+#if ADM_CXX20
 template<detail::precision T>
-void inverse(std::complex<T>* data, std::initializer_list<std::size_t> shape,
+void
+#else
+template<typename T>
+detail::precision_void_t<T>
+#endif
+inverse(std::complex<T>* data, std::initializer_list<std::size_t> shape,
              const options& opts = {}, std::optional<T> fct = std::nullopt) {
-    inverse(data, std::span<const std::size_t>(shape.begin(), shape.size()), opts, fct);
+    inverse(data, span<const std::size_t>(shape.begin(), shape.size()), opts, fct);
 }
 
 // ============================================================================
@@ -302,17 +351,18 @@ void inverse(std::complex<T>* data, std::initializer_list<std::size_t> shape,
 // ============================================================================
 
 /// Real plan, r2c and c2r, any rank.
-template<detail::precision T>
+template<typename T>
 class ADM_API plan_r2c {
+    static_assert(detail::is_precision_v<T>, "admiral: T must be float or double");
 public:
     /// 1-D over `size` REAL elements.
     [[nodiscard]] explicit plan_r2c(std::size_t size, const options& opts = {})
-        : plan_r2c(std::span<const std::size_t>(&size, 1), opts) {}
+        : plan_r2c(span<const std::size_t>(&size, 1), opts) {}
 
     /// N-D over `shape`, last axis fastest.
-    [[nodiscard]] explicit plan_r2c(std::span<const std::size_t> shape, const options& opts = {});
+    [[nodiscard]] explicit plan_r2c(span<const std::size_t> shape, const options& opts = {});
     [[nodiscard]] plan_r2c(std::initializer_list<std::size_t> shape, const options& opts = {})
-        : plan_r2c(std::span<const std::size_t>(shape.begin(), shape.size()), opts) {}
+        : plan_r2c(span<const std::size_t>(shape.begin(), shape.size()), opts) {}
 
     ~plan_r2c();
     plan_r2c(const plan_r2c&) = delete;
@@ -328,12 +378,12 @@ public:
     /// Span overloads, as on plan<T>: they exist for the size check, since the two
     /// buffers here have DIFFERENT lengths (real_size() vs cplx_size() == n/2+1 on the
     /// last axis) and swapping them is the mistake the pointer form cannot catch.
-    void forward(std::span<const T> in, std::span<std::complex<T>> out,
+    void forward(span<const T> in, span<std::complex<T>> out,
                  std::optional<T> fct = std::nullopt) const {
         check_sizes(in.size(), out.size());
         forward(in.data(), out.data(), fct);
     }
-    void inverse(std::span<std::complex<T>> spec, std::span<T> out,
+    void inverse(span<std::complex<T>> spec, span<T> out,
                  std::optional<T> fct = std::nullopt) const {
         check_sizes(out.size(), spec.size());
         inverse(spec.data(), out.data(), fct);
@@ -345,7 +395,7 @@ public:
 
 private:
     void check_sizes(std::size_t nreal, std::size_t ncplx) const {
-        if (nreal != real_size() || ncplx != cplx_size()) [[unlikely]]
+        if (nreal != real_size() || ncplx != cplx_size()) ADM_UNLIKELY
             throw size_error(detail::kSizeMismatch);
     }
     std::unique_ptr<detail::real_state<T>> m;
@@ -353,25 +403,49 @@ private:
 
 /// One-shot r2c, unscaled. The real `in` pointer is what picks this over the
 /// complex forward() above.
+#if ADM_CXX20
 template<detail::precision T>
-ADM_API void forward(const T* in, std::complex<T>* out, std::span<const std::size_t> shape,
-                     const options& opts = {}, std::optional<T> fct = std::nullopt);
+ADM_API void
+#else
+template<typename T>
+ADM_API detail::precision_void_t<T>
+#endif
+forward(const T* in, std::complex<T>* out, span<const std::size_t> shape,
+        const options& opts = {}, std::optional<T> fct = std::nullopt);
 
+#if ADM_CXX20
 template<detail::precision T>
-void forward(const T* in, std::complex<T>* out, std::initializer_list<std::size_t> shape,
-             const options& opts = {}, std::optional<T> fct = std::nullopt) {
-    forward(in, out, std::span<const std::size_t>(shape.begin(), shape.size()), opts, fct);
+void
+#else
+template<typename T>
+detail::precision_void_t<T>
+#endif
+forward(const T* in, std::complex<T>* out, std::initializer_list<std::size_t> shape,
+        const options& opts = {}, std::optional<T> fct = std::nullopt) {
+    forward(in, out, span<const std::size_t>(shape.begin(), shape.size()), opts, fct);
 }
 
 /// One-shot c2r, scaled by 1/Ntot. `spec` is overwritten.
+#if ADM_CXX20
 template<detail::precision T>
-ADM_API void inverse(std::complex<T>* spec, T* out, std::span<const std::size_t> shape,
-                     const options& opts = {}, std::optional<T> fct = std::nullopt);
+ADM_API void
+#else
+template<typename T>
+ADM_API detail::precision_void_t<T>
+#endif
+inverse(std::complex<T>* spec, T* out, span<const std::size_t> shape,
+        const options& opts = {}, std::optional<T> fct = std::nullopt);
 
+#if ADM_CXX20
 template<detail::precision T>
-void inverse(std::complex<T>* spec, T* out, std::initializer_list<std::size_t> shape,
-             const options& opts = {}, std::optional<T> fct = std::nullopt) {
-    inverse(spec, out, std::span<const std::size_t>(shape.begin(), shape.size()), opts, fct);
+void
+#else
+template<typename T>
+detail::precision_void_t<T>
+#endif
+inverse(std::complex<T>* spec, T* out, std::initializer_list<std::size_t> shape,
+        const options& opts = {}, std::optional<T> fct = std::nullopt) {
+    inverse(spec, out, span<const std::size_t>(shape.begin(), shape.size()), opts, fct);
 }
 
 // ============================================================================
@@ -386,8 +460,9 @@ void inverse(std::complex<T>* spec, T* out, std::initializer_list<std::size_t> s
 // fct for FFTW's convention.
 // ============================================================================
 
-template<detail::precision T>
+template<typename T>
 class ADM_API plan_r2r {
+    static_assert(detail::is_precision_v<T>, "admiral: T must be float or double");
 public:
     /// `rows` contiguous lines of `size` reals each, one kind for all of them. Only
     /// the innermost axis of a tensor is contiguous, so N-D needs a transpose the
@@ -406,12 +481,12 @@ public:
     void forward(const T* in, T* out, std::optional<T> fct = std::nullopt) const;
     void inverse(const T* in, T* out, std::optional<T> fct = std::nullopt) const;
 
-    void forward(std::span<const T> in, std::span<T> out,
+    void forward(span<const T> in, span<T> out,
                  std::optional<T> fct = std::nullopt) const {
         check_sizes(in.size(), out.size());
         forward(in.data(), out.data(), fct);
     }
-    void inverse(std::span<const T> in, std::span<T> out,
+    void inverse(span<const T> in, span<T> out,
                  std::optional<T> fct = std::nullopt) const {
         check_sizes(in.size(), out.size());
         inverse(in.data(), out.data(), fct);
@@ -422,7 +497,7 @@ public:
 
 private:
     void check_sizes(std::size_t nin, std::size_t nout) const {
-        if (nin != size() || nout != size()) [[unlikely]]
+        if (nin != size() || nout != size()) ADM_UNLIKELY
             throw size_error(detail::kSizeMismatch);
     }
     std::unique_ptr<detail::r2r_state<T>> m;

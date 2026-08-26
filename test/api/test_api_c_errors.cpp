@@ -169,9 +169,9 @@ TEST_CASE("adm_options reaches threads, effort and debug", "[c_api][options]") {
     for (size_t i = 0; i < N; ++i) data[i] = {double(i % 13) - 6.0, double(i % 7) - 3.0};
     const auto ref = data;
 
-    const adm_options threaded = {.nthreads = 2, .eff = ADM_EFFORT_ESTIMATE, .debug = 0};
-    const adm_options measured = {.nthreads = 1, .eff = ADM_EFFORT_AUTOMATIC, .debug = 0};
-    const adm_options traced = {.nthreads = 1, .eff = ADM_EFFORT_ESTIMATE, .debug = 2};
+    const adm_options threaded = {2, ADM_EFFORT_ESTIMATE, 0};
+    const adm_options measured = {1, ADM_EFFORT_AUTOMATIC, 0};
+    const adm_options traced = {1, ADM_EFFORT_ESTIMATE, 2};
 
     for (const adm_options* o : {&threaded, &measured, &traced}) {
         REQUIRE(adm_forward(data.data(), N, o) == ADM_SUCCESS);
@@ -189,7 +189,7 @@ TEST_CASE("adm_options reaches threads, effort and debug", "[c_api][options]") {
 
     // 3 is the largest value adm_effort's range can hold and is not an enumerator, so it
     // is the only unnamed value a cast can produce without an unspecified result.
-    const adm_options bad = {.nthreads = 1, .eff = static_cast<adm_effort>(3), .debug = 0};
+    const adm_options bad = {1, static_cast<adm_effort>(3), 0};
     REQUIRE(adm_forward(data.data(), N, &bad) == ADM_ERROR_INVALID_OPTION);
     REQUIRE(adm_plan_1d(&plan, N, &bad) == ADM_ERROR_INVALID_OPTION);
     adm_plan_destroy(plan);   // even an options reject writes an error record

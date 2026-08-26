@@ -7,8 +7,6 @@
 
 #include <cmath>
 #include <cstddef>
-#include <numbers>
-#include <span>
 #include <stdexcept>
 #include <type_traits>
 #include <vector>
@@ -22,7 +20,7 @@ namespace {
 template<typename T>
 std::vector<long double> oracle(admiral::r2r_kind kind, const std::vector<T>& x) {
     const std::size_t N = x.size();
-    const long double pi = std::numbers::pi_v<long double>;
+    const long double pi = admiral::detail::numbers::pi_v<long double>;
     const auto ld = [](auto v) { return static_cast<long double>(v); };
     std::vector<long double> y(N);
     for (std::size_t k = 0; k < N; ++k) {
@@ -87,8 +85,8 @@ TEMPLATE_TEST_CASE("DCT/DST match the direct sum in both directions", "[r2r]", f
             const auto x = make_real_input<TestType>(N, 999u + static_cast<unsigned>(N));
             admiral::plan_r2r<TestType> p(N, kind);
             std::vector<TestType> y(N), rt(N);
-            p.forward(std::span<const TestType>(x), std::span<TestType>(y));
-            p.inverse(std::span<const TestType>(y), std::span<TestType>(rt));
+            p.forward(admiral::span<const TestType>(x), admiral::span<TestType>(y));
+            p.inverse(admiral::span<const TestType>(y), admiral::span<TestType>(rt));
             CAPTURE(N, static_cast<int>(kind));
             CHECK(relerrtwonorm(oracle(kind, x), y) < r2r_tol<TestType>());
             CHECK(relerrtwonorm(x, rt) < r2r_tol<TestType>());
@@ -129,7 +127,7 @@ TEMPLATE_TEST_CASE("Threaded r2r equals the serial plan", "[r2r]", float, double
     constexpr std::size_t N = 40, rows = 12;
     for (const r2r_kind kind : {r2r_kind::dct2, r2r_kind::dct3, r2r_kind::dst2, r2r_kind::dst3}) {
         const auto x = make_real_input<TestType>(N * rows, 88u + static_cast<unsigned>(kind));
-        admiral::plan_r2r<TestType> mt(N, kind, rows, {.nthreads = 4});
+        admiral::plan_r2r<TestType> mt(N, kind, rows, {4});
         admiral::plan_r2r<TestType> st(N, kind, rows);
         std::vector<TestType> got(N * rows), want(N * rows), rt(N * rows);
         mt.forward(x.data(), got.data());
@@ -191,6 +189,6 @@ TEST_CASE("plan_r2r rejects empty sizes and mismatched spans", "[r2r]") {
     admiral::plan_r2r<double> p(8, admiral::r2r_kind::dct2, 2);
     CHECK(p.size() == 16);
     std::vector<double> a(16), b(8);
-    CHECK_THROWS_AS(p.forward(std::span<const double>(a), std::span<double>(b)),
+    CHECK_THROWS_AS(p.forward(admiral::span<const double>(a), admiral::span<double>(b)),
                     admiral::size_error);
 }

@@ -3,13 +3,13 @@
 #include <complex>
 #include <memory>
 #include <optional>
-#include <span>
 #include <new>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <utility>
 #include <variant>
+#include "admiral/detail/cxx_compat.hpp"  // span
 
 // Thin translation layer: validate, hand the pointers to the C++ API, map
 // exceptions onto adm_status. One template per operation keeps the two
@@ -33,8 +33,8 @@ namespace {
 // admiral.h's complex structs are layout-compatible with std::complex, so every
 // buffer crosses the boundary as a view, and no copy happens.
 template<typename T>
-std::span<std::complex<T>> to_cpp_span(void* data, size_t size) {
-    return std::span<std::complex<T>>(reinterpret_cast<std::complex<T>*>(data), size);
+admiral::span<std::complex<T>> to_cpp_span(void* data, size_t size) {
+    return admiral::span<std::complex<T>>(reinterpret_cast<std::complex<T>*>(data), size);
 }
 
 // A C caller can pass an eff outside the enum, so this layer guards the cast once
@@ -50,9 +50,9 @@ std::optional<admiral::options> to_cpp_options(const adm_options* opts) {
     if (opts->eff != ADM_EFFORT_ESTIMATE && opts->eff != ADM_EFFORT_AUTOMATIC &&
         opts->eff != ADM_EFFORT_MEASURE)
         return std::nullopt;
-    return admiral::options{.nthreads = opts->nthreads,
-                            .eff = static_cast<admiral::effort>(opts->eff),
-                            .debug = opts->debug};
+    return admiral::options{opts->nthreads,
+                            static_cast<admiral::effort>(opts->eff),
+                            opts->debug};
 }
 
 // A shape C can pass but C++ cannot: null, or zero rank. A zero extent or an
@@ -109,7 +109,7 @@ adm_status run_nd(void* data, const size_t* shape, size_t ndim, bool forward,
     if (data == nullptr) return ADM_ERROR_NULL_POINTER;
     if (bad_shape(shape, ndim)) return ADM_ERROR_INVALID_SIZE;
     return guarded_with(opts, [&](const admiral::options& o) {
-        const std::span<const size_t> extents(shape, ndim);
+        const admiral::span<const size_t> extents(shape, ndim);
         auto* const p = reinterpret_cast<std::complex<T>*>(data);
         if (forward) admiral::forward(p, extents, o);
         else         admiral::inverse(p, extents, o);
@@ -123,7 +123,7 @@ adm_status run_r2c(const void* in, void* out, const size_t* shape, size_t ndim,
     if (bad_shape(shape, ndim)) return ADM_ERROR_INVALID_SIZE;
     return guarded_with(opts, [&](const admiral::options& o) {
         admiral::forward(reinterpret_cast<const T*>(in), reinterpret_cast<std::complex<T>*>(out),
-                         std::span<const size_t>(shape, ndim), o);
+                         admiral::span<const size_t>(shape, ndim), o);
     });
 }
 
@@ -134,7 +134,7 @@ adm_status run_c2r(void* spec, void* out, const size_t* shape, size_t ndim,
     if (bad_shape(shape, ndim)) return ADM_ERROR_INVALID_SIZE;
     return guarded_with(opts, [&](const admiral::options& o) {
         admiral::inverse(reinterpret_cast<std::complex<T>*>(spec), reinterpret_cast<T*>(out),
-                         std::span<const size_t>(shape, ndim), o);
+                         admiral::span<const size_t>(shape, ndim), o);
     });
 }
 
@@ -245,7 +245,7 @@ adm_status make_plan(adm_plan* plan, const size_t* shape, size_t ndim, const adm
     std::string detail;
     try {
         *plan = std::make_unique<adm_plan_s>(std::in_place_type<admiral::plan<T>>,
-                                             std::span<const size_t>(shape, ndim), *o)
+                                             admiral::span<const size_t>(shape, ndim), *o)
                     .release();
         return ADM_SUCCESS;
     } catch (const std::bad_alloc&) {
@@ -271,8 +271,8 @@ adm_status make_plan(adm_plan* plan, const size_t* shape, size_t ndim, const adm
 
 // The variant lookup is also the precision check; a monostate variant replays
 // the recorded creation failure.
-template<typename T>
-adm_status plan_execute(adm_plan plan, auto* data, bool forward) {
+template<typename T, typename U>
+adm_status plan_execute(adm_plan plan, U* data, bool forward) {
     if (plan == nullptr) return ADM_ERROR_INVALID_PLAN;
     if (data == nullptr) return ADM_ERROR_NULL_POINTER;
     auto* p = std::get_if<admiral::plan<T>>(&plan->plan);

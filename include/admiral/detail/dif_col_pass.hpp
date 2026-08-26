@@ -19,13 +19,13 @@
 // ============================================================================
 
 #include <array>  // lane_prefix_mask lane-index sequence
-#include <bit>
 #include <cassert>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
 
 #include <poet/poet.hpp>  // poet::static_for (runtime tail width -> compile-time mask)
+#include "cxx_compat.hpp"  // detail::bit_width
 #include "simd.hpp"
 
 #include "butterfly.hpp"      // dif_butterfly
@@ -115,14 +115,14 @@ template<typename T>
 // FLATTEN, same reason as dif_pass_last_block: without it gcc-14 emits an out-of-line
 // radix_sym_dft for this butterfly, then folds the BULK pass's identical butterfly onto
 // it and calls it, so cells that never enter the tail pay for it.
-template<typename T, std::size_t IP>
+template<typename T, std::size_t IP, typename Mask>
 ADM_ALWAYS_INLINE ADM_FLATTEN void dif_col_piece_masked(const T* ccre,
                                             const T* ccim,
                                             T* chre, T* chim,
                                             std::size_t l1, std::size_t ido, std::size_t B,
                                             std::size_t a, std::size_t b, std::size_t c,
                                             const T* twre,
-                                            const T* twim, const auto m) {
+                                            const T* twim, const Mask m) {
     using batch = xsimd::batch<T>;
     batch tr[IP], ti[IP];
     for (std::size_t j = 0; j < IP; ++j) {
@@ -178,12 +178,12 @@ ADM_ALWAYS_INLINE void dif_col_piece_first(const std::complex<T>* data,
 // Masked twin of dif_col_piece_first: ONE full-width piece for a sub-batch block, instead of
 // a width descent. AoS side masked to 2*rem reals, planar side to rem lanes; the planar row
 // stride is B, so an unmasked store would clobber the next row.
-template<typename T, bool Forward, std::size_t IP, bool HiHalf>
+template<typename T, bool Forward, std::size_t IP, bool HiHalf, typename Mask, typename AMask>
 ADM_ALWAYS_INLINE ADM_FLATTEN void dif_col_piece_first_masked(
     const std::complex<T>* data, std::size_t axis_stride, T* chre,
     T* chim, std::size_t l1, std::size_t ido, std::size_t B, std::size_t a,
     std::size_t b, std::size_t c, const T* twre, const T* twim,
-    const auto m, const auto am) {
+    const Mask m, const AMask am) {
     using batch = xsimd::batch<T>;
     batch tr[IP], ti[IP];
     for (std::size_t j = 0; j < IP; ++j) {
@@ -229,11 +229,11 @@ ADM_ALWAYS_INLINE void dif_col_piece_last(const T* ccre, const T* ccim,
 
 // Masked twin of dif_col_piece_last: planar loads masked (stride B, and the last row would
 // otherwise read past the scratch buffer), AoS store masked to 2*B reals.
-template<typename T, bool Forward, std::size_t IP, bool HiHalf>
+template<typename T, bool Forward, std::size_t IP, bool HiHalf, typename Mask, typename AMask>
 ADM_ALWAYS_INLINE ADM_FLATTEN void dif_col_piece_last_masked(
     const T* ccre, const T* ccim, std::complex<T>* data,
     std::size_t axis_stride, std::size_t l1, std::size_t B, std::size_t b, std::size_t c,
-    T scale_val, const auto m, const auto am) {
+    T scale_val, const Mask m, const AMask am) {
     using batch = xsimd::batch<T>;
     batch tr[IP], ti[IP];
     for (std::size_t j = 0; j < IP; ++j) {
@@ -379,7 +379,7 @@ template<typename T, typename F>
     constexpr std::size_t W = xsimd::batch<T>::size;
     assert(rem < W);
     bool hit = false;
-    poet::static_for<1, std::ptrdiff_t{std::bit_width(W)} - 1>([&](auto E) {
+    poet::static_for<1, std::ptrdiff_t{detail::bit_width(W)} - 1>([&](auto E) {
         constexpr std::size_t PW = std::size_t{1} << E.value;
         if constexpr (((kPieceWidths<T> >> PW) & 1u) != 0u) {
             if (!hit && rem == PW) {
@@ -780,40 +780,56 @@ void dif_col_pass_fused(std::complex<T>* data, std::size_t axis_stride,
 // ----------------------------------------------------------------------------
 
 template<typename T>
-inline constexpr auto dif_col_pass_invoke = []<std::size_t IP>(
-        const T* ccre, const T* ccim,
-        T* chre, T* chim,
-        std::size_t l1, std::size_t ido, std::size_t B,
-        const T* twre, const T* twim) {
-    dif_col_pass<T, IP>(ccre, ccim, chre, chim, l1, ido, B, twre, twim);
+struct dif_col_pass_invoke_t {
+    template<std::size_t IP>
+    void operator()(const T* ccre, const T* ccim,
+                    T* chre, T* chim,
+                    std::size_t l1, std::size_t ido, std::size_t B,
+                    const T* twre, const T* twim) const {
+        dif_col_pass<T, IP>(ccre, ccim, chre, chim, l1, ido, B, twre, twim);
+    }
 };
+template<typename T>
+inline constexpr dif_col_pass_invoke_t<T> dif_col_pass_invoke{};
 
 template<typename T, bool Forward>
-inline constexpr auto dif_col_pass_first_invoke = []<std::size_t IP>(
-        const std::complex<T>* data, std::size_t axis_stride,
-        T* chre, T* chim,
-        std::size_t l1, std::size_t ido, std::size_t B,
-        const T* twre, const T* twim) {
-    dif_col_pass_first<T, Forward, IP>(data, axis_stride, chre, chim, l1, ido, B, twre, twim);
+struct dif_col_pass_first_invoke_t {
+    template<std::size_t IP>
+    void operator()(const std::complex<T>* data, std::size_t axis_stride,
+                    T* chre, T* chim,
+                    std::size_t l1, std::size_t ido, std::size_t B,
+                    const T* twre, const T* twim) const {
+        dif_col_pass_first<T, Forward, IP>(data, axis_stride, chre, chim, l1, ido, B, twre, twim);
+    }
 };
+template<typename T, bool Forward>
+inline constexpr dif_col_pass_first_invoke_t<T, Forward> dif_col_pass_first_invoke{};
 
 template<typename T, bool Forward>
-inline constexpr auto dif_col_pass_last_invoke = []<std::size_t IP>(
-        const T* ccre, const T* ccim,
-        std::complex<T>* data, std::size_t axis_stride,
-        std::size_t l1, std::size_t ido, std::size_t B,
-        const T* twre, const T* twim, T scale_val) {
-    dif_col_pass_last<T, Forward, IP>(ccre, ccim, data, axis_stride, l1, ido, B, twre, twim,
-                                      scale_val);
+struct dif_col_pass_last_invoke_t {
+    template<std::size_t IP>
+    void operator()(const T* ccre, const T* ccim,
+                    std::complex<T>* data, std::size_t axis_stride,
+                    std::size_t l1, std::size_t ido, std::size_t B,
+                    const T* twre, const T* twim, T scale_val) const {
+        dif_col_pass_last<T, Forward, IP>(ccre, ccim, data, axis_stride, l1, ido, B, twre, twim,
+                                          scale_val);
+    }
 };
+template<typename T, bool Forward>
+inline constexpr dif_col_pass_last_invoke_t<T, Forward> dif_col_pass_last_invoke{};
 
 template<typename T, bool Forward>
-inline constexpr auto dif_col_pass_fused_invoke = []<std::size_t IP>(
-        std::complex<T>* data, std::size_t axis_stride,
-        std::size_t l1, std::size_t ido, std::size_t B,
-        const T* twre, const T* twim, T scale_val) {
-    dif_col_pass_fused<T, Forward, IP>(data, axis_stride, l1, ido, B, twre, twim, scale_val);
+struct dif_col_pass_fused_invoke_t {
+    template<std::size_t IP>
+    void operator()(std::complex<T>* data, std::size_t axis_stride,
+                    std::size_t l1, std::size_t ido, std::size_t B,
+                    const T* twre, const T* twim, T scale_val) const {
+        dif_col_pass_fused<T, Forward, IP>(data, axis_stride, l1, ido, B, twre, twim, scale_val);
+    }
 };
+template<typename T, bool Forward>
+inline constexpr dif_col_pass_fused_invoke_t<T, Forward> dif_col_pass_fused_invoke{};
 
 } // namespace detail
 } // namespace admiral

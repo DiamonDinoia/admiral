@@ -16,6 +16,8 @@
 #endif
 
 #include <catch2/catch_test_macros.hpp>
+
+#include "admiral/detail/cxx_compat.hpp"  // detail::remove_cvref_t
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <cmath>
@@ -23,16 +25,15 @@
 #include <functional>
 #include <iterator>
 #include <limits>
-#include <numbers>
 #include <numeric>
 #include <random>
-#include <span>
 #include <type_traits>
 #include <vector>
 
 // Element count of a shape, over any range of extents: what the shared error budget
 // takes as Ntot for a separable N-D transform.
-std::size_t shape_product(const auto& shape) {
+template <typename Shape>
+std::size_t shape_product(const Shape& shape) {
     return std::reduce(std::begin(shape), std::end(shape), std::size_t{1}, std::multiplies<>{});
 }
 
@@ -40,13 +41,14 @@ std::size_t shape_product(const auto& shape) {
 // rather than per-element so a near-zero spectral bin cannot inflate the ratio.
 // Elements may be real or complex; the accumulators are double so a 2^20-point
 // float vector does not lose the error it reports.
-double relerrtwonorm(const auto& a, const auto& b) {
-    static_assert(requires { { std::norm(a[0] - b[0]) } -> std::convertible_to<double>; },
+template <typename A, typename B>
+double relerrtwonorm(const A& a, const B& b) {
+    static_assert(std::is_convertible_v<decltype(std::norm(a[0] - b[0])), double>,
                   "relerrtwonorm: element types must subtract to something normable");
     // A reference may carry a WIDER element type than the result it judges, and the
     // subtraction then promotes `b[m]`. Widen `b[m]` explicitly instead: clang reports
     // the implicit promotion under -Wdouble-promotion, and the suite builds -Werror.
-    using Ref = std::remove_cvref_t<decltype(a[0])>;
+    using Ref = admiral::detail::remove_cvref_t<decltype(a[0])>;
     double err = 0.0, nrm = 0.0;
     for (std::size_t m = 0; m < std::size(a); ++m) {
         nrm += static_cast<double>(std::norm(a[m]));
@@ -68,14 +70,16 @@ constexpr double fft_tol(double scale = 1.0) {
 
 // Catch2's WithinAbs takes double. Handing it float arguments promotes them
 // implicitly, which -Wdouble-promotion flags at every call site; convert once here.
-auto WithinAbsT(const auto target, const auto margin) {
+template <typename A, typename B>
+auto WithinAbsT(const A target, const B margin) {
     return Catch::Matchers::WithinAbs(static_cast<double>(target), static_cast<double>(margin));
 }
 
 // The suite's one array comparison. It reports the measured error rather than
 // "false" alone. A bare predicate inside a REQUIRE says nothing about how far off
 // the result was.
-void require_close(const auto& got, const auto& ref, double tol) {
+template <typename A, typename B>
+void require_close(const A& got, const B& ref, double tol) {
     REQUIRE(std::size(got) == std::size(ref));
     const double err = relerrtwonorm(ref, got);
     INFO("relative L2 error " << err << " (tol " << tol << ")");
@@ -88,14 +92,15 @@ void require_close(const auto& got, const auto& ref, double tol) {
 template <typename C>
 void require_close_c(const C* got, const C* ref, std::size_t size, double tol) {
     using T = decltype(C::real);
-    require_close(std::span(reinterpret_cast<const std::complex<T>*>(got), size),
-                  std::span(reinterpret_cast<const std::complex<T>*>(ref), size), tol);
+    require_close(admiral::span(reinterpret_cast<const std::complex<T>*>(got), size),
+                  admiral::span(reinterpret_cast<const std::complex<T>*>(ref), size), tol);
 }
 
 // Neumaier-compensated energy sum: `long double` is `double` on Apple Silicon, so a
 // wider accumulator alone does not clear the transform's own error. Terms are
 // std::norm, hence non-negative; Neumaier's magnitude test reduces to `s >= t`.
-long double energy(const auto& v) {
+template <typename V>
+long double energy(const V& v) {
     long double s = 0, c = 0;
     for (const auto& e : v) {
         const long double t = static_cast<long double>(std::norm(e));
@@ -108,8 +113,8 @@ long double energy(const auto& v) {
 
 // Parseval for the unnormalized forward: ||X||^2 == Ntot * ||x||^2. Energies are
 // squares, so an amplitude relative error e shows up here as ~2e, hence the scale.
-template<typename T>
-void require_parseval(const auto& x, const auto& X, std::size_t ntot, double scale = 4.0) {
+template<typename T, typename Xv, typename Xo>
+void require_parseval(const Xv& x, const Xo& X, std::size_t ntot, double scale = 4.0) {
     const double want = static_cast<double>(energy(x) * static_cast<long double>(ntot));
     const double got = static_cast<double>(energy(X));
     INFO("Parseval: ntot=" << ntot << " got " << got << " want " << want);
@@ -127,7 +132,8 @@ constexpr long double turn_fraction(std::size_t K, std::size_t n, std::size_t N)
 // exp(+2*pi*i*turns), rounded to T once at the end. `turns` may exceed 1.
 template<typename T>
 std::complex<T> unit_phasor(long double turns) {
-    const long double a = 2.0L * std::numbers::pi_v<long double> * std::fmod(turns, 1.0L);
+    const long double a =
+        2.0L * admiral::detail::numbers::pi_v<long double> * std::fmod(turns, 1.0L);
     return {static_cast<T>(std::cos(a)), static_cast<T>(std::sin(a))};
 }
 
@@ -141,7 +147,7 @@ std::vector<std::complex<Out>> reference_dft(const std::vector<std::complex<T>>&
     const long double sign = forward ? -1.0L : 1.0L;
     std::vector<std::complex<long double>> w(N);
     for (std::size_t j = 0; j < N; ++j) {
-        const long double ang = sign * 2.0L * std::numbers::pi_v<long double>
+        const long double ang = sign * 2.0L * admiral::detail::numbers::pi_v<long double>
                                 * static_cast<long double>(j) / static_cast<long double>(N);
         w[j] = {std::cos(ang), std::sin(ang)};
     }

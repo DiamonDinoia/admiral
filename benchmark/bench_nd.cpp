@@ -16,7 +16,6 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
-#include <span>
 #include <string>
 #include <vector>
 
@@ -106,7 +105,7 @@ bool compare_nd(const std::vector<std::size_t>& shape, int reps, long inner, int
         data[i] = std::complex<T>(std::sin(T(i) * T(0.1)), std::cos(T(i) * T(0.1)));
 
     const std::size_t nt = static_cast<std::size_t>(nthreads);
-    admiral::plan<T> p(std::span<const std::size_t>(shape.data(), shape.size()), {.nthreads = nt});
+    admiral::plan<T> p(admiral::span<const std::size_t>(shape.data(), shape.size()), {nt});
     std::vector<std::complex<T>> buf(Ntot);
 
     volatile T sink = T(0);
@@ -124,7 +123,7 @@ bool compare_nd(const std::vector<std::size_t>& shape, int reps, long inner, int
     // Identity control: a second plan and buffer at a different allocation position,
     // timed the same way as the first. A ratio other than ~1 is harness spread, and
     // every ratio below is that spread wide.
-    admiral::plan<T> p2(std::span<const std::size_t>(shape.data(), shape.size()), {.nthreads = nt});
+    admiral::plan<T> p2(admiral::span<const std::size_t>(shape.data(), shape.size()), {nt});
     std::vector<std::complex<T>> buf2(Ntot);
     const NbStat ident_fwd = nb_measure("identnd_fwd", reps, inner, [&]() {
         p2.forward(data.data(), buf2.data());
@@ -206,7 +205,7 @@ bool compare_nd_r2c(const std::vector<std::size_t>& shape, int reps, long inner,
     for (std::size_t i = 0; i < Nreal; ++i) real_in[i] = std::sin(T(i) * T(0.1)) + std::cos(T(i) * T(0.03));
 
     const std::size_t nt = static_cast<std::size_t>(nthreads);
-    admiral::plan_r2c<T> p(std::span<const std::size_t>(shape.data(), shape.size()), {.nthreads = nt});
+    admiral::plan_r2c<T> p(admiral::span<const std::size_t>(shape.data(), shape.size()), {nt});
     std::vector<std::complex<T>> cbuf(Nc);
     std::vector<T> rbuf(Nreal);
 
@@ -244,8 +243,8 @@ bool compare_nd_r2c(const std::vector<std::size_t>& shape, int reps, long inner,
     });
     // Identity control: a second plan and buffer at a different allocation position,
     // timed the same way as the first, so its ratio bounds the harness spread.
-    admiral::plan_r2c<T> p2(std::span<const std::size_t>(shape.data(), shape.size()),
-                            {.nthreads = nt});
+    admiral::plan_r2c<T> p2(admiral::span<const std::size_t>(shape.data(), shape.size()),
+                            {nt});
     std::vector<std::complex<T>> cbuf2(Nc);
     const NbStat ident_fwd = nb_measure("ident_r2c_fwd", reps, inner, [&]() {
         p2.forward(real_in.data(), cbuf2.data());
@@ -325,13 +324,13 @@ bool compare_nd_robust(const std::vector<std::size_t>& shape, int rounds, int re
     for (std::size_t i = 0; i < Ntot; ++i)
         data[i] = std::complex<T>(std::sin(T(i) * T(0.1)), std::cos(T(i) * T(0.1)));
     const std::size_t nt = static_cast<std::size_t>(nthreads);
-    std::span<const std::size_t> sp(shape.data(), shape.size());
+    admiral::span<const std::size_t> sp(shape.data(), shape.size());
     const std::string ss = shape_to_string(shape);
     const char* prec = (sizeof(T) == 4) ? "f32" : "f64";
     volatile T sink = T(0);
 
     auto makeOurs = [&]() {
-        auto plan = std::make_shared<admiral::plan<T>>(sp, admiral::options{.nthreads = nt});
+        auto plan = std::make_shared<admiral::plan<T>>(sp, admiral::options{nt});
         auto buf  = std::make_shared<std::vector<std::complex<T>>>(Ntot);
         ab_engine e;
         // Out-of-place forward (data -> buf): preserves the input like ducc0's c2c
@@ -399,13 +398,13 @@ bool compare_nd_r2c_robust(const std::vector<std::size_t>& shape, int rounds, in
     std::vector<T> real_in(Nreal);
     for (std::size_t i = 0; i < Nreal; ++i) real_in[i] = std::sin(T(i) * T(0.1)) + std::cos(T(i) * T(0.03));
     const std::size_t nt = static_cast<std::size_t>(nthreads);
-    std::span<const std::size_t> sp(shape.data(), shape.size());
+    admiral::span<const std::size_t> sp(shape.data(), shape.size());
     const std::string ss = shape_to_string(shape);
     const char* prec = (sizeof(T) == 4) ? "f32" : "f64";
     volatile T sink = T(0);
 
     auto makeOurs = [&]() {
-        auto plan = std::make_shared<admiral::plan_r2c<T>>(sp, admiral::options{.nthreads = nt});
+        auto plan = std::make_shared<admiral::plan_r2c<T>>(sp, admiral::options{nt});
         auto cbuf = std::make_shared<std::vector<std::complex<T>>>(Nc);
         auto rbuf = std::make_shared<std::vector<T>>(Nreal);
         ab_engine e;

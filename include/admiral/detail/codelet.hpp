@@ -8,16 +8,15 @@
 // ============================================================================
 
 #include <array>
-#include <bit>
 #include <cstddef>
 #include <cstdint>
-#include <numbers>
 #include <type_traits>
 
 #include <poet/poet.hpp>
 #include "simd.hpp"
 
 #include <admiral/detail/codelet_max.hpp>  // CODELET_CATALOG_MAX
+#include "cxx_compat.hpp"  // ADM_CONSTEVAL, detail::bit_width, detail::has_single_bit
 
 #include "butterfly.hpp"  // dif_butterfly (symmetric odd-radix + Cooley-Tukey DIF pow2)
 #include "ct_math.hpp"  // ct_sincos_t/turns, smallest_radix, codelet_radix
@@ -46,7 +45,7 @@ namespace detail {
 // W_N^{q j} = exp(sign 2*pi*i q j / N), layout (q-1)*M+j, q in [1,R), j in [0,M=N/R).
 // Part selects real (false) or imag (true). No runtime trig, no heap.
 template<unsigned N, unsigned R, typename T, bool Imag>
-consteval std::array<T, (R - 1) * (N / R)> make_twiddle_table() {
+ADM_CONSTEVAL std::array<T, (R - 1) * (N / R)> make_twiddle_table() {
     std::array<T, (R - 1) * (N / R)> a{};
     constexpr unsigned M = N / R;
     for (unsigned q = 1; q < R; ++q) {
@@ -75,11 +74,11 @@ struct yre_sink {
     }
 };
 
-template<unsigned R, typename T, typename V>
+template<unsigned R, typename T, typename V, typename Sink>
 ADM_ALWAYS_INLINE void bfly_chunk(const T* ADM_RESTRICT twre,
                                   const T* ADM_RESTRICT twim,
                                   const T* yre, const T* yim,
-                                  std::size_t M, std::size_t j, auto&& sink) {
+                                  std::size_t M, std::size_t j, Sink&& sink) {
     // Gather one sample per sub-block, applying the inter-stage twiddle.
     V tr[R], ti[R];
     poet::static_for<0, R>([&](const auto q) {
@@ -106,9 +105,9 @@ ADM_ALWAYS_INLINE void bfly_chunk(const T* ADM_RESTRICT twre,
 // Scalar combine chunk at compile-time j: twiddles fold by value, no table.
 // Inputs are NOT restrict: the cofactor combine reads rows stored moments
 // earlier in the same inlined region; restrict lets GCC reorder loads above stores.
-template<unsigned R, unsigned N, std::size_t J, typename T>
+template<unsigned R, unsigned N, std::size_t J, typename T, typename Sink>
 ADM_ALWAYS_INLINE void bfly_chunk_scalar_ct(const T* yre, const T* yim,
-                                            auto&& sink) {
+                                            Sink&& sink) {
     constexpr std::size_t M = N / R;
     T tr[R], ti[R];
     poet::static_for<0, R>([&](const auto q) {
@@ -129,7 +128,7 @@ ADM_ALWAYS_INLINE void bfly_chunk_scalar_ct(const T* yre, const T* yim,
 
 // Narrowest SIMD width >= 2 with a native batch at this T (tail descent starts here).
 template<typename T, std::size_t Wt = 2>
-[[nodiscard]] consteval std::size_t min_sized_tail_width() {
+[[nodiscard]] ADM_CONSTEVAL std::size_t min_sized_tail_width() {
     if constexpr (!std::is_void_v<xsimd::make_sized_batch_t<T, Wt>>) return Wt;
     else return min_sized_tail_width<T, Wt * 2>();
 }
@@ -138,9 +137,9 @@ template<typename T, std::size_t Wt = 2>
 // remainder (rem = M % W < W) by its binary expansion: one batch per set bit
 // at existing widths, value-folded scalar chunks for the rest. Every j is a
 // compile-time constant, so no combine work survives as an out-of-line call.
-template<unsigned R, unsigned N, typename T>
+template<unsigned R, unsigned N, typename T, typename Sink>
 ADM_ALWAYS_INLINE void radix_butterfly_ct(T* ADM_RESTRICT yre, T* ADM_RESTRICT yim,
-                                          auto&& sink) {
+                                          Sink&& sink) {
     constexpr std::size_t M = N / R;
     static constexpr auto twre = make_twiddle_table<N, R, T, false>();
     static constexpr auto twim = make_twiddle_table<N, R, T, true>();
@@ -165,7 +164,7 @@ ADM_ALWAYS_INLINE void radix_butterfly_ct(T* ADM_RESTRICT yre, T* ADM_RESTRICT y
         }
     }
     constexpr std::size_t rem = M - nfull * W;
-    poet::static_for<1, std::bit_width(W)>([&](auto S) {
+    poet::static_for<1, detail::bit_width(W)>([&](auto S) {
         constexpr std::size_t Wt = W >> S;
         using Vt = xsimd::make_sized_batch_t<T, Wt>;
         if constexpr (Wt >= 2 && !std::is_void_v<Vt> && (rem & Wt) != 0) {
@@ -205,7 +204,7 @@ ADM_ALWAYS_INLINE void radix_butterfly_ct(T* ADM_RESTRICT yre, T* ADM_RESTRICT y
 // linearity the fold costs nothing (compile-time table) and deletes 2L runtime
 // multiplies per Rader codelet.
 template<unsigned P, typename T, bool Imag>
-consteval std::array<T, P - 1> make_rader_bhat() {
+ADM_CONSTEVAL std::array<T, P - 1> make_rader_bhat() {
     constexpr unsigned L = P - 1;
     constexpr std::size_t g = ct_primitive_root(P);
     struct cd { double re; double im; };
@@ -248,7 +247,7 @@ consteval std::array<T, P - 1> make_rader_bhat() {
 // make_sized_batch_t can probe each candidate. Native width is always available, so the
 // recursion always terminates.
 template<typename T, std::size_t R, std::size_t W = 1>
-[[nodiscard]] consteval std::size_t cofactor_batch_width() {
+[[nodiscard]] ADM_CONSTEVAL std::size_t cofactor_batch_width() {
     if constexpr (W >= xsimd::batch<T>::size)
         return xsimd::batch<T>::size;  // native width is always available, so stop here
     else if constexpr (W >= R && !std::is_void_v<xsimd::make_sized_batch_t<T, W>>)
@@ -262,9 +261,9 @@ template<typename T, std::size_t R, std::size_t W = 1>
 // `sink(p, outr, outi)` lets the top-level combine store anywhere (e.g. the DP
 // terminal interleaves straight to AoS `data`) instead of round-tripping through
 // yre/yim.
-template<unsigned R, unsigned N, std::size_t J, typename T, typename V>
+template<unsigned R, unsigned N, std::size_t J, typename T, typename V, typename Sink>
 ADM_ALWAYS_INLINE void bfly_chunk_batched_ct(const V* yre, const V* yim,
-                                             auto&& sink) {
+                                             Sink&& sink) {
     constexpr std::size_t M = N / R;
     V tr[R], ti[R];
     poet::static_for<0, R>([&](const auto q) {
@@ -359,8 +358,9 @@ struct kernel_batched {
     // Same transform, but the FINAL combine emits via sink(p, outr, outi) instead
     // of storing to yre/yim. The caller fuses its store (scale + AoS interleave) into
     // the last butterfly. yre/yim stay as scratch. Each output index sinks once.
+    template<typename Sink>
     static void apply_sink(const V* xre, const V* xim, std::size_t xstride, V* yre, V* yim,
-                           auto&& sink) {
+                           Sink&& sink) {
         if constexpr (is_rader_prime(N)) {
             // Rader writes via data-dependent index maps; no last-combine hook.
             // Run whole, then forward outputs.
@@ -403,8 +403,9 @@ struct kernel_batched<N, T, false, V> {
     static void apply(const V* xre, const V* xim, std::size_t xstride, V* yre, V* yim) {
         kernel_batched<N, T, true, V>::apply(xim, xre, xstride, yim, yre);
     }
+    template<typename Sink>
     static void apply_sink(const V* xre, const V* xim, std::size_t xstride, V* yre, V* yim,
-                           auto&& sink) {
+                           Sink&& sink) {
         kernel_batched<N, T, true, V>::apply_sink(xim, xre, xstride, yim, yre,
             [&](std::size_t p, V outr, V outi) { sink(p, outi, outr); });
     }
@@ -440,7 +441,7 @@ inline constexpr unsigned kNoinlineMinSize = 16;
 static_assert(kNoinlineMinSize >= xsimd::batch<float>::size && kNoinlineMinSize <= CODELET_CATALOG_MAX,
               "kNoinlineMinSize must sit between the SIMD width and the catalog max");
 
-[[nodiscard]] consteval bool kernel_should_noinline(std::size_t M) {
+[[nodiscard]] ADM_CONSTEVAL bool kernel_should_noinline(std::size_t M) {
     return M >= kNoinlineMinSize
         && 2 * codelet_radix(M) + 10 > poet::vector_register_count();
 }
@@ -463,7 +464,7 @@ static_assert(kNoinlineMinSize >= xsimd::batch<float>::size && kNoinlineMinSize 
 inline constexpr std::size_t kMaskedLoad256MinWork = 27;
 
 template<typename T, unsigned R>
-[[nodiscard]] consteval bool cofactor_simd_profitable(std::size_t M) {
+[[nodiscard]] ADM_CONSTEVAL bool cofactor_simd_profitable(std::size_t M) {
     if (is_rader_prime(M)) {
         // Rader-prime: batch R copies across lanes UNLESS half-idle
         // (f32 R=2 -> Wc=4): scalar rader_apply<M> runs kernel<M-1> at full ymm.
@@ -495,7 +496,7 @@ template<typename T, unsigned R>
 // either fails this equals codelet_radix_for. 64 -> 8x8: r=4's flat-16 batched leaf
 // holds 2*16 batches, r=8's flat-8 holds 2*8 plus a combine under the 2r+10 budget.
 template<typename T>
-[[nodiscard]] consteval std::size_t kernel_peel_radix(std::size_t N) {
+[[nodiscard]] ADM_CONSTEVAL std::size_t kernel_peel_radix(std::size_t N) {
     constexpr std::size_t W = xsimd::batch<T>::size;
     if (N == 64 && 8 <= W && cofactor_simd_profitable<T, 8u>(8)) return 8;
     if (N % 8 == 0 && (N / 8) % 2 == 1 && 8 <= W && cofactor_simd_profitable<T, 8u>(N / 8))
@@ -590,6 +591,12 @@ struct kernel {
                         }
                     });
                     if constexpr (Wc == r) {
+                        // The direct arm reads xre/xim as aligned batch arrays, which is
+                        // legal only below the alignment check. The barrier pins every
+                        // memory access below the test, so no compiler hoists a read
+                        // above it. It emits no instructions of its own; it does
+                        // constrain scheduling around the test.
+                        asm volatile("" ::: "memory");
                         // Full batch: the batched input layout is byte-identical to the
                         // planar source, so forward it when V-aligned instead of staging
                         // (gcc lowers the staging loop to out-of-line memcpy PLT calls).
@@ -681,7 +688,7 @@ struct kernel {
                 // scalar loses. One 4-wide chunk beats four scalar radix-8
                 // butterflies.
                 constexpr std::size_t C = M - nft * Wc;
-                poet::static_for<1, std::bit_width(Wc)>([&](auto S) {
+                poet::static_for<1, detail::bit_width(Wc)>([&](auto S) {
                     constexpr std::size_t Wt = Wc >> S;
                     using Vt = xsimd::make_sized_batch_t<T, Wt>;
                     if constexpr (Wt >= 2 && !std::is_void_v<Vt> && (C & Wt) != 0) {
@@ -772,7 +779,7 @@ ADM_NOINLINE void kernel_apply_boundary(const T* xre, const T* xim, std::size_t 
 // Shared by rader_apply and rader_apply_batched; templated on P/L only to avoid
 // duplicate instantiations across T/V.
 template<unsigned P, unsigned L = P - 1>
-consteval std::array<std::size_t, L> rader_gpow_table() {
+ADM_CONSTEVAL std::array<std::size_t, L> rader_gpow_table() {
     constexpr std::size_t g = ct_primitive_root(P);
     std::array<std::size_t, L> t{};
     std::size_t e = 1;
@@ -786,7 +793,7 @@ consteval std::array<std::size_t, L> rader_gpow_table() {
 // Consteval g^{-m} mod P table for Rader output scatter (m=0..L-1, L=P-1).
 // Shared by rader_apply and rader_apply_batched.
 template<unsigned P, unsigned L = P - 1>
-consteval std::array<std::size_t, L> rader_ginvpow_table() {
+ADM_CONSTEVAL std::array<std::size_t, L> rader_ginvpow_table() {
     constexpr std::size_t g = ct_primitive_root(P);
     const std::size_t gi = ct_powmod(g, P - 2, P);
     std::array<std::size_t, L> t{};

@@ -26,11 +26,11 @@
 
 #include <algorithm>
 #include <atomic>
-#include <bit>
 #include <cmath>
 #include <complex>
 #include <cstddef>
 #include <vector>
+#include "cxx_compat.hpp"  // detail::bit_ceil, detail::countr_zero, detail::has_single_bit
 
 #include "dif_driver.hpp"      // dif_dispatch (1-D engine)
 #include "four_step.hpp"       // four_step_split
@@ -394,7 +394,7 @@ using large_split = four_step_split;
 
 // Usable leaf: pow2 or codelet-supported smooth length (build_dif_twiddle_set requirement).
 [[nodiscard]] constexpr bool large_leaf_ok(std::size_t f) {
-    return f > 1 && (std::has_single_bit(f) || is_codelet_supported(f));
+    return f > 1 && (detail::has_single_bit(f) || is_codelet_supported(f));
 }
 
 // Balanced split N = n1*n2 (both usable), closest to sqrt(N); {0,0} if none exists.
@@ -503,8 +503,8 @@ struct four_step_large_plan {
         // Split-twiddle tables for W_N^{nn1 k2}: q = nn1*k2 = qhi*M + qlo,
         // W_N^q = hitab[qhi]*lotab[qlo]. Exact sincos per entry (one rounding), no
         // accumulated rotation error. M = 2^k >= sqrt(N).
-        twist_M = std::bit_ceil(static_cast<std::size_t>(std::sqrt(static_cast<double>(N))) + 1);
-        twist_logM = static_cast<std::size_t>(std::countr_zero(twist_M));
+        twist_M = detail::bit_ceil(static_cast<std::size_t>(std::sqrt(static_cast<double>(N))) + 1);
+        twist_logM = static_cast<std::size_t>(detail::countr_zero(twist_M));
         lotab.resize(twist_M);
         for (std::size_t j = 0; j < twist_M; ++j) {
             const auto [sn, cs] = fwd ? portable_trig::sincos_turns<true>(j, N)

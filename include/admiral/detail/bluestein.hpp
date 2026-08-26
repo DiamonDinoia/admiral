@@ -12,13 +12,12 @@
 // ============================================================================
 
 #include <algorithm>
-#include <bit>
 #include <complex>
 #include <cstddef>
 #include <limits>
 #include <optional>
-#include <span>
 #include <vector>
+#include "cxx_compat.hpp"  // span, detail::bit_ceil
 
 #include "dif_driver.hpp"       // iterative_dif_execute_ws, dif_execute_in_place
 #include "four_step_large.hpp"  // four_step_large_plan, four_step_large_supported
@@ -79,16 +78,16 @@ class bluestein_plan {
 
 public:
     bluestein_plan(std::size_t size, bool is_forward)
-        // Every member is designated even where {} is the default: -Wmissing-field-initializers
-        // is an error here.
-        : m{.size = size,
-            .is_forward = is_forward,
-            .padded_size = bluestein_choose_pad(size),
-            .chirp = {},
-            .kernel_fft = {},
-            .bl_dif = {},
-            .six_fwd = {},
-            .six_inv = {}}
+        // Every member is initialized even where {} is the default:
+        // -Wmissing-field-initializers is an error here.
+        : m{size,
+            is_forward,
+            bluestein_choose_pad(size),
+            {},
+            {},
+            {},
+            {},
+            {}}
     {
         // Twiddle tables for padded pow2 transforms (only above codelet catalog).
         if (!is_codelet_catalog(m.padded_size)) {
@@ -118,7 +117,7 @@ public:
         }
 
         // Forward-transform the kernel
-        pad_fft<true>(std::span(kernel));
+        pad_fft<true>(span(kernel));
         m.kernel_fft = std::move(kernel);
     }
 
@@ -139,7 +138,7 @@ public:
         }
         std::fill(raw + 2 * N, raw + 2 * m.padded_size, T(0));
 
-        const std::span buf{a, m.padded_size};
+        const span buf{a, m.padded_size};
         pad_fft<true>(buf);
 
         // Pointwise multiply with pre-transformed kernel.
@@ -163,7 +162,7 @@ private:
     // (DRAM-scale pads), or the iterative DIF driver. Forward: un-normalized;
     // inverse: scaled by 1/pad.
     template<bool Forward>
-    void pad_fft(std::span<std::complex<T>> buf) const {
+    void pad_fft(span<std::complex<T>> buf) const {
         const std::size_t pad = m.padded_size;
         if (is_codelet_catalog(pad)) {
             codelet_dispatch<T, Forward>(buf.data(), buf.data(), pad);

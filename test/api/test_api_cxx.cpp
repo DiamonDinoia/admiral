@@ -17,7 +17,7 @@ TEMPLATE_TEST_CASE("FFT size 1", "[fft][edge]", float, double) {
     std::vector<std::complex<T>> input = {{T(1), T(0)}};
     std::vector<std::complex<T>> output(1);
 
-    admiral::forward(std::span<const std::complex<T>>(input), std::span(output));
+    admiral::forward(admiral::span<const std::complex<T>>(input), admiral::span(output));
 
     // N=1 is the identity, so this is exact, not "within 1e-6".
     REQUIRE(output.size() == 1);
@@ -33,7 +33,7 @@ TEMPLATE_TEST_CASE("FFT known values (size 4)", "[fft][known]", float, double) {
         {T(1), T(0)}, {T(0), T(0)}, {T(0), T(0)}, {T(0), T(0)}
     };
     std::vector<std::complex<T>> output(4);
-    admiral::forward(std::span(input), std::span(output));
+    admiral::forward(admiral::span(input), admiral::span(output));
 
     REQUIRE(output.size() == 4);
     require_close(output, std::vector<std::complex<T>>(4, std::complex<T>(T(1), T(0))), fft_tol<T>());
@@ -45,7 +45,7 @@ TEMPLATE_TEST_CASE("FFT known values (size 4, impulse)", "[fft][known]", float, 
         {T(1), T(0)}, {T(1), T(0)}, {T(1), T(0)}, {T(1), T(0)}
     };
     std::vector<std::complex<T>> output(4);
-    admiral::forward(std::span(input), std::span(output));
+    admiral::forward(admiral::span(input), admiral::span(output));
 
     REQUIRE(output.size() == 4);
     std::vector<std::complex<T>> want(4, std::complex<T>(T(0), T(0)));
@@ -66,7 +66,7 @@ TEMPLATE_TEST_CASE("FFT Parseval's theorem", "[fft][properties]", float, double)
         }
 
         std::vector<std::complex<T>> fft_result(N);
-        admiral::forward(std::span(input), std::span(fft_result));
+        admiral::forward(admiral::span(input), admiral::span(fft_result));
 
         // scale 1 asks require_parseval for its 32eps bound.
         require_parseval<T>(input, fft_result, N, 1.0);
@@ -98,12 +98,12 @@ TEMPLATE_TEST_CASE("FFT linearity", "[fft][properties]", float, double) {
         combined[i] = a * x[i] + b * y[i];
     }
     std::vector<std::complex<T>> fft_combined(N);
-    admiral::forward(std::span(combined), std::span(fft_combined));
+    admiral::forward(admiral::span(combined), admiral::span(fft_combined));
 
     // Compute a*FFT(x) + b*FFT(y)
     std::vector<std::complex<T>> fft_x(N), fft_y(N);
-    admiral::forward(std::span(x), std::span(fft_x));
-    admiral::forward(std::span(y), std::span(fft_y));
+    admiral::forward(admiral::span(x), admiral::span(fft_x));
+    admiral::forward(admiral::span(y), admiral::span(fft_y));
 
     std::vector<std::complex<T>> linear_combo(N);
     for (std::size_t i = 0; i < N; ++i) {
@@ -124,11 +124,11 @@ TEMPLATE_TEST_CASE("In-place transform", "[fft][inplace]", float, double) {
 
     std::vector<std::complex<T>> original = data;
 
-    admiral::forward(std::span(data), std::span(data));
+    admiral::forward(admiral::span(data), admiral::span(data));
 
     REQUIRE(relerrtwonorm(original, data) > fft_tol<T>());
 
-    admiral::inverse(std::span(data), std::span(data));
+    admiral::inverse(admiral::span(data), admiral::span(data));
 
     require_close(data, original, fft_tol<T>());
 }
@@ -136,19 +136,19 @@ TEMPLATE_TEST_CASE("In-place transform", "[fft][inplace]", float, double) {
 TEMPLATE_TEST_CASE("one-shot validation", "[fft][oneshot]", float, double) {
     using T = TestType;
     std::vector<std::complex<T>> in(64, {T(1), T(0)}), out(64), short_out(32);
-    const auto cin = std::span<const std::complex<T>>(in);
+    const auto cin = admiral::span<const std::complex<T>>(in);
 
     // A size mismatch throws instead of overrunning the short span, and it throws the
     // same admiral::size_error every other span-count check on this API throws.
-    REQUIRE_THROWS_AS(admiral::forward(cin, std::span(short_out)), admiral::size_error);
-    REQUIRE_THROWS_AS(admiral::inverse(cin, std::span(short_out)), admiral::size_error);
+    REQUIRE_THROWS_AS(admiral::forward(cin, admiral::span(short_out)), admiral::size_error);
+    REQUIRE_THROWS_AS(admiral::inverse(cin, admiral::span(short_out)), admiral::size_error);
 
     // Empty spans are a legal no-op.
     std::vector<std::complex<T>> ein, eout;
     REQUIRE_NOTHROW(
-        admiral::forward(std::span<const std::complex<T>>(ein), std::span(eout)));
+        admiral::forward(admiral::span<const std::complex<T>>(ein), admiral::span(eout)));
     REQUIRE_NOTHROW(
-        admiral::inverse(std::span<const std::complex<T>>(ein), std::span(eout)));
+        admiral::inverse(admiral::span<const std::complex<T>>(ein), admiral::span(eout)));
 }
 
 TEMPLATE_TEST_CASE("one-shot with nthreads transforms correctly", "[fft][oneshot][threads]",
@@ -160,12 +160,12 @@ TEMPLATE_TEST_CASE("one-shot with nthreads transforms correctly", "[fft][oneshot
     std::vector<std::complex<T>> x(N), y(N);
     for (std::size_t j = 0; j < N; ++j) x[j] = unit_phasor<T>(turn_fraction(3, j, N));
 
-    admiral::forward(std::span<const std::complex<T>>(x), std::span(y), {.nthreads = 2});
+    admiral::forward(admiral::span<const std::complex<T>>(x), admiral::span(y), {2});
 
     REQUIRE_THAT(double(std::abs(y[3])), WithinAbsT(double(N), double(N) * fft_tol<T>()));
 
     std::vector<std::complex<T>> back(N);
-    admiral::inverse(std::span<const std::complex<T>>(y), std::span(back), {.nthreads = 2});
+    admiral::inverse(admiral::span<const std::complex<T>>(y), admiral::span(back), {2});
     require_close(back, x, fft_tol<T>());
 }
 
@@ -181,10 +181,10 @@ TEMPLATE_TEST_CASE("N-D one-shot with nthreads transforms correctly",
     }
 
     std::vector<std::complex<T>> y = x;
-    admiral::forward(y.data(), shape, {.nthreads = 3});   // 3 = a non-pow2 thread count
+    admiral::forward(y.data(), shape, {3});   // 3 = a non-pow2 thread count
     REQUIRE_THAT(double(std::abs(y[5 * shape[1] + 3])),
                  WithinAbsT(double(N), double(N) * fft_tol<T>()));
-    admiral::inverse(y.data(), shape, {.nthreads = 3});
+    admiral::inverse(y.data(), shape, {3});
     require_close(y, x, fft_tol<T>());
 }
 
@@ -212,20 +212,21 @@ TEMPLATE_TEST_CASE("options::debug traces without changing the result",
             std::size_t n = 1;
             for (const std::size_t e : shape) n *= e;
             const auto x = ramp(n);
-            const std::span<const std::size_t> sp(shape);
+            const admiral::span<const std::size_t> sp(shape);
+            const admiral::options loud{0, admiral::effort::estimate, kVerbose};
 
             std::vector<std::complex<T>> v = x;
             admiral::plan<T>(sp).forward(v.data(), v.data());
             const auto quiet = v;
             v = x;
-            admiral::plan<T>(sp, {.debug = kVerbose}).forward(v.data(), v.data());
+            admiral::plan<T>(sp, loud).forward(v.data(), v.data());
             REQUIRE(v == quiet);
 
             // Out of place too: it is a separate funnel with its own guard.
             std::vector<std::complex<T>> dst(n);
             admiral::plan<T>(sp).inverse(quiet.data(), dst.data());
             const auto quiet_oop = dst;
-            admiral::plan<T>(sp, {.debug = kVerbose}).inverse(quiet.data(), dst.data());
+            admiral::plan<T>(sp, loud).inverse(quiet.data(), dst.data());
             REQUIRE(dst == quiet_oop);
         }
     }
@@ -233,7 +234,7 @@ TEMPLATE_TEST_CASE("options::debug traces without changing the result",
     SECTION("real, r2c and c2r") {
         const std::array<std::size_t, 2> shape{16, 12};
         const admiral::plan_r2c<T> quiet(shape);
-        const admiral::plan_r2c<T> loud(shape, {.debug = kVerbose});
+        const admiral::plan_r2c<T> loud(shape, {0, admiral::effort::estimate, kVerbose});
         std::vector<T> in(quiet.real_size());
         for (std::size_t j = 0; j < in.size(); ++j) in[j] = T(j % 11) - T(5);
 

@@ -2,7 +2,6 @@
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "utils/reference.hpp"
-#include <span>
 #include <admiral/admiral.hpp>
 #include <admiral/detail/plan.hpp>  // plan_impl::route_name() for the election check
 #include <vector>
@@ -10,9 +9,10 @@
 #include <cmath>
 #include <limits>
 #include <chrono>
-#include <numbers>
 
 using namespace Catch::Matchers;
+using admiral::span;
+namespace num = admiral::detail::numbers;
 
 TEST_CASE("Plan creation and basic properties", "[plan]") {
     // One plan type: admiral::plan<T> is bidirectional, there is no forward-only plan.
@@ -36,7 +36,7 @@ TEST_CASE("Plan move semantics", "[plan]") {
     std::vector<std::complex<double>> in(64);
     for (std::size_t i = 0; i < 64; ++i) in[i] = {std::sin(double(i)), std::cos(double(i))};
     auto want = in;
-    admiral::plan<double>(64).forward(std::span(want));
+    admiral::plan<double>(64).forward(span(want));
 
     auto plan1 = admiral::plan<double>(64);
     REQUIRE(plan1.size() == 64);
@@ -44,7 +44,7 @@ TEST_CASE("Plan move semantics", "[plan]") {
     auto plan2 = std::move(plan1);
     REQUIRE(plan2.size() == 64);
     auto got = in;
-    plan2.forward(std::span(got));
+    plan2.forward(span(got));
     REQUIRE(got == want);
 
     auto plan3 = admiral::plan<double>(32);
@@ -52,7 +52,7 @@ TEST_CASE("Plan move semantics", "[plan]") {
     plan3 = std::move(plan2);
     REQUIRE(plan3.size() == 64);
     auto got2 = in;
-    plan3.forward(std::span(got2));
+    plan3.forward(span(got2));
     REQUIRE(got2 == want);
 }
 
@@ -61,26 +61,26 @@ TEST_CASE("Plan execution produces correct results", "[plan]") {
 
     std::vector<std::complex<double>> input(N);
     for (std::size_t i = 0; i < N; ++i) {
-        input[i] = std::complex<double>(std::sin(2.0 * std::numbers::pi * double(i) / double(N)),
-                                        std::cos(2.0 * std::numbers::pi * double(i) / double(N)));
+        input[i] = std::complex<double>(std::sin(2.0 * num::pi * double(i) / double(N)),
+                                        std::cos(2.0 * num::pi * double(i) / double(N)));
     }
 
     auto fwd_plan = admiral::plan<double>(N);
     auto inv_plan = admiral::plan<double>(N);
 
     std::vector<std::complex<double>> plan_data = input;
-    fwd_plan.forward(std::span(plan_data));
+    fwd_plan.forward(span(plan_data));
 
     std::vector<std::complex<double>> plan_recovered(N);
     std::copy(plan_data.begin(), plan_data.end(), plan_recovered.begin());
-    inv_plan.inverse(std::span(plan_recovered));
+    inv_plan.inverse(span(plan_recovered));
 
     std::vector<std::complex<double>> direct_data(N);
     std::vector<std::complex<double>> input_copy = input;
-    admiral::forward(std::span<const std::complex<double>>(input_copy), std::span(direct_data));
+    admiral::forward(span<const std::complex<double>>(input_copy), span(direct_data));
 
     std::vector<std::complex<double>> direct_recovered(N);
-    admiral::inverse(std::span<const std::complex<double>>(direct_data), std::span(direct_recovered));
+    admiral::inverse(span<const std::complex<double>>(direct_data), span(direct_recovered));
 
     require_close(plan_data, direct_data, fft_tol<double>());
     require_close(plan_recovered, direct_recovered, fft_tol<double>());
@@ -93,16 +93,16 @@ TEMPLATE_TEST_CASE("Plan round-trip (power-of-2 sizes)", "[plan][roundtrip]", fl
     auto test_roundtrip = [&](std::size_t N) {
         std::vector<std::complex<T>> input(N);
         for (std::size_t i = 0; i < N; ++i) {
-            input[i] = std::complex<T>(std::sin(T(2) * std::numbers::pi_v<T> * T(i) / T(N)),
-                                       std::cos(T(2) * std::numbers::pi_v<T> * T(i) / T(N)));
+            input[i] = std::complex<T>(std::sin(T(2) * num::pi_v<T> * T(i) / T(N)),
+                                       std::cos(T(2) * num::pi_v<T> * T(i) / T(N)));
         }
 
         auto fwd_plan = admiral::plan<T>(N);
         auto inv_plan = admiral::plan<T>(N);
 
         std::vector<std::complex<T>> data = input;
-        fwd_plan.forward(std::span(data));
-        inv_plan.inverse(std::span(data));
+        fwd_plan.forward(span(data));
+        inv_plan.inverse(span(data));
 
         require_close(input, data, fft_tol<T>());
     };
@@ -128,8 +128,8 @@ TEMPLATE_TEST_CASE("Plan round-trip (prime sizes)", "[plan][roundtrip][prime]", 
         auto inv_plan = admiral::plan<T>(N);
 
         std::vector<std::complex<T>> data = input;
-        fwd_plan.forward(std::span(data));
-        inv_plan.inverse(std::span(data));
+        fwd_plan.forward(span(data));
+        inv_plan.inverse(span(data));
 
         require_close(input, data, fft_tol<T>());
     };
@@ -155,8 +155,8 @@ TEMPLATE_TEST_CASE("Plan round-trip (composite sizes)", "[plan][roundtrip][compo
         auto inv_plan = admiral::plan<T>(N);
 
         std::vector<std::complex<T>> data = input;
-        fwd_plan.forward(std::span(data));
-        inv_plan.inverse(std::span(data));
+        fwd_plan.forward(span(data));
+        inv_plan.inverse(span(data));
 
         require_close(input, data, fft_tol<T>());
     };
@@ -185,8 +185,8 @@ TEST_CASE("Plan reuse with different data", "[plan][reuse]") {
         }
 
         std::vector<std::complex<double>> data = input;
-        plan.forward(std::span(data));
-        plan.inverse(std::span(data));
+        plan.forward(span(data));
+        plan.inverse(span(data));
 
         require_close(input, data, fft_tol<double>(2.0));  // round trip compounds
     }
@@ -197,7 +197,7 @@ TEST_CASE("Plan error handling", "[plan][error]") {
 
     SECTION("Wrong size data") {
         std::vector<std::complex<double>> data(16);
-        REQUIRE_THROWS_AS(fwd_plan.forward(std::span(data)), admiral::size_error);
+        REQUIRE_THROWS_AS(fwd_plan.forward(span(data)), admiral::size_error);
     }
 
     SECTION("Zero size plan") {
@@ -225,26 +225,26 @@ TEST_CASE("plan_r2c span overloads validate both extents", "[plan][error]") {
     SECTION("forwards identically to the pointer form") {
         std::vector<std::complex<double>> spec_ptr(r.cplx_size());
         r.forward(real.data(), spec_ptr.data());
-        r.forward(std::span<const double>(real), std::span(spec));
+        r.forward(span<const double>(real), span(spec));
         REQUIRE(spec == spec_ptr);
 
         std::vector<double> back_ptr(r.real_size());
         auto spec_copy = spec;  // inverse overwrites its spectrum
         r.inverse(spec_ptr.data(), back_ptr.data());
-        r.inverse(std::span(spec_copy), std::span(back));
+        r.inverse(span(spec_copy), span(back));
         REQUIRE(back == back_ptr);
     }
 
     SECTION("wrong extent throws on either buffer") {
         std::vector<std::complex<double>> spec_bad(r.cplx_size() + 1);
         std::vector<double> real_bad(r.real_size() + 1);
-        REQUIRE_THROWS_AS(r.forward(std::span<const double>(real), std::span(spec_bad)),
+        REQUIRE_THROWS_AS(r.forward(span<const double>(real), span(spec_bad)),
                           admiral::size_error);
-        REQUIRE_THROWS_AS(r.forward(std::span<const double>(real_bad), std::span(spec)),
+        REQUIRE_THROWS_AS(r.forward(span<const double>(real_bad), span(spec)),
                           admiral::size_error);
-        REQUIRE_THROWS_AS(r.inverse(std::span(spec_bad), std::span(back)),
+        REQUIRE_THROWS_AS(r.inverse(span(spec_bad), span(back)),
                           admiral::size_error);
-        REQUIRE_THROWS_AS(r.inverse(std::span(spec), std::span(real_bad)),
+        REQUIRE_THROWS_AS(r.inverse(span(spec), span(real_bad)),
                           admiral::size_error);
     }
 }
@@ -260,11 +260,11 @@ void check_catalog_size(std::size_t N) {
     const auto input = make_input<T>(N);
 
     std::vector<std::complex<T>> out(N);
-    admiral::forward(std::span<const std::complex<T>>(input), std::span(out));
+    admiral::forward(span<const std::complex<T>>(input), span(out));
     require_close(out, reference_dft<T>(input, true), fft_tol<T>());
 
     std::vector<std::complex<T>> rt(N);
-    admiral::inverse(std::span<const std::complex<T>>(out), std::span(rt));
+    admiral::inverse(span<const std::complex<T>>(out), span(rt));
     require_close(rt, input, fft_tol<T>(2.0));  // two transforms compound
 }
 
@@ -275,10 +275,10 @@ void check_noncatalog_size_roundtrip(std::size_t N) {
     const auto input = make_input<T>(N);
 
     std::vector<std::complex<T>> out(N);
-    admiral::forward(std::span<const std::complex<T>>(input), std::span(out));
+    admiral::forward(span<const std::complex<T>>(input), span(out));
 
     std::vector<std::complex<T>> rt(N);
-    admiral::inverse(std::span<const std::complex<T>>(out), std::span(rt));
+    admiral::inverse(span<const std::complex<T>>(out), span(rt));
     require_close(rt, input, fft_tol<T>(2.0));  // two transforms compound
 }
 
@@ -340,8 +340,8 @@ TEMPLATE_TEST_CASE("Plan precision (forward+inverse)", "[plan][precision]", floa
     auto plan = admiral::plan<T>(N);
 
     std::vector<std::complex<T>> data = input;
-    plan.forward(std::span(data));
-    plan.inverse(std::span(data));
+    plan.forward(span(data));
+    plan.inverse(span(data));
 
     require_close(input, data, fft_tol<T>());
 }
@@ -366,7 +366,7 @@ TEMPLATE_TEST_CASE("Plan out-of-place execute (src preserved, matches in-place)"
         const double tol = fft_tol<T>();
 
         std::vector<std::complex<T>> inplace = input;
-        plan.forward(std::span(inplace));
+        plan.forward(span(inplace));
 
         const std::vector<std::complex<T>> src = input;
         std::vector<std::complex<T>> dst(N);
@@ -384,7 +384,7 @@ TEMPLATE_TEST_CASE("Plan out-of-place execute (src preserved, matches in-place)"
 
 TEST_CASE("plan_r2c rejects an empty or overflowing shape", "[plan][error]") {
     // Rank 0: no innermost axis to transform.
-    REQUIRE_THROWS_AS(admiral::plan_r2c<double>(std::span<const std::size_t>{}),
+    REQUIRE_THROWS_AS(admiral::plan_r2c<double>(span<const std::size_t>{}),
                       admiral::size_error);
     REQUIRE_THROWS_AS(admiral::plan_r2c<float>({0}), admiral::size_error);   // zero extent
     REQUIRE_THROWS_AS(admiral::plan_r2c<double>(
@@ -398,18 +398,18 @@ TEMPLATE_TEST_CASE("plan_r2c of a 1- or 2-point signal is exact", "[plan][r2c][e
     // N=1: spectrum == signal. N=2: X[0] = a+b, X[1] = a-b (unnormalized r2c).
     admiral::plan_r2c<T> p1({1});
     std::vector<std::complex<T>> s1(1);
-    p1.forward(std::vector<T>{T(3)}, std::span(s1));
+    p1.forward(std::vector<T>{T(3)}, span(s1));
     REQUIRE(s1[0] == std::complex<T>(T(3), T(0)));
 
     admiral::plan_r2c<T> p2({2});
     std::vector<std::complex<T>> s2(2);
-    p2.forward(std::vector<T>{T(4), T(-1)}, std::span(s2));
+    p2.forward(std::vector<T>{T(4), T(-1)}, span(s2));
     REQUIRE(s2[0] == std::complex<T>(T(3), T(0)));
     REQUIRE(s2[1] == std::complex<T>(T(5), T(0)));
 
     std::vector<std::complex<T>> spec{T(3), T(5)};
     std::vector<T> back(2);
-    p2.inverse(spec, std::span(back));
+    p2.inverse(spec, span(back));
     REQUIRE(std::abs(back[0] - T(4)) <= T(8) * std::numeric_limits<T>::epsilon());
     REQUIRE(std::abs(back[1] - T(-1)) <= T(8) * std::numeric_limits<T>::epsilon());
 }
@@ -423,7 +423,7 @@ TEMPLATE_TEST_CASE("plan with effort::measure picks a working route", "[plan][me
     std::uniform_real_distribution<double> u(-1, 1);
     for (const std::size_t n : {16u, 60u, 67u, 105u, 143u, 243u, 256u, 384u, 500u, 512u}) {
         CAPTURE(n);
-        admiral::plan<T> p(n, {.eff = admiral::effort::measure});
+        admiral::plan<T> p(n, {0, admiral::effort::measure});
         std::vector<std::complex<T>> x(n), y(n);
         for (auto& v : x) v = {T(u(rng)), T(u(rng))};
         p.forward(x.data(), y.data());
@@ -449,11 +449,11 @@ TEMPLATE_TEST_CASE("effort::measure elects a chain that agrees with estimate",
         CAPTURE(n);
         std::vector<std::complex<T>> x(n), a(n), b(n);
         for (auto& v : x) v = {T(u(rng)), T(u(rng))};
-        admiral::plan<T>(n, {.eff = admiral::effort::estimate}).forward(x.data(), a.data());
+        admiral::plan<T>(n, {0, admiral::effort::estimate}).forward(x.data(), a.data());
         // Both budgets: they stop the same race at different points, so they can elect
         // different chains and each has to be right on its own.
         for (const admiral::effort eff : {admiral::effort::automatic, admiral::effort::measure}) {
-            admiral::plan<T>(n, {.eff = eff}).forward(x.data(), b.data());
+            admiral::plan<T>(n, {0, eff}).forward(x.data(), b.data());
             require_close(b, a, fft_tol<T>());
         }
     }
@@ -494,13 +494,13 @@ TEST_CASE("measure_batch spans the sample interval at every execution cost",
 TEMPLATE_TEST_CASE("plan with effort::measure at N=1 and N=2 stays exact", "[plan][measure]",
                    float, double) {
     using T = TestType;
-    admiral::plan<T> p1(1, {.eff = admiral::effort::measure});
+    admiral::plan<T> p1(1, {0, admiral::effort::measure});
     std::vector<std::complex<T>> v{{T(2), T(-1)}};
-    p1.forward(std::span(v));
+    p1.forward(span(v));
     REQUIRE(v[0] == std::complex<T>(T(2), T(-1)));
-    admiral::plan<T> p2(2, {.eff = admiral::effort::measure});
+    admiral::plan<T> p2(2, {0, admiral::effort::measure});
     std::vector<std::complex<T>> w{{T(1), T(0)}, {T(3), T(0)}};
-    p2.forward(std::span(w));
+    p2.forward(span(w));
     REQUIRE(w[0] == std::complex<T>(T(4), T(0)));
     REQUIRE(w[1] == std::complex<T>(T(-2), T(0)));
 }

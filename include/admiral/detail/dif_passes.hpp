@@ -4,14 +4,16 @@
 // passes (dif_pass_first/last), and runtime-radix dispatch functors.
 
 #include <algorithm>  // std::max / std::min (split-column tile width)
-#include <bit>       // std::bit_floor (small-ido sized-piece width)
 #include <cassert>
 #include <complex>
 #include <cstddef>
 #include <type_traits>  // std::integral_constant (transpose-tile offsets)
-#include <utility>   // std::integer_sequence (small-ido allow-list), std::cmp_less
+#include <utility>   // std::integer_sequence (small-ido allow-list), detail::cmp_less
 
 #include <poet/poet.hpp>
+#include "cxx_compat.hpp"  // ADM_CONSTEVAL, detail::cmp_less, detail::bit_ceil,
+                          // detail::bit_floor, detail::bit_width, detail::countr_zero,
+                          // detail::has_single_bit
 #include "simd.hpp"
 
 #include "butterfly.hpp"      // dif_butterfly, dif_pass_unroll (brings fft_ct_math)
@@ -552,7 +554,8 @@ ADM_NOINLINE void dif_pass_prime_chip(const T* ccre, const T* ccim,
             const std::size_t rem = ido - aa;
             // Full-vs-masked split for the generic middle pass: the corner tile alone
             // masks, so the main case carries no mask object at all.
-            auto tile = [&]<bool Full>(xsimd::batch_bool<T> m) ADM_LAMBDA_ALWAYS_INLINE {
+            auto tile = [&](xsimd::batch_bool<T> m, auto full) ADM_LAMBDA_ALWAYS_INLINE {
+                constexpr bool Full = decltype(full)::value;
                 const auto um = xsimd::unaligned_mode{};
                 batch xre[P], xim[P];
                 for (unsigned j = 0; j < P; ++j) {
@@ -596,8 +599,8 @@ ADM_NOINLINE void dif_pass_prime_chip(const T* ccre, const T* ccim,
                     }
                 }
             };
-            if (rem >= W) tile.template operator()<true>(xsimd::batch_bool<T>(true));
-            else          tile.template operator()<false>(lane_prefix_mask<T>(rem));
+            if (rem >= W) tile(xsimd::batch_bool<T>(true), std::bool_constant<true>{});
+            else          tile(lane_prefix_mask<T>(rem), std::bool_constant<false>{});
         }
     }
 }
@@ -862,7 +865,7 @@ void dif_pass_first_impl(const std::complex<T>* data,
     const T* are = nullptr;
     const T* aim = nullptr;
     if constexpr (Split) {
-        bsh = static_cast<std::size_t>(std::countr_zero(blk));
+        bsh = static_cast<std::size_t>(detail::countr_zero(blk));
         nb = (ido + blk - 1) >> bsh;
         are = twre + (IP - 1) * blk;
         aim = twim + (IP - 1) * blk;
@@ -969,7 +972,8 @@ void dif_pass_first(const std::complex<T>* data,
                     std::size_t l1, std::size_t ido,
                     const T* twre, const T* twim,
                     std::size_t eso, std::size_t blk) {
-    const auto run = [&]<bool Split>() {
+    const auto run = [&](auto split) {
+        constexpr bool Split = decltype(split)::value;
         if constexpr (dif_butterfly_wants_reload<IP>)
             dif_pass_first_impl<T, Forward, IP, Split>(data, chre, chim, l1, ido, twre, twim,
                                                        eso, blk);
@@ -977,8 +981,8 @@ void dif_pass_first(const std::complex<T>* data,
             dif_pass_first_flat<T, Forward, IP, Split>(data, chre, chim, l1, ido, twre, twim,
                                                        eso, blk);
     };
-    if (blk != 0) run.template operator()<true>();
-    else run.template operator()<false>();
+    if (blk != 0) run(std::bool_constant<true>{});
+    else run(std::bool_constant<false>{});
 }
 
 // ---------------------------------------------------------------------------
@@ -993,7 +997,7 @@ void dif_pass_first(const std::complex<T>* data,
 
 // exp(sign*2*pi*i*(t*W+lane)/SubN) as a lane table for the row-space odd twiddle.
 template<typename T, std::size_t SubN, std::size_t Tt, std::size_t W, bool Imag>
-[[nodiscard]] consteval std::array<T, W> row_split_twiddle() {
+[[nodiscard]] ADM_CONSTEVAL std::array<T, W> row_split_twiddle() {
     std::array<T, W> a{};
     for (std::size_t lane = 0; lane < W; ++lane) {
         const auto sc = ct_sincos_turns(/*conjugate=*/true, Tt * W + lane, SubN);
@@ -1038,7 +1042,7 @@ template<std::size_t W>
 using dif_last_tail_seq = decltype(dif_tail_seq_shift(std::make_index_sequence<W - 1>{}));
 
 // Subgroup p output offset: DIF emits evens at 2k, odds at 2k+1 recursively → bitrev(p).
-[[nodiscard]] consteval std::size_t row_split_offset(std::size_t p, std::size_t levels) {
+[[nodiscard]] ADM_CONSTEVAL std::size_t row_split_offset(std::size_t p, std::size_t levels) {
     std::size_t off = 0;
     for (std::size_t l = 0; l < levels; ++l) {
         off = (off << 1) | (p & 1u);
@@ -1077,7 +1081,7 @@ ADM_COLD ADM_NOINLINE void dif_pass_last_scalar_rows(const T* ccre,
 template<typename T, std::size_t IP>
 struct dif_last_batch {
     static constexpr std::size_t Wn = xsimd::batch<T>::size;
-    static constexpr std::size_t Wfit = std::bit_ceil(IP);
+    static constexpr std::size_t Wfit = detail::bit_ceil(IP);
     using sized_t = xsimd::make_sized_batch_t<T, std::min(Wfit, Wn)>;
     using type = std::conditional_t<std::is_void_v<sized_t>, xsimd::batch<T>, sized_t>;
 };
@@ -1108,12 +1112,12 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
     {
         // 32-reg ISAs only: on 16-reg ISAs the G+4+transpose tile spills.
         constexpr bool row_split_path =
-            std::has_single_bit(IP) && IP >= 2 * W && dif_butterfly_wants_reload<IP> &&
+            detail::has_single_bit(IP) && IP >= 2 * W && dif_butterfly_wants_reload<IP> &&
             poet::vector_register_count() >= 32 && Rows == W;
         if constexpr (row_split_path) {
             // Row-space pre-levels: G+4 live batches vs 2*IP-live full butterfly.
             constexpr std::size_t G = IP / W;                 // subgroups
-            constexpr std::size_t L = std::bit_width(G) - 1u;  // split levels
+            constexpr std::size_t L = detail::bit_width(G) - 1u;  // split levels
             alignas(batch_t::arch_type::alignment()) T stg_re[G * W * W];
             alignas(batch_t::arch_type::alignment()) T stg_im[G * W * W];
             // Versioned by hand: letting gcc unswitch the rowperm != 0 test itself costs the
@@ -1165,7 +1169,7 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
             auto load_tile = [&](const auto off) ADM_LAMBDA_ALWAYS_INLINE {
                 batch_t rr[W], ri[W];
                 poet::static_for<0, W>([&](const auto bb) {
-                    if constexpr (std::cmp_less(bb.value, Rows)) {
+                    if constexpr (detail::cmp_less(bb.value, Rows)) {
                         rr[bb] = batch_t::load_unaligned(ccre + (IP * row(b + bb) + off));
                         ri[bb] = batch_t::load_unaligned(ccim + (IP * row(b + bb) + off));
                     } else {
@@ -1194,7 +1198,7 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
             constexpr auto mask = xsimd::make_batch_bool_constant<T, lane_lt<IP>, arch>();
             batch_t rr[W], ri[W];
             poet::static_for<0, W>([&](const auto bb) {
-                if constexpr (std::cmp_less(bb.value, Rows)) {
+                if constexpr (detail::cmp_less(bb.value, Rows)) {
                     rr[bb] = batch_t::load(ccre + IP * row(b + bb), mask, xsimd::unaligned_mode{});
                     ri[bb] = batch_t::load(ccim + IP * row(b + bb), mask, xsimd::unaligned_mode{});
                 } else {
@@ -1222,14 +1226,19 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
     }
 }
 
-// Tail chiplet dispatcher: stateless functor (see dif_pass_last_block re lambda closure).
+// Tail chiplet dispatcher: stateless functor (see dif_pass_last_block re lambda
+// closure) with a member-template call operator.
 template<typename T, bool Forward, std::size_t IP>
-inline constexpr auto dif_last_tail_invoke = []<std::size_t Rows>(
-        const T* ccre, const T* ccim,
-        std::complex<T>* data,
-        std::size_t l1, std::size_t b, T scale_val, const std::uint32_t* rowperm) {
-    dif_pass_last_block<T, Forward, IP, Rows>(ccre, ccim, data, l1, b, scale_val, rowperm);
+struct dif_last_tail_invoke_t {
+    template<std::size_t Rows>
+    void operator()(const T* ccre, const T* ccim,
+                    std::complex<T>* data, std::size_t l1, std::size_t b, T scale_val,
+                    const std::uint32_t* rowperm) const {
+        dif_pass_last_block<T, Forward, IP, Rows>(ccre, ccim, data, l1, b, scale_val, rowperm);
+    }
 };
+template<typename T, bool Forward, std::size_t IP>
+inline constexpr dif_last_tail_invoke_t<T, Forward, IP> dif_last_tail_invoke{};
 
 // Last pass: planar SoA → AoS. Inputs ccre/ccim[j+IP*b], outputs data[b+l1*k].
 // ido==1 always (l1==N/IP), twiddles W^0=1 (twre/twim unused). See dif_pass_last_block.

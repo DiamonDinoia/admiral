@@ -13,9 +13,7 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
-#include <numbers>
 #include <random>
-#include <span>
 #include <vector>
 
 using namespace Catch::Matchers;
@@ -266,7 +264,7 @@ TEMPLATE_TEST_CASE("1D via nd_plan matches legacy 1D FFT", "[nd][1d]", float, do
         const auto in = make_input<T>(N, static_cast<unsigned>(N + 100));
 
         std::vector<std::complex<T>> legacy(N);
-        admiral::forward<T>(std::span<const std::complex<T>>(in), std::span(legacy));
+        admiral::forward<T>(admiral::span<const std::complex<T>>(in), admiral::span(legacy));
 
         auto nd = in;
         admiral::forward(nd.data(), {N});
@@ -390,7 +388,7 @@ TEMPLATE_TEST_CASE("Runtime nd_execute matches compile-time nd_plan", "[nd][disp
 
         auto b = in;
         const std::size_t dims[2] = {shape[0], shape[1]};
-        admiral::detail::nd_runtime_plan<T>(std::span<const std::size_t>(dims, 2), /*forward=*/true).execute(b.data());
+        admiral::detail::nd_runtime_plan<T>(admiral::span<const std::size_t>(dims, 2), /*forward=*/true).execute(b.data());
 
         const double tol = fft_tol<T>();
         require_close(a, b, tol);
@@ -436,10 +434,10 @@ TEMPLATE_TEST_CASE("Unified plan<T> handles N-D via runtime shape", "[nd][plan]"
 
         admiral::plan<T> p(N);
         auto a = in;
-        p.forward(std::span<std::complex<T>>(a.data(), N));
+        p.forward(admiral::span<std::complex<T>>(a.data(), N));
 
         std::vector<std::complex<T>> legacy(N);
-        admiral::forward<T>(std::span<const std::complex<T>>(in), std::span(legacy));
+        admiral::forward<T>(admiral::span<const std::complex<T>>(in), admiral::span(legacy));
         require_close(a, legacy, fft_tol<T>());
     }
 }
@@ -453,7 +451,7 @@ TEMPLATE_TEST_CASE("choose_line_route narrow-run criterion", "[nd][route]", floa
     using admiral::detail::choose_line_route;
     using admiral::detail::line_route;
 
-    admiral::detail::nd_axis_state<T> st;
+    admiral::detail::nd_axis_state<T> st{};
     st.dif = true;  // a column chain exists, so both routes are available
 
     const std::size_t budget = admiral::detail::col_cache_budget(1);
@@ -519,7 +517,7 @@ TEMPLATE_TEST_CASE("N-D plans honour the measuring efforts", "[nd][effort]", flo
 
     for (const admiral::effort eff : {admiral::effort::automatic, admiral::effort::measure}) {
         CAPTURE(int(eff));
-        const admiral::plan<T> p(shape, {.eff = eff});
+        const admiral::plan<T> p(shape, {0, eff});
         std::vector<std::complex<T>> v = in;
         p.forward(v.data(), v.data());
         p.inverse(v.data(), v.data());

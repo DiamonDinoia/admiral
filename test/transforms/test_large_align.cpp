@@ -22,9 +22,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <numbers>
 #include <random>
-#include <span>
 #include <vector>
 
 namespace {
@@ -88,7 +86,7 @@ TEST_CASE("four_step_large forward vs analytical (double)", "[large][fourstep]")
 
         auto plan = admiral::plan<double>(N);
         auto out = in;
-        plan.forward(std::span(out));
+        plan.forward(admiral::span(out));
 
         require_close(out, ref, fft_tol<double>());
     }
@@ -104,8 +102,8 @@ TEST_CASE("four_step_large round-trip identity (double)", "[large][fourstep]") {
         auto plan = admiral::plan<double>(N);
 
         auto data = in;
-        plan.forward(std::span(data));
-        plan.inverse(std::span(data));
+        plan.forward(admiral::span(data));
+        plan.inverse(admiral::span(data));
 
         require_close(data, in, fft_tol<double>());
     }
@@ -153,10 +151,10 @@ TEST_CASE("four_step_large fused-band impulse (double)", "[large][fourstep]") {
         require_close(out, inv_ref, fft_tol<double>());
 
         auto ip = in;
-        plan.forward(std::span(ip));
+        plan.forward(admiral::span(ip));
         require_close(ip, fwd_ref, fft_tol<double>());
         ip = in;
-        plan.inverse(std::span(ip));
+        plan.inverse(admiral::span(ip));
         require_close(ip, inv_ref, fft_tol<double>());
     }
 }
@@ -174,7 +172,7 @@ TEST_CASE("four_step_large tone and impulse (float)", "[large][fourstep]") {
         const std::size_t K = N / 4 + 7;
         const auto in  = tone_input<float>(N, K);
         const auto ref = tone_spectrum<float>(N, K);
-        auto plan = admiral::plan<float>({N}, {.nthreads = nt});
+        auto plan = admiral::plan<float>({N}, {nt});
         std::vector<std::complex<float>> out(N);
         plan.forward(in.data(), out.data());
         require_close(out, ref, fft_tol<float>(64));

@@ -6,16 +6,16 @@
 // ============================================================================
 
 #include <array>
-#include <bit>
 #include <cmath>
 #include <complex>
 #include <cstddef>
-#include <numbers>
 #include <type_traits>
 #include <utility>
 
 // CMake-generated codelet catalog sizes (shared with the per-N TUs; see src/CodeletCatalog.cmake).
 #include <admiral/detail/codelet_max.hpp>
+#include "cxx_compat.hpp"  // ADM_IS_CONSTANT_EVALUATED, detail::bit_ceil,
+                          // detail::countr_zero, detail::numbers
 
 namespace admiral {
 namespace detail {
@@ -271,7 +271,7 @@ inline constexpr unsigned kPadMaxV7 = 2;
 // offline fitter all have to featurise the pad the transform will run.
 [[nodiscard]] constexpr std::size_t bluestein_choose_pad(std::size_t n) {
     const std::size_t need = 2 * n - 1;
-    const std::size_t ceil2 = std::bit_ceil(need);
+    const std::size_t ceil2 = detail::bit_ceil(need);
     for (std::size_t m = need; m < ceil2; ++m) {
         std::size_t q = m;
         unsigned v3 = 0, v7 = 0;
@@ -292,8 +292,8 @@ inline constexpr double kBluesteinCostPerPadLog = 1.53;
 // form, so it and they move together (plan.hpp's dif-vs-blue gate prices the real pad).
 // Inside 2..512 the fitted model prices the real pad and is unaffected.
 [[nodiscard]] constexpr double bluestein_model_cost(std::size_t N) {
-    const std::size_t pad = std::bit_ceil(2 * N - 1);
-    return kBluesteinCostPerPadLog * double(pad) * double(std::countr_zero(pad));
+    const std::size_t pad = detail::bit_ceil(2 * N - 1);
+    return kBluesteinCostPerPadLog * double(pad) * double(detail::countr_zero(pad));
 }
 
 // ----------------------------------------------------------------------------
@@ -307,7 +307,7 @@ inline constexpr double kBluesteinCostPerPadLog = 1.53;
     // The series exists for constant evaluation only. At RUNTIME, libm does the same job
     // in one instruction sequence and every cost-model feature vector is log-scale, so
     // plan code must take std::log2.
-    if (!std::is_constant_evaluated()) return std::log2(x);
+    if (!ADM_IS_CONSTANT_EVALUATED()) return std::log2(x);
     int e = 0;
     while (x >= 2.0) { x *= 0.5; ++e; }
     while (x < 1.0) { x *= 2.0; --e; }
@@ -320,14 +320,14 @@ inline constexpr double kBluesteinCostPerPadLog = 1.53;
         term *= t2;
         sum += term / double(k);
     }
-    return double(e) + 2.0 * sum * std::numbers::log2e;
+    return double(e) + 2.0 * sum * detail::numbers::log2e;
 }
 
 [[nodiscard]] constexpr double ct_exp(double x) {
-    constexpr double ln2 = std::numbers::ln2;
+    constexpr double ln2 = detail::numbers::ln2;
     if (x > 700.0) return 1e308;   // cost scores only; saturate instead of inf
     if (x < -700.0) return 0.0;
-    if (!std::is_constant_evaluated()) return std::exp(x);
+    if (!ADM_IS_CONSTANT_EVALUATED()) return std::exp(x);
     const double kf = x / ln2;
     const auto k = static_cast<long long>(kf >= 0.0 ? kf + 0.5 : kf - 0.5);
     const double r = x - double(k) * ln2;  // |r| <= ln2/2

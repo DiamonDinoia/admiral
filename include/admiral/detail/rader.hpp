@@ -20,12 +20,11 @@
 // prime", Proc. IEEE 56 (1968) 1107. DOI 10.1109/PROC.1968.6477
 // ============================================================================
 
-#include <bit>
 #include <cmath>
 #include <complex>
 #include <cstddef>
-#include <span>
 #include <vector>
+#include "cxx_compat.hpp"  // detail::has_single_bit
 
 #include "ct_math.hpp"       // ct_is_prime, ct_powmod, ct_primitive_root
 #include "dif_driver.hpp"    // iterative_dif_execute_ws, dif_execute_in_place
@@ -43,7 +42,7 @@ namespace detail {
 enum class rader_inner_kind { codelet, iterative_dif, four_step };
 
 [[nodiscard]] inline bool rader_inner_supported(std::size_t L) {
-    return is_codelet_catalog(L) || std::has_single_bit(L) || is_codelet_supported(L)
+    return is_codelet_catalog(L) || detail::has_single_bit(L) || is_codelet_supported(L)
            || four_step_supported(L);
 }
 
@@ -84,7 +83,7 @@ inline constexpr double kRaderCostPerElement = 17.0;
 [[nodiscard]] inline double estimated_plan_cost(std::size_t N) {
     if (N <= 1) return 0.0;
     if (N <= kFourStepLeafMax && is_codelet_catalog(N)) return gate_leaf_cyc(N);
-    if (std::has_single_bit(N) || is_codelet_supported(N)) return dif_model_cost(N);
+    if (detail::has_single_bit(N) || is_codelet_supported(N)) return dif_model_cost(N);
     const four_step_split s = choose_four_step_split(N);
     if (s.valid()) {
         const double c = gate_four_step_cost(s.n1, s.n2);
@@ -186,7 +185,7 @@ private:
 
     static rader_inner_kind pick_inner(std::size_t L) {
         if (is_codelet_catalog(L)) return rader_inner_kind::codelet;
-        if (std::has_single_bit(L) || is_codelet_supported(L)) return rader_inner_kind::iterative_dif;
+        if (detail::has_single_bit(L) || is_codelet_supported(L)) return rader_inner_kind::iterative_dif;
         return rader_inner_kind::four_step;
     }
 

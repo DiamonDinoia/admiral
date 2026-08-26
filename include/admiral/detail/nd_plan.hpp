@@ -15,16 +15,15 @@
 
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <memory>
 #include <optional>
-#include <span>
 #include <stdexcept>
 #include <vector>
+#include "cxx_compat.hpp"  // ADM_UNLIKELY, span, detail::has_single_bit
 
 #include <admiral/errors.hpp>  // size_error
 
@@ -45,7 +44,7 @@ namespace detail {
 // A wrapped total would reach an array bound downstream, so the API boundary rejects
 // it rather than truncating it.
 [[nodiscard]] inline std::optional<std::size_t> extent_product(
-    std::span<const std::size_t> shape) noexcept {
+    span<const std::size_t> shape) noexcept {
     std::size_t total = 1;
     for (const std::size_t e : shape) {
         if (e == 0 || total > std::numeric_limits<std::size_t>::max() / e) return std::nullopt;
@@ -113,7 +112,7 @@ template<typename T>
             const bool small_inner =
                 (nd_col_block<T>(length, inner, nthreads, /*nruns=*/1) / W) < 4
                 || (inner % W) != 0;
-            const bool pow2 = std::has_single_bit(length);
+            const bool pow2 = detail::has_single_bit(length);
             if (small_inner && pow2) { r4 = build_radix4_plan(length); ov = &r4; }
         }
         // Col form (fuse_packed=false): feeds col_dif_execute_ws with plain per-pass tables.
@@ -142,22 +141,22 @@ template<typename T>
 // the whole chunk go through one execute_many, which resolves the route once per
 // chunk instead of once per line and drops the caller's index decode too. Zero
 // means the rows are addressed individually (a box that skips).
-template<typename T>
+template<typename T, typename LineBase>
 ADM_ALWAYS_INLINE void apply_lines_contiguous(std::complex<T>* data, std::size_t len,
                                               const nd_axis_state<T>& st, std::optional<T> fct,
                                               thread_pool* pool, std::size_t nrows,
-                                              std::size_t total_elems, auto line_base,
+                                              std::size_t total_elems, LineBase line_base,
                                               std::size_t row_stride = 0) {
     // The axis plan gets no pool here. Sub-plans that must thread internally own
     // their pool by construction (see make_nd_axis_state).
-    const exec_options<T> opts{.fct = fct};
+    const exec_options<T> opts{fct};
     parallel_for(pool, nrows, total_elems, [&](std::size_t b, std::size_t e, std::size_t) {
         if (row_stride) {
             st.plan->execute_many(data + line_base(b), e - b, row_stride, opts);
             return;
         }
         for (std::size_t r = b; r < e; ++r)
-            st.plan->execute(std::span<std::complex<T>>(data + line_base(r), len), opts);
+            st.plan->execute(span<std::complex<T>>(data + line_base(r), len), opts);
     });
 }
 
@@ -207,13 +206,13 @@ void move_run(std::complex<T>* line, std::size_t inner, std::size_t len, std::si
         }
 }
 
-template<typename T>
+template<typename T, typename LineBase>
 ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t len,
                                            std::size_t inner, bool forward,
                                            const nd_axis_state<T>& st, std::optional<T> fct,
                                            thread_pool* pool, std::size_t nruns,
                                            std::size_t run_len, std::size_t total_elems,
-                                           auto line_base) {
+                                           LineBase line_base) {
     // Work is a flat [0,nunits) range chunked across threads; each unit is a
     // (run, sub) pair. Rather than u/sub_count + u%sub_count per unit (two 64-bit
     // divisions in the inner loop), decode the chunk start once and advance a
@@ -255,7 +254,7 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
     }
     const std::size_t ngroups = (run_len + group - 1) / group;
     const std::size_t nunits = nruns * ngroups;
-    const exec_options<T> opts{.fct = fct};
+    const exec_options<T> opts{fct};
     parallel_for(pool, nunits, total_elems, [&](std::size_t b, std::size_t e, std::size_t) {
         // Uninitialized: the gather below fills all gw*len entries before every use.
         soa_scratch<T, 1> scratch(2 * len * group);
@@ -306,11 +305,11 @@ inline constexpr std::size_t kPackMinPasses = 5;
 // chain. The gather/scatter pair costs 2 passes over the slab against the chain's
 // log(len), and the gather reads exactly the strided elements the first pass would
 // have read anyway. Caller guarantees Bp <= W, st.dif, and disjoint bands.
-template<typename T>
+template<typename T, typename LineBases>
 void apply_bands_strided_packed(std::complex<T>* data, std::size_t len, std::size_t inner,
                                 bool forward, const nd_axis_state<T>& st, std::optional<T> fct,
                                 thread_pool* pool, std::size_t nruns, std::size_t w0,
-                                std::size_t w1, std::size_t total_elems, auto line_bases) {
+                                std::size_t w1, std::size_t total_elems, LineBases line_bases) {
     const std::size_t Bp = w0 + w1;
     const T scale = fct.value_or(forward ? T(1) : T(1) / static_cast<T>(len));
     // Bands are complex, the copies are real: 2*w <= 2*W reals, so one real_run_copy
@@ -385,7 +384,7 @@ public:
     // long innermost axis depends on it (see plan_impl). nthreads > 1 builds
     // the threading state here (batch loops) and/or inside the axis sub-plans;
     // eff flows to each axis's 1-D engine (measure races its ranked candidates).
-    nd_runtime_plan(std::span<const std::size_t> shape, bool is_forward,
+    nd_runtime_plan(span<const std::size_t> shape, bool is_forward,
                     std::size_t nthreads = 1,
                     admiral::effort eff = admiral::effort::estimate);
     void execute(std::complex<T>* data, const exec_options<T>& opts = {}) const;
@@ -440,12 +439,12 @@ private:
 };
 
 template<typename T>
-nd_runtime_plan<T>::nd_runtime_plan(std::span<const std::size_t> shape, bool is_forward,
+nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forward,
                                     std::size_t nthreads, admiral::effort eff) {
     m.shape.assign(shape.begin(), shape.end());
     m.is_forward = is_forward;
     const auto total = extent_product(m.shape);
-    if (!total) [[unlikely]] throw size_error("Plan size must be greater than 0");
+    if (!total) ADM_UNLIKELY throw size_error("Plan size must be greater than 0");
     m.total = *total;
     // Every partial product below is <= m.total, so the strides cannot overflow.
     // inner = product of faster extents = this axis' stride (suffix product).
@@ -485,9 +484,9 @@ void nd_runtime_plan<T>::execute(std::complex<T>* data, const exec_options<T>& o
         // wraps it in layers that do zero work at nrows==1. A custom fct always
         // lands on the (only) axis, degenerate shape{1} included.
         const scale_plan sp = make_scale_plan(opts.fct);
-        m.axes[0].plan->execute(std::span<std::complex<T>>(data, m.total),
-                                {.fct = sp.custom ? std::optional<T>(sp.fct) : std::nullopt,
-                                 .debug = opts.debug});
+        m.axes[0].plan->execute(span<std::complex<T>>(data, m.total),
+                                {sp.custom ? std::optional<T>(sp.fct) : std::nullopt,
+                                 opts.debug});
         return;
     }
     execute_nd(data, opts);
@@ -496,7 +495,7 @@ void nd_runtime_plan<T>::execute(std::complex<T>* data, const exec_options<T>& o
 template<typename T>
 void nd_runtime_plan<T>::execute_nd(std::complex<T>* data, const exec_options<T>& opts) const {
     const std::size_t ndim = m.shape.size();
-    if (opts.debug >= dbg_route) [[unlikely]] trace(opts.debug, "in-place");
+    if (opts.debug >= dbg_route) ADM_UNLIKELY trace(opts.debug, "in-place");
     const scale_plan sp = make_scale_plan(opts.fct);
     std::size_t inner = 1;
     for (std::size_t di = 0; di < ndim; ++di) {
@@ -528,8 +527,8 @@ void nd_runtime_plan<T>::execute(const std::complex<T>* src, std::complex<T>* ds
         // Rank-1 out-of-place: straight to the axis plan (see the in-place arm).
         const scale_plan sp = make_scale_plan(opts.fct);
         m.axes[0].plan->execute(src, dst,
-                                {.fct = sp.custom ? std::optional<T>(sp.fct) : std::nullopt,
-                                 .debug = opts.debug});
+                                {sp.custom ? std::optional<T>(sp.fct) : std::nullopt,
+                                 opts.debug});
         return;
     }
     execute_nd(src, dst, opts);
@@ -540,11 +539,11 @@ void nd_runtime_plan<T>::execute_nd(const std::complex<T>* src, std::complex<T>*
                                     const exec_options<T>& opts) const {
     const std::size_t ndim = m.shape.size();
     const std::size_t len = m.shape[ndim - 1];   // innermost extent
-    if (opts.debug >= dbg_route) [[unlikely]] trace(opts.debug, "oop");
+    if (opts.debug >= dbg_route) ADM_UNLIKELY trace(opts.debug, "oop");
     const std::size_t rows = m.total / len;
     const nd_axis_state<T>& in_st = m.axes[ndim - 1];
     const scale_plan sp = make_scale_plan(opts.fct);
-    const exec_options<T> row_opts{.fct = axis_fct(sp, ndim - 1)};
+    const exec_options<T> row_opts{axis_fct(sp, ndim - 1)};
     // Innermost pass src -> dst: iterative_dif writes dst directly; other routes
     // copy the row then transform in place (row hot from copy). A single row
     // (rank-1) makes the batch loop run serial-inline, and the axis plan then

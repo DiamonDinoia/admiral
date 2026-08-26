@@ -19,15 +19,16 @@
 // ============================================================================
 
 #include <complex>
-#include <concepts>   // std::invocable (run_tiles body constraint)
+#include <concepts>     // std::invocable (run_tiles body constraint, C++20)
 #include <cstddef>
-#include <memory>      // make_unique_for_overwrite
-#include <span>
-#include <utility>     // std::pair
+#include <memory>       // make_unique_for_overwrite
+#include <type_traits>  // std::is_invocable_v (run_tiles body constraint, C++17)
+#include <utility>      // std::pair
 #include <vector>
 
 #include <admiral/errors.hpp>  // size_error
 
+#include "cxx_compat.hpp"  // ADM_UNLIKELY, span, detail::make_unique_for_overwrite
 #include "nd_plan.hpp"        // nd_axis_state, make_nd_axis_state, nd_apply_axis
 #include "plan.hpp"           // plan_impl
 #include "portable_trig.hpp"  // sincos_turns
@@ -102,13 +103,18 @@ private:
 
     // Run `ntiles` tiles through body(tile, scratch). Serial: reuses tile_scratch_.
     // Threaded: per-chunk 4*M scratch, allocated once per chunk.
+#if ADM_CXX20
     template<typename Body>
         requires std::invocable<Body&, std::size_t, V*>
+#else
+    template<typename Body,
+             std::enable_if_t<std::is_invocable_v<Body&, std::size_t, V*>, int> = 0>
+#endif
     void run_tiles(thread_pool* pool, std::size_t ntiles, std::size_t total_elems, Body&& body) const {
         const bool par = pool && ntiles >= 2 * pool->size() && total_elems >= kThreadMinElems;
         if (par) {
             pool->parallel_for(ntiles, [&](std::size_t b, std::size_t e, std::size_t) {
-                auto sc = std::make_unique_for_overwrite<V[]>(4 * M_);
+                auto sc = detail::make_unique_for_overwrite<V[]>(4 * M_);
                 for (std::size_t t = b; t < e; ++t) body(t, sc.get());
             });
         } else {
@@ -271,11 +277,11 @@ private:
     void r2c_even_scalar(const T* in, std::complex<T>* out, std::size_t rows) const {
         const std::size_t M = M_, half = N_ / 2;
         // Uninitialized: the deinterleave below fills all M entries every row.
-        const auto z = std::make_unique_for_overwrite<std::complex<T>[]>(M == 0 ? 1 : M);
+        const auto z = detail::make_unique_for_overwrite<std::complex<T>[]>(M == 0 ? 1 : M);
         for (std::size_t r = 0; r < rows; ++r) {
             const T* xr = in + r * N_;
             for (std::size_t j = 0; j < M; ++j) z[j] = std::complex<T>(xr[2 * j], xr[2 * j + 1]);
-            fwd_.execute(std::span<std::complex<T>>(z.get(), M));  // Z = DFT_M(z)
+            fwd_.execute(admiral::span<std::complex<T>>(z.get(), M));  // Z = DFT_M(z)
             std::complex<T>* Xr = out + r * Nh_;
             for (std::size_t k = 0; k <= half; ++k) {
                 const std::complex<T> zk = z[k % M];
@@ -291,7 +297,7 @@ private:
     void c2r_even_scalar(const std::complex<T>* in, T* out, std::size_t rows) const {
         const std::size_t M = M_;
         // Uninitialized: the recombination below fills all M entries every row.
-        const auto Z = std::make_unique_for_overwrite<std::complex<T>[]>(M == 0 ? 1 : M);
+        const auto Z = detail::make_unique_for_overwrite<std::complex<T>[]>(M == 0 ? 1 : M);
         for (std::size_t r = 0; r < rows; ++r) {
             const std::complex<T>* Xr = in + r * Nh_;
             for (std::size_t k = 0; k < M; ++k) {
@@ -302,7 +308,7 @@ private:
                 const std::complex<T> Zo = std::conj(tw_[k]) * Vo; // Zo[k] = W_N^{-k} Vo
                 Z[k] = Ze + std::complex<T>(T(0), T(1)) * Zo;
             }
-            inv_.execute(std::span<std::complex<T>>(Z.get(), M));  // z = IDFT_M(Z), *1/M
+            inv_.execute(admiral::span<std::complex<T>>(Z.get(), M));  // z = IDFT_M(Z), *1/M
             T* xr = out + r * N_;
             for (std::size_t j = 0; j < M; ++j) { xr[2 * j] = Z[j].real(); xr[2 * j + 1] = Z[j].imag(); }
         }
@@ -313,11 +319,11 @@ private:
     void r2c_odd(const T* in, std::complex<T>* out, std::size_t rows, thread_pool* pool) const {
         parallel_for(pool, rows, rows * N_, [&](std::size_t b, std::size_t e, std::size_t) {
             // Uninitialized: the loops below fill all N_ entries every row.
-            const auto c = std::make_unique_for_overwrite<std::complex<T>[]>(N_);
+            const auto c = detail::make_unique_for_overwrite<std::complex<T>[]>(N_);
             for (std::size_t r = b; r < e; ++r) {
                 const T* xr = in + r * N_;
                 for (std::size_t i = 0; i < N_; ++i) c[i] = std::complex<T>(xr[i], T(0));
-                fwd_.execute(std::span<std::complex<T>>(c.get(), N_));
+                fwd_.execute(admiral::span<std::complex<T>>(c.get(), N_));
                 std::complex<T>* Xr = out + r * Nh_;
                 for (std::size_t k = 0; k < Nh_; ++k) Xr[k] = c[k];
             }
@@ -327,12 +333,12 @@ private:
     void c2r_odd(const std::complex<T>* in, T* out, std::size_t rows, thread_pool* pool) const {
         parallel_for(pool, rows, rows * N_, [&](std::size_t b, std::size_t e, std::size_t) {
             // Uninitialized: the loops below fill all N_ entries every row.
-            const auto c = std::make_unique_for_overwrite<std::complex<T>[]>(N_);
+            const auto c = detail::make_unique_for_overwrite<std::complex<T>[]>(N_);
             for (std::size_t r = b; r < e; ++r) {
                 const std::complex<T>* Xr = in + r * Nh_;
                 for (std::size_t k = 0; k < Nh_; ++k) c[k] = Xr[k];
                 for (std::size_t k = Nh_; k < N_; ++k) c[k] = std::conj(Xr[N_ - k]);
-                inv_.execute(std::span<std::complex<T>>(c.get(), N_));  // *1/N
+                inv_.execute(admiral::span<std::complex<T>>(c.get(), N_));  // *1/N
                 T* xr = out + r * N_;
                 for (std::size_t i = 0; i < N_; ++i) xr[i] = c[i].real();
             }
@@ -378,7 +384,7 @@ real_adm_plan<T>::real_adm_plan(std::size_t N, admiral::effort eff)
             tab_.build(M_);
             // One over-aligned ping-pong block reused across all tiles/executes
             // (single-threaded plan).
-            tile_scratch_ = std::make_unique_for_overwrite<V[]>(4 * M_);
+            tile_scratch_ = detail::make_unique_for_overwrite<V[]>(4 * M_);
         }
     }
 }
@@ -408,7 +414,7 @@ public:
     // test_fft_threads checks for r2c.
     // nthreads > 1 builds the plan-owned pool (tile + column loops thread on it
     // at execute; no per-call threading knob exists).
-    explicit nd_real_plan(std::span<const std::size_t> shape, std::size_t nthreads = 1,
+    explicit nd_real_plan(admiral::span<const std::size_t> shape, std::size_t nthreads = 1,
                           admiral::effort eff = admiral::effort::estimate);
 
     [[nodiscard]] std::size_t cplx_size() const noexcept { return m.total_c; }
@@ -463,7 +469,7 @@ private:
 };
 
 template<typename T>
-nd_real_plan<T>::nd_real_plan(std::span<const std::size_t> shape, std::size_t nthreads,
+nd_real_plan<T>::nd_real_plan(admiral::span<const std::size_t> shape, std::size_t nthreads,
                               admiral::effort eff) {
     m.shape.assign(shape.begin(), shape.end());
     const std::size_t n = m.shape.size();
@@ -500,7 +506,7 @@ nd_real_plan<T>::nd_real_plan(std::span<const std::size_t> shape, std::size_t nt
 
 template<typename T>
 void nd_real_plan<T>::forward(const T* in, std::complex<T>* out, const exec_options<T>& opts) const {
-    if (opts.debug >= dbg_route) [[unlikely]] trace(opts.debug, "fwd", m.fwd_axes);
+    if (opts.debug >= dbg_route) ADM_UNLIKELY trace(opts.debug, "fwd", m.fwd_axes);
     m.rp->r2c(in, out, m.rows, m.pool.get());                      // innermost real axis
     run_outer(out, m.fwd_axes, /*is_forward=*/true, m.pool.get()); // remaining axes (c2c)
     if (opts.fct && *opts.fct != T(1))
@@ -509,7 +515,7 @@ void nd_real_plan<T>::forward(const T* in, std::complex<T>* out, const exec_opti
 
 template<typename T>
 void nd_real_plan<T>::inverse(std::complex<T>* spec, T* out, const exec_options<T>& opts) const {
-    if (opts.debug >= dbg_route) [[unlikely]] trace(opts.debug, "inv", m.inv_axes);
+    if (opts.debug >= dbg_route) ADM_UNLIKELY trace(opts.debug, "inv", m.inv_axes);
     run_outer(spec, m.inv_axes, /*is_forward=*/false, m.pool.get()); // outer axes first
     m.rp->c2r(spec, out, m.rows, m.pool.get());                      // then innermost c2r
     if (opts.fct) {

@@ -41,7 +41,7 @@ void check_forced(std::size_t N, const dif_factor_plan& ov, bool forward, bool i
     auto in = make_signal<T>(N);
     std::vector<std::complex<T>> out(in);  // in-place shape starts from in either way
     plan_impl<T> pl(N, forward, 1, &ov);
-    const exec_options<T> one{.fct = T(1)};
+    const exec_options<T> one{T(1)};
     if (in_place) pl.execute(out.data(), out.data(), one);
     else          pl.execute(in.data(), out.data(), one);
     require_close(out, reference_dft<T>(in, forward), fft_tol<T>(8));
@@ -68,7 +68,7 @@ void impulse_flat(std::size_t N, double tol_scale) {
     std::vector<std::complex<T>> in(N, {T(0), T(0)}), got(N);
     in[0] = {T(1), T(0)};
     plan_impl<T> fwd(N, true, 1, nullptr);
-    const exec_options<T> one{.fct = T(1)};
+    const exec_options<T> one{T(1)};
     fwd.execute(in.data(), got.data(), one);
     T num = 0;
     for (const auto& v : got) num += std::norm(v - std::complex<T>{T(1), T(0)});
@@ -104,8 +104,8 @@ TEMPLATE_TEST_CASE("generic prime pass: forced chains vs naive DFT", "[accuracy]
         const std::vector<std::complex<T>> in = make_signal<T>(25575);
         std::vector<std::complex<T>> buf(in);
         plan_impl<T> fwd(25575, true, 1, &ov), inv(25575, false, 1, &ov);
-        const exec_options<T> one{.fct = T(1)};
-        const exec_options<T> unscale{.fct = T(1) / T(25575)};  // inverse normalization
+        const exec_options<T> one{T(1)};
+        const exec_options<T> unscale{T(1) / T(25575)};  // inverse normalization
         if (ip) {
             fwd.execute(buf.data(), buf.data(), one);
             inv.execute(buf.data(), buf.data(), unscale);
@@ -221,7 +221,7 @@ TEMPLATE_TEST_CASE("boundary-generic chains stay out of iterative_dif", "[covera
         // ... and the size still transforms correctly wherever it routes.
         std::vector<std::complex<T>> in(N), out(N);
         in = make_signal<T>(N);
-        const exec_options<T> one{.fct = T(1)};
+        const exec_options<T> one{T(1)};
         plan_impl<T> fwd(N, true, 1, nullptr);
         fwd.execute(in.data(), out.data(), one);
         require_close(out, reference_dft<T>(in, true), fft_tol<T>(4));
@@ -232,7 +232,7 @@ TEMPLATE_TEST_CASE("boundary-generic chains stay out of iterative_dif", "[covera
     {
         const auto bad = dif_factor_plan{3, 31};
         std::vector<std::complex<T>> in(93), out(93);
-        const exec_options<T> one{.fct = T(1)};
+        const exec_options<T> one{T(1)};
         REQUIRE_THROWS(([&] {
             plan_impl<T> pl(93, true, 1, &bad);
             pl.execute(in.data(), out.data(), one);

@@ -34,7 +34,7 @@ TEST_CASE("fftw shim: forward matches native unnormalized forward", "[fftw]") {
         fftw_destroy_plan(p);
 
         admiral::plan<double> np(static_cast<std::size_t>(N));
-        np.forward(std::span(native), 1.0);  // fct=1 -> unnormalized, FFTW convention
+        np.forward(admiral::span(native), 1.0);  // fct=1 -> unnormalized, FFTW convention
 
         require_close(shim, native, fft_tol<double>());
     }
@@ -76,8 +76,8 @@ TEST_CASE("fftw shim: 2-D plan and execute_dft on fresh arrays", "[fftw]") {
 
     admiral::plan<double> np({std::size_t(n0), std::size_t(n1)});
     auto ra = a, rb = b;
-    np.forward(std::span(ra), 1.0);
-    np.forward(std::span(rb), 1.0);
+    np.forward(admiral::span(ra), 1.0);
+    np.forward(admiral::span(rb), 1.0);
     require_close(ra, oa, fft_tol<double>());
     require_close(rb, ob, fft_tol<double>());
 }
@@ -105,7 +105,7 @@ TEST_CASE("fftw shim: 3-D plan and out-of-place inverse", "[fftw]") {
 
     admiral::plan<double> np({std::size_t(n0), std::size_t(n1), std::size_t(n2)});
     auto ref = in;
-    np.forward(std::span(ref), 1.0);
+    np.forward(admiral::span(ref), 1.0);
     require_close(spec, ref, fft_tol<double>());
 
     for (auto& z : in) z *= double(N);  // unnormalized round trip
@@ -152,10 +152,10 @@ TEST_CASE("fftw shim: single-precision 2-D, 3-D and execute_dft", "[fftw]") {
         std::vector<std::size_t> shape = three_d
             ? std::vector<std::size_t>{std::size_t(n0), std::size_t(n1), std::size_t(n2)}
             : std::vector<std::size_t>{std::size_t(n0), std::size_t(n1)};
-        admiral::plan<float> np{std::span<const std::size_t>(shape)};
+        admiral::plan<float> np{admiral::span<const std::size_t>(shape)};
         auto ra = a, rb = b;
-        np.forward(std::span(ra), 1.0f);
-        np.forward(std::span(rb), 1.0f);
+        np.forward(admiral::span(ra), 1.0f);
+        np.forward(admiral::span(rb), 1.0f);
         require_close(ra, oa, fft_tol<float>());
         require_close(rb, ob, fft_tol<float>());
     }

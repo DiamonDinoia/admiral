@@ -7,7 +7,6 @@
 #include <complex>
 #include <cstdio>
 #include <fstream>
-#include <numbers>
 #include <algorithm>
 #include <numeric>
 #include <optional>
@@ -31,6 +30,7 @@
 // Everything here has internal linkage; only main() is external. The shared
 // timing/A-B harness lives in bench_harness.hpp (namespace bench).
 using namespace bench;
+using admiral::span;
 
 namespace {
 
@@ -84,7 +84,7 @@ std::vector<std::complex<double>>
 reference_forward_dft(const std::vector<std::complex<T>>& in) {
     const std::size_t N = in.size();
     std::vector<std::complex<double>> out(N);
-    constexpr double two_pi = 2.0 * std::numbers::pi_v<double>;
+    constexpr double two_pi = 2.0 * admiral::detail::numbers::pi_v<double>;
     for (std::size_t k = 0; k < N; ++k) {
         std::complex<double> acc{0.0, 0.0};
         for (std::size_t n = 0; n < N; ++n) {
@@ -130,7 +130,7 @@ struct BenchmarkResult {
     double rt_ratio() const { return fft_rt_ms / ducc0_rt_ms; }
 
     bool is_power_of_2() const {
-        return std::has_single_bit(size);
+        return admiral::detail::has_single_bit(size);
     }
 
     bool is_prime() const { return admiral::detail::ct_is_prime(size); }
@@ -283,7 +283,7 @@ void factor_sweep_size(std::size_t N, const std::vector<unsigned>& radices, int 
     // Accuracy gate: a decomposition that fails to reproduce the reference DFT is
     // reported as FAIL and never timed.
     std::copy(data.begin(), data.end(), buf.begin());
-    fwd_plan.execute(std::span(buf));
+    fwd_plan.execute(span(buf));
     const double l2err = l2_rel_error<T>(buf, reference_forward_dft<T>(data));
     if (!(l2err <= default_accuracy_tol<T>())) {
         std::cout << N << ',' << ((sizeof(T) == 4) ? "f32" : "f64") << ','
@@ -297,13 +297,13 @@ void factor_sweep_size(std::size_t N, const std::vector<unsigned>& radices, int 
     volatile T sink = T(0);
     const NbStat fft_fwd = nb_measure("factor_fft_fwd", reps, 0, [&]() {
         std::copy(data.begin(), data.end(), buf.begin());
-        fwd_plan.execute(std::span(buf));
+        fwd_plan.execute(span(buf));
         sink += buf[N / 2].real();
     });
     const NbStat fft_rt = nb_measure("factor_fft_rt", reps, 0, [&]() {
         std::copy(data.begin(), data.end(), buf.begin());
-        fwd_plan.execute(std::span(buf));
-        inv_plan.execute(std::span(buf));
+        fwd_plan.execute(span(buf));
+        inv_plan.execute(span(buf));
         sink += buf[N / 2].real();
     });
     const NbStat ducc_fwd = nb_measure("factor_ducc_fwd", reps, 0, [&]() {
@@ -375,7 +375,7 @@ void benchmark_size(size_t N, const std::string& type) {
     std::vector<std::complex<T>> fft_output(N);
     double fft_fwd_time = time_execution("fft_fwd", [&]() {
         std::copy(data.begin(), data.end(), fft_output.begin());
-        fwd_plan.forward(std::span(fft_output));
+        fwd_plan.forward(span(fft_output));
         ankerl::nanobench::doNotOptimizeAway(fft_output.data());
     });
 
@@ -383,8 +383,8 @@ void benchmark_size(size_t N, const std::string& type) {
     std::vector<std::complex<T>> fft_temp1(N);
     double fft_rt_time = time_execution("fft_rt", [&]() {
         std::copy(data.begin(), data.end(), fft_temp1.begin());
-        fwd_plan.forward(std::span(fft_temp1));
-        inv_plan.inverse(std::span(fft_temp1));
+        fwd_plan.forward(span(fft_temp1));
+        inv_plan.inverse(span(fft_temp1));
         ankerl::nanobench::doNotOptimizeAway(fft_temp1.data());
     });
 
@@ -454,12 +454,12 @@ CategoryStats compute_category_stats(const std::string& category, const std::str
     stats.avg_fwd_ratio = mean(fwd_ratios);
     stats.avg_rt_ratio = mean(rt_ratios);
 
-    const auto [fmin, fmax] = std::ranges::minmax(fwd_ratios);
-    const auto [rmin, rmax] = std::ranges::minmax(rt_ratios);
-    stats.min_fwd_ratio = fmin;
-    stats.max_fwd_ratio = fmax;
-    stats.min_rt_ratio = rmin;
-    stats.max_rt_ratio = rmax;
+    const auto [fmin, fmax] = std::minmax_element(fwd_ratios.begin(), fwd_ratios.end());
+    const auto [rmin, rmax] = std::minmax_element(rt_ratios.begin(), rt_ratios.end());
+    stats.min_fwd_ratio = *fmin;
+    stats.max_fwd_ratio = *fmax;
+    stats.min_rt_ratio = *rmin;
+    stats.max_rt_ratio = *rmax;
 
     return stats;
 }
@@ -562,7 +562,7 @@ int profile_single_size(std::size_t N, long iters) {
     auto t0 = std::chrono::high_resolution_clock::now();
     for (long it = 0; it < iters; ++it) {
         std::copy(data.begin(), data.end(), buf.begin());
-        fwd_plan.forward(std::span(buf));
+        fwd_plan.forward(span(buf));
     }
     auto t1 = std::chrono::high_resolution_clock::now();
     const double total_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
@@ -580,7 +580,7 @@ int profile_single_size(std::size_t N, long iters) {
 // Theoretical peak flops/cycle for type T at this build's SIMD width: two FMA
 // units, each xsimd::batch<T>::size lanes wide, 2 flops per FMA.
 template<typename T>
-consteval double peak_flops_per_cycle() {
+constexpr double peak_flops_per_cycle() {
     return 2.0 * static_cast<double>(xsimd::batch<T>::size) * 2.0;
 }
 
@@ -622,7 +622,7 @@ bool compare_min_of_n(std::size_t N, int reps, long inner,
     // Accuracy gate first. The gate drops a plan that did not compute the transform
     // and never times it, so a bogus fast ratio never reports as a win.
     std::copy(data.begin(), data.end(), buf.begin());
-    fwd_plan.execute(std::span(buf));
+    fwd_plan.execute(span(buf));
     // Above kNaiveRefMaxN the O(N^2) reference is too slow; large sizes gate on
     // round-trip error, and FFTW below cross-checks against the gated forward.
     double l2err;
@@ -630,7 +630,7 @@ bool compare_min_of_n(std::size_t N, int reps, long inner,
         l2err = l2_rel_error<T>(buf, reference_forward_dft<T>(data));
     } else {
         std::vector<std::complex<T>> rt(buf.begin(), buf.end());
-        inv_plan.execute(std::span(rt));
+        inv_plan.execute(span(rt));
         std::vector<std::complex<double>> ref_d(N);
         for (std::size_t i = 0; i < N; ++i)
             ref_d[i] = std::complex<double>(static_cast<double>(data[i].real()),
@@ -653,13 +653,13 @@ bool compare_min_of_n(std::size_t N, int reps, long inner,
     volatile T sink = T(0);
     const NbStat fft_fwd = nb_measure("fft_fwd", reps, inner, [&]() {
         std::copy(data.begin(), data.end(), buf.begin());
-        fwd_plan.execute(std::span(buf));
+        fwd_plan.execute(span(buf));
         sink += buf[N / 2].real();
     });
     const NbStat fft_rt = nb_measure("fft_rt", reps, inner, [&]() {
         std::copy(data.begin(), data.end(), buf.begin());
-        fwd_plan.execute(std::span(buf));
-        inv_plan.execute(std::span(buf));
+        fwd_plan.execute(span(buf));
+        inv_plan.execute(span(buf));
         sink += buf[N / 2].real();
     });
     const NbStat ducc_fwd = nb_measure("ducc_fwd", reps, inner, [&]() {
@@ -797,18 +797,18 @@ bool compare_factors_ab(std::size_t N,
         auto t_fwd = [&](admiral::detail::plan_impl<T>& p) {
             return nb_measure("ab_fwd", reps, inner, [&]() {
                 std::copy(data.begin(), data.end(), buf.begin());
-                p.execute(std::span(buf)); sink += buf[N / 2].real();
+                p.execute(span(buf)); sink += buf[N / 2].real();
             });
         };
         auto t_rt = [&](admiral::detail::plan_impl<T>& pf2, admiral::detail::plan_impl<T>& pi) {
             return nb_measure("ab_rt", reps, inner, [&]() {
                 std::copy(data.begin(), data.end(), buf.begin());
-                pf2.execute(std::span(buf)); pi.execute(std::span(buf)); sink += buf[N / 2].real();
+                pf2.execute(span(buf)); pi.execute(span(buf)); sink += buf[N / 2].real();
             });
         };
         for (int w = 0; w < 3; ++w) {   // pre-fault + warm caches for both
-            std::copy(data.begin(), data.end(), buf.begin()); f_fwd.execute(std::span(buf)); f_inv.execute(std::span(buf));
-            std::copy(data.begin(), data.end(), buf.begin()); s_fwd.execute(std::span(buf)); s_inv.execute(std::span(buf));
+            std::copy(data.begin(), data.end(), buf.begin()); f_fwd.execute(span(buf)); f_inv.execute(span(buf));
+            std::copy(data.begin(), data.end(), buf.begin()); s_fwd.execute(span(buf)); s_inv.execute(span(buf));
             sink += buf[0].real();
         }
         phase p; p.any_wall = false;
@@ -838,7 +838,7 @@ bool compare_factors_ab(std::size_t N,
         auto accurate = [&](const admiral::detail::dif_factor_plan& p) {
             admiral::detail::plan_impl<T> fp(N, true, 1, &p);
             std::copy(data.begin(), data.end(), buf.begin());
-            fp.execute(std::span(buf));
+            fp.execute(span(buf));
             return l2_rel_error<T>(buf, reference_forward_dft<T>(data)) <= tol;
         };
         if (!accurate(pa) || !accurate(pb)) {
@@ -899,7 +899,7 @@ bool verify_size(std::size_t N, double tol) {
 
     admiral::detail::plan_impl<T> fwd_plan(N, true);
     std::vector<std::complex<T>> buf(data);
-    fwd_plan.execute(std::span(buf));
+    fwd_plan.execute(span(buf));
     const double l2err = l2_rel_error<T>(buf, reference_forward_dft<T>(data));
     const bool ok = l2err <= tol;
     std::cout << (ok ? "PASS " : "FAIL ")
@@ -1025,7 +1025,7 @@ void decomp_report(const std::vector<std::size_t>& sizes) {
         constexpr double INF = 1e30;
         const d::four_step_split fs = d::choose_four_step_split(N);
         const double fs_cost = fs.valid() ? d::gate_four_step_cost(fs.n1, fs.n2) : INF;
-        const bool smooth = std::has_single_bit(N) || d::is_codelet_supported(N);
+        const bool smooth = admiral::detail::has_single_bit(N) || d::is_codelet_supported(N);
         const double dif_cost = smooth ? d::dif_model_cost(N) : INF;
         const double cod_cost = (N <= d::kFourStepLeafMax && d::is_codelet_catalog(N))
                                     ? d::gate_leaf_cyc(N) : INF;
@@ -1124,13 +1124,13 @@ void route_ab_dif_one(std::size_t N,
         ab_engine e;
         e.fwd = [&data, &sink, fwd, buf]() {
             std::copy(data.begin(), data.end(), buf->begin());
-            fwd->execute(std::span(*buf));
+            fwd->execute(span(*buf));
             sink += (*buf)[buf->size() / 2].real();
         };
         e.rt = [&data, &sink, fwd, inv, buf]() {
             std::copy(data.begin(), data.end(), buf->begin());
-            fwd->execute(std::span(*buf));
-            inv->execute(std::span(*buf));
+            fwd->execute(span(*buf));
+            inv->execute(span(*buf));
             sink += (*buf)[buf->size() / 2].real();
         };
         return e;
@@ -1144,13 +1144,13 @@ void route_ab_dif_one(std::size_t N,
         ab_engine e;
         e.fwd = [&data, &sink, fwd, buf]() {
             std::copy(data.begin(), data.end(), buf->begin());
-            fwd->execute(std::span(*buf));
+            fwd->execute(span(*buf));
             sink += (*buf)[buf->size() / 2].real();
         };
         e.rt = [&data, &sink, fwd, inv, buf]() {
             std::copy(data.begin(), data.end(), buf->begin());
-            fwd->execute(std::span(*buf));
-            inv->execute(std::span(*buf));
+            fwd->execute(span(*buf));
+            inv->execute(span(*buf));
             sink += (*buf)[buf->size() / 2].real();
         };
         return e;
@@ -1210,7 +1210,7 @@ void base_cost_size(std::size_t N, int rounds, int reps, long inner) {
         auto pl  = std::make_shared<plan_t>(N, true, f.kind);
         auto buf = std::make_shared<std::vector<std::complex<T>>>(N);
         std::copy(data.begin(), data.end(), buf->begin());
-        pl->execute(std::span(*buf));
+        pl->execute(span(*buf));
         const double l2 = l2_rel_error<T>(*buf, ref);
         if (l2 > tol) {
             std::cout << "BASECOST-VERIFY-FAIL size= " << N << " prec=" << prec
@@ -1228,7 +1228,7 @@ void base_cost_size(std::size_t N, int rounds, int reps, long inner) {
     for (auto& s : states) {
         for (int w = 0; w < 3; ++w) {
             std::copy(data.begin(), data.end(), s.buf->begin());
-            s.plan->execute(std::span(*s.buf));
+            s.plan->execute(span(*s.buf));
             sink += (*s.buf)[N / 2].real();
         }
     }
@@ -1250,7 +1250,7 @@ void base_cost_size(std::size_t N, int rounds, int reps, long inner) {
             auto& s = states[idx];
             const NbStat st = nb_measure("bc_fwd", reps, inner, [&]() {
                 std::copy(data.begin(), data.end(), s.buf->begin());
-                s.plan->execute(std::span(*s.buf));
+                s.plan->execute(span(*s.buf));
                 sink += (*s.buf)[N / 2].real();
             });
             if (st.cyc > 0.0 && st.cyc < best_cyc[idx]) {
@@ -1400,7 +1400,7 @@ void chain_sweep(std::size_t N, int rounds, int reps, long inner, std::size_t ma
         const auto fp = make_dif_factor_plan(c);
         Arm        a{&c, std::make_unique<plan_t>(N, true, 1, &fp), std::vector<std::complex<T>>(N)};
         std::copy(data.begin(), data.end(), a.buf.begin());
-        a.plan->execute(std::span(a.buf));
+        a.plan->execute(span(a.buf));
         if (l2_rel_error<T>(a.buf, ref) <= tol) arms.push_back(std::move(a));
     };
     for (const auto& c : chains) add(c);
@@ -1415,7 +1415,7 @@ void chain_sweep(std::size_t N, int rounds, int reps, long inner, std::size_t ma
     for (auto& a : arms)
         for (int w = 0; w < 3; ++w) {
             std::copy(data.begin(), data.end(), a.buf.begin());
-            a.plan->execute(std::span(a.buf));
+            a.plan->execute(span(a.buf));
             sink += a.buf[N / 2].real();
         }
     for (int r = 0; r < rounds; ++r)
@@ -1423,7 +1423,7 @@ void chain_sweep(std::size_t N, int rounds, int reps, long inner, std::size_t ma
             Arm&         a  = arms[(k + static_cast<std::size_t>(r)) % arms.size()];
             const NbStat st = nb_measure("chain_fwd", reps, inner, [&]() {
                 std::copy(data.begin(), data.end(), a.buf.begin());
-                a.plan->execute(std::span(a.buf));
+                a.plan->execute(span(a.buf));
                 sink += a.buf[N / 2].real();
             });
             if (st.cyc > 0.0 && st.cyc < a.cyc) { a.cyc = st.cyc; a.err = st.err; }
@@ -1735,7 +1735,7 @@ int main(int argc, char** argv) {
                         data[i] = std::complex<T>(std::sin(T(i) * T(0.1)), std::cos(T(i) * T(0.1)));
                     admiral::detail::plan_impl<T> fwd(N, true), inv(N, false);
                     std::copy(data.begin(), data.end(), buf.begin());
-                    fwd.execute(std::span(buf));
+                    fwd.execute(span(buf));
                     fftw_c2c<T> fftw(N);
                     if (!fftw.alignment_ok(data)) {
                         std::cout << "FFTWAB size=" << N << " VOID (fftw alignment mismatch)\n";
@@ -1754,7 +1754,7 @@ int main(int argc, char** argv) {
                             data_d[i] = std::complex<double>(static_cast<double>(data[i].real()),
                                                              static_cast<double>(data[i].imag()));
                         std::vector<std::complex<T>> rt(buf.begin(), buf.end());
-                        inv.execute(std::span(rt));
+                        inv.execute(span(rt));
                         l2 = l2_rel_error<T>(rt, data_d);
                         fl2 = l2_rel_error<T>(fftw.roundtrip(data), data_d);
                     }
@@ -1772,7 +1772,7 @@ int main(int argc, char** argv) {
                         fwd.execute(data.data(), buf.data()); sink += buf[N / 2].real(); }); };
                     auto t_fft_rt = [&]() { return nb_measure("fab_r", reps, inner, [&]() {
                         std::copy(data.begin(), data.end(), buf.begin());
-                        fwd.execute(std::span(buf)); inv.execute(std::span(buf));
+                        fwd.execute(span(buf)); inv.execute(span(buf));
                         sink += buf[N / 2].real(); }); };
                     auto t_ftw_fwd = [&]() { return nb_measure("fab_wf", reps, inner, [&]() {
                         sink += fftw.forward_into(data)[N / 2].real(); }); };
@@ -1780,7 +1780,7 @@ int main(int argc, char** argv) {
                         sink += fftw.roundtrip(data)[N / 2].real(); }); };
                     for (int w = 0; w < 3; ++w) {   // warm both paths
                         std::copy(data.begin(), data.end(), buf.begin());
-                        fwd.execute(std::span(buf)); inv.execute(std::span(buf));
+                        fwd.execute(span(buf)); inv.execute(span(buf));
                         sink += fftw.roundtrip(data)[N / 2].real();
                     }
                     std::vector<double> fr, rr;

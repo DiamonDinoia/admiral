@@ -28,16 +28,15 @@
 #include <admiral/detail/config.hpp>  // adm_measure
 
 #include <algorithm>
-#include <bit>
 #include <chrono>
 #include <complex>
 #include <cstddef>
 #include <limits>
 #include <memory>
 #include <optional>
-#include <span>
 #include <variant>
 #include <vector>
+#include "cxx_compat.hpp"  // ADM_UNLIKELY, ADM_UNREACHABLE, span, detail::has_single_bit
 
 #include "base_cost_model.hpp" // generated routing cost model, see tools/fit_cost_model.cpp
 #include "bluestein.hpp"  // bluestein_plan
@@ -63,6 +62,8 @@ namespace detail {
 // Per-execute options. Designated-initializer friendly:
 //   plan.execute(data, {.fct = T(0.5)}); // custom scale
 //   plan.execute(data, {.debug = dbg_shape}); // trace route and shape to stderr
+// At C++17 the same aggregate reads positionally: {fct, debug}, e.g. {T(0.5)} or
+// {std::nullopt, dbg_shape}.
 // fct == nullopt: forward=1, inverse=1/N.
 // debug == 0: silent, and the only cost is the compare (see debug.hpp).
 // Threading is NOT an option here. The nthreads ctor argument fixes it at plan
@@ -242,7 +243,7 @@ public:
     // Execute in place. A plan built with nthreads > 1 threads four_step_large
     // internally on its plan-owned pool. opts.fct scales output (nullopt =
     // direction default). Out-of-line.
-    void execute(std::span<std::complex<T>> data, const exec_options<T>& opts = {}) const;
+    void execute(span<std::complex<T>> data, const exec_options<T>& opts = {}) const;
 
     // src == dst: in-place. src != dst: reads src (preserved, no partial alias),
     // writes dst; no separate src->dst staging copy, since each route folds the read of
@@ -362,7 +363,7 @@ private:
         case base_form::bluestein:         return route_kind::bluestein;
         }
         // Exhaustive: a new base_form must be mapped here, not silently routed.
-        __builtin_unreachable();
+        ADM_UNREACHABLE();
     }
 
     // Measure-at-plan-time: time the model's top-ranked candidates on scratch
@@ -417,7 +418,7 @@ private:
     // (dif_generic_radices). The DP run is cheap against plan build (twiddle
     // generation dominates it).
     [[nodiscard]] static bool dif_chain_supported(std::size_t size) {
-        if (std::has_single_bit(size) || is_codelet_supported(size)) return true;
+        if (detail::has_single_bit(size) || is_codelet_supported(size)) return true;
         // The chain that would EXECUTE, which is not always the DP's argmin. The shape
         // vetoes (a big generic parked at ido < W) condemn some cheapest chains, and the
         // election walks the candidate list past them.
@@ -569,10 +570,10 @@ plan_impl<T>::plan_impl(std::size_t size, bool is_forward, route_kind forced,
                         std::size_t nthreads)
     // The force-route trial takes the same pool rule: without the pool it would time
     // the SERIAL route under a threaded route's name.
-    : m{.size = size, .is_forward = is_forward, .route = forced, .st = {},
-        .pool = make_route_pool(nthreads, size, forced)}
+    : m{size, is_forward, forced, {},
+        make_route_pool(nthreads, size, forced)}
 {
-    if (size == 0) [[unlikely]]
+    if (size == 0) ADM_UNLIKELY
         throw size_error("Plan size must be greater than 0");
     // Force any instantiable route; reject unavailable (size, T) combinations.
     if (!route_available(forced, size))
@@ -593,7 +594,7 @@ plan_impl<T>::plan_impl(std::size_t size, bool is_forward, std::size_t nthreads,
                     // undefined at 0. The chain DP hoists `dif_radix_admissible(0, 25)` out of
                     // its divisor loop (which is empty for 0), and is_pentanomial(0) divides 0
                     // by 2 forever. Answer trivially and let the delegate throw.
-                    if (size == 0) [[unlikely]] return measured_choice{};
+                    if (size == 0) ADM_UNLIKELY return measured_choice{};
                     if (dif_override) return measured_choice{route_kind::iterative_dif, {}};
                     // effort::measure is kept for the FFTW mapping, not for a second budget.
                     if (eff != admiral::effort::estimate)
@@ -604,12 +605,12 @@ plan_impl<T>::plan_impl(std::size_t size, bool is_forward, std::size_t nthreads,
 template<typename T>
 plan_impl<T>::plan_impl(std::size_t size, bool is_forward, std::size_t nthreads,
                         const dif_factor_plan* dif_override, measured_choice choice)
-    : m{.size = size, .is_forward = is_forward,
-        .route = choice.route,
-        .st = {},
-        .pool = make_route_pool(nthreads, size, choice.route)}
+    : m{size, is_forward,
+        choice.route,
+        {},
+        make_route_pool(nthreads, size, choice.route)}
 {
-    if (size == 0) [[unlikely]] {
+    if (size == 0) ADM_UNLIKELY {
         throw size_error("Plan size must be greater than 0");
     }
     // Every radix in dif_radix_set is 11-smooth, so no chain can represent a
@@ -793,8 +794,8 @@ plan_impl<T>::measure_route(std::size_t size, bool is_forward, std::size_t nthre
 }
 
 template<typename T>
-void plan_impl<T>::execute(std::span<std::complex<T>> data, const exec_options<T>& opts) const {
-    if (data.size() != m.size) [[unlikely]] {
+void plan_impl<T>::execute(span<std::complex<T>> data, const exec_options<T>& opts) const {
+    if (data.size() != m.size) ADM_UNLIKELY {
         throw size_error("Data size doesn't match plan size");
     }
     execute(data.data(), data.data(), opts);
@@ -805,9 +806,9 @@ void plan_impl<T>::execute(const std::complex<T>* src, std::complex<T>* dst,
                            const exec_options<T>& opts) const {
     // Direction default: forward=1, inverse=1/N.
     const T fct = opts.fct.value_or(m.is_forward ? T(1) : T(1) / T(m.size));
-    if (opts.debug >= dbg_route) [[unlikely]]
+    if (opts.debug >= dbg_route) ADM_UNLIKELY
         trace(opts.debug, src == dst ? "in-place" : "oop", fct);
-    if (m.size == 1) [[unlikely]] { *dst = *src * fct; return; }  // ctor rejects size==0
+    if (m.size == 1) ADM_UNLIKELY { *dst = *src * fct; return; }  // ctor rejects size==0
     // Lift direction to compile-time once; hot path carries no runtime branch.
     if (m.is_forward) execute_impl<true>(src, dst, fct);
     else              execute_impl<false>(src, dst, fct);
@@ -817,8 +818,8 @@ template<typename T>
 void plan_impl<T>::execute_many(std::complex<T>* data, std::size_t n, std::size_t stride,
                                 const exec_options<T>& opts) const {
     const T fct = opts.fct.value_or(m.is_forward ? T(1) : T(1) / T(m.size));
-    if (opts.debug >= dbg_route) [[unlikely]] trace(opts.debug, "many", fct, n, stride);
-    if (m.size == 1) [[unlikely]] {  // ctor rejects size==0
+    if (opts.debug >= dbg_route) ADM_UNLIKELY trace(opts.debug, "many", fct, n, stride);
+    if (m.size == 1) ADM_UNLIKELY {  // ctor rejects size==0
         for (std::size_t r = 0; r < n; ++r) data[r * stride] *= fct;
         return;
     }

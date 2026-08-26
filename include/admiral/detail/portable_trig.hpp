@@ -15,16 +15,16 @@
 
 #include <array>
 #include <cstddef>
-#include <numbers>
 #include <utility>
 
 #include <poet/poet.hpp>
+#include "cxx_compat.hpp"  // detail::numbers
 
 namespace admiral {
 namespace detail {
 namespace portable_trig {
 
-using std::numbers::pi;
+using detail::numbers::pi;
 
 // Minimax Horner coefficients in u=t^2, valid |t|<=pi/4.
 inline constexpr std::array<double, 6> sin_coeffs = {

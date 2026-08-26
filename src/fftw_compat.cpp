@@ -9,9 +9,9 @@
 #include <cstdlib>   // posix_memalign, free
 #include <memory>
 #include <new>
-#include <span>
 #include <utility>
 #include <vector>
+#include "admiral/detail/cxx_compat.hpp"  // span
 
 // One handle template, instantiated once per precision. The handle owns the admiral
 // plan plus the arrays and direction captured at plan time, so fftw_execute(p) can
@@ -83,8 +83,8 @@ H* make_plan(int rank, const int* n, void* in, void* out, int sign, unsigned fla
         (flags & FFTW_ESTIMATE) ? admiral::effort::estimate : admiral::effort::automatic;
     try {
         // nthreads stays 1: the shim's documented contract is single-threaded plans.
-        return std::make_unique<H>(sign, in, out, std::span<const size_t>(shape),
-                                   admiral::options{.nthreads = 1, .eff = eff})
+        return std::make_unique<H>(sign, in, out, admiral::span<const size_t>(shape),
+                                   admiral::options{1, eff})
             .release();
     } catch (...) {
         return nullptr;

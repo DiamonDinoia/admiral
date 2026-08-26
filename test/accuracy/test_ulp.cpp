@@ -23,15 +23,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <numbers>
 #include <random>
-#include <span>
 #include <vector>
 
 namespace {
 
 using ld = long double;
 using cld = std::complex<ld>;
+namespace num = admiral::detail::numbers;
 
 // Route coverage: codelet catalog, smooth mixed-radix, coprime -> good_thomas,
 // prime -> rader, a prime both decline -> bluestein, and a four_step split.
@@ -75,7 +74,7 @@ std::vector<cld> naive_dft(const std::vector<cld>& x, int sign, bool scale = tru
             // ld(k)*ld(j)/ld(n) instead leaves an absolute angle error that grows like
             // n*eps_ld: 1 double eps of oracle error at n=2048, and ~20 at 65536,
             // which is most of the budget these tests measure.
-            const ld ang = ld(sign) * 2 * std::numbers::pi_v<ld> * turn_fraction(k, j, n);
+            const ld ang = ld(sign) * 2 * num::pi_v<ld> * turn_fraction(k, j, n);
             acc += x[j] * cld(std::cos(ang), std::sin(ang));
         }
         y[k] = (sign < 0 || !scale) ? acc : acc / ld(n);
@@ -100,7 +99,7 @@ std::vector<cld> factored_dft(const std::vector<cld>& x, std::size_t n1, std::si
         for (std::size_t k1 = 0; k1 < n1; ++k1) {
             // turn_fraction reduces j2*k1 mod N in integers before dividing, so the
             // angle carries no rounding of its own.
-            const ld ang = ld(sign) * 2 * std::numbers::pi_v<ld> * turn_fraction(j2, k1, N);
+            const ld ang = ld(sign) * 2 * num::pi_v<ld> * turn_fraction(j2, k1, N);
             a[k1 * n2 + j2] = col[k1] * cld(std::cos(ang), std::sin(ang));
         }
     }
@@ -211,7 +210,7 @@ TEMPLATE_TEST_CASE("ULP: N-D forward matches a long-double DFT", "[accuracy][ulp
 
         const auto x = random_signal<T>(ntot, 11);
         std::vector<std::complex<T>> y(ntot);
-        const std::span<const std::size_t> extents{shape};
+        const admiral::span<const std::size_t> extents{shape};
         admiral::plan<T> p(extents);
         p.forward(x.data(), y.data());
 
@@ -339,7 +338,7 @@ TEMPLATE_TEST_CASE("ULP: multi-tone input has a closed-form spectrum", "[accurac
         for (std::size_t j = 0; j < n; ++j) {
             cld acc{0, 0};
             for (std::size_t m = 0; m < ks.size(); ++m) {
-                const ld ang = 2 * std::numbers::pi_v<ld> * turn_fraction(ks[m], j, n);
+                const ld ang = 2 * num::pi_v<ld> * turn_fraction(ks[m], j, n);
                 acc += as[m] * cld(std::cos(ang), std::sin(ang));
             }
             x[j] = {T(acc.real()), T(acc.imag())};

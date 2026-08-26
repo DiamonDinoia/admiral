@@ -27,6 +27,7 @@
 
 #include <poet/poet.hpp>
 
+
 #include "codelet.hpp"     // kernel_batched (lane-packed terminal)
 #include "dif_passes.hpp"  // dif_pass[_first/_last/_fused] + invokers
 #include "math.hpp"        // codelet_dispatch (terminal base kernel)
@@ -143,6 +144,42 @@ void dif_tape_step_single(const T* sr, const T* si, T*, T*,
 // Halving a TU does move codegen (gcc's inlining budget is per translation unit): expect
 // small scalar-addressing deltas in the moved kernels and re-measure runtime rather than
 // assuming a pass-tree move is free.
+
+// poet::dispatch makers, one stateless functor per step family. Each is a struct
+// with a member-template call operator.
+template<typename T, bool Chiplet>
+struct dif_thunk_body_maker {
+    using fn_t = typename dif_step<T>::fn_t;
+    template<std::size_t P>
+    fn_t operator()() const noexcept { return &dif_tape_step_body<T, P, Chiplet>; }
+};
+
+template<typename T>
+struct dif_thunk_ip_maker {
+    using fn_t = typename dif_step<T>::fn_t;
+    template<std::size_t IP>
+    fn_t operator()() const noexcept { return &dif_tape_step_ip<T, IP>; }
+};
+
+template<typename T>
+struct dif_thunk_f2_maker {
+    using fn_t = typename dif_step<T>::fn_t;
+    template<std::size_t P1, std::size_t P2>
+    fn_t operator()() const noexcept { return &dif_tape_step_f2<T, P1, P2>; }
+};
+
+template<typename T, bool Forward>
+struct dif_tape_fill_first {
+    template<std::size_t IP>
+    void operator()(dif_step<T>& s) const noexcept { s.fn = &dif_tape_step_first<T, Forward, IP>; }
+};
+
+template<typename T, bool Forward>
+struct dif_tape_fill_last {
+    template<std::size_t IP>
+    void operator()(dif_step<T>& s) const noexcept { s.fn = &dif_tape_step_last<T, Forward, IP>; }
+};
+
 template<typename T>
 struct dif_thunk {
     using fn_t = typename dif_step<T>::fn_t;
@@ -155,31 +192,25 @@ struct dif_thunk {
 
 template<typename T>
 auto dif_thunk<T>::body(std::size_t ip) -> fn_t {
-    return poet::dispatch(poet::throw_on_no_match,
-                          []<std::size_t P>() -> fn_t { return &dif_tape_step_body<T, P, false>; },
+    return poet::dispatch(poet::throw_on_no_match, dif_thunk_body_maker<T, false>{},
                           poet::dispatch_param<dif_radix_set>{ip});
 }
 
 template<typename T>
 auto dif_thunk<T>::chiplet(std::size_t ip) -> fn_t {
-    return poet::dispatch(poet::throw_on_no_match,
-                          []<std::size_t P>() -> fn_t { return &dif_tape_step_body<T, P, true>; },
+    return poet::dispatch(poet::throw_on_no_match, dif_thunk_body_maker<T, true>{},
                           poet::dispatch_param<dif_generic_radix_seq>{ip});
 }
 
 template<typename T>
 auto dif_thunk<T>::in_place(std::size_t ip) -> fn_t {
-    return poet::dispatch(poet::throw_on_no_match,
-                          []<std::size_t IP>() -> fn_t { return &dif_tape_step_ip<T, IP>; },
+    return poet::dispatch(poet::throw_on_no_match, dif_thunk_ip_maker<T>{},
                           poet::dispatch_param<dif_ip_radix_set>{ip});
 }
 
 template<typename T>
 auto dif_thunk<T>::fused2(std::size_t p1, std::size_t p2) -> fn_t {
-    return poet::dispatch(poet::throw_on_no_match,
-                          []<std::size_t P1, std::size_t P2>() -> fn_t {
-                              return &dif_tape_step_f2<T, P1, P2>;
-                          },
+    return poet::dispatch(poet::throw_on_no_match, dif_thunk_f2_maker<T>{},
                           poet::dispatch_param<dif_fused_pair_set>{p1},
                           poet::dispatch_param<dif_fused_pair_set>{p2});
 }
@@ -244,10 +275,7 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
             st.dim = static_cast<std::uint8_t>(es_bit(0) ? 2 : 0);
             st.es = static_cast<std::uint8_t>(es_bit(0) << 1);
             st.ido = N / dtw.radices[0];
-            poet::dispatch(poet::throw_on_no_match,
-                           []<std::size_t IP>(dif_step<T>& s) {
-                               s.fn = &dif_tape_step_first<T, Forward, IP>;
-                           },
+            poet::dispatch(poet::throw_on_no_match, dif_tape_fill_first<T, Forward>{},
                            poet::dispatch_param<dif_radix_set>{dtw.radices[0]}, st);
             tv.push_back(st);
         }
@@ -325,10 +353,7 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
             st.src = b8(ping);
             st.sim = b8(ping);
             st.es = dtw.rowperm.empty() ? std::uint8_t{0} : std::uint8_t{4};
-            poet::dispatch(poet::throw_on_no_match,
-                           []<std::size_t IP>(dif_step<T>& s) {
-                               s.fn = &dif_tape_step_last<T, Forward, IP>;
-                           },
+            poet::dispatch(poet::throw_on_no_match, dif_tape_fill_last<T, Forward>{},
                            poet::dispatch_param<dif_radix_set>{dtw.radices[p]}, st);
             tv.push_back(st);
         }

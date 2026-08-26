@@ -11,8 +11,9 @@
 #include <cstddef>
 #include <functional>
 #include <limits>
-#include <span>
 #include <vector>
+
+using admiral::span;
 
 // axis_plan<T> transforms one full axis of a row-major tensor, restricted to a box.
 // Oracle: the verified 1D admiral::plan<T> per line; elements outside the box must
@@ -56,8 +57,8 @@ void check(const std::vector<std::size_t>& shape, std::size_t axis,
     const auto orig = make_input<T>(total, 0xA11CE);
     auto data = orig;
 
-    const admiral::axis_plan<T> ap(std::span<const std::size_t>(shape), axis, forward);
-    ap.execute(data.data(), std::span<const std::size_t>(lo), std::span<const std::size_t>(hi));
+    const admiral::axis_plan<T> ap(span<const std::size_t>(shape), axis, forward);
+    ap.execute(data.data(), span<const std::size_t>(lo), span<const std::size_t>(hi));
 
     // Reference: 1D plan per line (same direction, default scale).
     const admiral::plan<T> ref(std::array<std::size_t, 1>{len});
@@ -65,8 +66,8 @@ void check(const std::vector<std::size_t>& shape, std::size_t axis,
     for_each_line(shape, st, lo, hi, axis, 0, 0, [&](std::size_t base) {
         std::vector<std::complex<T>> line(len), got(len);
         for (std::size_t p = 0; p < len; ++p) line[p] = orig[base + p * st[axis]];
-        if (forward) ref.forward(std::span<std::complex<T>>(line));
-        else         ref.inverse(std::span<std::complex<T>>(line));
+        if (forward) ref.forward(span<std::complex<T>>(line));
+        else         ref.inverse(span<std::complex<T>>(line));
         for (std::size_t p = 0; p < len; ++p) {
             const std::size_t idx = base + p * st[axis];
             in_box[idx] = 1;
@@ -93,15 +94,15 @@ void check_bands(const std::vector<std::size_t>& shape, std::size_t axis,
     const auto orig = make_input<T>(total, 0xBA11D);
     auto packed = orig, split = orig;
 
-    const admiral::axis_plan<T> ap(std::span<const std::size_t>(shape), axis, forward);
-    ap.execute_bands(packed.data(), std::span<const std::size_t>(lo),
-                     std::span<const std::size_t>(hi), lo2_last, hi2_last);
+    const admiral::axis_plan<T> ap(span<const std::size_t>(shape), axis, forward);
+    ap.execute_bands(packed.data(), span<const std::size_t>(lo),
+                     span<const std::size_t>(hi), lo2_last, hi2_last);
 
     auto lo2 = lo, hi2 = hi;
     lo2[ndim - 1] = lo2_last;
     hi2[ndim - 1] = hi2_last;
-    ap.execute(split.data(), std::span<const std::size_t>(lo), std::span<const std::size_t>(hi));
-    ap.execute(split.data(), std::span<const std::size_t>(lo2), std::span<const std::size_t>(hi2));
+    ap.execute(split.data(), span<const std::size_t>(lo), span<const std::size_t>(hi));
+    ap.execute(split.data(), span<const std::size_t>(lo2), span<const std::size_t>(hi2));
 
     require_close(packed, split, fft_tol<T>());
 }
@@ -161,10 +162,10 @@ TEMPLATE_TEST_CASE("axis_plan forward/inverse round-trips on the box", "[axis]",
     const auto orig = make_input<T>(total, 0xBEEF);
     auto data = orig;
 
-    admiral::axis_plan<T> fwd(std::span<const std::size_t>(shape), axis, true);
-    admiral::axis_plan<T> inv(std::span<const std::size_t>(shape), axis, false);
-    fwd.execute(data.data(), std::span<const std::size_t>(lo), std::span<const std::size_t>(hi));
-    inv.execute(data.data(), std::span<const std::size_t>(lo), std::span<const std::size_t>(hi));
+    admiral::axis_plan<T> fwd(span<const std::size_t>(shape), axis, true);
+    admiral::axis_plan<T> inv(span<const std::size_t>(shape), axis, false);
+    fwd.execute(data.data(), span<const std::size_t>(lo), span<const std::size_t>(hi));
+    inv.execute(data.data(), span<const std::size_t>(lo), span<const std::size_t>(hi));
 
     require_close(data, orig, fft_tol<T>());
 }
@@ -178,10 +179,10 @@ TEMPLATE_TEST_CASE("axis_plan multithreaded matches serial", "[axis]", float, do
     const auto orig = make_input<T>(total, 0xF00D);
 
     auto ser = orig, par = orig;
-    admiral::axis_plan<T> s(std::span<const std::size_t>(shape), axis, true);
-    admiral::axis_plan<T> p(std::span<const std::size_t>(shape), axis, true, {.nthreads = 4});
-    s.execute(ser.data(), std::span<const std::size_t>(lo), std::span<const std::size_t>(hi));
-    p.execute(par.data(), std::span<const std::size_t>(lo), std::span<const std::size_t>(hi));
+    admiral::axis_plan<T> s(span<const std::size_t>(shape), axis, true);
+    admiral::axis_plan<T> p(span<const std::size_t>(shape), axis, true, {4});
+    s.execute(ser.data(), span<const std::size_t>(lo), span<const std::size_t>(hi));
+    p.execute(par.data(), span<const std::size_t>(lo), span<const std::size_t>(hi));
 
     require_close(par, ser, fft_tol<T>());
 }
@@ -190,7 +191,7 @@ TEMPLATE_TEST_CASE("axis_plan rejects malformed shapes and boxes", "[axis]", flo
     using T = TestType;
     using admiral::axis_plan;
     const auto sp = [](const std::vector<std::size_t>& v) {
-        return std::span<const std::size_t>(v);
+        return span<const std::size_t>(v);
     };
     const std::vector<std::size_t> none{};
 
@@ -243,17 +244,17 @@ TEMPLATE_TEST_CASE("axis_plan survives a move", "[axis]", float, double) {
     const std::vector<std::size_t> shape{6, 8};
     const auto orig = make_input<T>(48, 7);
     auto want = orig, got = orig, got2 = orig;
-    const auto full = std::span<const std::size_t>{};
+    const auto full = span<const std::size_t>{};
 
-    admiral::axis_plan<T> ref(std::span<const std::size_t>(shape), 1, true);
+    admiral::axis_plan<T> ref(span<const std::size_t>(shape), 1, true);
     ref.execute(want.data(), full, full);
 
-    admiral::axis_plan<T> src(std::span<const std::size_t>(shape), 1, true);
+    admiral::axis_plan<T> src(span<const std::size_t>(shape), 1, true);
     admiral::axis_plan<T> moved(std::move(src));
     moved.execute(got.data(), full, full);
     REQUIRE(got == want);
 
-    admiral::axis_plan<T> dst(std::span<const std::size_t>(shape), 0, true);
+    admiral::axis_plan<T> dst(span<const std::size_t>(shape), 0, true);
     dst = std::move(moved);
     dst.execute(got2.data(), full, full);
     REQUIRE(got2 == want);
@@ -264,9 +265,9 @@ TEMPLATE_TEST_CASE("axis_plan empty box is a no-op", "[axis]", float, double) {
     const std::vector<std::size_t> shape{6, 8};
     const auto orig = make_input<T>(48, 1);
     auto data = orig;
-    admiral::axis_plan<T> ap(std::span<const std::size_t>(shape), 1, true);
+    admiral::axis_plan<T> ap(span<const std::size_t>(shape), 1, true);
     const std::vector<std::size_t> lo{3, 0}, hi{3, 8};   // empty on dim 0
-    ap.execute(data.data(), std::span<const std::size_t>(lo), std::span<const std::size_t>(hi));
+    ap.execute(data.data(), span<const std::size_t>(lo), span<const std::size_t>(hi));
     REQUIRE(data == orig);
 }
 
@@ -275,8 +276,8 @@ TEMPLATE_TEST_CASE("axis_plan on an extent-1 axis is a no-op", "[axis]", float, 
     const std::vector<std::size_t> shape{4, 1};
     auto data = make_input<T>(4, 0xA11CE);
     const auto orig = data;
-    admiral::axis_plan<T> p(std::span<const std::size_t>(shape), 1, true);
-    const auto full = std::span<const std::size_t>{};
+    admiral::axis_plan<T> p(span<const std::size_t>(shape), 1, true);
+    const auto full = span<const std::size_t>{};
     p.execute(data.data(), full, full);
     REQUIRE(data == orig);  // extent 1: nothing to transform, elements untouched
 }
@@ -290,9 +291,9 @@ TEMPLATE_TEST_CASE("axis_plan multithreaded on a single batch unit", "[axis]", f
     const std::vector<std::size_t> shape{65536, 1};
     const auto orig = make_input<T>(65536, 0xB00C);
     auto ser = orig, par = orig;
-    admiral::axis_plan<T> s(std::span<const std::size_t>(shape), 0, true);
-    admiral::axis_plan<T> p(std::span<const std::size_t>(shape), 0, true, {.nthreads = 4});
-    const auto full = std::span<const std::size_t>{};
+    admiral::axis_plan<T> s(span<const std::size_t>(shape), 0, true);
+    admiral::axis_plan<T> p(span<const std::size_t>(shape), 0, true, {4});
+    const auto full = span<const std::size_t>{};
     s.execute(ser.data(), full, full);
     p.execute(par.data(), full, full);
     require_close(par, ser, fft_tol<T>());
@@ -303,8 +304,8 @@ TEMPLATE_TEST_CASE("axis_plan execute with an explicit fct", "[axis]", float, do
     const std::vector<std::size_t> shape{16, 32};
     const auto orig = make_input<T>(shape[0] * shape[1], 0xC7);
     auto plain = orig, scaled = orig;
-    admiral::axis_plan<T> p(std::span<const std::size_t>(shape), 0, true);
-    const auto full = std::span<const std::size_t>{};
+    admiral::axis_plan<T> p(span<const std::size_t>(shape), 0, true);
+    const auto full = span<const std::size_t>{};
     p.execute(plain.data(), full, full);
     p.execute(scaled.data(), full, full, T(2));
     // fct multiplies the output: compare against twice the unscaled result.

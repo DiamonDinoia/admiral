@@ -10,6 +10,7 @@
 
 #include <limits>
 #include <vector>
+#include "admiral/detail/cxx_compat.hpp"  // ADM_UNLIKELY, span, detail::type_identity_t
 
 #include "admiral/detail/nd_plan.hpp"      // nd_runtime_plan, nd_axis_state, apply_lines_*
 #include "admiral/detail/plan.hpp"         // plan_impl, exec_options
@@ -32,7 +33,7 @@ namespace detail {
 // count; on overflow the plan constructor reports the bad shape itself, so a
 // saturated max (full auto count) is fine here.
 [[nodiscard]] inline std::size_t resolve_auto(const admiral::options& opts,
-                                              std::span<const std::size_t> shape) {
+                                              span<const std::size_t> shape) {
     return resolve_nthreads(opts.nthreads, extent_product(shape).value_or(
                                                std::numeric_limits<std::size_t>::max()));
 }
@@ -43,7 +44,7 @@ struct plan_state {
     nd_runtime_plan<T> inv;
     unsigned debug;
 
-    plan_state(std::span<const std::size_t> shape, const admiral::options& opts)
+    plan_state(span<const std::size_t> shape, const admiral::options& opts)
         : fwd{shape, /*is_forward=*/true, resolve_auto(opts, shape), opts.eff},
           inv{shape, /*is_forward=*/false, resolve_auto(opts, shape), opts.eff},
           debug(opts.debug) {}
@@ -65,7 +66,7 @@ struct axis_state {
     std::unique_ptr<thread_pool> pool;
     unsigned debug;
 
-    axis_state(std::span<const std::size_t> extents, std::size_t ax, bool fwd,
+    axis_state(span<const std::size_t> extents, std::size_t ax, bool fwd,
                const admiral::options& opts)
         : shape(extents.begin(), extents.end()), stride(extents.size()), axis(ax), forward(fwd),
           innermost(ax + 1 == extents.size()), debug(opts.debug) {
@@ -107,7 +108,7 @@ struct real_state {
     nd_real_plan<T> plan;   // owns its pool when nthreads > 1
     unsigned debug;
 
-    real_state(std::span<const std::size_t> shape, const admiral::options& opts)
+    real_state(span<const std::size_t> shape, const admiral::options& opts)
         : plan{shape, resolve_auto(opts, shape), opts.eff}, debug(opts.debug) {}
 };
 
@@ -137,124 +138,160 @@ template<typename T>
 namespace {
 
 template<typename T>
-void one_shot_1d(std::span<const std::complex<T>> input, std::span<std::complex<T>> output,
+void one_shot_1d(span<const std::complex<T>> input, span<std::complex<T>> output,
                  bool is_forward, const options& opts, std::optional<T> fct) {
-    if (input.size() != output.size()) [[unlikely]]
+    if (input.size() != output.size()) ADM_UNLIKELY
         throw size_error("Input and output sizes must match");
-    if (input.empty()) [[unlikely]] return;
+    if (input.empty()) ADM_UNLIKELY return;
     detail::plan_impl<T>(output.size(), is_forward,
                          detail::resolve_nthreads(opts.nthreads, output.size()), nullptr,
                          effort::estimate)
-        .execute(input.data(), output.data(), {.fct = fct, .debug = opts.debug});
+        .execute(input.data(), output.data(), {fct, opts.debug});
 }
 
 template<typename T>
-void one_shot_nd(std::complex<T>* data, std::span<const std::size_t> shape, bool is_forward,
+void one_shot_nd(std::complex<T>* data, span<const std::size_t> shape, bool is_forward,
                  const options& opts, std::optional<T> fct) {
     detail::nd_runtime_plan<T>(shape, is_forward, detail::resolve_auto(opts, shape),
                                effort::estimate)
-        .execute(data, {.fct = fct, .debug = opts.debug});
+        .execute(data, {fct, opts.debug});
 }
 
 }  // namespace
 
 // The type_identity_t wrapper is part of the signature; see admiral.hpp.
+#if ADM_CXX20
 template<detail::precision T>
-void forward(std::type_identity_t<std::span<const std::complex<T>>> input,
-             std::span<std::complex<T>> output, const options& opts, std::optional<T> fct) {
+void
+#else
+template<typename T>
+detail::precision_void_t<T>
+#endif
+forward(detail::type_identity_t<span<const std::complex<T>>> input,
+        span<std::complex<T>> output, const options& opts, std::optional<T> fct) {
     one_shot_1d<T>(input, output, /*is_forward=*/true, opts, fct);
 }
 
+#if ADM_CXX20
 template<detail::precision T>
-void inverse(std::type_identity_t<std::span<const std::complex<T>>> input,
-             std::span<std::complex<T>> output, const options& opts, std::optional<T> fct) {
+void
+#else
+template<typename T>
+detail::precision_void_t<T>
+#endif
+inverse(detail::type_identity_t<span<const std::complex<T>>> input,
+        span<std::complex<T>> output, const options& opts, std::optional<T> fct) {
     one_shot_1d<T>(input, output, /*is_forward=*/false, opts, fct);
 }
 
+#if ADM_CXX20
 template<detail::precision T>
-void forward(std::complex<T>* data, std::span<const std::size_t> shape, const options& opts,
-             std::optional<T> fct) {
+void
+#else
+template<typename T>
+detail::precision_void_t<T>
+#endif
+forward(std::complex<T>* data, span<const std::size_t> shape, const options& opts,
+        std::optional<T> fct) {
     one_shot_nd<T>(data, shape, /*is_forward=*/true, opts, fct);
 }
 
+#if ADM_CXX20
 template<detail::precision T>
-void inverse(std::complex<T>* data, std::span<const std::size_t> shape, const options& opts,
-             std::optional<T> fct) {
+void
+#else
+template<typename T>
+detail::precision_void_t<T>
+#endif
+inverse(std::complex<T>* data, span<const std::size_t> shape, const options& opts,
+        std::optional<T> fct) {
     one_shot_nd<T>(data, shape, /*is_forward=*/false, opts, fct);
 }
 
+#if ADM_CXX20
 template<detail::precision T>
-void forward(const T* in, std::complex<T>* out, std::span<const std::size_t> shape,
-             const options& opts, std::optional<T> fct) {
+void
+#else
+template<typename T>
+detail::precision_void_t<T>
+#endif
+forward(const T* in, std::complex<T>* out, span<const std::size_t> shape,
+        const options& opts, std::optional<T> fct) {
     detail::nd_real_plan<T>(shape, detail::resolve_auto(opts, shape), effort::estimate)
-        .forward(in, out, {.fct = fct, .debug = opts.debug});
+        .forward(in, out, {fct, opts.debug});
 }
 
+#if ADM_CXX20
 template<detail::precision T>
-void inverse(std::complex<T>* spec, T* out, std::span<const std::size_t> shape,
-             const options& opts, std::optional<T> fct) {
+void
+#else
+template<typename T>
+detail::precision_void_t<T>
+#endif
+inverse(std::complex<T>* spec, T* out, span<const std::size_t> shape,
+        const options& opts, std::optional<T> fct) {
     detail::nd_real_plan<T>(shape, detail::resolve_auto(opts, shape), effort::estimate)
-        .inverse(spec, out, {.fct = fct, .debug = opts.debug});
+        .inverse(spec, out, {fct, opts.debug});
 }
 
 // ============================================================================
 // plan
 // ============================================================================
 
-template<detail::precision T>
-plan<T>::plan(std::span<const std::size_t> shape, const options& opts)
+template<typename T>
+plan<T>::plan(span<const std::size_t> shape, const options& opts)
     : m{std::make_unique<detail::plan_state<T>>(shape, opts)} {}
 
-template<detail::precision T>
+template<typename T>
 plan<T>::~plan() = default;
-template<detail::precision T>
+template<typename T>
 plan<T>::plan(plan&&) noexcept = default;
-template<detail::precision T>
+template<typename T>
 plan<T>& plan<T>::operator=(plan&&) noexcept = default;
 
-template<detail::precision T>
+template<typename T>
 std::size_t plan<T>::size() const noexcept {
     return m->fwd.size();
 }
 
-template<detail::precision T>
+template<typename T>
 void plan<T>::run(bool is_forward, std::complex<T>* data, const T* fct) const {
     const auto& p = is_forward ? m->fwd : m->inv;
-    p.execute(data, {.fct = detail::as_optional(fct), .debug = m->debug});
+    p.execute(data, {detail::as_optional(fct), m->debug});
 }
 
-template<detail::precision T>
+template<typename T>
 void plan<T>::run(bool is_forward, const std::complex<T>* src, std::complex<T>* dst,
                   const T* fct) const {
     const auto& p = is_forward ? m->fwd : m->inv;
-    p.execute(src, dst, {.fct = detail::as_optional(fct), .debug = m->debug});
+    p.execute(src, dst, {detail::as_optional(fct), m->debug});
 }
 
 // ============================================================================
 // axis_plan
 // ============================================================================
 
-template<detail::precision T>
-axis_plan<T>::axis_plan(std::span<const std::size_t> shape, std::size_t axis, bool forward,
+template<typename T>
+axis_plan<T>::axis_plan(span<const std::size_t> shape, std::size_t axis, bool forward,
                         const options& opts)
     : m{std::make_unique<detail::axis_state<T>>(shape, axis, forward, opts)} {}
 
-template<detail::precision T>
+template<typename T>
 axis_plan<T>::~axis_plan() = default;
-template<detail::precision T>
+template<typename T>
 axis_plan<T>::axis_plan(axis_plan&&) noexcept = default;
-template<detail::precision T>
+template<typename T>
 axis_plan<T>& axis_plan<T>::operator=(axis_plan&&) noexcept = default;
 
-template<detail::precision T>
-void axis_plan<T>::execute(std::complex<T>* data, std::span<const std::size_t> lo,
-                           std::span<const std::size_t> hi, std::optional<T> fct) const {
+template<typename T>
+void axis_plan<T>::execute(std::complex<T>* data, span<const std::size_t> lo,
+                           span<const std::size_t> hi, std::optional<T> fct) const {
     execute_bands(data, lo, hi, 0, 0, fct);
 }
 
-template<detail::precision T>
-void axis_plan<T>::execute_bands(std::complex<T>* data, std::span<const std::size_t> lo,
-                                 std::span<const std::size_t> hi, std::size_t lo2_last,
+template<typename T>
+void axis_plan<T>::execute_bands(std::complex<T>* data, span<const std::size_t> lo,
+                                 span<const std::size_t> hi, std::size_t lo2_last,
                                  std::size_t hi2_last, std::optional<T> fct) const {
     const std::size_t ndim = m->shape.size();
     const std::size_t len = m->shape[m->axis];
@@ -354,33 +391,33 @@ void axis_plan<T>::execute_bands(std::complex<T>* data, std::span<const std::siz
 // plan_r2c
 // ============================================================================
 
-template<detail::precision T>
-plan_r2c<T>::plan_r2c(std::span<const std::size_t> shape, const options& opts)
+template<typename T>
+plan_r2c<T>::plan_r2c(span<const std::size_t> shape, const options& opts)
     : m{std::make_unique<detail::real_state<T>>(shape, opts)} {}
 
-template<detail::precision T>
+template<typename T>
 plan_r2c<T>::~plan_r2c() = default;
-template<detail::precision T>
+template<typename T>
 plan_r2c<T>::plan_r2c(plan_r2c&&) noexcept = default;
-template<detail::precision T>
+template<typename T>
 plan_r2c<T>& plan_r2c<T>::operator=(plan_r2c&&) noexcept = default;
 
-template<detail::precision T>
+template<typename T>
 void plan_r2c<T>::forward(const T* in, std::complex<T>* out, std::optional<T> fct) const {
-    m->plan.forward(in, out, {.fct = fct, .debug = m->debug});
+    m->plan.forward(in, out, {fct, m->debug});
 }
 
-template<detail::precision T>
+template<typename T>
 void plan_r2c<T>::inverse(std::complex<T>* spec, T* out, std::optional<T> fct) const {
-    m->plan.inverse(spec, out, {.fct = fct, .debug = m->debug});
+    m->plan.inverse(spec, out, {fct, m->debug});
 }
 
-template<detail::precision T>
+template<typename T>
 std::size_t plan_r2c<T>::real_size() const noexcept {
     return m->plan.real_size();
 }
 
-template<detail::precision T>
+template<typename T>
 std::size_t plan_r2c<T>::cplx_size() const noexcept {
     return m->plan.cplx_size();
 }
@@ -389,28 +426,28 @@ std::size_t plan_r2c<T>::cplx_size() const noexcept {
 // plan_r2r
 // ============================================================================
 
-template<detail::precision T>
+template<typename T>
 plan_r2r<T>::plan_r2r(std::size_t size, r2r_kind kind, std::size_t rows, const options& opts)
     : m{std::make_unique<detail::r2r_state<T>>(size, kind, rows, opts)} {}
 
-template<detail::precision T>
+template<typename T>
 plan_r2r<T>::~plan_r2r() = default;
-template<detail::precision T>
+template<typename T>
 plan_r2r<T>::plan_r2r(plan_r2r&&) noexcept = default;
-template<detail::precision T>
+template<typename T>
 plan_r2r<T>& plan_r2r<T>::operator=(plan_r2r&&) noexcept = default;
 
-template<detail::precision T>
+template<typename T>
 void plan_r2r<T>::forward(const T* in, T* out, std::optional<T> fct) const {
     m->plan.forward(in, out, fct);
 }
 
-template<detail::precision T>
+template<typename T>
 void plan_r2r<T>::inverse(const T* in, T* out, std::optional<T> fct) const {
     m->plan.inverse(in, out, fct);
 }
 
-template<detail::precision T>
+template<typename T>
 std::size_t plan_r2r<T>::size() const noexcept {
     return m->plan.size();
 }

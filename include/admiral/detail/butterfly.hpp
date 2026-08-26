@@ -22,6 +22,7 @@
 #include <utility>
 
 #include <poet/poet.hpp>
+#include "cxx_compat.hpp"  // ADM_CONSTEVAL, detail::has_single_bit
 
 #include "ct_math.hpp"  // ct_sincos_turns, ct_sincos_t, coprime_split
 
@@ -113,7 +114,7 @@ ADM_ALWAYS_INLINE void pow2_dif_butterfly(const V (&xr)[IP], const V (&xi)[IP], 
 // kernel. Both forms emit natural k, which is all the CRT map below assumes.
 template<typename T, std::size_t N, typename V, typename Emit>
 ADM_ALWAYS_INLINE void sub_dft(const V (&xr)[N], const V (&xi)[N], Emit&& emit) {
-    if constexpr (std::has_single_bit(N))
+    if constexpr (detail::has_single_bit(N))
         pow2_dif_butterfly<T, N, V>(xr, xi, std::forward<Emit>(emit));
     else
         radix_sym_dft<T, N>(xr, xi, std::forward<Emit>(emit));
@@ -235,7 +236,7 @@ template<typename T, std::size_t IP, typename V, typename Emit>
 ADM_ALWAYS_INLINE void pow2_dif_butterfly(const V (&xr)[IP],
                                           const V (&xi)[IP],
                                           Emit&& emit) {
-    static_assert(IP >= 2 && std::has_single_bit(IP), "pow2_dif_butterfly: IP must be a power of two >= 2");
+    static_assert(IP >= 2 && detail::has_single_bit(IP), "pow2_dif_butterfly: IP must be a power of two >= 2");
     if constexpr (IP == 2) {
         emit(std::integral_constant<std::size_t, 0>{}, xr[0] + xr[1], xi[0] + xi[1]);
         emit(std::integral_constant<std::size_t, 1>{}, xr[0] - xr[1], xi[0] - xi[1]);
@@ -346,7 +347,7 @@ ADM_ALWAYS_INLINE void dif_butterfly(const V (&tr)[IP],
         radix_sym_dft<T, IP>(tr, ti, std::forward<Emit>(emit));
     } else if constexpr (IP % 2 == 0 && pf.first != 0) {
         pfa_dif_butterfly<T, pf.first, pf.second>(tr, ti, std::forward<Emit>(emit));
-    } else if constexpr (IP >= 4 && std::has_single_bit(IP)) {
+    } else if constexpr (IP >= 4 && detail::has_single_bit(IP)) {
         pow2_dif_butterfly<T, IP>(tr, ti, std::forward<Emit>(emit));
     } else {
         poet::static_for<0, IP>([&](const auto k) {
@@ -390,7 +391,7 @@ ADM_ALWAYS_INLINE void dif_butterfly_terminal(const V (&tr)[IP],
 // accumulators, twiddle temps); U must produce NO vector spills. U=1 for
 // FMA-bound radices; larger U only spills.
 template<std::size_t IP>
-consteval std::size_t dif_pass_unroll() {
+ADM_CONSTEVAL std::size_t dif_pass_unroll() {
     constexpr std::size_t peak_live = 2u * IP + 10u;
     constexpr std::size_t budget = poet::vector_register_count();
     constexpr std::size_t u = budget / peak_live;

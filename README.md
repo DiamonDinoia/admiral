@@ -5,9 +5,8 @@
 [![codecov](https://codecov.io/gh/DiamonDinoia/admiral/graph/badge.svg)](https://codecov.io/gh/DiamonDinoia/admiral)
 
 A C++20 FFT library, buildable at C++17: complex and real transforms, any size,
-1-D and N-D, float
-or double, with optional multithreading. One compiled engine behind three
-interfaces: C++, C, and a drop-in FFTW subset.
+1-D and N-D, float, double or long double, with optional multithreading. One
+compiled engine behind three interfaces: C++, C, and a drop-in FFTW subset.
 
 ## Quick start
 
@@ -141,10 +140,13 @@ To consume the checkout without installing, use `FetchContent` or
 
 The C++ header declares the engine instead of defining it, so it includes only
 the standard library. The engine is compiled, so the C++ API ships for
-`std::complex<float>` and `std::complex<double>` only. The exported target
-compiles at whatever `ADM_CXX_STANDARD` was configured with. The two builds are not
-link-compatible: every span in the API is `admiral::span`, which is `std::span` at
-C++20 and a polyfill of the same shape at C++17.
+`std::complex<float>`, `std::complex<double>` and `std::complex<long double>`. The
+long-double transform runs a scalar backend, because no SIMD ISA has 80-bit lanes, and
+it covers `plan`, `plan_r2c` and the one-shots; `axis_plan` and `plan_r2r` stay
+float/double. The exported target compiles at whatever `ADM_CXX_STANDARD` was
+configured with. The two builds are not link-compatible: every span in the API is
+`admiral::span`, which is `std::span` at C++20 and a polyfill of the same shape at
+C++17.
 
 The shared libraries need nothing extra; they record their own dependency on
 libstdc++, so a plain C project links `admiral::admiral_c` and runs. The static

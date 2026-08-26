@@ -88,6 +88,21 @@ by 1-2% at v3/gcc 14.2.
   1 h 50 m in single-threaded GNU `as`), clang's instrumented build is an ordinary
   compile.
 
+## Precisions
+
+`float` and `double` reach the SIMD engine. `long double` reaches
+`include/admiral/detail/scalar_fft.hpp` instead, because no ISA has 80-bit lanes, and
+it covers `plan`, `plan_r2c` and the one-shots only; `axis_plan` and `plan_r2r` stay
+float and double. The two gates are `detail::is_precision_v` and
+`detail::is_simd_precision_v` in the compat seam.
+
+The scalar backend carries NO second copy of the radix math. `butterfly.hpp` is
+V-generic: the same text is the SIMD kernel at `V = xsimd::batch<T>` and the scalar
+kernel at `V = T`. An edit to a butterfly moves both, so a long double accuracy test
+can fail on a change that looks SIMD-only. `ct_math.hpp` folds its twiddles at
+`ct_real_t<T>`, which is long double past double, because a double constant caps a
+transform at 2^-53.
+
 ## SIMD and dispatch
 
 - All vector code goes through xsimd, all dispatch and unrolling through poet.

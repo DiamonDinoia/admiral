@@ -35,6 +35,7 @@ set(ADM_TEST_SOURCES
     kernels/test_ct_math.cpp
     kernels/test_factor_plan.cpp
     kernels/test_cost_model.cpp
+    kernels/test_cxx_compat.cpp
     transforms/test_plan.cpp
     transforms/test_axis.cpp
     transforms/test_large_align.cpp

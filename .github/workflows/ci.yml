@@ -159,10 +159,14 @@ jobs:
         # This leg skips test_ulp for the reason scripts/validate.sh skips it. Its O(N^2)
         # long-double reference makes the binary minutes of pure arithmetic under
         # valgrind, and an empty filtered run exits 4 (Catch2's no-match code).
+        # test_long_double is skipped for a different reason: valgrind emulates
+        # x87 80-bit long double in 64-bit, so long-double accuracy asserts read
+        # double-precision values (~1e-16) and fail the test, not the engine.
         run: |
           for t in build/test/test_*; do
             [ -x "$t" ] || continue
             [ "$(basename "$t")" = test_ulp ] && continue
+            [ "$(basename "$t")" = test_long_double ] && continue
             echo "--- $t"
             valgrind --error-exitcode=1 --leak-check=full \
               --errors-for-leak-kinds=definite "$t"

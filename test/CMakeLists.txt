@@ -43,6 +43,7 @@ set(ADM_TEST_SOURCES
     transforms/test_r2r.cpp
     accuracy/test_ulp.cpp
     accuracy/test_analytical.cpp
+    accuracy/test_long_double.cpp
 )
 
 if(NOT ADM_ENABLE_THREADS)

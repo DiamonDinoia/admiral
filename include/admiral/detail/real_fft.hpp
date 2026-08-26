@@ -32,6 +32,7 @@
 #include "nd_plan.hpp"        // nd_axis_state, make_nd_axis_state, nd_apply_axis
 #include "plan.hpp"           // plan_impl
 #include "portable_trig.hpp"  // sincos_turns
+#include "real_recombine.hpp"  // r2c_even_bin, c2r_even_bin
 #include "twiddles.hpp"       // build_dif_factor_plan, dif_radix_set
 #include "vecpass.hpp"        // vp::multipass_tables, vp::multipass_run (WS-B)
 #include <poet/poet.hpp>      // poet::static_for (tile loop unroll)
@@ -281,16 +282,9 @@ private:
         for (std::size_t r = 0; r < rows; ++r) {
             const T* xr = in + r * N_;
             for (std::size_t j = 0; j < M; ++j) z[j] = std::complex<T>(xr[2 * j], xr[2 * j + 1]);
-            fwd_.execute(admiral::span<std::complex<T>>(z.get(), M));  // Z = DFT_M(z)
+            fwd_.execute(span<std::complex<T>>(z.get(), M));  // Z = DFT_M(z)
             std::complex<T>* Xr = out + r * Nh_;
-            for (std::size_t k = 0; k <= half; ++k) {
-                const std::complex<T> zk = z[k % M];
-                const std::complex<T> zc = std::conj(z[(M - k % M) % M]);
-                const std::complex<T> Ze = (zk + zc) * T(0.5);
-                // Zo = (zk - zc) / (2i) = (zk - zc) * (-i/2)
-                const std::complex<T> Zo = (zk - zc) * std::complex<T>(T(0), T(-0.5));
-                Xr[k] = Ze + tw_[k] * Zo;
-            }
+            for (std::size_t k = 0; k <= half; ++k) Xr[k] = r2c_even_bin(z.get(), tw_[k], M, k);
         }
     }
 
@@ -300,15 +294,8 @@ private:
         const auto Z = detail::make_unique_for_overwrite<std::complex<T>[]>(M == 0 ? 1 : M);
         for (std::size_t r = 0; r < rows; ++r) {
             const std::complex<T>* Xr = in + r * Nh_;
-            for (std::size_t k = 0; k < M; ++k) {
-                const std::complex<T> Xk  = Xr[k];
-                const std::complex<T> Xmk = std::conj(Xr[M - k]);  // k==0 -> Xr[M]
-                const std::complex<T> Ze = (Xk + Xmk) * T(0.5);
-                const std::complex<T> Vo = (Xk - Xmk) * T(0.5);    // = W_N^k Zo[k]
-                const std::complex<T> Zo = std::conj(tw_[k]) * Vo; // Zo[k] = W_N^{-k} Vo
-                Z[k] = Ze + std::complex<T>(T(0), T(1)) * Zo;
-            }
-            inv_.execute(admiral::span<std::complex<T>>(Z.get(), M));  // z = IDFT_M(Z), *1/M
+            for (std::size_t k = 0; k < M; ++k) Z[k] = c2r_even_bin(Xr, tw_[k], M, k);
+            inv_.execute(span<std::complex<T>>(Z.get(), M));  // z = IDFT_M(Z), *1/M
             T* xr = out + r * N_;
             for (std::size_t j = 0; j < M; ++j) { xr[2 * j] = Z[j].real(); xr[2 * j + 1] = Z[j].imag(); }
         }
@@ -323,7 +310,7 @@ private:
             for (std::size_t r = b; r < e; ++r) {
                 const T* xr = in + r * N_;
                 for (std::size_t i = 0; i < N_; ++i) c[i] = std::complex<T>(xr[i], T(0));
-                fwd_.execute(admiral::span<std::complex<T>>(c.get(), N_));
+                fwd_.execute(span<std::complex<T>>(c.get(), N_));
                 std::complex<T>* Xr = out + r * Nh_;
                 for (std::size_t k = 0; k < Nh_; ++k) Xr[k] = c[k];
             }
@@ -338,7 +325,7 @@ private:
                 const std::complex<T>* Xr = in + r * Nh_;
                 for (std::size_t k = 0; k < Nh_; ++k) c[k] = Xr[k];
                 for (std::size_t k = Nh_; k < N_; ++k) c[k] = std::conj(Xr[N_ - k]);
-                inv_.execute(admiral::span<std::complex<T>>(c.get(), N_));  // *1/N
+                inv_.execute(span<std::complex<T>>(c.get(), N_));  // *1/N
                 T* xr = out + r * N_;
                 for (std::size_t i = 0; i < N_; ++i) xr[i] = c[i].real();
             }
@@ -414,7 +401,7 @@ public:
     // test_fft_threads checks for r2c.
     // nthreads > 1 builds the plan-owned pool (tile + column loops thread on it
     // at execute; no per-call threading knob exists).
-    explicit nd_real_plan(admiral::span<const std::size_t> shape, std::size_t nthreads = 1,
+    explicit nd_real_plan(span<const std::size_t> shape, std::size_t nthreads = 1,
                           admiral::effort eff = admiral::effort::estimate);
 
     [[nodiscard]] std::size_t cplx_size() const noexcept { return m.total_c; }
@@ -469,7 +456,7 @@ private:
 };
 
 template<typename T>
-nd_real_plan<T>::nd_real_plan(admiral::span<const std::size_t> shape, std::size_t nthreads,
+nd_real_plan<T>::nd_real_plan(span<const std::size_t> shape, std::size_t nthreads,
                               admiral::effort eff) {
     m.shape.assign(shape.begin(), shape.end());
     const std::size_t n = m.shape.size();

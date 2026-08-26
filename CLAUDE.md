@@ -1,8 +1,73 @@
 # admiral
 
-C++20 FFT library (compiled engine behind extern-template boundaries) with C++
+FFT library (compiled engine behind extern-template boundaries) with C++
 and C APIs plus an FFTW shim. `README.md` is the reference; this file only lists
 what an agent gets wrong first.
+
+## Language standard
+
+C++20 by default. `-DADM_CXX_STANDARD=17` builds the same kernels at C++17; 23 also
+builds. The seam is `include/admiral/detail/cxx_compat.hpp`: a `span` polyfill,
+`ADM_CONSTEVAL`, `ADM_UNLIKELY`, `ADM_UNREACHABLE`, bit ops, `numbers`, `type_identity`
+(the struct indirection is what makes the alias a non-deduced context; a bare alias is
+not) and `const_find` (`std::find` goes constexpr only in C++20).
+
+Constraint machinery keeps an `#if ADM_CXX20` pair, C++20 arm first, so deleting the
+`#else` half leaves ordinary C++20: the `precision` and `ChunkBody` concepts, `run_tiles`'
+`requires std::invocable`, and the two `requires`-expressions in `twiddles.hpp`. Both arms
+constrain, never assert: a concept and `std::enable_if_t` each REMOVE the overload, while
+a `static_assert` in the body makes the same mistake a hard error instead of a
+substitution failure. The C++17 arm spells the constraint as `precision_void_t<T>` in a
+public function's return type, a defaulted template parameter internally, or a `void_t`
+member detection.
+
+The four public class templates are the exception: they carry a one-line `static_assert`
+in both standards. Constraining their heads means constraining all 34 out-of-class member
+definitions in `src/cpp_api.hpp` to match, and the assert names the offending T where the
+concept would only say the constraint failed.
+
+Everything else carries ONE spelling, the one valid in both standards, because the C++17
+form is also idiomatic C++20 and a second arm would only rot. A templated lambda becomes
+a stateless struct with a member-template call operator, an `auto` parameter becomes a
+named template parameter, and Good-Thomas's gather keeps its masks compile-time through
+generator types keyed by integral NTTPs (class-type NTTPs and xsimd's array
+`make_batch_constant` are C++20-only).
+
+Verify a change to the seam with a per-object function-symbol diff: `nm --defined-only
+-S`, comparing the multiset of symbol sizes. Do NOT use `objcopy -O binary
+--only-section=.text`. Every template instantiation lands in its own COMDAT
+`.text._Z...` section, which that filter skips, so a `.text`-only diff never looks at a
+single kernel. At Release/x86-64/gcc 14.2 over the 225 objects of a full build:
+
+- 165 objects carry a bit-identical size multiset, and every seam wrapper inlines away:
+  `admiral::span`'s members, `const_find`, the bit ops, `make_unique_for_overwrite` and
+  `cmp_less` have ZERO out-of-line definitions in either standard's library.
+- The instantiation TUs SHRINK, because naming a closure type deduplicates what a
+  templated lambda instantiated once per call site: `vpass_invoke` symbols fall from 120
+  to 60, `inst_dif_f_{fwd,inv}` by 23%, `inst_real_{f,d}` by 11%.
+- The codelets GROW, and the seam is not the cause. Master plus the `asm volatile`
+  alignment barrier alone reproduces the shipped sizes byte-for-byte on codelet_6,
+  codelet_12 and codelet_16, so the barrier owns the whole delta.
+
+Anything else that moves is a regression to explain.
+
+The two builds are NOT link-compatible: `admiral::span` is `std::span` at C++20 and the
+polyfill at C++17.
+
+## Alignment hazard that's already handled
+
+codelet.hpp's cofactor `Wc == r` fast arm reinterprets scalar pointers as aligned batch
+arrays behind a runtime check. Reading a misaligned-reinterpreted `V*` is UB the moment
+it executes. The check makes that conditional dynamically, but a hoisting compiler can
+still pull the direct loads above it. The `asm volatile("" ::: "memory")` immediately
+before the `kb_aligned` computation is what stops the hoist, and it is load-bearing
+today, not insurance against a future layout change: delete it and gcc 13.3 release at
+v3 segfaults in `codelet kernel<N> matches reference DFT` and `...::apply_sink...`,
+while the same tree with the barrier passes 295/295. gcc 14.2 is clean either way, so
+a 14.2-only check cannot see this. Re-verify on 13.3 before touching that arm. The
+barrier is not free: it constrains scheduling around the test, which grows
+`codelet_apply<16u, float, true>` from 625 to 700 bytes and moves every codelet object
+by 1-2% at v3/gcc 14.2.
 
 ## Build
 

@@ -4,7 +4,8 @@
 [![Docs](https://github.com/DiamonDinoia/admiral/actions/workflows/docs.yml/badge.svg?branch=master)](https://diamondinoia.com/admiral/)
 [![codecov](https://codecov.io/gh/DiamonDinoia/admiral/graph/badge.svg)](https://codecov.io/gh/DiamonDinoia/admiral)
 
-A C++20 FFT library: complex and real transforms, any size, 1-D and N-D, float
+A C++20 FFT library, buildable at C++17: complex and real transforms, any size,
+1-D and N-D, float
 or double, with optional multithreading. One compiled engine behind three
 interfaces: C++, C, and a drop-in FFTW subset.
 
@@ -47,8 +48,11 @@ incompatible with the local ninja: `unset NINJA_STATUS`.
 
 Requirements: CMake 3.25+, Ninja (or Make), and a C++20 compiler. GCC 14+ or
 Clang 19+ recommended; older C++20 compilers build and pass the tests but
-generate worse code. xsimd and poet are fetched automatically and are the only
-dependencies of the library itself.
+generate worse code. `-DADM_CXX_STANDARD=17` builds the same library at C++17;
+the `{.nthreads = 8}` form above is C++20, which gcc and clang also accept at
+C++17 as an extension, and other compilers need the fields in order. xsimd and
+poet are fetched automatically and are the only dependencies of the library
+itself.
 
 ## Warning
 
@@ -138,7 +142,9 @@ To consume the checkout without installing, use `FetchContent` or
 The C++ header declares the engine instead of defining it, so it includes only
 the standard library. The engine is compiled, so the C++ API ships for
 `std::complex<float>` and `std::complex<double>` only. The exported target
-requires C++20 at the call site.
+compiles at whatever `ADM_CXX_STANDARD` was configured with. The two builds are not
+link-compatible: every span in the API is `admiral::span`, which is `std::span` at
+C++20 and a polyfill of the same shape at C++17.
 
 The shared libraries need nothing extra; they record their own dependency on
 libstdc++, so a plain C project links `admiral::admiral_c` and runs. The static

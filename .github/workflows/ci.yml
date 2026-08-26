@@ -30,9 +30,12 @@ jobs:
           - {os: ubuntu-24.04, cxx: g++-14, arch: x86-64-v2}
           - {os: ubuntu-24.04, cxx: g++-14, arch: x86-64-v3}
           - {os: ubuntu-24.04, cxx: clang++-18, arch: x86-64-v3}
+          # The headers are written to one spelling per construct, valid at both
+          # standards. Only this row compiles the C++17 leg.
+          - {os: ubuntu-24.04, cxx: g++-14, arch: x86-64-v3, std: 17}
           - {os: ubuntu-24.04-arm, cxx: g++-14, arch: armv8-a}
           - {os: macos-14, cxx: clang++, arch: none}
-    name: ${{ matrix.cxx }} ${{ matrix.arch }}
+    name: ${{ matrix.cxx }} ${{ matrix.arch }} c++${{ matrix.std || 20 }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -41,13 +44,14 @@ jobs:
         run: ${{ runner.os == 'macOS' && 'brew install ninja' || 'sudo apt-get update && sudo apt-get install -y ninja-build' }}
       - uses: hendrikmuhs/ccache-action@v1
         with:
-          key: ${{ matrix.os }}-${{ matrix.cxx }}-${{ matrix.arch }}
+          key: ${{ matrix.os }}-${{ matrix.cxx }}-${{ matrix.arch }}-${{ matrix.std || 20 }}
       - name: Configure
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
             -DCMAKE_BUILD_TYPE=Release \
             -DADM_TARGET_ARCH=${{ matrix.arch }} \
+            -DADM_CXX_STANDARD=${{ matrix.std || 20 }} \
             -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
       - name: Assert the flags arrived
@@ -60,6 +64,7 @@ jobs:
         run: |
           grep -qF -- '=${{ matrix.arch }}' build/compile_commands.json
           ! grep -qF -- '=native' build/compile_commands.json
+          grep -qF -- '-std=c++${{ matrix.std || 20 }}' build/compile_commands.json
       - run: cmake --build build
       - run: ctest --test-dir build --output-on-failure
 

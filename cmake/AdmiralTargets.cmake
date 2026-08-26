@@ -60,7 +60,7 @@ function(adm_add_surface name)
         # directly instead of queueing behind either artifact's link.
         add_library(${name}_objects OBJECT ${A_SOURCE})
         set_property(TARGET ${name}_objects PROPERTY POSITION_INDEPENDENT_CODE ON)
-        target_compile_features(${name}_objects PRIVATE cxx_std_20)
+        target_compile_features(${name}_objects PRIVATE cxx_std_${ADM_CXX_STANDARD})
         target_include_directories(${name}_objects
             PUBLIC
                 $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
@@ -90,9 +90,10 @@ function(adm_add_surface name)
         target_include_directories(${lib} PUBLIC
             $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
             $<INSTALL_INTERFACE:include>)
-        # admiral.hpp uses concepts and std::span, so a consumer needs C++20 even
-        # though the library is already compiled. Harmless for the C interfaces.
-        target_compile_features(${lib} PUBLIC cxx_std_20)
+        # A consumer compiles the public headers at the same standard the library
+        # was built with: concepts + std::span at 20, detail/cxx_compat.hpp
+        # fallbacks at 17. Harmless for the C interfaces.
+        target_compile_features(${lib} PUBLIC cxx_std_${ADM_CXX_STANDARD})
     endforeach()
 
     # Shared links the archive rather than listing its objects, so the linker can

@@ -45,7 +45,7 @@ add_library(admiral_engine OBJECT
     inst_nd_f.cpp inst_nd_d.cpp
     inst_real_f.cpp inst_real_d.cpp
     inst_api_f.cpp inst_api_d.cpp)
-target_compile_features(admiral_engine PRIVATE cxx_std_20)
+target_compile_features(admiral_engine PRIVATE cxx_std_${ADM_CXX_STANDARD})
 target_include_directories(admiral_engine PRIVATE
     ${PROJECT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -68,7 +68,7 @@ add_library(admiral_codelets STATIC
     ${ADM_CODELET_GENERATED}
     ${CMAKE_CURRENT_BINARY_DIR}/codelet_dispatch.cpp)
 
-target_compile_features(admiral_codelets PUBLIC cxx_std_20)
+target_compile_features(admiral_codelets PUBLIC cxx_std_${ADM_CXX_STANDARD})
 target_include_directories(admiral_codelets PRIVATE
     ${PROJECT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}           # codelet_apply.hpp
@@ -111,7 +111,7 @@ add_library(admiral_internal INTERFACE)
 target_include_directories(admiral_internal INTERFACE
     ${PROJECT_SOURCE_DIR}/include
     ${ADM_GENERATED_INCLUDE_DIR})
-target_compile_features(admiral_internal INTERFACE cxx_std_20)
+target_compile_features(admiral_internal INTERFACE cxx_std_${ADM_CXX_STANDARD})
 # With ADM_ENABLE_THREADS the plan-owned std::jthread pool needs pthread in every
 # TU that builds a pool; without it, ADM_THREADS_LIB is empty.
 target_link_libraries(admiral_internal INTERFACE

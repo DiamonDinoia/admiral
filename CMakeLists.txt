@@ -7,7 +7,7 @@ cmake_minimum_required(VERSION 3.25)
 project(
     admiral
     VERSION 0.0.1
-    DESCRIPTION "Admiral: high-performance C++20 FFT library with C and C++ APIs"
+    DESCRIPTION "Admiral: high-performance FFT library with C and C++ APIs"
     LANGUAGES C CXX
 )
 
@@ -34,6 +34,15 @@ option(ADM_BUILD_EXAMPLES "Build the runnable examples" ${PROJECT_IS_TOP_LEVEL})
 option(ADM_ENABLE_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 option(ADM_ENABLE_THREADS "Multi-threaded plan execution (links Threads); OFF = serial no-op pool" ON)
 option(ADM_MEASURE "Compile in plan-time route measurement (admiral::effort::measure, FFTW_MEASURE)" ON)
+
+# Language standard of the library and its installed headers. 20 uses concepts and
+# std::span directly; 17 routes through the detail/cxx_compat.hpp fallbacks with the
+# same kernels and codegen. The value is a feature name everywhere, never a raw flag.
+set(ADM_CXX_STANDARD 20 CACHE STRING "C++ standard for library and public headers: 17, 20 or 23")
+set_property(CACHE ADM_CXX_STANDARD PROPERTY STRINGS 17 20 23)
+if(NOT ADM_CXX_STANDARD MATCHES "^(17|20|23)$")
+    message(FATAL_ERROR "ADM_CXX_STANDARD=${ADM_CXX_STANDARD}: only 17, 20 and 23 are supported")
+endif()
 
 option(ADM_USE_FAST_MATH "Enable -ffast-math for relaxed floating-point math" ON)
 

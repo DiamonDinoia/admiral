@@ -9,6 +9,7 @@
 #   isa         x86-64 / -v2 / -v3 / -v4 at Release
 #   compilers   $CXX_LIST (default "g++ clang++") at x86-64-v3; the baseline is the isa arm
 #   catalog     a non-default codelet catalog (extra size 66 -> Rader's codelet inner)
+#   cxx17       the C++17 compatibility arm (ADM_CXX_STANDARD=17), tests on
 #   sanitize    address+undefined, then thread
 #   valgrind    memcheck over the test binaries, no AVX-512, no fast-math
 #   tidy        clang-tidy over the two non-template source files
@@ -124,6 +125,16 @@ arm_sanitize() {
     done
 }
 
+# The C++17 compatibility arm. The flag assertion is the same tripwire as the ISA
+# arms: ADM_CXX_STANDARD drives CMAKE_CXX_STANDARD, and a missed threading of it
+# would compile -std=c++20 quietly otherwise. Codegen parity with the C++20 build
+# is checked per release (object .text diff), not here.
+arm_cxx17() {
+    run_arm cxx17 "want:-std=c++17" "want:-march=x86-64-v3" "not:std=c++20" -- \
+        -DCMAKE_BUILD_TYPE=Release -DADM_CXX_STANDARD=17 -DADM_TARGET_ARCH=x86-64-v3 \
+        -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF
+}
+
 # The codelet catalog is four cache variables (MIN_N/MAX_N/EXTRA/EXCLUDE) and nothing else
 # here builds a non-default one, so a knob the docs invite users to turn had no test.
 # Adding 66 makes p=67 the first Rader prime whose p-1 is a catalog member, which is the
@@ -204,7 +215,7 @@ arm_tidy() {
 # Quoted "${@:-a b c}" would expand the default as ONE word, and an unknown arm name
 # would otherwise pass silently, so both cases fail below.
 arms=("$@")
-((${#arms[@]})) || arms=(isa compilers catalog sanitize valgrind tidy)
+((${#arms[@]})) || arms=(isa compilers catalog cxx17 sanitize valgrind tidy)
 for arm in "${arms[@]}"; do
     if [[ $(type -t "arm_$arm") != function ]]; then
         echo "=== $arm: no such arm"; failed+=("$arm-unknown"); continue

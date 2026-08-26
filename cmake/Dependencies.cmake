@@ -56,8 +56,9 @@ if(ducc0_ADDED)
         ${ducc0_SOURCE_DIR}/src
     )
 
-    # Set C++20 standard for ducc0
-    target_compile_features(ducc0 PUBLIC cxx_std_20)
+    # ducc0 carries no C++20-only constructs the bench needs, so it tracks the
+    # library's standard (a consumer-facing feature must match the span ABI).
+    target_compile_features(ducc0 PUBLIC cxx_std_${ADM_CXX_STANDARD})
 
     adm_silence_target(ducc0)
 

@@ -5,8 +5,9 @@
 # std::complex<float> and std::complex<double>. The OBJECT libraries are a
 # compile-time device and are not installed; nor is admiral_internal.
 #
-# Only the three public headers go in. They include nothing but the standard
-# library, so the prefix needs no xsimd, no poet and no admiral/detail.
+# Only the public headers go in: the three interfaces plus the compatibility
+# header on which admiral.hpp's C++17 fallback lives. The prefix needs no xsimd,
+# no poet and no other admiral/detail.
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -25,6 +26,10 @@ install(FILES
     ${PROJECT_SOURCE_DIR}/include/admiral/fftw3.h
     ${PROJECT_SOURCE_DIR}/include/admiral/errors.hpp
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/admiral)
+
+install(FILES
+    ${PROJECT_SOURCE_DIR}/include/admiral/detail/cxx_compat.hpp
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/admiral/detail)
 
 install(EXPORT admiralTargets NAMESPACE admiral::
     FILE admiralTargets.cmake

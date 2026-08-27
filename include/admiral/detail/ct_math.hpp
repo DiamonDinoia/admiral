@@ -46,15 +46,26 @@ template<typename F = double>
     const F x2 = x * x;
     // cos: sum (-1)^k x^(2k)/(2k)!   ;  sin: sum (-1)^k x^(2k+1)/(2k+1)!
     // k counts in F: every factorial step below is an exact small integer.
-    // The tail falls under eps(F) after 9 terms in double and 12 in long double.
-    constexpr F kTerms = std::numeric_limits<F>::digits > 53 ? F(12) : F(9);
+    //
+    // The loop runs until both tails fall under eps(F) rather than to a fixed
+    // count. A count is a calibration to ONE mantissa width, and long double is
+    // 64 bits on x86, 113 on aarch64 and 53 on arm64 macOS. A 12-term fold is
+    // exact at 64 bits and short at 113: measured against a 40-term series, it
+    // misses by 437 eps at den 7 and 16000 at den 64, and ct_sincos_turns is the
+    // butterflies' only twiddle source, so the transform inherits that phase.
+    // Terms shrink monotonically over |x| <= pi/4, so the test terminates: 9
+    // iterations at 53 bits, 10 at 64, 14 or 15 at 113.
+    const F tiny = std::numeric_limits<F>::epsilon() / F(2);
     F cterm = 1, csum = 1;
     F sterm = x, ssum = x;
-    for (F k = 1; k <= kTerms; ++k) {
+    for (F k = 1;; ++k) {
         cterm *= -x2 / ((2 * k - 1) * (2 * k));
         csum += cterm;
         sterm *= -x2 / ((2 * k) * (2 * k + 1));
         ssum += sterm;
+        const F ca = cterm < 0 ? -cterm : cterm;
+        const F sa = sterm < 0 ? -sterm : sterm;
+        if (ca <= tiny && sa <= tiny) break;
     }
     return {ssum, csum};
 }

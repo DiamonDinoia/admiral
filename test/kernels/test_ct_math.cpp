@@ -13,7 +13,10 @@
 #include <admiral/detail/ct_math.hpp>
 #include <admiral/detail/math.hpp>
 
+#include <array>
+#include <cmath>
 #include <cstddef>
+#include <limits>
 #include <vector>
 
 using namespace admiral::detail;
@@ -67,6 +70,67 @@ static_assert(generates_group(13));
 static_assert(generates_group(17));
 static_assert(generates_group(97));
 static_assert(generates_group(101));
+
+// --- the twiddle fold is accurate at whatever width F carries ---
+//
+// ct_sincos_turns is the ONLY twiddle source for the butterflies, so its error
+// is a phase error the whole transform inherits. Nothing else can catch a fold
+// that is short: every transform test compares against a reference folded the
+// same way, or against a tolerance scaled to the element type rather than to
+// the fold. libm is the independent reference here.
+//
+// F = long double is the case that bites. It is 64 bits on x86, 113 on aarch64
+// and 53 on arm64 macOS, so a fold calibrated to one of those is wrong on the
+// others, and only this test says so.
+template<typename F, std::size_t Den>
+ADM_CONSTEVAL std::array<ct_sincos_v<F>, Den> folded_turns() {
+    std::array<ct_sincos_v<F>, Den> a{};
+    for (std::size_t k = 0; k < Den; ++k) a[k] = ct_sincos_turns<F>(/*conjugate=*/false, k, Den);
+    return a;
+}
+
+// Worst |folded - libm| over one den, in eps(F). Den is a template parameter
+// because ct_sincos_turns is consteval: the table has to fold at compile time.
+template<typename F, std::size_t Den>
+F turns_err() {
+    constexpr std::array<ct_sincos_v<F>, Den> tab = folded_turns<F, Den>();
+    const F eps = std::numeric_limits<F>::epsilon();
+    F worst = 0;
+    for (std::size_t k = 0; k < Den; ++k) {
+        const F ang = F(2) * numbers::pi_v<F> * static_cast<F>(k) / static_cast<F>(Den);
+        const F es = std::abs(tab[k].s - std::sin(ang)) / eps;
+        const F ec = std::abs(tab[k].c - std::cos(ang)) / eps;
+        worst = es > worst ? es : worst;
+        worst = ec > worst ? ec : worst;
+    }
+    return worst;
+}
+
+// den 7 is the sharp one: the octant residual reaches (pi/4)*6/7, where a short
+// series has the least room. The catalog reaches every den below.
+template<typename F>
+F worst_turns_err() {
+    F w = 0;
+    for (const F e : {turns_err<F, 2>(), turns_err<F, 3>(), turns_err<F, 4>(),
+                      turns_err<F, 5>(), turns_err<F, 7>(), turns_err<F, 8>(),
+                      turns_err<F, 11>(), turns_err<F, 13>(), turns_err<F, 16>(),
+                      turns_err<F, 32>(), turns_err<F, 64>()})
+        w = e > w ? e : w;
+    return w;
+}
+
+TEST_CASE("ct_sincos_turns matches libm at the fold precision", "[ct_math][numerics]") {
+    const double wd = worst_turns_err<double>();
+    INFO("double fold worst " << wd << " eps");
+    REQUIRE(wd <= 8);
+
+    // The SIMD engines fold at double; only the scalar long double backend asks
+    // for more, and it is the width that varies across the CI hosts.
+    const double wl = static_cast<double>(worst_turns_err<long double>());
+    INFO("long double fold worst " << wl << " eps (digits "
+                                   << std::numeric_limits<long double>::digits << ")");
+    REQUIRE(wl <= 8);
+}
 
 // The helpers are constexpr, not consteval, so nothing above emits a runtime
 // definition. Call them through volatile arguments to cover that instantiation.

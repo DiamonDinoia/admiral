@@ -41,7 +41,11 @@ long double relerr_ld(const std::vector<V>& ref, const std::vector<V>& got) {
 template<typename V>
 void require_close_lt(const std::vector<V>& ref, const std::vector<V>& got) {
     const long double err = relerr_ld(ref, got);
-    INFO("relative L2 error " << static_cast<double>(err));
+    // In eps units too: long double is 64-bit mantissa on x86, 113 on aarch64 and
+    // 53 on arm64 macOS, so an absolute error alone cannot be compared across hosts.
+    INFO("relative L2 error " << static_cast<double>(err) << " = "
+                              << static_cast<double>(err / std::numeric_limits<lt_t>::epsilon())
+                              << " eps");
     REQUIRE(err <= static_cast<long double>(fft_tol<lt_t>()));
 }
 
@@ -183,6 +187,55 @@ TEST_CASE("long double plans thread without sharing scratch", "[longdouble][thre
 // The quadrant fold in scalar_twiddle keeps the trig argument below a quarter
 // turn and makes the four quarter turns come out exact. Both hold without a
 // reference of higher precision than long double.
+// cos and sin of the reduced argument, by Taylor series. |t| <= pi/2 converges
+// in under 30 terms, so the series is its own reference at any width: a wider
+// carrier does not exist on a binary128 host. This is the only check on the
+// twiddle PHASE. Modulus alone cannot see a rotation, and a rotation is what a
+// weak libm delivers: the whole transform inherits the twiddle's phase error.
+void series_cos_sin(lt_t t, lt_t& c, lt_t& s) {
+    const lt_t t2 = t * t;
+    lt_t ct = 1, cs = 1, st = t, sn = t;
+    for (int k = 1; k <= 30; ++k) {
+        ct *= -t2 / (lt_t(2 * k - 1) * lt_t(2 * k));
+        st *= -t2 / (lt_t(2 * k) * lt_t(2 * k + 1));
+        cs += ct;
+        sn += st;
+    }
+    c = cs;
+    s = sn;
+}
+
+TEST_CASE("long double: scalar_twiddle phase matches an independent series", "[longdouble]") {
+    using admiral::detail::scalar_twiddle;
+    const lt_t eps = std::numeric_limits<lt_t>::epsilon();
+    lt_t worst = 0;
+    std::size_t worst_k = 0, worst_n = 0;
+    for (const std::size_t n : {31u, 101u, 821u, 1024u, 3939u, 4093u, 8192u}) {
+        for (std::size_t k = 0; k < n; ++k) {
+            // scalar_twiddle's own reduction, so the series sees the same argument.
+            const std::size_t k4 = 4 * k, q = k4 / n;
+            const lt_t rem = static_cast<lt_t>(k4 % n) / static_cast<lt_t>(4 * n);
+            lt_t c, s;
+            series_cos_sin(lt_t(2) * admiral::detail::numbers::pi_v<lt_t> * rem, c, s);
+            const lc_t want = q == 0   ? lc_t(c, s)
+                              : q == 1 ? lc_t(-s, c)
+                              : q == 2 ? lc_t(-c, -s)
+                                       : lc_t(s, -c);
+            // Backward is the unconjugated exp(+2 pi i k/n), which is what the series gives.
+            const lc_t got = scalar_twiddle<lt_t>(k, n, false);
+            const lt_t e = std::abs(std::conj(want) * got - lc_t(1, 0)) / eps;
+            if (e > worst) {
+                worst = e;
+                worst_k = k;
+                worst_n = n;
+            }
+        }
+    }
+    INFO("worst phase error " << static_cast<double>(worst) << " eps at k=" << worst_k
+                              << " n=" << worst_n);
+    REQUIRE(worst <= 8);
+}
+
 TEST_CASE("long double: scalar_twiddle folds the quadrants exactly", "[longdouble]") {
     using admiral::detail::scalar_twiddle;
     const lt_t eps = std::numeric_limits<lt_t>::epsilon();

@@ -9,6 +9,7 @@
 
 #include <array>
 #include <complex>
+#include <limits>
 #include <type_traits>
 #include <vector>
 
@@ -44,9 +45,15 @@ TEST_CASE("compat: numbers constants match double-precision expectations", "[ker
     REQUIRE(cx::numbers::pi == 3.141592653589793238462643383279502884);
     REQUIRE(cx::numbers::pi_v<double> == cx::numbers::pi);
     // pi_v<T> must not narrow through the wide carrier: a long double pi keeps
-    // its low bits instead of truncating at double precision.
-    REQUIRE(cx::numbers::pi_v<long double> - static_cast<long double>(cx::numbers::pi)
-            != 0.0L);
+    // its low bits instead of truncating at double precision. Where long double
+    // IS double (arm64 macOS, MSVC) there are no low bits to keep, and the
+    // property the carrier has to satisfy is equality.
+    if constexpr (std::numeric_limits<long double>::digits >
+                  std::numeric_limits<double>::digits)
+        REQUIRE(cx::numbers::pi_v<long double> - static_cast<long double>(cx::numbers::pi)
+                != 0.0L);
+    else
+        REQUIRE(cx::numbers::pi_v<long double> == static_cast<long double>(cx::numbers::pi));
 }
 
 TEST_CASE("compat: bit helpers agree with the shift-count definitions", "[kernels][compat]") {

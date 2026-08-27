@@ -206,7 +206,55 @@ TEMPLATE_TEST_CASE("strides_plan degenerate and rejected geometry", "[transforms
     REQUIRE_THROWS_AS(bad.forward(data.data(), data.data()), admiral::size_error);
 }
 
+// Bit-identical across alignment classes.
+//
+// The column engine clones its store-policy lambda per inline context, and under
+// fast-math the compiler is free to contract and reassociate each clone
+// differently. Which clone covers a column depends on where the data starts, so
+// without the numerics pin in src/CMakeLists.txt one transform returns
+// 1-ULP-different bits per alignment class. Every check above compares against a
+// tolerance and passes right through that; only bitwise equality catches it.
+//
+// The check is a real one. Strip the pin and rebuild: at Release/x86-64-v4/gcc
+// 14.2 this case fails on its first assertion, len 20 nbatch 16 forward through
+// axis_plan at offset 1, 2 of 320 elements differing at f32 and 38 of 320 at f64.
 namespace {
+
+// Runs one transform at every element offset 0..15 into the start of a buffer and
+// requires the results to agree bit for bit. Two plan types, one engine.
+template<typename T>
+void require_align_stable(std::size_t len, std::size_t nbatch, bool forward, bool axis) {
+    constexpr std::size_t kOff = 16;   // covers W for every ISA level admiral targets
+    const std::size_t n = len * nbatch;
+    const auto in = make_input<T>(n, 0xA11C);
+    std::vector<std::complex<T>> ref(n);
+
+    for (std::size_t off = 0; off < kOff; ++off) {
+        std::vector<std::complex<T>> buf(n + kOff);
+        std::copy(in.begin(), in.end(), buf.begin() + static_cast<std::ptrdiff_t>(off));
+        std::complex<T>* const p = buf.data() + off;
+        if (axis) {
+            const std::size_t shape[2] = {len, nbatch};
+            const admiral::axis_plan<T> ap(span<const std::size_t>(shape, 2), 0, forward);
+            ap.execute(p, {}, {});
+        } else {
+            const admiral::strides_plan<T> sp(len, nbatch, nbatch, 1, nbatch, 1);
+            if (forward) sp.forward(p, p);
+            else         sp.inverse(p, p);
+        }
+        if (off == 0) {
+            std::copy(p, p + n, ref.begin());
+            continue;
+        }
+        std::size_t diffs = 0;
+        for (std::size_t i = 0; i < n; ++i)
+            if (std::memcmp(&p[i], &ref[i], sizeof(std::complex<T>)) != 0) ++diffs;
+        INFO("offset " << off << " len " << len << " nbatch " << nbatch
+                       << (axis ? " axis_plan" : " strides_plan")
+                       << (forward ? " forward" : " inverse"));
+        REQUIRE(diffs == 0);
+    }
+}
 
 // One input layout, several output layouts, results gathered to logical (p, l)
 // order: bitwise equal. The route and the factoring proxy pick the numbers, so
@@ -261,4 +309,14 @@ TEMPLATE_TEST_CASE("strides_plan bits do not depend on the output layout",
         require_output_layout_stable<T>(64, 2, 8192, 1, forward);
         require_output_layout_stable<T>(64, 8, 1, 64, forward);
     }
+}
+
+TEMPLATE_TEST_CASE("column engine is bit-identical across alignment classes",
+                   "[transforms][strides][numerics]", float, double) {
+    using T = TestType;
+    // gcc breaks at len 20; clang needs len 60. 256 adds radix coverage.
+    for (const std::size_t len : {std::size_t{20}, std::size_t{60}, std::size_t{256}})
+        for (const bool forward : {true, false})
+            for (const bool axis : {true, false})
+                require_align_stable<T>(len, 16, forward, axis);
 }

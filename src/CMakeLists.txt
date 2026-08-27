@@ -45,6 +45,32 @@ add_library(admiral_engine OBJECT
     inst_nd_f.cpp inst_nd_d.cpp
     inst_real_f.cpp inst_real_d.cpp
     inst_api_f.cpp inst_api_d.cpp inst_api_ld.cpp)
+
+# The column engine's last pass clones its store-policy lambdas per inline context
+# (bulk/prefix/suffix), and under fast-math the compiler contracts and REASSOCIATES
+# the butterfly math differently per clone: one transform then returns
+# 1-ULP-different bits depending on which clone a column's width-and-alignment cover
+# picks, and so on the data's alignment class. Pin the association at the call
+# boundary: contract=on scopes contraction to single expressions, no-associative-math
+# withdraws the permission to rewrite the add tree. Both flags are load-bearing and
+# neither alone closes it. inst_col_* only: the 1-D engine runs one clone per length
+# and is already bit-stable. Both gcc and clang need this (test_strides.cpp's
+# "bit-identical across alignment classes" case fails without it on both); MSVC is
+# untested, /fp:precise is the same withdrawal.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set(_adm_col_numerics -ffp-contract=on -fno-associative-math)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+    set(_adm_col_numerics /fp:precise)
+elseif(ADM_USE_FAST_MATH)
+    # No spelling known for this compiler, so the col engine keeps whatever fast-math
+    # licence it was given. Say so here rather than let the bit-stability test be the
+    # first news of it.
+    message(WARNING "admiral: no fast-math numerics pin for ${CMAKE_CXX_COMPILER_ID}; "
+                    "the column engine may not be bit-stable across data alignments")
+endif()
+set_source_files_properties(
+    inst_col_f_fwd.cpp inst_col_f_inv.cpp inst_col_d_fwd.cpp inst_col_d_inv.cpp
+    PROPERTIES COMPILE_OPTIONS "${_adm_col_numerics}")
 target_compile_features(admiral_engine PRIVATE cxx_std_${ADM_CXX_STANDARD})
 target_include_directories(admiral_engine PRIVATE
     ${PROJECT_SOURCE_DIR}/include

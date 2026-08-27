@@ -69,6 +69,56 @@ barrier is not free: it constrains scheduling around the test, which grows
 `codelet_apply<16u, float, true>` from 625 to 700 bytes and moves every codelet object
 by 1-2% at v3/gcc 14.2.
 
+## Bitwise stability of the column engine
+
+The col chain clones its store-policy lambdas per inline context (bulk/prefix/suffix in
+`dif_col_pass_last`, width covers elsewhere), so under `-ffast-math` the compiler contracts
+and reassociates one butterfly differently per clone: a transform's bits depend on the
+data's alignment class, because that is what picks the clone covering a column. The pin
+is in `src/CMakeLists.txt`, on the four `inst_col_*` TUs only: `-ffp-contract=on
+-fno-associative-math`, guarded on the compiler id because the spellings differ and an
+unknown `-f` name is a hard error on clang. The 1-D engine runs one clone per length and
+needs nothing.
+
+`test/transforms/test_strides.cpp`'s "bit-identical across alignment classes" case IS the
+check, and it is a real one: strip the pin and it fails. Release/x86-64-v4, gcc 14.2 fails
+at len 20 offset 1 (2 of 320 elements at f32, 38 of 320 at f64); clang 19 needs len 60
+(159 of 960 at f32). Both fail through `axis_plan`, so the defect is on master and
+predates the `strides_plan` branch; `strides_plan` only reaches the same col chain. Every
+other test in the tree compares against a tolerance and passes either way.
+
+Both flags are load-bearing and the pair is minimal. The 2x2 at v4/gcc 14.2 on that same
+test: no pin fails, `-fno-associative-math` alone fails, `-ffp-contract=on` alone fails,
+the pair passes. Per-clone contraction and reassociation are independent sources, and
+closing one leaves the other. `-fno-associative-math` and gcc's narrower
+`-fno-tree-reassoc` are interchangeable here and indistinguishable in speed (geomean
+1.0027 over 10 col cells at v4, against a 1.1% same-binary control floor), so the portable
+spelling wins. `-ftree-reassoc` stays ENABLED under the pin; what stops it touching floats
+is gcc gating FP reassociation on `flag_associative_math`. Nothing tests that gate, so a
+gcc that moved FP reassociation out from behind it would break the pin silently.
+
+The pin is NOT cheap, and `-ffp-contract=on` is what costs. The butterflies write the
+multiply and the add as separate statements, so scoping contraction to one expression
+leaves almost nothing to contract: FMAs in `inst_col_f_fwd.cpp.o` fall from 21110 to 3029
+and total FP instructions rise 20% (56965 to 68448), f64 the same shape.
+`inst_dif_f_fwd.cpp.o` is byte-identical across the two builds, which is the control that
+the pin reaches those four TUs and nothing else. The col kernels are memory-bound at the
+benchmarked sizes, so that 20% costs about 0.9% geomean wall clock and at most 3% on any
+cell. Source-level `piece_fma` pinning is not needed for correctness once the flags are
+set, but routing the col butterfly twiddles through it the way `dif_passes.hpp` already
+does would take contraction out of the compiler's hands and buy those FMAs back. 3% is
+the ceiling, so it is a lead and not a priority.
+
+A second, source-level invariant sits next to the flag pin: `strides_plan` bits must not
+depend on the OUTPUT layout, because the route and the f32 radix-4 factoring proxy are
+what pick the numbers. `choose_line_route` in `apply_lines_strided_oop` therefore reads
+`src_line` only, `strides_state` builds its axis states from `istride` only, and the slab
+arm runs only when that same chooser picks the col route. Pricing the destination stride
+into either (a `std::max(src, dst)` looks reasonable and was the original code) flips the
+route or the factoring on wide output strides: the "bits do not depend on the output
+layout" case in `test_strides.cpp` then fails at len 64 nbatch 2 out (8192, 1), 100 of
+128 elements, both precisions.
+
 ## Build
 
 - `module load gcc/14.2.0`. The system g++ is 8.5 and cannot compile C++20.

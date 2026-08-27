@@ -272,6 +272,88 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
     });
 }
 
+// Out-of-place twin of apply_lines_strided: src and dst may carry independent
+// element strides (`line` between the elements of one line, `batch` between the
+// same element of consecutive lines). The col route needs both batch strides 1:
+// the pass kernels walk columns contiguously, and the first pass then reads the
+// source straight (fused copy-in through col_dif's first_src). Every other
+// stride pattern takes the transposed route, whose gather/scatter carry the two
+// batch strides explicitly. The route reads the SOURCE layout only: a route is
+// what picks the numbers, so pricing the destination in would make a transform's
+// bits depend on where the result lands. dst == src is legal only when the two
+// layouts match: each route reads a tile fully before it writes that tile, so a
+// tile is safe in place, but a differing stride pair makes one tile's writes
+// land in the next tile's reads.
+template<typename T, typename SrcBase, typename DstBase>
+ADM_ALWAYS_INLINE void
+apply_lines_strided_oop(const std::complex<T>* src, std::size_t src_line,
+                        std::size_t src_batch, std::complex<T>* dst,
+                        std::size_t dst_line, std::size_t dst_batch, std::size_t len,
+                        bool forward, const nd_axis_state<T>& st, std::optional<T> fct,
+                        thread_pool* pool, std::size_t nruns, std::size_t run_len,
+                        std::size_t total_elems, SrcBase src_base, DstBase dst_base) {
+    const std::size_t nthreads = pool_size(pool);
+    if (src_batch == 1 && dst_batch == 1 &&
+        choose_line_route<T>(st, len, src_line, run_len, nthreads) ==
+            line_route::col_dif) {
+        const std::size_t Bt = nd_col_block<T>(len, run_len, nthreads, nruns);
+        const std::size_t ntiles = (run_len + Bt - 1) / Bt;
+        const std::size_t nunits = nruns * ntiles;
+        const T scale = fct.value_or(forward ? T(1) : T(1) / static_cast<T>(len));
+        parallel_for(pool, nunits, total_elems, [&](std::size_t b, std::size_t e, std::size_t) {
+            soa_scratch<T, 4> sc(len * Bt);
+            std::size_t run = b / ntiles, tile = b % ntiles;
+            const std::complex<T>* sline = src + src_base(run);
+            std::complex<T>* dline = dst + dst_base(run);
+            for (std::size_t u = b; u < e; ++u) {
+                const std::size_t c0 = tile * Bt;
+                const std::size_t bc = std::min(Bt, run_len - c0);
+                col_dif_dispatch<T>(forward, dline + c0, len, dst_line, bc, sc.buf(0),
+                                    sc.buf(1), sc.buf(2), sc.buf(3), st.dtw, scale,
+                                    sline + c0, src_line);
+                if (++tile == ntiles) {
+                    tile = 0;
+                    sline = src + src_base(++run);
+                    dline = dst + dst_base(run);
+                }
+            }
+        });
+        return;
+    }
+    // Transposed route (any strides, and the only route without a column chain):
+    // gather a cache-resident group of columns out of src, 1D-plan each, scatter
+    // into dst. Same grouping rule as the in-place form.
+    std::size_t group = transpose_group<T>(len, run_len);
+    if (pool && nruns * ((run_len + group - 1) / group) < 2 * nthreads) {
+        constexpr std::size_t kLine = kCacheLine / sizeof(std::complex<T>);
+        const std::size_t target =
+            ((run_len + 2 * nthreads - 1) / (2 * nthreads) + kLine - 1) / kLine * kLine;
+        group = std::min(group, std::max(kLine, target));
+    }
+    const std::size_t ngroups = (run_len + group - 1) / group;
+    const std::size_t nunits = nruns * ngroups;
+    const exec_options<T> opts{fct};
+    parallel_for(pool, nunits, total_elems, [&](std::size_t b, std::size_t e, std::size_t) {
+        // Uninitialized: the gather fills all gw*len entries before every use.
+        soa_scratch<T, 1> scratch(2 * len * group);
+        auto* const buf = reinterpret_cast<std::complex<T>*>(scratch.buf(0));
+        for (std::size_t u = b; u < e; ++u) {
+            const std::size_t c0 = (u % ngroups) * group;
+            const std::size_t gw = std::min(group, run_len - c0);
+            const std::size_t r = u / ngroups;
+            const std::complex<T>* const sline = src + src_base(r) + c0 * src_batch;
+            std::complex<T>* const dline = dst + dst_base(r) + c0 * dst_batch;
+            for (std::size_t p = 0; p < len; ++p)
+                for (std::size_t g = 0; g < gw; ++g)
+                    buf[g * len + p] = sline[p * src_line + g * src_batch];
+            st.plan->execute_many(buf, gw, len, opts);
+            for (std::size_t p = 0; p < len; ++p)
+                for (std::size_t g = 0; g < gw; ++g)
+                    dline[p * dst_line + g * dst_batch] = buf[g * len + p];
+        }
+    });
+}
+
 // How a pair of disjoint column bands on the same lines is issued.
 enum class band_form : std::uint8_t {
     packed,  // both bands gathered into one <= W slab: one pass chain instead of two

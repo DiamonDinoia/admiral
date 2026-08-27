@@ -7,6 +7,7 @@ namespace admiral {
 
 template class plan<double>;
 template class axis_plan<double>;
+template class strides_plan<double>;
 template class plan_r2c<double>;
 template class plan_r2r<double>;
 

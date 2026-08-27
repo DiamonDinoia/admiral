@@ -20,7 +20,8 @@
 // has no stability guarantee.
 //
 // Layout. Contiguous row-major, last axis fastest, the same layout as FFTW.
-// Strided data, mdspan and non-contiguous views are not supported.
+// strides_plan is the exception: it takes a batch of strided lines. General mdspan
+// views are not supported.
 //
 // Sign and scale. Forward uses exp(-2*pi*i*k*n/N) and is unscaled. Inverse uses
 // exp(+2*pi*i*k*n/N) and divides by the element count, so forward then inverse
@@ -107,6 +108,7 @@ inline constexpr char kSizeMismatch[] = "Data size doesn't match plan size";
 // Engine state, defined in the library. Declaring it is all this header needs.
 template<typename T> struct plan_state;
 template<typename T> struct axis_state;
+template<typename T> struct strides_state;
 template<typename T> struct real_state;
 template<typename T> struct r2r_state;
 
@@ -293,6 +295,62 @@ public:
 
 private:
     std::unique_ptr<detail::axis_state<T>> m;
+};
+
+/// Batched 1-D FFT over `nbatch` strided lines of `len` complex elements, out of
+/// place. The geometry is FFTW's plan_many(rank = 1), under the parameter names
+/// FFTW and cuFFT both use: a stride separates the elements of one transform, a
+/// dist separates consecutive transforms. The two layouts are independent:
+///
+///   transform l, element p:
+///       src[p * in_stride + l * in_dist] -> dst[p * out_stride + l * out_dist]
+///
+/// Where it sits: plan transforms a whole contiguous tensor, axis_plan one axis of a
+/// contiguous tensor in place, strides_plan one batch of strided lines out of place.
+/// It builds both directions and picks per call, the way plan does. axis_plan is the
+/// one that fixes its direction at construction.
+///
+/// The INPUT geometry alone picks the numbers: a given (len, in_stride, in_dist)
+/// returns bit-identical results into every output layout, so results stay
+/// comparable across layouts. Unit input dist runs the batched SIMD column pass
+/// straight out of the source; other input strides move cache-resident groups of
+/// columns through contiguous scratch. Unit input stride is a batch of contiguous
+/// rows, one contiguous transform per line.
+/// src == dst transforms in place, and then requires the two layouts to match.
+/// Buffers that overlap without being equal are undefined behaviour, as everywhere
+/// else in this header. T is float or double, because the strided kernels are SIMD.
+///
+/// A plan owns scratch that every call overwrites, so one plan serves one call at a
+/// time. Concurrent calls need one plan each; opts.nthreads threads inside a call.
+template<typename T>
+class ADM_API strides_plan {
+    static_assert(detail::is_simd_precision_v<T>, "admiral: T must be float or double");
+public:
+    /// Strides count std::complex<T> elements. Zero len, zero nbatch, zero stride and
+    /// (with nbatch > 1) zero dist throw size_error, as does a len * nbatch that does
+    /// not fit size_t.
+    [[nodiscard]] strides_plan(std::size_t len, std::size_t nbatch, std::size_t in_stride,
+                               std::size_t in_dist, std::size_t out_stride,
+                               std::size_t out_dist, const options& opts = {});
+
+    ~strides_plan();
+    strides_plan(const strides_plan&) = delete;
+    strides_plan& operator=(const strides_plan&) = delete;
+    strides_plan(strides_plan&&) noexcept;
+    strides_plan& operator=(strides_plan&&) noexcept;
+
+    /// Forward FFT, unscaled. fct overrides the output scale.
+    void forward(const std::complex<T>* src, std::complex<T>* dst,
+                 std::optional<T> fct = std::nullopt) const;
+    /// Inverse FFT, scaled by 1/len. Otherwise identical to forward().
+    void inverse(const std::complex<T>* src, std::complex<T>* dst,
+                 std::optional<T> fct = std::nullopt) const;
+
+    /// Elements touched per buffer: len * nbatch.
+    [[nodiscard]] std::size_t size() const noexcept;
+
+private:
+    std::unique_ptr<detail::strides_state<T>> m;
 };
 
 // ============================================================================

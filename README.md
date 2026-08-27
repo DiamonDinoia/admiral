@@ -142,8 +142,8 @@ The C++ header declares the engine instead of defining it, so it includes only
 the standard library. The engine is compiled, so the C++ API ships for
 `std::complex<float>`, `std::complex<double>` and `std::complex<long double>`. The
 long-double transform runs a scalar backend, because no SIMD ISA has 80-bit lanes, and
-it covers `plan`, `plan_r2c` and the one-shots; `axis_plan` and `plan_r2r` stay
-float/double. The exported target compiles at whatever `ADM_CXX_STANDARD` was
+it covers `plan`, `plan_r2c` and the one-shots; `axis_plan`, `strides_plan` and
+`plan_r2r` stay float/double. The exported target compiles at whatever `ADM_CXX_STANDARD` was
 configured with. The two builds are not link-compatible: every span in the API is
 `admiral::span`, which is `std::span` at C++20 and a polyfill of the same shape at
 C++17.

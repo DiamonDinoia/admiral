@@ -21,8 +21,8 @@ substitution failure. The C++17 arm spells the constraint as `precision_void_t<T
 public function's return type, a defaulted template parameter internally, or a `void_t`
 member detection.
 
-The four public class templates are the exception: they carry a one-line `static_assert`
-in both standards. Constraining their heads means constraining all 34 out-of-class member
+The five public class templates are the exception: they carry a one-line `static_assert`
+in both standards. Constraining their heads means constraining all 41 out-of-class member
 definitions in `src/cpp_api.hpp` to match, and the assert names the offending T where the
 concept would only say the constraint failed.
 
@@ -92,8 +92,8 @@ by 1-2% at v3/gcc 14.2.
 
 `float` and `double` reach the SIMD engine. `long double` reaches
 `include/admiral/detail/scalar_fft.hpp` instead, because no ISA has 80-bit lanes, and
-it covers `plan`, `plan_r2c` and the one-shots only; `axis_plan` and `plan_r2r` stay
-float and double. The two gates are `detail::is_precision_v` and
+it covers `plan`, `plan_r2c` and the one-shots only; `axis_plan`, `strides_plan` and
+`plan_r2r` stay float and double. The two gates are `detail::is_precision_v` and
 `detail::is_simd_precision_v` in the compat seam.
 
 The scalar backend carries NO second copy of the radix math. `butterfly.hpp` is

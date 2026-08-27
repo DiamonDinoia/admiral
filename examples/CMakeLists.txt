@@ -13,6 +13,7 @@ set(ADM_EXAMPLES
     real_transforms     admiral
     r2r_dct             admiral
     axis_transform      admiral
+    strided_lines       admiral
     c_api               admiral_c
     fftw_dropin         fftw
 )

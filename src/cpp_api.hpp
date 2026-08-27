@@ -13,6 +13,7 @@
 
 #include "admiral/detail/cxx_compat.hpp"   // ADM_UNLIKELY, span, detail::type_identity_t
 #include "admiral/detail/nd_plan.hpp"      // nd_runtime_plan, nd_axis_state, apply_lines_*
+#include "admiral/detail/scratch.hpp"      // make_aligned_buffer (strides_plan slab)
 #include "admiral/detail/plan.hpp"         // plan_impl, exec_options
 #include "admiral/detail/r2r.hpp"          // r2r_plan
 #include "admiral/detail/real_fft.hpp"     // nd_real_plan
@@ -42,6 +43,22 @@ namespace detail {
 template<typename T>
 [[nodiscard]] std::optional<T> as_optional(const T* p) {
     return p ? std::optional<T>{*p} : std::nullopt;
+}
+
+// Plan-time threading split for the single-axis plans (nd_runtime_plan folds the
+// same rule over every axis): the batch loop owns the pool when it can ever
+// thread (`lines` >= 2 and enough work), and the axis sub-plan then routes
+// 1-threaded; a single-line plan hands the axis the real thread count instead,
+// four_step_large being the only route that reads it.
+inline std::size_t split_batch_threads(std::size_t requested, std::size_t total,
+                                       std::size_t lines,
+                                       std::unique_ptr<thread_pool>& pool) {
+    const std::size_t nthreads = resolve_nthreads(requested, total);
+    if (lines >= 2 && total >= kThreadMinElems) {
+        if (nthreads > 1) pool = std::make_unique<thread_pool>(nthreads);
+        return 1;
+    }
+    return nthreads;
 }
 
 template<typename T>
@@ -100,7 +117,6 @@ struct axis_state {
         const auto total = extent_product(shape);
         if (!total)
             throw size_error("axis_plan: extents must be > 0 and their product must fit");
-        const std::size_t nthreads = resolve_nthreads(opts.nthreads, *total);
         std::size_t s = 1;
         for (std::size_t di = 0; di < shape.size(); ++di) {
             const std::size_t d = shape.size() - 1 - di;
@@ -109,21 +125,136 @@ struct axis_state {
         }
         for (std::size_t d = 0; d < shape.size(); ++d)
             if (d != axis && (innermost || d + 1 != shape.size())) bd.push_back(d);
-        // Plan-time threading split, identical to the one in nd_runtime_plan:
-        // the sub-plan routes as (and owns the pool of) a threaded plan only
-        // when the batch loop in execute() can never thread, since it then runs
-        // serially inside/instead of it. prod(shape[d != axis]) bounds that
-        // loop's unit count for both the contiguous and the strided form, so a
-        // single-line box (finufft with ntrans == 1) hands the axis the real
-        // thread count: four_step_large is the only route that reads nthreads
-        // and the only one that threads its own passes.
-        const std::size_t units = *total / shape[axis];
-        const bool threads_above = units >= 2 && *total >= kThreadMinElems;
-        // Exactly one live pool per axis plan: the batch loops' when they can
-        // thread (>= 2 lines exist), else the sub-plan's (single-line boxes).
+        // prod(shape[d != axis]) bounds the batch loop's unit count for both the
+        // contiguous and the strided form, so a single-line box (finufft with
+        // ntrans == 1) hands the axis the real thread count.
         st = make_nd_axis_state<T>(shape[axis], stride[axis], forward, innermost,
-                                   threads_above ? 1 : nthreads, opts.eff);
-        if (nthreads > 1 && threads_above) pool = std::make_unique<thread_pool>(nthreads);
+                                   split_batch_threads(opts.nthreads, *total,
+                                                       *total / shape[axis], pool),
+                                   opts.eff);
+    }
+};
+
+// Geometry fixed at construction; only the base pointers arrive per call. One
+// nd_axis_state per direction (the col twiddles are direction-free, the 1-D
+// sub-plan is not), a pool for the batch loop, and the route rules from the
+// public docs. The slab below is
+// allocated once and overwritten by every call, so a plan serves one call at a
+// time; concurrent transforms need one plan each.
+template<typename T>
+struct strides_state {
+    std::size_t len, nbatch;
+    std::size_t in_stride, in_dist, out_stride, out_dist;
+    nd_axis_state<T> fwd, inv;
+    std::unique_ptr<thread_pool> pool;
+    // Only the in_dist == 1, out_dist != 1 geometry with the col route uses this:
+    // the col chain writes len*nbatch contiguous, then one pass scatters into the
+    // strided destination.
+    detail::aligned_buffer<std::complex<T>> slab;
+
+    strides_state(std::size_t len_, std::size_t n, std::size_t istride, std::size_t idist,
+                  std::size_t ostride, std::size_t odist, const admiral::options& opts)
+        : len(len_), nbatch(n), in_stride(istride), in_dist(idist), out_stride(ostride),
+          out_dist(odist) {
+        if (istride == 0 || ostride == 0 || (n > 1 && (idist == 0 || odist == 0)))
+            throw size_error("strides_plan: strides must be nonzero");
+        const std::size_t dims[2] = {len_, n};
+        const auto total = extent_product(span<const std::size_t>(dims, 2));
+        if (!total) throw size_error("strides_plan: len and nbatch must be > 0 and their"
+                                     " product must fit");
+        const std::size_t axis_threads = split_batch_threads(opts.nthreads, *total, n, pool);
+        // The INPUT stride, not max over both sides: the axis state's factoring
+        // proxy picks the numbers, and the route rule below promises bits that do
+        // not depend on the output layout.
+        fwd = make_nd_axis_state<T>(len_, istride, /*is_forward=*/true, /*innermost=*/false,
+                                    axis_threads, opts.eff);
+        inv = make_nd_axis_state<T>(len_, istride, /*is_forward=*/false, /*innermost=*/false,
+                                    axis_threads, opts.eff);
+        // Allocate where the route is decided, so a call never allocates and a
+        // failure lands at plan time with every other resource error. The gate is
+        // the same chooser call run() makes, so the slab exists iff run() reads it.
+        if (len_ > 1 && istride != 1 && idist == 1 && odist != 1 &&
+            (slab_route(fwd) || slab_route(inv)))
+            slab = detail::make_aligned_buffer<std::complex<T>>(*total);
+    }
+
+    // The col chain into the slab is worth its extra scatter pass only when the
+    // chooser actually picks it; otherwise run() transposes straight into dst.
+    [[nodiscard]] bool slab_route(const nd_axis_state<T>& st) const {
+        return choose_line_route<T>(st, len, in_stride, nbatch, pool_size(pool.get())) ==
+               line_route::col_dif;
+    }
+
+    void run(bool is_forward, const std::complex<T>* src, std::complex<T>* dst,
+             std::optional<T> fct) const {
+        const nd_axis_state<T>& st = is_forward ? fwd : inv;
+        // In place is one layout, not two: the routes below read a tile before they
+        // write it, which holds only when the two layouts coincide.
+        if (src == dst && (in_stride != out_stride || in_dist != out_dist))
+            throw size_error("strides_plan: in place requires matching in/out strides");
+        if (len <= 1) {
+            // Identity axis: a strided copy, scaled. The default is 1 in both
+            // directions, because the inverse's 1/len is 1 at this length.
+            const T scale = fct.value_or(T(1));
+            for (std::size_t l = 0; l < nbatch; ++l)
+                *dst = *src * scale, src += in_dist, dst += out_dist;
+            return;
+        }
+        // Route by INPUT geometry: contiguous input lines run the per-line contiguous
+        // engine; unit-dist input columns run the batched SIMD column chain. A given
+        // length then produces the same numbers for a given direction regardless of the
+        // OUTPUT layout, which is what lets callers compare results across layouts.
+        if (in_stride == 1) {
+            const exec_options<T> opts{fct};
+            if (out_stride == 1) {
+                // Contiguous rows on both sides: transform into dst directly.
+                parallel_for(pool.get(), nbatch, len * nbatch,
+                             [&](std::size_t b, std::size_t e, std::size_t) {
+                                 for (std::size_t r = b; r < e; ++r)
+                                     st.plan->execute(src + r * in_dist, dst + r * out_dist,
+                                                      opts);
+                             });
+                return;
+            }
+            // Contiguous input lines, strided output lines: per-line engine into a
+            // line-long scratch, then scatter. The scratch is one line, not a slab:
+            // this route is not the fast path, it is the numerics-consistency one.
+            parallel_for(pool.get(), nbatch, len * nbatch,
+                         [&](std::size_t b, std::size_t e, std::size_t) {
+                             detail::soa_scratch<std::complex<T>, 1> scratch(len);
+                             std::complex<T>* const line = scratch.buf(0);
+                             for (std::size_t r = b; r < e; ++r) {
+                                 st.plan->execute(src + r * in_dist, line, opts);
+                                 for (std::size_t p = 0; p < len; ++p)
+                                     dst[p * out_stride + r * out_dist] = line[p];
+                             }
+                         });
+            return;
+        }
+        // The batched SIMD column pass needs unit dist on BOTH sides. When only the
+        // source is dist-contiguous (a transposed output view, say), run the same col
+        // chain into the contiguous slab and scatter: one extra strided-write pass
+        // buys the col engine's numerics, which callers cross-check against the
+        // contiguous run's output. When the chooser prefers the transposed route the
+        // slab buys nothing, so fall through and transpose straight into dst.
+        if (in_dist == 1 && out_dist != 1 && slab_route(st)) {
+            apply_lines_strided_oop<T>(src, in_stride, in_dist, slab.get(), nbatch,
+                                       /*dst_batch=*/1, len, is_forward, st, fct,
+                                       pool.get(), /*nruns=*/1, nbatch, len * nbatch,
+                                       [](std::size_t) { return std::size_t{0}; },
+                                       [](std::size_t) { return std::size_t{0}; });
+            parallel_for(pool.get(), nbatch, len * nbatch,
+                         [&](std::size_t b, std::size_t e, std::size_t) {
+                             for (std::size_t l = b; l < e; ++l)
+                                 for (std::size_t p = 0; p < len; ++p)
+                                     dst[p * out_stride + l * out_dist] = slab[p * nbatch + l];
+                         });
+            return;
+        }
+        apply_lines_strided_oop<T>(src, in_stride, in_dist, dst, out_stride, out_dist, len,
+                                   is_forward, st, fct, pool.get(), /*nruns=*/1, nbatch,
+                                   len * nbatch, [](std::size_t) { return std::size_t{0}; },
+                                   [](std::size_t) { return std::size_t{0}; });
     }
 };
 
@@ -438,6 +569,41 @@ void axis_plan<T>::execute_bands(std::complex<T>* data, span<const std::size_t> 
                                            [&](std::size_t r) { return base_of(r) + lo2_last; });
         return;
     }
+}
+
+// ============================================================================
+// strides_plan
+// ============================================================================
+
+template<typename T>
+strides_plan<T>::strides_plan(std::size_t len, std::size_t nbatch, std::size_t in_stride,
+                              std::size_t in_dist, std::size_t out_stride,
+                              std::size_t out_dist, const options& opts)
+    : m{std::make_unique<detail::strides_state<T>>(len, nbatch, in_stride, in_dist,
+                                                   out_stride, out_dist, opts)} {}
+
+template<typename T>
+strides_plan<T>::~strides_plan() = default;
+template<typename T>
+strides_plan<T>::strides_plan(strides_plan&&) noexcept = default;
+template<typename T>
+strides_plan<T>& strides_plan<T>::operator=(strides_plan&&) noexcept = default;
+
+template<typename T>
+void strides_plan<T>::forward(const std::complex<T>* src, std::complex<T>* dst,
+                            std::optional<T> fct) const {
+    m->run(true, src, dst, fct);
+}
+
+template<typename T>
+void strides_plan<T>::inverse(const std::complex<T>* src, std::complex<T>* dst,
+                            std::optional<T> fct) const {
+    m->run(false, src, dst, fct);
+}
+
+template<typename T>
+std::size_t strides_plan<T>::size() const noexcept {
+    return m->len * m->nbatch;
 }
 
 // ============================================================================

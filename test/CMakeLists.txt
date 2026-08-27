@@ -38,6 +38,7 @@ set(ADM_TEST_SOURCES
     kernels/test_cxx_compat.cpp
     transforms/test_plan.cpp
     transforms/test_axis.cpp
+    transforms/test_strides.cpp
     transforms/test_large_align.cpp
     transforms/test_generic_pass.cpp
     transforms/test_r2r.cpp
@@ -123,7 +124,7 @@ find_program(ADM_NM NAMES ${CMAKE_NM} nm)
 if(ADM_NM AND ADM_HAVE_VERSION_SCRIPT)
     # lib | allowed-export pattern | one regex per interface that must be present
     foreach(row
-        "admiral;^_Z[A-Z]+7admiral;_ZN7admiral7forwardI|_ZN7admiral7inverseI|_ZN7admiral4planI|_ZN7admiral9axis_planI|_ZN7admiral8plan_r2cI|_ZN7admiral8plan_r2rI"
+        "admiral;^_Z[A-Z]+7admiral;_ZN7admiral7forwardI|_ZN7admiral7inverseI|_ZN7admiral4planI|_ZN7admiral9axis_planI|_ZN7admiral12strides_planI|_ZN7admiral8plan_r2cI|_ZN7admiral8plan_r2rI"
         "admiral_c;^(adm|admf)_;adm_plan_1d|adm_forward|adm_r2c_nd|admf_plan_1d|admf_forward"
         "admiral_fftw;^fftw[f]?_;fftw_plan_dft_1d|fftw_execute|fftwf_plan_dft_1d")
         list(GET row 0 lib)

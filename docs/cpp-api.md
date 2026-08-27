@@ -75,6 +75,31 @@ ax0.execute(data.data(), {}, {});        // empty box = full extent
 dimension in one call; the header documents when that beats two `execute()`
 calls.
 
+## Strided lines
+
+`strides_plan` transforms `nbatch` lines of `len` complex elements out of place,
+under FFTW's `plan_many(rank = 1)` geometry and its parameter names: a stride
+separates the elements of one transform, a dist separates consecutive transforms.
+Source and destination carry independent pairs, so one plan expresses a
+gather, a scatter, or a transpose. [example](https://github.com/DiamonDinoia/admiral/blob/master/examples/strided_lines.cpp)
+
+```cpp
+// Every column of a row-major (rows x cols) matrix, written out column-major:
+// one call transforms and transposes.
+admiral::strides_plan<double> columns(/*len=*/rows, /*nbatch=*/cols,
+                                      /*in_stride=*/cols, /*in_dist=*/1,
+                                      /*out_stride=*/1,   /*out_dist=*/rows);
+columns.forward(src.data(), dst.data());
+```
+
+The input geometry alone picks the numbers, so a given source produces
+bit-identical results into every output layout: unit input dist runs the batched
+SIMD column pass straight out of the source, unit input stride runs one
+contiguous transform per line, anything else moves cache-resident groups of
+columns through scratch. `src == dst` transforms in place and then requires the
+two layouts to match. `float` and `double` only, because the strided kernels are
+SIMD.
+
 ## Errors
 
 Every failure the caller can cause derives from `admiral::error` and carries an

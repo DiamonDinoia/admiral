@@ -173,11 +173,13 @@ arm_valgrind() {
         # test_ulp is [ulp] end to end, so the filter leaves it with nothing to run and
         # Catch2 exits 4, which reads as a valgrind error. Skip the binary, not the tag.
         [[ $(basename "$bin") == test_ulp ]] && continue
-        # valgrind emulates x87 80-bit long double in 64-bit.
+        # valgrind emulates x87 80-bit long double in 64-bit, so ~[longdouble] drops the
+        # accuracy asserts elsewhere. test_long_double is that tag end to end, so the
+        # filter empties it and Catch2 exits 4: skip the binary, as for test_ulp.
         [[ $(basename "$bin") == test_long_double ]] && continue
         echo "--- $(basename "$bin")" >>"$log"
         valgrind --error-exitcode=1 --errors-for-leak-kinds=definite \
-            --leak-check=full "$bin" '~[ulp]' >>"$log" 2>&1 || { echo "  ERRORS: $(basename "$bin")"; rc=1; }
+            --leak-check=full "$bin" '~[ulp]' '~[longdouble]' >>"$log" 2>&1 || { echo "  ERRORS: $(basename "$bin")"; rc=1; }
     done
     ((rc == 0)) && { echo "  OK"; ((pass++)); rm -rf "$dir"; } || failed+=("valgrind")
 }

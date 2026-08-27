@@ -123,9 +123,14 @@ TEST_CASE("ct_sincos_turns matches libm at the fold precision", "[ct_math][numer
     const double wd = worst_turns_err<double>();
     INFO("double fold worst " << wd << " eps");
     REQUIRE(wd <= 8);
+}
 
-    // The SIMD engines fold at double; only the scalar long double backend asks
-    // for more, and it is the width that varies across the CI hosts.
+// The SIMD engines fold at double; only the scalar long double backend asks for more,
+// and it is the width that varies across the CI hosts. Tagged so the valgrind legs can
+// drop it: valgrind emulates x87 80-bit long double in 64-bit, so the fold computes at
+// double while eps() still reads 2^-64, and the ratio alone reports 9216 eps.
+TEST_CASE("ct_sincos_turns matches libm at the long double fold precision",
+          "[ct_math][numerics][longdouble]") {
     const double wl = static_cast<double>(worst_turns_err<long double>());
     INFO("long double fold worst " << wl << " eps (digits "
                                    << std::numeric_limits<long double>::digits << ")");

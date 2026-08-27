@@ -141,10 +141,23 @@ layout" case in `test_strides.cpp` then fails at len 64 nbatch 2 out (8192, 1), 
 ## Precisions
 
 `float` and `double` reach the SIMD engine. `long double` reaches
-`include/admiral/detail/scalar_fft.hpp` instead, because no ISA has 80-bit lanes, and
-it covers `plan`, `plan_r2c` and the one-shots only; `axis_plan`, `strides_plan` and
-`plan_r2r` stay float and double. The two gates are `detail::is_precision_v` and
-`detail::is_simd_precision_v` in the compat seam.
+`include/admiral/detail/scalar_fft.hpp` instead, because no ISA carries lanes that
+wide, and it covers `plan`, `plan_r2c` and the one-shots only; `axis_plan`,
+`strides_plan` and `plan_r2r` stay float and double. The two gates are
+`detail::is_precision_v` and `detail::is_simd_precision_v` in the compat seam.
+
+`long double` is THREE different types across the supported targets, and a constant
+tuned to one of them is tuned to one host: x87 double-extended on x86-64 Linux
+(`digits` 64), IEEE binary128 on aarch64 Linux (113), and plain `double` on arm64 macOS
+and MSVC (53). So a width can be NARROWER than double's carrier expects, not only wider:
+`test_cxx_compat.cpp`'s `pi_v` case asks for distinct low bits where they exist and
+equality where they do not. And a series cannot be truncated at a term count:
+`ct_sincos_small` runs until both tails fall under `eps(F)/2`, which is 9 iterations at
+53 bits, 10 at 64 and 14 or 15 at 113. A 12-term fold, calibrated to x87, missed by
+437 eps at den 7 and 16000 at den 64, and `ct_sincos_turns` is the butterflies' only
+twiddle source, so the whole transform inherited that phase. Only CI can see any of
+this; x86-64 alone cannot. `std::numeric_limits<F>::digits` is the only honest way to
+ask.
 
 The scalar backend carries NO second copy of the radix math. `butterfly.hpp` is
 V-generic: the same text is the SIMD kernel at `V = xsimd::batch<T>` and the scalar

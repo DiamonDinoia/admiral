@@ -124,9 +124,9 @@ TEMPLATE_TEST_CASE("r2c/c2r N-D nthreads=1 vs 4 agrees within the FFT rounding f
     }
 }
 
-// nthreads=0 resolves to hardware_concurrency (capped) at the ctor boundary and
-// must not crash or change the result vs the serial path (to the FFT rounding
-// floor; see file header). On a single-core host it resolves to 1 (serial).
+// nthreads=0 resolves to the allowed physical cores at the ctor boundary and must
+// not crash or change the result vs the serial path (to the FFT rounding floor;
+// see file header). On a single-core host it resolves to 1 (serial).
 TEMPLATE_TEST_CASE("nthreads=0 auto-select matches serial", "[threads]", float, double) {
     using T = TestType;
     const std::vector<std::size_t> shape = {16, 8192};
@@ -134,7 +134,7 @@ TEMPLATE_TEST_CASE("nthreads=0 auto-select matches serial", "[threads]", float, 
     const auto in = make_input<T>(16 * 8192, 0xA705u);
 
     admiral::plan<T> serial(sp);
-    admiral::plan<T> autop(sp, {0});   // 0 -> hardware_concurrency, capped
+    admiral::plan<T> autop(sp, {0});   // 0 -> allowed physical cores
 
     auto a = in, b = in;
     serial.forward(a.data());
@@ -215,5 +215,32 @@ TEST_CASE("threaded out-of-place four_step_large matches serial (double)",
     p1.forward(in.data(), o1.data());
     p4.forward(in.data(), o4.data());
     require_close(o4, o1, forecast_tol<double>(N));
+}
+
+// The auto count has no flat ceiling: a transform large enough to thread gets every
+// physical core the affinity mask allows. A reintroduced `min(cores, K)` fails the
+// first two REQUIREs on any host with more than K cores, and the third on every host.
+// The ramp itself is the small-transform guard, so it is pinned here too.
+TEST_CASE("nthreads=0 ramps to every allowed physical core", "[threads]") {
+    using admiral::detail::allowed_physical_cores;
+    using admiral::detail::kAutoElemsPerThread;
+    using admiral::detail::kAutoSerialElems;
+    using admiral::detail::resolve_nthreads;
+
+    const std::size_t cores = allowed_physical_cores();
+    REQUIRE(cores >= 1);
+    REQUIRE(resolve_nthreads(0) == cores);
+
+    // total/kAutoElemsPerThread saturates the core count well before SIZE_MAX.
+    REQUIRE(resolve_nthreads(0, std::numeric_limits<std::size_t>::max()) == cores);
+    REQUIRE(resolve_nthreads(0, cores * kAutoElemsPerThread) == cores);
+
+    // Below the serial floor the pool never appears, whatever the machine.
+    REQUIRE(resolve_nthreads(0, kAutoSerialElems - 1) == 1);
+    REQUIRE(resolve_nthreads(0, 1) == 1);
+
+    // An explicit count is still returned verbatim, ramp or no ramp.
+    REQUIRE(resolve_nthreads(3) == 3);
+    REQUIRE(resolve_nthreads(3, 1) == 3);
 }
 #endif  // ADM_THREADS

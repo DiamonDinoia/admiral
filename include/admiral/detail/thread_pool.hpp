@@ -52,7 +52,6 @@ inline void cpu_relax() noexcept {
 #include <fstream>
 #include <functional>
 #include <mutex>
-#include <set>
 #include <string>
 #include <vector>
 #if defined(__linux__)
@@ -90,10 +89,6 @@ inline constexpr std::size_t kThreadMinElems = std::size_t{1} << 15;
 
 #if ADM_THREADS
 
-// Ceiling for nthreads=0 auto-selection: tiny transforms never gain from
-// oversubscribing a big machine, and the pool spins, so cap the auto count.
-inline constexpr std::size_t kMaxAutoThreads = 16;
-
 // Auto-selection heuristic: a pool costs more than it saves below
 // kAutoSerialElems elements; above it, one worker per kAutoElemsPerThread,
 // capped at the machine's allowed physical cores. Fitted from the threaded
@@ -107,33 +102,42 @@ inline constexpr std::size_t kAutoElemsPerThread = std::size_t{1} << 12;
 // hardware_concurrency counts SMT siblings, which share execution resources: the
 // wrong count for a spinning pool on unbalanced splits. Falls back to
 // hardware_concurrency where topology is absent.
+//
+// thread_siblings_list names the core, not core_id: sysfs prints the mask in
+// ascending order, so the first id in the list is shared by every sibling and the
+// core is counted once. core_id is -1 on arm64/riscv without firmware topology,
+// which folds the whole machine onto one core.
 [[nodiscard]] inline std::size_t allowed_physical_cores() {
 #if defined(__linux__)
     cpu_set_t aff;
     if (sched_getaffinity(0, sizeof(aff), &aff) == 0) {
-        std::set<std::pair<std::uint32_t, std::uint32_t>> cores;  // (package id, core id)
+        cpu_set_t cores;
+        CPU_ZERO(&cores);
         // size_t index: glibc's CPU_ISSET converts its argument to size_t internally.
         for (std::size_t cpu = 0; cpu < static_cast<std::size_t>(CPU_SETSIZE); ++cpu) {
             if (!CPU_ISSET(cpu, &aff)) continue;
-            const std::string topo =
-                "/sys/devices/system/cpu/cpu" + std::to_string(cpu) + "/topology/";
-            std::ifstream pkg(topo + "physical_package_id"), core(topo + "core_id");
-            std::uint32_t p = 0, c = 0;
-            if (pkg >> p && core >> c) cores.emplace(p, c);
+            std::ifstream f("/sys/devices/system/cpu/cpu" + std::to_string(cpu) +
+                            "/topology/thread_siblings_list");
+            long long first = -1;   // the read stops at the ',' or '-' ending the first id
+            if (!(f >> first) || first < 0 || first >= CPU_SETSIZE)
+                first = static_cast<long long>(cpu);
+            CPU_SET(static_cast<std::size_t>(first), &cores);
         }
-        if (!cores.empty()) return cores.size();
+        if (const int n = CPU_COUNT(&cores); n > 0) return static_cast<std::size_t>(n);
     }
 #endif
     const unsigned hc = std::thread::hardware_concurrency();
     return hc == 0 ? 1 : hc;
 }
 
-// 0 -> allowed physical cores (fallback 1), capped at kMaxAutoThreads; cached,
-// affinity is fixed for the run in practice.
+// 0 -> allowed physical cores (fallback 1); cached, affinity is fixed for the run
+// in practice. No flat ceiling: the size-aware overload below is what keeps a small
+// transform off a big machine, and a transform large enough to thread wants every
+// core the process is allowed.
 // >=1 returned verbatim; caller decides whether to build a pool.
 [[nodiscard]] inline std::size_t resolve_nthreads(std::size_t n) {
     if (n != 0) return n;
-    static const std::size_t auto_n = std::min(allowed_physical_cores(), kMaxAutoThreads);
+    static const std::size_t auto_n = allowed_physical_cores();
     return auto_n;
 }
 

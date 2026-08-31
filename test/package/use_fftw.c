@@ -26,7 +26,7 @@ int main(void) {
     int rc = 0;
     double worst = 0.0;
     for (int k = 0; k < N; ++k) {
-        /* FFTW_FORWARD is exp(-2*pi*i*k*n/N), so the +Q tone peaks at bin Q. */
+        /* `FFTW_FORWARD` is exp(-2*pi*i*k*n/N), so the +Q tone peaks at bin Q. */
         const double want = (k == Q) ? (double)N : 0.0;
         const double e = hypot(out[k][0] - want, out[k][1]);
         if (e > worst) worst = e;

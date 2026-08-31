@@ -1,8 +1,8 @@
-// The C++17 compatibility seam, probed at the configured standard. What runs
-// here must hold whichever arm the language mode selects: admiral::span aliases
-// std::span at C++20 or is the polyfill at 17, and the detail helpers take the
-// same view either way. The checks are semantic, so both arms answer the same.
-#include <admiral/admiral.hpp>            // admiral::span, detail/cxx_compat.hpp
+// The C++17 compatibility seam, probed at the configured standard. Every check must
+// hold on both arms of the language mode: `admiral::span` aliases `std::span` at
+// C++20 and is the polyfill at C++17. The detail helpers take the same view on each
+// arm. The checks are semantic, so both arms answer the same.
+#include <admiral/admiral.hpp>            // `admiral::span`, detail/cxx_compat.hpp
 #include <admiral/detail/cxx_compat.hpp> // the tier arms directly
 
 #include <catch2/catch_test_macros.hpp>
@@ -40,14 +40,14 @@ TEST_CASE("compat: span parity at this standard", "[kernels][compat]") {
 }
 
 TEST_CASE("compat: numbers constants match double-precision expectations", "[kernels][compat]") {
-    // The decimal literal and the library rounder's digit string both land on
-    // pi's nearest double.
+    // The decimal literal and the library rounder's digit string both land on the
+    // nearest `double` to pi.
     REQUIRE(cx::numbers::pi == 3.141592653589793238462643383279502884);
     REQUIRE(cx::numbers::pi_v<double> == cx::numbers::pi);
-    // pi_v<T> must not narrow through the wide carrier: a long double pi keeps
-    // its low bits instead of truncating at double precision. Where long double
-    // IS double (arm64 macOS, MSVC) there are no low bits to keep, and the
-    // property the carrier has to satisfy is equality.
+    // `pi_v<T>` must not narrow through the wide carrier: a `long double` pi keeps
+    // the low bits instead of truncating at `double` precision. Where `long double`
+    // IS `double` (arm64 macOS, MSVC) there are no low bits to keep, so equality is
+    // the carrier property.
     if constexpr (std::numeric_limits<long double>::digits >
                   std::numeric_limits<double>::digits)
         REQUIRE(cx::numbers::pi_v<long double> - static_cast<long double>(cx::numbers::pi)
@@ -68,9 +68,9 @@ TEST_CASE("compat: bit helpers agree with the shift-count definitions", "[kernel
     REQUIRE(cx::const_find(hay.begin(), hay.end(), 2) == hay.begin() + 1);
 }
 
-// The polyfill and std::span must accept and reject the same constructions, or a
-// call site compiles at one standard and not the other. A temporary container is
-// the case they could differ on: std::span's range constructor takes a non-borrowed
+// The polyfill and `std::span` must accept and reject the same constructions, or a
+// call site compiles at one standard and not the other. A temporary container is the
+// case the two can differ on. The `std::span` range constructor takes a non-borrowed
 // rvalue only when the element type is const, and the polyfill's const-container
 // overload reaches exactly that case.
 TEST_CASE("compat: span binds a temporary only through const elements", "[kernels][compat]") {

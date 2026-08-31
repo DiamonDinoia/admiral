@@ -1,4 +1,4 @@
-// One direction of the 1-D mixed-radix DIF engine. See inst_col_f_fwd.cpp.
+// One direction of the 1-D mixed-radix DIF engine. See `inst_col_f_fwd.cpp`.
 #include "admiral/detail/dif_driver.hpp"
 
 namespace admiral {

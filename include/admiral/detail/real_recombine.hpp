@@ -1,14 +1,10 @@
 #pragma once
 
-// The even-N real recombination, one bin at a time. An even-length real transform
-// runs a half-length complex transform over the interleaved input, then trades
-// bin k against bin M-k to reach the real spectrum. Both backends recombine here:
-// the vector engine's scalar row loop (real_fft.hpp) and the long double backend
-// (scalar_fft.hpp).
-//
-// Real arithmetic throughout, never std::complex operators: a complex-by-complex
-// product carries the Annex G inf/nan fix-up, which gcc emits inline unless
-// -fcx-limited-range is on.
+// The even-N real recombination, one bin at a time: a half-length complex
+// transform over the interleaved input, then bin k traded against bin M-k.
+// Both backends use this recombination (`real_fft.hpp`, `scalar_fft.hpp`).
+// Real arithmetic throughout: a `std::complex` product carries Annex G
+// inf/nan fix-up, which gcc emits inline without `-fcx-limited-range`.
 
 #include <complex>
 #include <cstddef>
@@ -16,9 +12,9 @@
 namespace admiral {
 namespace detail {
 
-// Forward bin k of an even-N r2c: X[k] = Ze[k] + tw[k] * Zo[k], where z is the
-// M-point transform of the interleaved input. z holds M entries and k runs to M,
-// so the DC bin (k == 0) and the Nyquist bin (k == M) both read z[0].
+// Bin k: X[k] = Ze[k] + tw[k] * Zo[k] over the M-point transform `z` of the
+// interleaved input. `k` runs to `M`, so DC (`k == 0`) and Nyquist (`k == M`)
+// read `z[0]`.
 template <typename T>
 inline std::complex<T> r2c_even_bin(const std::complex<T>* z, std::complex<T> tw,
                                    std::size_t M, std::size_t k) {
@@ -34,9 +30,8 @@ inline std::complex<T> r2c_even_bin(const std::complex<T>* z, std::complex<T> tw
             zei + tw.real() * zoi + tw.imag() * zor};
 }
 
-// Inverse of the above: z[k] = Ze[k] + i*Zo[k] from the real spectrum X, which
-// holds M+1 bins. X[M - k] enters conjugated, which flips the sign its imaginary
-// part contributes, and k == 0 pairs DC with Nyquist through X[M].
+// Inverse of `r2c_even_bin`: z[k] = Ze[k] + i*Zo[k] from X (M+1 bins).
+// X[M - k] enters conjugated; `k == 0` pairs DC with Nyquist through X[M].
 template <typename T>
 inline std::complex<T> c2r_even_bin(const std::complex<T>* X, std::complex<T> tw,
                                     std::size_t M, std::size_t k) {

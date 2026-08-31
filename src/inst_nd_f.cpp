@@ -1,6 +1,6 @@
-// One explicit instantiation per TU: the route trees compile in parallel. The extern
-// declaration in the detail headers plus the definition here is what makes consumers
-// reference these symbols instead of re-instantiating a tree.
+// One explicit instantiation per TU: the route trees compile in parallel. The
+// extern declarations in the detail headers keep consumers from
+// re-instantiating a tree; the definition here supplies the symbol.
 #include "admiral/detail/nd_plan.hpp"
 namespace admiral::detail {
 template class nd_runtime_plan<float>;

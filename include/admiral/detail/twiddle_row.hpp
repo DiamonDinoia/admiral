@@ -1,34 +1,21 @@
 #pragma once
 
-// ============================================================================
 // twiddle_row: one twiddle row, W entries at a time.
 //
-// A row is a geometric sequence: entry i is W_den^{step*i} = r^i for
-// r = W_den^{step}, i in [0, n). Filling it W-wide takes two pieces:
-//
-//   * SEED    one batch holding r^l in lane l, from W sincos calls per row.
-//   * ANCHOR  block b is seed * r^(b*W), one W-wide complex multiply, with
-//             r^(b*W) itself from sincos so nothing accumulates across blocks.
-//
-// WHY, over calling sincos per entry: portable_trig::sincos_turns is
-// divider-bound, with two 64-bit integer divisions, one double division and a 4-way
-// quadrant switch per entry. One W-wide complex multiply replaces W entries of that.
-//
-// A twiddle table is a numerical library's set of fundamental constants, so
-// accuracy, not speed, settles both pieces:
-//
-//  * EXACT SEED, not a Kogge-Stone prefix-product scan across the lanes. That scan
-//    chains log2(W)+1 complex multiplies, and the accumulated error costs more than
-//    the W sincos calls per row it saves.
-//  * EVERY BLOCK anchored, so error stays at the reference's own rounding; chaining a
-//    recurrence between sparse anchors costs more error than the plan time it saves.
-//    The tree deletes both rejects rather than keeping them behind a knob.
-//    The ULP suite (test_ulp.cpp) probes the tables end-to-end, and
-//    test_iterative.cpp checks the factored pass-0 row entry by entry.
-//
-// The largest f64 tables are store-bound (RFO included), so cheaper twiddle
-// arithmetic would not move those cells anyway.
-// ============================================================================
+// Entry i of a row is r^i for r = W_den^{step}, i in [0, n). Two pieces fill
+// a row W-wide:
+//   SEED    one batch holding r^l in lane l, from W sincos calls per row.
+//   ANCHOR  block b is seed * r^(b*W), with r^(b*W) itself from sincos, so
+//           nothing accumulates across blocks and error stays at sincos's own
+//           rounding.
+// Per-entry sincos is the alternative. `sincos_turns` is divider-bound: two
+// 64-bit integer divisions, one double division, a 4-way quadrant switch per
+// entry. One W-wide complex multiply replaces W `sincos_turns` calls per row.
+// The SEED is exact sincos, not a Kogge-Stone prefix-product scan. A scan
+// chains log2(W)+1 complex multiplies, and the accumulated error outweighs
+// the sincos calls saved.
+// `test_ulp.cpp` probes the tables end-to-end; `test_iterative.cpp` checks the
+// factored pass-0 row entry by entry.
 
 #include <cstddef>
 #include <tuple>
@@ -36,8 +23,8 @@
 
 #include "simd.hpp"
 
-#include "macros.hpp"          // ADM_ALWAYS_INLINE, ADM_RESTRICT
-#include "portable_trig.hpp"   // sincos_turns (exact anchors)
+#include "macros.hpp"          // `ADM_ALWAYS_INLINE`, `ADM_RESTRICT`
+#include "portable_trig.hpp"   // `sincos_turns` (exact anchors)
 
 namespace admiral {
 namespace detail {
@@ -50,7 +37,7 @@ ADM_ALWAYS_INLINE void cmul_ip(B& are, B& aim, const B& bre, const B& bim) {
     are = re;
 }
 
-// re[i], im[i] <- cos/sin of (Forward ? -1 : +1) * 2*pi * step*i / den, i in [0,n).
+// `re[i]`, `im[i]` <- cos/sin of (`Forward` ? -1 : +1) * 2*pi * step*i / den, i in [0,n).
 // Direct evaluation below one full batch, where the seed cannot amortise.
 template<typename T, bool Forward>
 void geom_twiddle_row(std::size_t step, std::size_t den, std::size_t n,
@@ -68,8 +55,7 @@ void geom_twiddle_row(std::size_t step, std::size_t den, std::size_t n,
         return;
     }
 
-    // Seed: lane l = r^l, by W sincos calls per ROW, amortised over the ido entries
-    // filled. Exact, not scanned across lanes, which costs less error (see banner).
+    // Seed: lane l holds r^l, from W exact sincos calls per row.
     alignas(B::arch_type::alignment()) T seed_re[W], seed_im[W];
     for (std::size_t l = 0; l < W; ++l) std::tie(seed_re[l], seed_im[l]) = exact(l);
     const B sre = B::load_aligned(seed_re);

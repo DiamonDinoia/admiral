@@ -1,13 +1,10 @@
 # CPM.cmake bootstrap, from https://github.com/cpm-cmake/CPM.cmake
-#
-# Upstream's cmake/get_cpm.cmake with the release pinned and hashed. The wiki
-# snippet hardcodes CMAKE_BINARY_DIR and cannot configure a fresh build dir
-# offline; honour CPM_SOURCE_CACHE instead. file(DOWNLOAD) skips the transfer when
-# the file already matches EXPECTED_HASH, so no existence guard is needed.
-#
-# CPM records the include location in CPM_DIRECTORY (CACHE INTERNAL) and silently
-# return()s if a later configure includes it from elsewhere; a build dir predating
-# this file must be configured from scratch once.
+# Upstream's `cmake/get_cpm.cmake` with the release pinned and hashed. The wiki
+# snippet hardcodes `CMAKE_BINARY_DIR` and cannot configure a fresh build dir offline;
+# honour `CPM_SOURCE_CACHE` instead. `file(DOWNLOAD)` skips the transfer when
+# `EXPECTED_HASH` matches. CPM records `CPM_DIRECTORY` (`CACHE INTERNAL`) and hits a
+# silent `return()` when a later configure includes CPM from elsewhere. A pre-existing
+# build dir must be wiped once.
 include_guard(GLOBAL)
 
 set(CPM_DOWNLOAD_VERSION 0.38.7)

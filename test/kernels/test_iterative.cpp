@@ -1,6 +1,6 @@
-// Iterative DIF driver validation against an independent O(N^2) oracle, NOT
-// admiral's kernel<N>: the oracle must share no code with the thing under
-// test. kernel<N> takes the same oracle at catalog sizes in test_codelet.cpp.
+// Iterative DIF driver validation against an independent O(N^2) oracle, NOT admiral's
+// `kernel<N>`: the oracle must share no code with the thing under test. `kernel<N>` takes
+// the same oracle at catalog sizes in `test_codelet.cpp`.
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -26,15 +26,15 @@ namespace {
 template<typename T, bool Forward>
 void check_iterative_vs_reference(std::size_t N, const dif_factor_plan* forced = nullptr) {
     const auto x = make_input<T>(N);
-    // Wider than T: a f64 oracle narrowed to double carries ~1 eps of summation
-    // error against the flat 32-eps budget, which the check tolerates.
+    // Wider than `T` at f32: the oracle narrows the `long double` accumulation to
+    // `double`, ~1 eps of summation error inside the flat 32-eps budget.
     const auto ref = reference_dft<T, double>(x, Forward);
 
     std::vector<std::complex<T>> got(x.begin(), x.end());
     const auto dtw = build_dif_twiddle_set<T>(N, forced);
     std::vector<T> cc0re(N), cc0im(N), cc1re(N), cc1im(N);
-    // Through the trampoline, like every production caller: naming a leaf directly would
-    // make this TU instantiate the whole engine tree instead of referencing inst_dif_*.
+    // Call through the trampoline, like every production caller: a direct leaf name would
+    // make this TU instantiate the whole engine tree instead of referencing `inst_dif_*`.
     dif_dispatch<T>(Forward, got.data(), got.data(), N, cc0re.data(), cc0im.data(),
                     cc1re.data(), cc1im.data(), dtw);
 
@@ -58,9 +58,9 @@ TEST_CASE("iterative DIF matches the reference DFT: 7-smooth composites", "[iter
                  315, 360, 420, 512});
 }
 
-// 11-smooth sizes: radix-11 routing. Covers radix-11 as a single fused pass (11),
-// and in first / intermediate / last pass positions combined with radices 2/3/4/5/7.
-// 121 = 11^2 is the worst case: nothing but radix 11.
+// 11-smooth sizes: radix-11 routing. The case covers radix-11 as a single fused pass
+// (11), and in first / intermediate / last pass positions combined with radices
+// 2/3/4/5/7. 121 = 11^2 is the worst case: nothing but radix 11.
 TEST_CASE("iterative DIF matches the reference DFT: 11-smooth sizes", "[iterative_dif]") {
     check_sizes({11,    // [11]
                  22,    // [2, 11]
@@ -78,7 +78,7 @@ TEST_CASE("iterative DIF matches the reference DFT: pow2 sizes", "[iterative_dif
     check_sizes({2, 4, 8, 16, 32, 64, 128, 256, 512, 1024});
 }
 
-// Every pass dispatches over dif_radix_set, so a forced radix outside it skipped the pass.
+// Every pass dispatches over `dif_radix_set`; a radix outside the set would skip the pass.
 TEST_CASE("a forced radix outside dif_radix_set is rejected", "[iterative_dif]") {
     dif_factor_plan plan;
     plan.push(6);  // excluded as never emitted, on every ISA
@@ -86,9 +86,10 @@ TEST_CASE("a forced radix outside dif_radix_set is rejected", "[iterative_dif]")
     REQUIRE_THROWS_AS(build_dif_twiddle_set<double>(24, &plan), admiral::unsupported_error);
 }
 
-// The pass reads the factored pass-0 row (dif_twiddle_set::p0_block) W lanes at a time
-// from a blk-wide block, so a batch is valid only while a0+W stays inside one block. The overlap
-// tail starts at ido-W, not W-aligned when ido%W != 0; the tail then takes the flat row.
+// The pass reads the factored pass-0 row (`dif_twiddle_set::p0_block`) `W` lanes at a time
+// from a `blk`-wide block. A batch is valid only while `a0 + W` stays inside one block.
+// The overlap tail starts at `ido - W`, not `W`-aligned when `ido % W != 0`; the tail then
+// takes the flat row.
 namespace {
 
 template<typename T, std::size_t IP>
@@ -135,7 +136,7 @@ constexpr double factored_tol = 1e3 * double(std::numeric_limits<T>::epsilon());
 
 TEST_CASE("the factored pass-0 row matches the flat one at every column",
           "[iterative_dif][twiddles]") {
-    // ido % W == 0: no overlap tail, the shape the goal cells run.
+    // `ido % W == 0`: no overlap tail, the shape the goal cells run.
     CHECK(first_pass_factored_dev<double, 16>(4096) < factored_tol<double>);
     CHECK(first_pass_factored_dev<double, 5>(20000) < factored_tol<double>);
     // Overlap tail fires, batch stays inside its block.
@@ -146,15 +147,15 @@ TEST_CASE("the factored pass-0 row matches the flat one at every column",
     CHECK(first_pass_factored_dev<double, 2>(16389) < factored_tol<double>);
     CHECK(first_pass_factored_dev<double, 3>(11013) < factored_tol<double>);
     CHECK(first_pass_factored_dev<double, 7>(4741) < factored_tol<double>);
-    // f32 has a wider W, so it straddles at different ido.
+    // f32 has a wider `W`, so the tail straddles at a different `ido`.
     CHECK(first_pass_factored_dev<float, 16>(4096) < factored_tol<float>);
     CHECK(first_pass_factored_dev<float, 7>(7817) < factored_tol<float>);
     CHECK(first_pass_factored_dev<float, 5>(11017) < factored_tol<float>);
 }
 
 TEST_CASE("col dif: first_src copy-in requires its own stride", "[iterative][col]") {
-    // The defensive throw at col_dif_execute_ws: no public caller reaches it
-    // (four_step_large always passes n1), so this case checks it directly.
+    // The defensive throw at `col_dif_execute_ws`: no public caller reaches the throw
+    // (`four_step_large` always passes `n1`), so this case checks the throw directly.
     const std::size_t N = 16;
     const auto dtw = build_dif_twiddle_set<double>(N, nullptr, /*fuse_packed=*/false);
     std::vector<std::complex<double>> data(N * 4), src(N * 4);

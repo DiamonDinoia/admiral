@@ -1,6 +1,6 @@
-// Installed C++ interface: only <admiral/admiral.hpp>, no detail headers, no xsimd,
+// Installed C++ interface: only `<admiral/admiral.hpp>`, no detail headers, no xsimd,
 // no poet. A single unit spike transforms to a pure tone, so a wrong sign, a wrong
-// scale factor, or a plan that silently did nothing all fail here.
+// scale factor or a plan that silently did nothing all fail here.
 #include <admiral/admiral.hpp>
 
 #include <algorithm>
@@ -32,10 +32,10 @@ int check(const char* what, std::size_t n, std::size_t q) {
         const auto phase = T(2) * admiral::detail::numbers::pi_v<T> * T(q) * T(i) / T(n);
         worst = std::max(worst, std::abs(x[i] - std::complex<T>(std::cos(phase), std::sin(phase))));
     }
-    // Componentwise absolute error against a spectrum whose peak is n, so the bound
-    // scales with n: max|got-ref| <= 32*eps*||ref||_inf, the flat 32*eps the suite's
-    // fft_tol asserts in the relative L2 norm. Spelled out rather than shared because
-    // an installed-package test may include only <admiral/admiral.hpp>.
+    // Componentwise absolute error on a spectrum peaked at n, so the bound scales
+    // with n: max|got-ref| <= 32*eps*||ref||_inf. That is the suite's flat 32*eps
+    // discipline of `fft_tol`, in relative L2 there. Spelled out, not shared: an
+    // installed-package test may include only `<admiral/admiral.hpp>`.
     const T tol = T(n) * T(32) * std::numeric_limits<T>::epsilon();
     std::printf("%-6s n=%zu worst=%.3g tol=%.3g\n", what, n, double(worst), double(tol));
     return worst <= tol ? 0 : 1;
@@ -48,7 +48,7 @@ int main() {
     rc |= check<double>("f64", 1024, 3);
     rc |= check<float>("f32", 1024, 3);
     rc |= check<double>("f64", 1050, 7);  // not a power of two
-    // Free functions, and the two-thread path.
+    // Free functions with an explicit options aggregate: `nthreads` = 2.
     std::vector<std::complex<double>> a(512, {1, 0}), b(512);
     admiral::forward<double>(a, b, {2});
     const double dc_tol = 512.0 * 32.0 * std::numeric_limits<double>::epsilon();

@@ -1,4 +1,4 @@
-/* The FFTW shim: existing FFTW code compiles unchanged against <admiral/fftw3.h>. */
+/* The FFTW shim: existing FFTW code compiles unchanged against `<admiral/fftw3.h>`. */
 #include <admiral/fftw3.h>
 
 #include <math.h>

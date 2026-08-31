@@ -1,8 +1,8 @@
 #pragma once
 
-// The --pass single-pass microbench. Instantiating dif_pass / dif_pass_last over the
-// whole radix set dominates a benchmarks-ON build, so the definition lives here and
-// each precision gets its own TU (bench_pass_{f,d}.cpp).
+// The --pass single-pass microbench. Instantiating `dif_pass` / `dif_pass_last` over
+// the whole radix set dominates a benchmarks-ON build, so the definition lives here
+// and each precision gets its own TU (bench_pass_{f,d}.cpp).
 #include "bench_harness.hpp"
 
 #include <admiral/detail/dif_passes.hpp>  // dif_pass, dif_pass_last
@@ -21,7 +21,7 @@
 namespace bench {
 
 // C++17 lambdas cannot take template parameters, so the three dispatch helpers are
-// namespace-scope structs. Calls invoke operator()<IPv>() either way.
+// namespace-scope structs. Calls invoke `operator()<IPv>()` either way.
 template<typename T>
 struct bench_mid {
     const T* ccre; const T* ccim; T* chre; T* chim;
@@ -29,7 +29,7 @@ struct bench_mid {
     template<std::size_t IPv>
     void operator()() const {
         // A middle SoA pass carries no direction. The inverse rides the same code in
-        // swapped domain (butterfly.hpp). Only the boundary passes still take Forward.
+        // swapped domain (butterfly.hpp). Only the boundary passes still take `Forward`.
         admiral::detail::dif_pass<T, IPv>(ccre, ccim, chre, chim, l1, ido, twre, twim,
                                           1, 1);  // contiguous SoA: unit element strides
     }
@@ -88,8 +88,8 @@ void pass_microbench(unsigned IP, std::size_t ido, std::size_t l1, bool last,
         sink += last ? out[span / 2].real() : chre[span / 2];
     };
     if (perf_iters > 0) {
-        // Enough to fault the buffers in and settle the frequency before perf attaches;
-        // the measured loop below is what an external `perf stat` counts.
+        // The warmup faults the buffers in and settles the frequency before perf
+        // attaches; the measured loop below is what an external perf stat counts.
         constexpr long kWarmReps = 200;
         for (long i = 0; i < kWarmReps; ++i) call();
         for (long i = 0; i < perf_iters; ++i) call();        // measured by external perf

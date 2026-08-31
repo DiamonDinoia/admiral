@@ -1,66 +1,56 @@
 #pragma once
 
 // ============================================================================
-// Real-to-complex (r2c) and inverse (c2r), built on the c2c engine.
-//
-// 1D even-N: half-length trick. Pack N reals into N/2 complex z[j]=x[2j]+i*x[2j+1],
-// run length-(N/2) plan_impl, then one recombination pass (length-N twiddles) yields
-// the N/2+1 half-spectrum. c2r: inverse recombination -> IDFT_{N/2} -> unpack.
-// No new kernels or twiddle machinery; just plan_impl + portable_trig.
-//
-//   Odd N: full length-N c2c + slice (correctness fallback, never a performance
-//   target; benchmark r2c sizes are all even).
-//
-// N-D: 1D r2c on the innermost axis -> complex tensor (Nh=N/2+1 innermost extent);
-// c2c column passes (nd_apply_axis) over remaining axes. c2r reverses the order.
-//
-// Normalization: r2c unscaled; c2r carries 1/N in the inner IDFT and 1/len per outer
-// axis (product = 1/Ntot). r2c -> c2r is the identity.
+// r2c/c2r built on the c2c engine.
+// 1D even N: pack z[j] = x[2j] + i*x[2j+1], run a length-(N/2) c2c, then one
+// recombination pass (length-N twiddles) yields the N/2+1 half-spectrum. c2r inverts:
+// unrecombine, `IDFT_`{N/2}, unpack. Odd N: full length-N c2c + slice, a correctness
+// fallback, never a performance target.
+// N-D: 1D r2c on the innermost axis (extent Nh = N/2+1), then c2c column passes.
+// Normalization: r2c unscaled; c2r carries 1/N for the inner axis and 1/len per outer
+// axis, product 1/Ntot. r2c -> c2r is the identity.
 // ============================================================================
 
 #include <complex>
-#include <concepts>     // std::invocable (run_tiles body constraint, C++20)
+#include <concepts>     // std::invocable (`run_tiles` body constraint, C++20)
 #include <cstddef>
-#include <memory>       // make_unique_for_overwrite
-#include <type_traits>  // std::is_invocable_v (run_tiles body constraint, C++17)
+#include <memory>       // `make_unique_for_overwrite`
+#include <type_traits>  // `std::is_invocable_v` (`run_tiles` body constraint, C++17)
 #include <utility>      // std::pair
 #include <vector>
 
-#include <admiral/errors.hpp>  // size_error
+#include <admiral/errors.hpp>  // `size_error`
 
-#include "cxx_compat.hpp"  // ADM_UNLIKELY, span, detail::make_unique_for_overwrite
-#include "nd_plan.hpp"        // nd_axis_state, make_nd_axis_state, nd_apply_axis
-#include "plan.hpp"           // plan_impl
-#include "portable_trig.hpp"  // sincos_turns
-#include "real_recombine.hpp"  // r2c_even_bin, c2r_even_bin
-#include "twiddles.hpp"       // build_dif_factor_plan, dif_radix_set
-#include "vecpass.hpp"        // vp::multipass_tables, vp::multipass_run (WS-B)
-#include <poet/poet.hpp>      // poet::static_for (tile loop unroll)
+#include "cxx_compat.hpp"  // `ADM_UNLIKELY`, span, `detail::make_unique_for_overwrite`
+#include "nd_plan.hpp"        // `nd_axis_state`, `make_nd_axis_state`, `nd_apply_axis`
+#include "plan.hpp"           // `plan_impl`
+#include "portable_trig.hpp"  // `sincos_turns`
+#include "real_recombine.hpp"  // `r2c_even_bin`, `c2r_even_bin`
+#include "twiddles.hpp"       // `build_dif_factor_plan`, `dif_radix_set`
+#include "vecpass.hpp"        // `vp::multipass_tables`, `vp::multipass_run` (WS-B)
+#include <poet/poet.hpp>      // `poet::static_for` (tile loop unroll)
 #include "simd.hpp"    // xsimd::batch
-// Last of the includes, paired with undef_macros.hpp at the end of the file: every
-// sibling header above re-includes macros.hpp itself, which is an error while ours
-// is still defined.
-#include "macros.hpp"         // ADM_NOINLINE, ADM_COLD (trace())
+// Last include: every sibling above re-includes macros.hpp, which is an error while
+// ours is still defined (`undef_macros.hpp` closes the file).
+#include "macros.hpp"         // `ADM_NOINLINE`, `ADM_COLD` (`trace()`)
 
 namespace admiral {
 namespace detail {
 
-// 1D real<->half-complex: inner c2c plans (both dirs) and twiddle ring built once.
-// `rows` contiguous lines per call; N-D outer axes pass rows>1.
+// 1D real <-> half-complex plan: inner c2c plans (both dirs) and twiddle ring built
+// once; rows is contiguous lines per call, and N-D outer axes pass rows > 1.
 template<typename T>
 class real_adm_plan {
 public:
-    // Defined out-of-line below so `extern template` suppresses
-    // instantiation in consumer TUs: [temp.explicit]/12 exempts inline functions,
-    // and a member defined in the class body is implicitly inline.
-    // eff flows to the inner 1-D engine (fwd_/inv_).
+    // Out-of-line below: an extern template cannot suppress an inline member
+    // ([temp.explicit]/12), and an in-class definition is implicitly inline.
     explicit real_adm_plan(std::size_t N, admiral::effort eff = admiral::effort::estimate);
 
-    // Forward r2c: `rows` real rows of length N -> `rows` half-spectra of length Nh.
+    // Forward r2c: rows real rows of length N -> rows half-spectra of length Nh.
     // pool (may be null) threads the batched tile loop over rows (even path only).
     void r2c(const T* in, std::complex<T>* out, std::size_t rows, thread_pool* pool = nullptr) const;
 
-    // Inverse c2r: `rows` half-spectra of length Nh -> `rows` real rows of
+    // Inverse c2r: rows half-spectra of length Nh -> rows real rows of
     // length N. Fully inverts (carries 1/N), so r2c -> c2r is the identity.
     void c2r(const std::complex<T>* in, T* out, std::size_t rows, thread_pool* pool = nullptr) const;
 
@@ -68,7 +58,7 @@ private:
     using V = xsimd::batch<T>;
     static constexpr std::size_t W = V::size;
 
-    // True iff M factors into dif_radix_set (no Bluestein/Rader escape).
+    // True iff M factors into `dif_radix_set` (no Bluestein/Rader escape).
     // A prime > 11 (e.g. M=13) is not batchable.
     static bool multipass_supported(std::size_t M) {
         const auto fp = admiral::detail::build_dif_factor_plan<T>(M);
@@ -102,7 +92,7 @@ private:
         c2r_even_scalar(in + done * Nh_, out + done * N_, rows - done);
     }
 
-    // Run `ntiles` tiles through body(tile, scratch). Serial: reuses tile_scratch_.
+    // Run ntiles tiles through body(tile, scratch). Serial: reuses `tile_scratch_`.
     // Threaded: per-chunk 4*M scratch, allocated once per chunk.
 #if ADM_CXX20
     template<typename Body>
@@ -123,9 +113,8 @@ private:
         }
     }
 
-    // --- Batched W-row tile: W rows -> W half-spectra. Inner size-M DFT via
-    // vp::multipass_run; recombination butterfly V-wide (scalar twiddle broadcast per k). ---
-    // Half-spectrum recombine per frequency: Ze = even part of the pair, Zo = odd part.
+    // Batched W-row tile: W rows -> W half-spectra. Inner size-M DFT via
+    // `vp::multipass_run`; the recombine below is V-wide (broadcast scalar twiddle).
     // r2c: X = Ze + tw*Zo; c2r: Z = Ze + i*Zo with conj(tw) applied to Vo.
     static ADM_ALWAYS_INLINE std::pair<V, V> r2c_recombine(V zkr, V zki, V zcr, V zci, V hv, V twr,
                                           V twi) {
@@ -146,9 +135,8 @@ private:
         V* cur_re = scratch;         V* cur_im = scratch + M;
         V* nxt_re = scratch + 2 * M; V* nxt_im = scratch + 3 * M;
 
-        // Pack z[j]=x[2j]+i*x[2j+1] for W rows. WxW transpose of W rows×W reals
-        // yields H=W/2 consecutive j (vunpck/vperm beats scalar vinsertps;
-        // see four_step.hpp). M%H != 0 -> scalar < H tail.
+        // Pack z[j] = x[2j] + i*x[2j+1] for W rows: a WxW transpose yields H = W/2
+        // consecutive j (vunpck/vperm beats scalar assembly). M%H != 0 -> scalar tail.
         constexpr std::size_t H = W / 2;
         std::size_t j = 0;
         for (; j + H <= M; j += H) {
@@ -166,15 +154,15 @@ private:
             cur_re[j] = V::load_aligned(zr);
             cur_im[j] = V::load_aligned(zi);
         }
-        // Plain pointers, not a structured binding: the static_for lambdas below capture
-        // these, and AppleClang rejects capturing a binding (C++20 P1091).
+        // Plain pointers, not a structured binding: the `static_for` lambdas below
+        // capture them, and AppleClang rejects capturing a binding (P1091).
         const auto G = vp::multipass_run<T, true, V>(tab_, cur_re, cur_im, nxt_re, nxt_im);
         const V* Gre = G.first;
         const V* Gim = G.second;
 
-        // Recombine to half-spectrum X[k], k=0..M. Butterfly per-k; store
-        // transpose-batched over H consecutive k (mirror of pack). Full block: k<M,
-        // ka=k, kb=M-k, no modulo. k=M Nyquist + M%H remainder go scalar.
+        // Recombine to X[k], k = 0..M, transpose-stored over H consecutive k (mirror
+        // of the pack): full blocks use ka = k, kb = M-k with no modulo. The k = M
+        // Nyquist and the M%H remainder go scalar.
         const V hv(T(0.5));
         std::size_t k = 0;
         for (; k + H <= M; k += H) {
@@ -211,9 +199,8 @@ private:
         V* cur_re = scratch;         V* cur_im = scratch + M;
         V* nxt_re = scratch + 2 * M; V* nxt_im = scratch + 3 * M;
 
-        // Build Z[k] from (in[k], in[M-k]) for W rows. Ascending k block + descending
-        // conjugate block (mb=M-k0-H+1, reverse: p=H-1-m -> mb+p=M-kk), both loaded
-        // via WxW transpose. Butterfly per-k; strided I/O vectorized.
+        // Build Z[k] from (in[k], in[M-k]) for W rows: an ascending k block and a
+        // descending conjugate block (mb+p = M-kk), both via WxW transpose.
         const V hv(T(0.5));
         constexpr std::size_t H = W / 2;
         std::size_t k = 0;
@@ -251,7 +238,7 @@ private:
             cur_im[k] = Zi;
         }
         const auto G = vp::multipass_run<T, false, V>(tab_, cur_re, cur_im, nxt_re, nxt_im);
-        const V* Gre = G.first;   // plain pointers: the lambdas capture them, see r2c_even_tile
+        const V* Gre = G.first;   // plain pointers: the lambdas capture them, see `r2c_even_tile`
         const V* Gim = G.second;
 
         // Unpack z[j] -> x[2j],x[2j+1] for W rows: H=W/2 j per WxW transpose-store, scalar < H tail.
@@ -282,7 +269,7 @@ private:
         for (std::size_t r = 0; r < rows; ++r) {
             const T* xr = in + r * N_;
             for (std::size_t j = 0; j < M; ++j) z[j] = std::complex<T>(xr[2 * j], xr[2 * j + 1]);
-            fwd_.execute(span<std::complex<T>>(z.get(), M));  // Z = DFT_M(z)
+            fwd_.execute(span<std::complex<T>>(z.get(), M));  // Z = `DFT_M`(z)
             std::complex<T>* Xr = out + r * Nh_;
             for (std::size_t k = 0; k <= half; ++k) Xr[k] = r2c_even_bin(z.get(), tw_[k], M, k);
         }
@@ -295,17 +282,17 @@ private:
         for (std::size_t r = 0; r < rows; ++r) {
             const std::complex<T>* Xr = in + r * Nh_;
             for (std::size_t k = 0; k < M; ++k) Z[k] = c2r_even_bin(Xr, tw_[k], M, k);
-            inv_.execute(span<std::complex<T>>(Z.get(), M));  // z = IDFT_M(Z), *1/M
+            inv_.execute(span<std::complex<T>>(Z.get(), M));  // z = `IDFT_M`(Z), *1/M
             T* xr = out + r * N_;
             for (std::size_t j = 0; j < M; ++j) { xr[2 * j] = Z[j].real(); xr[2 * j + 1] = Z[j].imag(); }
         }
     }
 
     // Odd-N fallback: full length-N c2c + slice (r2c); rebuild conjugate-symmetric
-    // spectrum + IDFT (c2r). Per-row parallel_for with per-chunk scratch.
+    // spectrum + IDFT (c2r). Per-row `parallel_for` with per-chunk scratch.
     void r2c_odd(const T* in, std::complex<T>* out, std::size_t rows, thread_pool* pool) const {
         parallel_for(pool, rows, rows * N_, [&](std::size_t b, std::size_t e, std::size_t) {
-            // Uninitialized: the loops below fill all N_ entries every row.
+            // Uninitialized: the loops below fill all `N_` entries every row.
             const auto c = detail::make_unique_for_overwrite<std::complex<T>[]>(N_);
             for (std::size_t r = b; r < e; ++r) {
                 const T* xr = in + r * N_;
@@ -319,7 +306,7 @@ private:
 
     void c2r_odd(const std::complex<T>* in, T* out, std::size_t rows, thread_pool* pool) const {
         parallel_for(pool, rows, rows * N_, [&](std::size_t b, std::size_t e, std::size_t) {
-            // Uninitialized: the loops below fill all N_ entries every row.
+            // Uninitialized: the loops below fill all `N_` entries every row.
             const auto c = detail::make_unique_for_overwrite<std::complex<T>[]>(N_);
             for (std::size_t r = b; r < e; ++r) {
                 const std::complex<T>* Xr = in + r * Nh_;
@@ -332,8 +319,8 @@ private:
         });
     }
 
-    // Init order = declaration order: even_ before M_ (M_ derived from even_),
-    // both before fwd_/inv_ (built from M_).
+    // Init order = declaration order: `even_` before M_ (M_ derived from `even_`),
+    // both before `fwd_`/`inv_` (built from M_).
     std::size_t N_;
     bool even_;
     std::size_t M_, Nh_;
@@ -341,10 +328,9 @@ private:
     std::vector<std::complex<T>> tw_;  // recombination twiddles (even path only)
     bool batched_ = false;             // WS-B row-batched fast path enabled
     vp::multipass_tables<T> tab_;  // inner size-M DIF tables (even+batched); direction-free
-    // 4*M ping-pong, reused across tiles by the SERIAL run_tiles branch only (the
-    // threaded branch allocates per chunk). Unlike four_step_large_plan, this makes
-    // r2c/c2r NON-re-entrant: nd_real_plan hands the pool down rather than calling
-    // r2c from inside its own parallel_for, so nothing shares one plan across threads.
+    // 4*M ping-pong reused across tiles by the SERIAL `run_tiles` branch only (the
+    // threaded branch allocates per chunk), so r2c/c2r are NOT re-entrant.
+    // `nd_real_plan` hands the pool down: nothing shares one plan across threads.
     std::unique_ptr<V[]> tile_scratch_;
 };
 
@@ -362,15 +348,13 @@ real_adm_plan<T>::real_adm_plan(std::size_t N, admiral::effort eff)
             const auto [sn, cs] = portable_trig::sincos_turns<true>(k, N_);
             tw_[k] = std::complex<T>(static_cast<T>(cs), static_cast<T>(sn));
         }
-        // WS-B fast path: W real rows per SIMD tile, inner size-M DIF multipass
-        // (vecpass.hpp). Active when M>=2 and M factors into dif_radix_set;
-        // else scalar plan_impl handles it. One direction-free table pair
-        // serves both r2c and c2r (swapped-domain conjugation, vecpass.hpp).
+        // WS-B batched path (W rows per SIMD tile, vecpass.hpp multipass), active
+        // when M >= 2 factors into `dif_radix_set`. One direction-free table pair
+        // serves both r2c and c2r.
         batched_ = M_ >= 2 && multipass_supported(M_);
         if (batched_) {
             tab_.build(M_);
-            // One over-aligned ping-pong block reused across all tiles/executes
-            // (single-threaded plan).
+            // Over-aligned ping-pong reused across all tiles and executes.
             tile_scratch_ = detail::make_unique_for_overwrite<V[]>(4 * M_);
         }
     }
@@ -395,23 +379,21 @@ void real_adm_plan<T>::c2r(const std::complex<T>* in, T* out, std::size_t rows,
 template<typename T>
 class nd_real_plan {
 public:
-    // Out-of-line (see real_adm_plan above). The WHOLE tree has to sit behind one
-    // instantiation: move only part of it and the serial path inlines and contracts
-    // where the threaded path calls, which breaks the 1-vs-N-thread bit identity
-    // test_fft_threads checks for r2c.
-    // nthreads > 1 builds the plan-owned pool (tile + column loops thread on it
-    // at execute; no per-call threading knob exists).
+    // Out-of-line (see `real_adm_plan` above). The WHOLE tree must sit behind one
+    // instantiation: a partial move inlines and contracts the serial path where the
+    // threaded path calls, breaking the 1-vs-N-thread bit identity `test_fft_threads`
+    // checks for r2c. nthreads > 1 builds the plan-owned pool.
     explicit nd_real_plan(span<const std::size_t> shape, std::size_t nthreads = 1,
                           admiral::effort eff = admiral::effort::estimate);
 
     [[nodiscard]] std::size_t cplx_size() const noexcept { return m.total_c; }
     [[nodiscard]] std::size_t real_size() const noexcept { return m.rows * m.inner_len; }
 
-    // r2c: real `in` -> half-spectrum `out`. opts.fct scales output (default:
+    // r2c: real in -> half-spectrum out. opts.fct scales output (default:
     // unscaled), applied as one post-pass.
     void forward(const T* in, std::complex<T>* out, const exec_options<T>& opts = {}) const;
 
-    // c2r: half-spectrum `spec` (consumed) -> real `out`. Default: 1/Ntot;
+    // c2r: half-spectrum spec (consumed) -> real out. Default: 1/Ntot;
     // custom fct rescales (one post-pass).
     void inverse(std::complex<T>* spec, T* out, const exec_options<T>& opts = {}) const;
 
@@ -431,8 +413,8 @@ private:
 
     struct M {
         std::vector<std::size_t> shape;
-        std::size_t inner_len;   // shape.back() (real innermost extent)
-        std::size_t Nh;          // inner_len/2 + 1
+        std::size_t inner_len;   // `shape.back()` (real innermost extent)
+        std::size_t Nh;          // `inner_len`/2 + 1
         std::size_t rows;        // product of outer extents
         std::size_t total_c;     // rows * Nh
         std::optional<real_adm_plan<T>> rp;
@@ -440,9 +422,8 @@ private:
         std::unique_ptr<thread_pool> pool;   // null means serial
     } m;
 
-    // exec_options::debug >= dbg_route. One line per transform, not per line, for the
-    // same reason as nd_runtime_plan::trace. `axes` is the direction's outer-axis set, so
-    // the shape a route is reported for is the one that ran.
+    // One line per transform, not per inner axis (same rule as `nd_runtime_plan::trace`).
+    // axes is this direction's outer-axis set, so the reported shape is the one that ran.
     ADM_NOINLINE ADM_COLD void trace(unsigned level, const char* how,
                                      const std::vector<nd_axis_state<T>>& axes) const {
         dbg_print("r2c rank=", m.shape.size(), " ", how, " real=", real_size(), " cplx=",
@@ -461,7 +442,7 @@ nd_real_plan<T>::nd_real_plan(span<const std::size_t> shape, std::size_t nthread
     m.shape.assign(shape.begin(), shape.end());
     const std::size_t n = m.shape.size();
     // Rank 0 has no innermost axis, and a wrapped product would become a buffer
-    // size below. Same rejection as nd_runtime_plan.
+    // size below. Same rejection as `nd_runtime_plan`.
     if (n == 0 || !extent_product(m.shape))
         throw size_error("Plan size must be greater than 0");
     m.inner_len = m.shape.back();
@@ -471,17 +452,16 @@ nd_real_plan<T>::nd_real_plan(span<const std::size_t> shape, std::size_t nthread
     m.rows = 1;
     for (std::size_t d = 0; d + 1 < n; ++d) m.rows *= m.shape[d];
     m.total_c = m.rows * m.Nh;
-    // Per-axis c2c states (outer axes only, both dirs). `inner` starts at Nh,
-    // built innermost-first to match run_outer().
+    // Per-axis c2c states (outer axes only, both dirs). inner starts at Nh,
+    // built innermost-first to match `run_outer()`.
     const std::size_t nouter = n - 1;
     m.fwd_axes.resize(nouter);
     m.inv_axes.resize(nouter);
     std::size_t inner = m.Nh;
     for (std::size_t di = 0; di < nouter; ++di) {
         const std::size_t d = nouter - 1 - di;
-        // Outer-axis sub-plans stay 1-thread: the batch loops above them are
-        // threadable (units >= 2 for any real shape that executes them), and
-        // nesting parallel_for is forbidden.
+        // Outer-axis sub-plans stay single-thread: the batch loops above them
+        // thread, and nesting `parallel_for` is forbidden.
         m.fwd_axes[d] = make_nd_axis_state<T>(m.shape[d], inner, /*is_forward=*/true,
                                               /*innermost=*/false, 1, eff);
         m.inv_axes[d] = make_nd_axis_state<T>(m.shape[d], inner, /*is_forward=*/false,
@@ -515,8 +495,8 @@ void nd_real_plan<T>::inverse(std::complex<T>* spec, T* out, const exec_options<
     }
 }
 
-// Instantiated once in src/inst_real_{f,d}.cpp. Every consumer TU (c_api,
-// fftw_api, 4 tests, 2 benchmarks) otherwise rebuilds this whole tree.
+// Instantiated once in src/`inst_real_`{f,d}.cpp. Every consumer TU (`c_api`,
+// `fftw_api`, 4 tests, 2 benchmarks) otherwise rebuilds this whole tree.
 extern template class real_adm_plan<float>;
 extern template class real_adm_plan<double>;
 extern template class nd_real_plan<float>;

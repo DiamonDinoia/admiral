@@ -1,4 +1,4 @@
-// See inst_col_f_fwd.cpp.
+// See `inst_col_f_fwd.cpp`.
 #include "admiral/detail/dif_col_driver.hpp"
 
 namespace admiral {

@@ -309,8 +309,7 @@ RE-FRAMES the table instead of refreshing it. Never import a leaf-table hunk.
 Refresh protocol, after a kernel change re-prices a leaf:
 
 1. Sweep the pre-change and post-change builds on ONE host, `--codelet-sweep
-   --prec=both`, 7 sweeps, arm order alternating, pinned. `--codelet-sweep` emits no
-   header row.
+   --prec=both`, 7 sweeps, arm order alternating, pinned.
 2. Take per-entry medians. A single sweep moves an entry by ~46%.
 3. Move only entries whose RATIO between the two builds departs from 1 beyond their
    own spread. The ratio cancels the frame; an absolute reading does not.

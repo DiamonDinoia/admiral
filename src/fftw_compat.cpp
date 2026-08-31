@@ -1,22 +1,22 @@
-// FFTW3-compatible shim over admiral::plan<T>. See include/admiral/fftw3.h for the
-// covered API and conventions (unnormalized both directions; flags ignored).
+// FFTW3-compatible shim over `admiral::plan<T>`. See `include/admiral/fftw3.h`
+// for the covered API and conventions (unnormalized both directions; flags
+// ignored).
 
 #include "admiral/fftw3.h"
 #include "admiral/admiral.hpp"
-#include "admiral/detail/scratch.hpp"  // span_align: the alignment the kernels assume
+#include "admiral/detail/scratch.hpp"  // `span_align`: the alignment the kernels assume
 
 #include <complex>
-#include <cstdlib>   // posix_memalign, free
+#include <cstdlib>   // `posix_memalign`, `free`
 #include <memory>
 #include <new>
 #include <utility>
 #include <vector>
-#include "admiral/detail/cxx_compat.hpp"  // span
+#include "admiral/detail/cxx_compat.hpp"  // `span`
 
-// One handle template, instantiated once per precision. The handle owns the admiral
-// plan plus the arrays and direction captured at plan time, so fftw_execute(p) can
-// replay them. Precision is the handle's own type, so there is no enum to keep in
-// sync, no void* to cast back, and no destructor to write.
+// One handle per precision. The handle owns the admiral plan plus the arrays
+// and direction captured at plan time, so `fftw_execute(p)` replays them. The
+// handle's type IS the precision tag; no enum, no void*, no destructor.
 template<typename T>
 struct fftw_handle {
     using value_type = T;
@@ -31,15 +31,14 @@ struct fftw_handle {
     void* out;
 };
 
-// The two names fftw3.h declares. Separate types make fftw_execute() on an
-// fftwf_plan a compile error rather than a silent no-op.
+// The two names `fftw3.h` declares. Separate types make `fftw_execute()` on an
+// `fftwf_plan` a compile error rather than a silent no-op.
 struct fftw_plan_s  : fftw_handle<double> { using fftw_handle<double>::fftw_handle; };
 struct fftwf_plan_s : fftw_handle<float>  { using fftw_handle<float>::fftw_handle; };
 
 namespace {
 
-// FFTW guarantees SIMD-friendly alignment; the value is the library's own, not a
-// literal big enough for one arch. span_align is arch-derived and
+// FFTW guarantees SIMD-friendly alignment; `span_align` is arch-derived and
 // precision-independent, so one number covers both entry points.
 constexpr size_t kAlign = admiral::detail::span_align<double>;
 static_assert(kAlign == admiral::detail::span_align<float>);
@@ -76,13 +75,13 @@ H* make_plan(int rank, const int* n, void* in, void* out, int sign, unsigned fla
         if (n[i] < 1) return nullptr;
         shape[i] = static_cast<size_t>(n[i]);
     }
-    // FFTW_MEASURE is zero, so estimate is the flag to detect. It opts out of the
-    // candidate race. Everything else, PATIENT/EXHAUSTIVE included, takes
-    // effort::automatic, because the engine has one search budget (admiral.hpp).
+    // `FFTW_MEASURE` is zero, so `FFTW_ESTIMATE` is the only detectable flag;
+    // the flag opts out of the candidate race. Everything else takes
+    // `effort::automatic`: one search budget (`admiral.hpp`).
     const admiral::effort eff =
         (flags & FFTW_ESTIMATE) ? admiral::effort::estimate : admiral::effort::automatic;
     try {
-        // nthreads stays 1: the shim's documented contract is single-threaded plans.
+        // `nthreads` stays 1: the shim's documented contract is single-threaded plans.
         return std::make_unique<H>(sign, in, out, admiral::span<const size_t>(shape),
                                    admiral::options{1, eff})
             .release();

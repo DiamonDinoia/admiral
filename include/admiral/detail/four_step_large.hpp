@@ -1,24 +1,20 @@
 #pragma once
 
 // ============================================================================
-// LARGE-N six-step route: N = N1*N2 with both leaves cache-resident full sub-FFTs
-// (iterative_dif row passes, not codelets), so N1,N2 ~ sqrt(N). No working buffer:
-// execute() is re-entrant. Threading comes from the caller's pool pointer, null by
-// construction for ND-shared sub-plans (built nthreads = 1), so a shared plan never
-// nests a parallel_for.
+// LARGE-N six-step route: N = n1*n2 with both leaves cache-resident full sub-FFTs
+// (`iterative_dif` row passes, not codelets), so n1,n2 ~ sqrt(N). No working buffer:
+// `execute()` is re-entrant. ND-shared sub-plans are built nthreads = 1, so a shared
+// plan never nests a `parallel_for`.
 //
-// DIT index map (input viewed [n2][n1], n = i*n1 + nn1; output viewed [n1][n2],
-// k = k1*n2 + k2), split-twist W_N^{nn1*k2} factored hitab*lotab:
-//   P1 transpose in -> out : out[nn1][i]  = in[i*n1 + nn1]     ([n1][n2] view)
-//   P2 size-n2 row DFTs, then twist W_N^{nn1*k2}. The twist is diagonal in k2,
-//      the n2-DFT's OUTPUT coordinate, so it applies AFTER the DFT. Inverse default
-//      folds 1/n2 into this pass.
-//   P3 in-place transpose  ([n1][n2] -> [n2][n1]).
-//      P2/P3 run as one band-fused sweep whenever n1 divides n2.
-//   P4 size-n1 row DFTs. Inverse default folds 1/n1; a custom fct lands
-//      entirely here, the same rule as the 1-D last pass.
-//   P5 in-place transpose  ([n2][n1] -> [n1][n2]); out[k1*n2+k2] = X[k].
-//      P4/P5 run as one band-fused sweep whenever n1 divides n2.
+// DIT index map (input viewed [n2][n1], output viewed [n1][n2]), split-twist
+// W_N^{nn1*k2} factored hitab*lotab:
+//   P1 transpose in -> out.
+//   P2 size-n2 row DFTs, then the twist. The twist is diagonal in k2, the n2-DFT's
+//      OUTPUT coordinate, so it applies AFTER the DFT. Inverse default folds 1/n2 in.
+//   P3 in-place transpose [n1][n2] -> [n2][n1].
+//   P4 size-n1 row DFTs. Inverse default folds 1/n1; a custom fct lands entirely here.
+//   P5 in-place transpose [n2][n1] -> [n1][n2]; out[k1*n2+k2] = X[k].
+//   P2/P3 and P4/P5 run as one band-fused sweep whenever n1 divides n2.
 //
 // Ref: Bailey, "FFTs in external or hierarchical memory", J. Supercomput. 4
 // (1990) 23. DOI 10.1007/BF00162341
@@ -30,29 +26,28 @@
 #include <complex>
 #include <cstddef>
 #include <vector>
-#include "cxx_compat.hpp"  // detail::bit_ceil, detail::countr_zero, detail::has_single_bit
+#include "cxx_compat.hpp"  // `detail::bit_ceil`, `detail::countr_zero`, `detail::has_single_bit`
 
-#include "dif_driver.hpp"      // dif_dispatch (1-D engine)
-#include "four_step.hpp"       // four_step_split
-#include "math.hpp"            // is_codelet_supported
-#include "portable_trig.hpp"   // sincos_turns
-#include "scratch.hpp"         // soa_scratch
-#include "simd_swizzle.hpp"    // aos_deinterleave, aos_interleave
-#include "thread_pool.hpp"     // thread_pool (intra-transform threading)
-#include "twiddles.hpp"        // dif_twiddle_set, build_dif_twiddle_set
+#include "dif_driver.hpp"      // `dif_dispatch` (1-D engine)
+#include "four_step.hpp"       // `four_step_split`
+#include "math.hpp"            // `is_codelet_supported`
+#include "portable_trig.hpp"   // `sincos_turns`
+#include "scratch.hpp"         // `soa_scratch`
+#include "simd_swizzle.hpp"    // `aos_deinterleave`, `aos_interleave`
+#include "thread_pool.hpp"     // `thread_pool` (intra-transform threading)
+#include "twiddles.hpp"        // `dif_twiddle_set`, `build_dif_twiddle_set`
 
 namespace admiral {
 namespace detail {
 
-// Out-of-place complex transpose out[j*n2+i] = W[i*n1+j]: deinterleave W source rows to
-// planar re/im, xsimd::transpose in registers, interleave back. That gives W contiguous
-// full-vector stores per output row instead of a scalar scatter. Cache-blocked at B for
-// L1 residency.
+// Out-of-place complex transpose out[j*n2+i] = W[i*n1+j]: WxW register tiles over
+// planar re/im give W contiguous full-vector stores per output row, not a scalar
+// scatter. Cache-blocked at B for L1 residency.
 constexpr std::size_t four_step_tblock = 32;  // transpose cache-block (complex)
 
-// Vector WxW transpose of source band [i_lo,i_hi) (W-aligned) x cols [0,n1v),
-// j-blocked at B. out[j*n2+i] = Wm[i*ld+j] over the band, ld = padded row stride.
-// Fused into execute's row loop, which reads src L2-hot and skips a DRAM re-read.
+// Vector WxW transpose of source band [`i_lo`,`i_hi`) (W-aligned) x cols [0,n1v),
+// j-blocked at B: out[j*n2+i] = Wm[i*ld+j], ld = padded row stride. Fused into
+// execute's row loop, which reads src L2-hot and skips a DRAM re-read.
 template<typename T>
 void four_step_transpose_band(const std::complex<T>* Wm, std::complex<T>* out,
                               std::size_t n1, std::size_t ld, std::size_t n2,
@@ -79,8 +74,8 @@ void four_step_transpose_band(const std::complex<T>* Wm, std::complex<T>* out,
     }
 }
 
-// W-ragged remainder scatter (non-overlapping): right cols [n1v,n1) x all rows,
-// then bottom rows [n2v,n2) x left cols [0,n1v). Done once after all bands.
+// W-ragged remainder scatter, done once after all bands: right cols [n1v,n1) x all
+// rows, then bottom rows [n2v,n2) x left cols [0,n1v).
 template<typename T>
 void four_step_transpose_remainder(const std::complex<T>* Wm, std::complex<T>* out,
                                    std::size_t n1, std::size_t ld, std::size_t n2) {
@@ -93,9 +88,8 @@ void four_step_transpose_remainder(const std::complex<T>* Wm, std::complex<T>* o
         for (std::size_t j = 0; j < n1v; ++j) out[j * n2 + i] = Wm[i * ld + j];
 }
 
-// WxW tile transpose core: dst(r,c) = src(c,r) over the tile, i.e.
-// dst[r*ld_d + c] = src[c*ld_s + r]. Loads all W rows before storing any, so
-// src == dst (diagonal self-tile) is safe.
+// WxW tile transpose dst[r*`ld_d` + c] = src[c*`ld_s` + r]. All W rows load before any
+// store, so src == dst (diagonal self-tile) is safe.
 template<typename T>
 void four_step_tile_transpose(const std::complex<T>* src, std::size_t ld_s,
                               std::complex<T>* dst, std::size_t ld_d) {
@@ -112,10 +106,10 @@ void four_step_tile_transpose(const std::complex<T>* src, std::size_t ld_s,
         aos_interleave<T>(d + c * ld_d * 2, re[c], im[c]);
 }
 
-// In-place transpose of the n x n leading-dim-ld matrix at m. Tile-pair swaps stage one
-// side through an L1 stack tile; diagonal tiles self-transpose in registers; the ragged
-// border (n % W) is scalar swaps. Tile rows are independent: only row min(a,b)'s chunk
-// touches tile (a,b).
+// In-place transpose of the n x n leading-dim-ld matrix at m: diagonal tiles
+// self-transpose in registers, off-diagonal pairs swap through an L1 stack tile, and
+// the ragged n % W border is scalar swaps. Tile rows are disjoint across a, which is
+// what the `parallel_for` chunks over.
 template<typename T>
 void four_step_square_transpose_inplace(std::complex<T>* m, std::size_t ld, std::size_t n,
                                         thread_pool* pool) {
@@ -132,7 +126,7 @@ void four_step_square_transpose_inplace(std::complex<T>* m, std::size_t ld, std:
                 std::complex<T>* const lo = m + j0 * ld + i0;
                 for (std::size_t r = 0; r < W; ++r) std::copy_n(hi + r * ld, W, stage + r * W);
                 four_step_tile_transpose<T>(lo, ld, hi, ld);     // hi := lo^T
-                four_step_tile_transpose<T>(stage, W, lo, ld);   // lo := hi_old^T
+                four_step_tile_transpose<T>(stage, W, lo, ld);   // lo := `hi_old`^T
             }
         }
     });
@@ -140,17 +134,16 @@ void four_step_square_transpose_inplace(std::complex<T>* m, std::size_t ld, std:
         for (std::size_t i = 0; i < j; ++i) std::swap(m[i * ld + j], m[j * ld + i]);
 }
 
-// Grid transpose: buffer viewed as [rows][cols] grid of contiguous blk-complex
-// blocks; transpose the grid, b = i*cols + q -> f(b) = (b % cols)*rows + b/cols.
-// Cycles rotate with a one-block stash; moves are contiguous blk-runs.
+// Grid transpose: the buffer viewed as a [rows][cols] grid of contiguous blk-complex
+// blocks is transposed, b -> (b % cols)*rows + b/cols. Cycles rotate with a one-block
+// stash; moves are contiguous blk-runs.
 template<typename T>
 void four_step_block_grid_transpose(std::complex<T>* m, std::size_t rows, std::size_t cols,
                                     std::size_t blk, thread_pool* pool) {
     const std::size_t B = rows * cols;
     const auto fwd = [&](std::size_t b) { return (b % cols) * rows + b / cols; };
     const auto pred = [&](std::size_t b) { return (b % rows) * cols + b / rows; };
-    // Rotation scratch must survive a full cycle, so collect orbit-min leaders
-    // first (walk stops at the first smaller element, ~O(B log L) total).
+    // Collect orbit-min leaders first: the rotation stash must survive a full cycle.
     std::vector<std::size_t> leaders;
     for (std::size_t b = 1; b + 1 < B; ++b) {
         std::size_t q = fwd(b);
@@ -173,9 +166,9 @@ void four_step_block_grid_transpose(std::complex<T>* m, std::size_t rows, std::s
     });
 }
 
-// Element-cycle fallback for C % R != 0 and R % C != 0 (never taken by a pow2
-// split): f(p) = p*R mod (R*C-1) on 0 < p < R*C-1, endpoints fixed. Orbit-min
-// leader, single-element stash. Correctness path, not a fast one.
+// Element-cycle fallback for mutually non-dividing R and C (no `pow2` split reaches
+// it): f(p) = p*R mod (R*C-1) on 0 < p < R*C-1, endpoints fixed, orbit-min leaders,
+// single-element stash. Correctness path, not a fast one.
 template<typename T>
 void four_step_transpose_cycles(std::complex<T>* m, std::size_t R, std::size_t C) {
     const std::size_t NM1 = R * C - 1;
@@ -183,7 +176,7 @@ void four_step_transpose_cycles(std::complex<T>* m, std::size_t R, std::size_t C
     for (std::size_t p = 1; p < NM1; ++p) {
         std::size_t q = fwd(p);
         while (q > p) q = fwd(q);
-        if (q != p) continue;  // not orbit-min (or not a fixed point that needs no move)
+        if (q != p) continue;  // not orbit-min, or a fixed point needing no move
         const std::complex<T> first = m[p];
         std::complex<T> prev_val = first;
         std::size_t cur = p;
@@ -197,11 +190,10 @@ void four_step_transpose_cycles(std::complex<T>* m, std::size_t R, std::size_t C
     }
 }
 
-// In-place transpose of the R x C row-major matrix at m to C x R. Decomposes by
-// shape: square tile swaps (R == C), or C = m*R as strided square transposes plus
-// an [R][m] block-grid rotation (blocks of R), or R = m*C as contiguous square
-// transposes plus an [m][C] block-grid rotation (blocks of C), else element
-// cycles. All pow2 splits (square or 1:2) take the tiled paths.
+// In-place transpose of the R x C row-major matrix at m to C x R, decomposed by
+// shape: square tile swaps (R == C), or C = m*R / R = m*C as per-block square
+// transposes plus a block-grid rotation, else element cycles. All `pow2` splits
+// (square or 1:2) take the tiled paths.
 template<typename T>
 void four_step_transpose_inplace(std::complex<T>* m, std::size_t R, std::size_t C,
                                  thread_pool* pool) {
@@ -223,10 +215,10 @@ void four_step_transpose_inplace(std::complex<T>* m, std::size_t R, std::size_t 
     }
 }
 
-// Step a of the fused sweeps' lower-triangular tile pass, on all m panels: diagonal
-// self-tile plus pairs (a,b) for b < a. Writes tiles (a,b) and (b,a); keyed on the larger
-// index, so concurrent steps never share a tile. Shuffles and copies only, no FP, so
-// the serial arms calling this are bit-for-bit the threaded step.
+// Step a of the fused sweeps' lower-triangular tile pass on all m panels: diagonal
+// self-tile plus pairs (a,b) for b < a, keyed on the larger index, so concurrent
+// steps never share a tile. Shuffles and copies only, no FP: the serial arms calling
+// this are bit-for-bit the threaded step.
 template<typename T>
 inline void four_step_fused_sweep_step(std::complex<T>* out, std::size_t ld,
                                        std::size_t n1, std::size_t m, std::size_t a,
@@ -243,15 +235,14 @@ inline void four_step_fused_sweep_step(std::complex<T>* out, std::size_t ld,
             for (std::size_t r = 0; r < W; ++r)
                 std::copy_n(hi + r * ld, W, stage + r * W);
             four_step_tile_transpose<T>(lo, ld, hi, ld);   // hi := lo^T
-            four_step_tile_transpose<T>(stage, W, lo, ld); // lo := hi_old^T
+            four_step_tile_transpose<T>(stage, W, lo, ld); // lo := `hi_old`^T
         }
     }
 }
 
-// Contiguous tile-row bounds that equalize triangle area over `nparts` parts: step a
-// costs a+1 pairs, so boundary c goes at ntiles*sqrt(c/nparts). Keyed on the chunk index
-// (u0/chunk): part c covers [lo(c), lo(c+1)) and the parts partition [0,ntiles), incl.
-// empty ranges.
+// Contiguous tile-row bounds that equalize triangle area over nparts parts: step a
+// costs a+1 pairs, so boundary c goes at ntiles*sqrt(c/nparts). Part c covers
+// [lo(c), lo(c+1)); the parts partition [0,ntiles), including empty ranges.
 [[nodiscard]] inline std::size_t four_step_sweep_lo(std::size_t c, std::size_t nparts,
                                                     std::size_t ntiles) {
     return static_cast<std::size_t>(
@@ -259,10 +250,10 @@ inline void four_step_fused_sweep_step(std::complex<T>* out, std::size_t ld,
                      * static_cast<double>(ntiles)));
 }
 
-// Phase B of a threaded fused pass: the tile sweeps, after the DFT phase barrier. Only
-// the first nparts chunks run (begin<end), so balance over nparts and key the range on
-// the chunk index (u0/chunk), never on tid. A skipped chunk would drop its tile rows
-// with no error. Shared by both fused passes below.
+// Phase B of a threaded fused pass: the tile sweeps after the DFT phase barrier,
+// shared by both fused passes below. Only the first nparts chunks run (begin<end), so
+// balance over nparts and key the range on the chunk index (u0/chunk), never on tid:
+// a skipped chunk would drop its tile rows with no error.
 template<typename T>
 inline void four_step_fused_sweep_phase(std::complex<T>* out, std::size_t ld,
                                         std::size_t n1, std::size_t m, std::size_t ntiles,
@@ -282,19 +273,15 @@ inline void four_step_fused_sweep_phase(std::complex<T>* out, std::size_t ld,
     });
 }
 
-// Fused P4+P5 for splits with n2 = m*n1: each fused step DFTs one band of [n2][n1] rows,
-// then runs step a of the in-place transpose's tile sweep while the band is cache-hot.
-// Bitwise identical to the unfused pair: the same W-tile swaps once each and the same
-// per-row DFT op sequence; only the interleaving changes.
+// Fused P4+P5 for splits with n2 = m*n1: each fused step DFTs one band of [n2][n1]
+// rows, then runs step a of the in-place transpose's tile sweep while the band is
+// cache-hot. Bitwise identical to the unfused pair: the same W-tile swaps and per-row
+// DFT op sequence; only the interleaving changes.
 //
-// Panels (m > 1 defer splits): P5 is m square n1 x n1 transposes at out + q*n1, ld = n2;
-// panel q's local row r is [n2][n1] row q + r*m. One fused step DFTs the contiguous rows
-// [m*a*W, m*(a+1)*W) and sweeps tile-row a on all m panels. m == 1 is the square case.
-//
-// Threaded runs split at a phase barrier: (A) all DFT bands on uniform chunks, then (B)
-// the tile sweeps in area-equal contiguous ranges (four_step_sweep_lo). Sweep step a reads
-// bands < a, so fusing the whole loop across the pool's static chunks would chain it into
-// near-serial order. pool == nullptr runs the serial interleave verbatim below.
+// Panels (m > 1 defer splits): P5 is m square n1 x n1 transposes at out + q*n1, ld =
+// n2. One fused step DFTs rows [m*a*W, m*(a+1)*W) and sweeps tile-row a on all m
+// panels. Threaded runs split at a phase barrier, DFTs then area-equal sweeps:
+// sweep step a reads bands < a, so fused static chunks would chain near-serially.
 template<typename T>
 void four_step_dft_transpose_fused(std::complex<T>* out, std::size_t n1, std::size_t n2,
                                    std::size_t m, bool is_forward,
@@ -334,7 +321,7 @@ void four_step_dft_transpose_fused(std::complex<T>* out, std::size_t n1, std::si
     });
 }
 
-// One [n2] row: in-place DFT via dif_dispatch, then the split twiddle
+// One [n2] row: in-place DFT via `dif_dispatch`, then the split twiddle
 // W_N^q = hitab[q>>logM] * lotab[q&(M-1)], q advancing by j per element.
 template<typename T>
 inline void four_step_row_dft_twist(std::complex<T>* row, std::size_t n2, std::size_t j,
@@ -351,10 +338,9 @@ inline void four_step_row_dft_twist(std::complex<T>* row, std::size_t n2, std::s
     }
 }
 
-// Fused P2+P3: a band of W [n1][n2] rows gets its size-n2 DFT + split-twist, then step a
-// of P3's tile sweep while the band is hot (panel row r == P2 row r directly). Same
-// bitwise-identity argument and threaded two-dispatch split as
-// four_step_dft_transpose_fused.
+// Fused P2+P3: a band of W [n1][n2] rows gets its size-n2 DFT + split-twist, then
+// step a of P3's tile sweep while the band is hot. Same bitwise-identity argument and
+// threaded phase split as `four_step_dft_transpose_fused`.
 template<typename T>
 void four_step_twist_dft_transpose_fused(std::complex<T>* out, std::size_t n1,
                                          std::size_t n2, std::size_t m, bool is_forward,
@@ -392,14 +378,14 @@ void four_step_twist_dft_transpose_fused(std::complex<T>* out, std::size_t n1,
 
 using large_split = four_step_split;
 
-// Usable leaf: pow2 or codelet-supported smooth length (build_dif_twiddle_set requirement).
+// Usable leaf: `pow2` or `codelet`-supported smooth length (`build_dif_twiddle_set` requirement).
 [[nodiscard]] constexpr bool large_leaf_ok(std::size_t f) {
     return f > 1 && (detail::has_single_bit(f) || is_codelet_supported(f));
 }
 
-// Balanced split N = n1*n2 (both usable), closest to sqrt(N); {0,0} if none exists.
-// Orientation is NOT free: swapping n1/n2 to line-align the output stride loses. Keep
-// n1 <= n2.
+// Balanced split N = n1*n2 (both usable), closest to sqrt(N), n1 <= n2; {0,0} if
+// none exists. Orientation is NOT free: swapping n1/n2 to line-align the output
+// stride loses.
 [[nodiscard]] constexpr large_split choose_large_split(std::size_t N) {
     large_split best{};
     for (std::size_t n1 = 2; n1 * n1 <= N; ++n1) {
@@ -412,41 +398,43 @@ using large_split = four_step_split;
 }
 
 // Hand-fit admission byte lines for this route, shared with the callers that gate on
-// them: a threshold and the quantity it was fitted against are ONE artifact. Change
-// either and re-derive both, together. Bluestein's inner six-step arm is admitted
-// off the same f64 serial line, so it has to be one constant and not a matching literal.
+// them: a threshold and the quantity it was fitted against are ONE artifact, so change
+// either and re-derive both. Bluestein's inner six-step arm is admitted off the same
+// f64 serial line, so it is one constant, never a matching literal.
 
-// Threaded, both precisions: a BUDGET divided by nthreads, clamped below by a FLOOR.
-// The crossover against a serial DIF chain falls as 1/nthreads, then bottoms out where
-// the DIF stream stops being L2-resident per pass.
+// Threaded, both precisions: BUDGET / nthreads, clamped below by FLOOR. The crossover
+// against a serial DIF chain falls as 1/nthreads and bottoms out where the DIF stream
+// stops being L2-resident per pass.
 inline constexpr std::size_t kLargeRouteThreadedByteBudget = std::size_t{2} << 20;
 inline constexpr std::size_t kLargeRouteThreadedFloorBytes = std::size_t{512} << 10;
+
+// Serial admission, per precision: measured crossover against the serial DIF chain.
 inline constexpr std::size_t kLargeRouteSerialF64Bytes = std::size_t{12} << 20;
 inline constexpr std::size_t kLargeRouteSerialF32Bytes = (std::size_t{16} << 20) - 1;
 
-// Serial f32 admission is a WINDOW, not a half-line. The DIF chain wins again from an
-// upper size on. f64 shows no upper crossover and threading removes it for both
-// precisions, so this bound is f32-and-serial only.
+// Serial f32 admission is a WINDOW, not a half-line: the DIF chain wins again above
+// this size. f64 shows no upper crossover and threading removes it, so this bound is
+// f32-serial only.
 inline constexpr std::size_t kLargeRouteSerialF32MaxBytes = std::size_t{32} << 20;
 
 // Threaded admission line, one source for the gate and the test that pins it. The -1
-// turns four_step_large_supported's strict compare into "admit at the line".
+// turns `four_step_large_supported`'s strict compare into "admit at the line".
 [[nodiscard]] constexpr std::size_t large_route_threaded_bytes(std::size_t nthreads) {
     return std::max(kLargeRouteThreadedFloorBytes, kLargeRouteThreadedByteBudget / nthreads) - 1;
 }
 
-// Route gate: N is DRAM-bound (> threshold_bytes) and has a balanced usable split.
+// Route gate: N is DRAM-bound (> `threshold_bytes`) and has a balanced usable split.
 [[nodiscard]] constexpr bool four_step_large_supported(std::size_t N, std::size_t elem_bytes,
                                                        std::size_t threshold_bytes) {
     return N * elem_bytes > threshold_bytes && choose_large_split(N).valid();
 }
 
 // Fused-legal split search: the most balanced leaf-ok split with n2 % n1 == 0 and
-// n1 % W == 0. The balanced chooser does not know about the fused-shape requirement, so
-// it can elect a split the fused sweeps cannot run. {0,0} when nothing legal exists.
+// n1 % W == 0, or {0,0}. The balanced chooser alone can elect a split the fused
+// sweeps cannot run.
 template<typename T>
 [[nodiscard]] constexpr large_split choose_fused_large_split(std::size_t N) {
-    // W<=2: only balanced splits that also satisfy the fused-shape predicate, so that the
+    // W<=2: keep only balanced splits that satisfy the fused-shape predicate, so the
     // gate and the plan chooser agree.
     constexpr std::size_t W = xsimd::batch<T>::size;
     if constexpr (W <= 2) {
@@ -465,19 +453,18 @@ template<typename T>
     return best;
 }
 
-// The split shape the engine runs fast: n2 % n1 == 0 keeps the in-place transposes on the
-// tiled/defer paths and enables the band-fused sweeps, whose own guard is n1 % W == 0 (so
-// this predicate tracks W across ISAs). n2 % n1 != 0 puts both transposes on the serial
-// element-cycle fallback (four_step_transpose_cycles), where even a scratch-buffer
-// transpose loses to the DIF chain. Used by the public gate (plan.hpp large_route_admits)
-// and the bluestein inner delegate (bluestein.hpp bluestein_inner_six_step_admits).
+// The split shape the engine runs fast: n2 % n1 == 0 keeps the transposes tiled and
+// enables the band-fused sweeps, whose guard n1 % W == 0 tracks W across ISAs.
+// n2 % n1 != 0 puts both transposes on the serial element-cycle fallback, which loses
+// to the DIF chain. Used by plan.hpp `large_route_admits` and bluestein.hpp
+// `bluestein_inner_six_step_admits`.
 template<typename T>
 [[nodiscard]] constexpr bool four_step_large_fused_shape(std::size_t N) {
     return choose_fused_large_split<T>(N).valid();
 }
 
 // Plan state: two leaf twiddle sets + split-twiddle tables.
-// No working buffer: execute() moves data between in and out only (re-entrant).
+// No working buffer: `execute()` moves data between in and out only (re-entrant).
 template<typename T>
 struct four_step_large_plan {
     std::size_t n1 = 0, n2 = 0;
@@ -491,18 +478,16 @@ struct four_step_large_plan {
     std::size_t twist_M = 1, twist_logM = 0;
 
     four_step_large_plan(std::size_t N, bool fwd) : is_forward(fwd) {
-        // Prefer the fused-legal split (the public gates only admit shapes that
-        // have one); fall back to the balanced split for direct/forced builds
-        // so the engine still runs on any leaf-ok factorization.
+        // Fused-legal split first (the public gates admit only shapes that have
+        // one); balanced split as fallback, so a direct/forced build still runs.
         large_split sp = choose_fused_large_split<T>(N);
         if (!sp.valid()) sp = choose_large_split(N);
         n1 = sp.n1;
         n2 = sp.n2;
         dtw_n2 = build_dif_twiddle_set<T>(n2, nullptr);
         dtw_n1 = build_dif_twiddle_set<T>(n1, nullptr);
-        // Split-twiddle tables for W_N^{nn1 k2}: q = nn1*k2 = qhi*M + qlo,
-        // W_N^q = hitab[qhi]*lotab[qlo]. Exact sincos per entry (one rounding), no
-        // accumulated rotation error. M = 2^k >= sqrt(N).
+        // Exact sincos per entry (one rounding, no accumulated rotation error).
+        // M = 2^k >= sqrt(N).
         twist_M = detail::bit_ceil(static_cast<std::size_t>(std::sqrt(static_cast<double>(N))) + 1);
         twist_logM = static_cast<std::size_t>(detail::countr_zero(twist_M));
         lotab.resize(twist_M);
@@ -520,12 +505,10 @@ struct four_step_large_plan {
         }
     }
 
-    // in == out or in != out; result written to out, scaled by fct. Default scale
-    // (forward=1, inverse=1/N): P2 folds 1/n2, P4 folds 1/n1. Custom fct goes
-    // entirely into P4's row pass (P2 unscaled). pool == nullptr runs everything
-    // inline; ND-shared sub-plans are built nthreads = 1, so their pool is null by
-    // construction and nothing nests a parallel_for. No plan-owned buffer exists, so
-    // execute() is re-entrant.
+    // Result written to out (in == out allowed), scaled by fct. Default scale
+    // (forward 1, inverse 1/N): P2 folds 1/n2, P4 folds 1/n1; a custom fct goes
+    // entirely into P4's row pass (P2 unscaled). pool == nullptr runs inline; no
+    // plan-owned buffer exists, so `execute()` is re-entrant.
     void execute(const std::complex<T>* in, std::complex<T>* out, T fct,
                  thread_pool* pool = nullptr) const {
         const std::size_t N = n1 * n2;
@@ -533,8 +516,8 @@ struct four_step_large_plan {
         constexpr std::size_t Wv = xsimd::batch<T>::size;
         constexpr std::size_t RB = four_step_tblock;   // rows per band (multiple of Wv)
 
-        // --- P1: transpose in -> out, out viewed [n1][n2]. Reuses the band
-        //     transpose verbatim with ld == n1 (`in` has the natural stride). ---
+        // P1: transpose in -> out, out viewed [n1][n2]; the band transpose with
+        // ld == n1 (in has the natural stride).
         if (in == out) {
             four_step_transpose_inplace<T>(out, n2, n1, pool);
         } else {
@@ -548,12 +531,11 @@ struct four_step_large_plan {
             four_step_transpose_remainder<T>(in, out, n1, n1, n2);
         }
 
-        // --- P2: size-n2 DFT per row of out (viewed [n1][n2]), then the split
-        //     twist W_N^{j*k2}, q increments by j per column; it lands after the
-        //     DFT because it is diagonal in the DFT's output coordinate. ---
-        // --- P3: [n1][n2] -> [n2][n1] in place. Wide splits (n2 = m*n1) defer the
-        //     block-grid rotation: after the per-block square transposes every P4
-        //     row is already contiguous, so the rotation composes into P5 below. ---
+        // P2: size-n2 DFT per row of out (viewed [n1][n2]), then the split twist,
+        // which lands after the DFT because it is diagonal in the output coordinate.
+        // P3: [n1][n2] -> [n2][n1] in place. Wide splits (n2 = m*n1) defer the
+        // block-grid rotation: after the per-block square transposes every P4 row is
+        // already contiguous, so the rotation composes into P5 below.
         const T p2_scale = (!is_forward && default_scale) ? T(1) / static_cast<T>(n2) : T(1);
         const bool defer_rot = (n2 % n1 == 0) && (n2 != n1);
         if (n2 % n1 == 0 && n1 % Wv == 0) {   // P2+P3 as one band-fused sweep
@@ -582,12 +564,10 @@ struct four_step_large_plan {
             }
         }
 
-        // --- P4+P5: size-n1 row DFTs, then [n2][n1] -> [n1][n2]; out[k1*n2+k2]
-        //     = X[k]. Square and defer splits (n2 = m*n1) fuse the two phases
-        //     band-by-band, each DFT'd band transposed onward while cache-hot
-        //     (four_step_dft_transpose_fused); the defer P5 is the same m strided
-        //     square transposes as P3 (rotation composed away, see P3).
-        //     Non-divisible splits keep the unfused phases below. ---
+        // P4+P5: size-n1 row DFTs, then [n2][n1] -> [n1][n2]; out[k1*n2+k2] = X[k].
+        // Square and defer splits (n2 = m*n1) fuse the phases band-by-band
+        // (`four_step_dft_transpose_fused`); the defer P5 is the same m strided
+        // square transposes as P3. Non-divisible splits keep the unfused phases.
         const T row_scale = default_scale ? (is_forward ? T(1) : T(1) / static_cast<T>(n1)) : fct;
         if (n2 % n1 == 0 && n1 % Wv == 0) {   // P4+P5 as one band-fused sweep
             four_step_dft_transpose_fused<T>(out, n1, n2, n2 / n1, is_forward, dtw_n1,

@@ -1,4 +1,4 @@
-// Real input: plan_r2c holds half the spectrum (FFTW's packed layout).
+// Real input: `plan_r2c` holds half the spectrum (FFTW's packed layout).
 #include <admiral/admiral.hpp>
 
 #include <cmath>

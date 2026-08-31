@@ -1,15 +1,14 @@
 #pragma once
 
-// Identity of the current build, as the routing cost model keys it.
+// Identity of the current build, as the routing cost model keys builds.
 //
-// (arch, compiler, major, W, regs, sizeof T), deliberately NOT an ISA
-// revision. The model's features only ever read the vector width and the
-// architectural register count, so the same key works on NEON, SVE or RVV
-// without a new enumeration; an unswept target finds no match and runs
-// on the shared coefficients. The compiler is part of the key because the
-// coefficients encode codegen quality, which does not port. The architecture is
-// part of it for the same reason: SVE at 512 bits has the same (W, regs) as AVX-512
-// and would otherwise silently inherit the x86 coefficients.
+// The key is (arch, compiler, major, W, regs, sizeof T), deliberately not an
+// ISA revision. The same key works on NEON, SVE or RVV without a new
+// enumeration. An unswept target finds no match and runs on the shared
+// coefficients. The compiler sits in the key because the coefficients encode
+// codegen quality, which does not port. The arch sits in the key because SVE
+// at 512 bits has the same (W, regs) as AVX-512 and would otherwise inherit
+// the x86 coefficients.
 
 #include <cstddef>
 #include <string_view>
@@ -61,13 +60,12 @@ inline constexpr int build_compiler_major =
     0;
 #endif
 
-// Microarchitecture the codegen targets, part of a sweep receipt's filename:
-// two CPUs running identical binaries (at the same x86-64-v* level) can disagree
-// on the best route at the same size. Without it their measurements would land in
-// one file, and the fitter would pool them as if they agreed.
-// "generic" = no uarch identity (-march=x86-64-v* / distro builds).
+// Microarchitecture the codegen targets, part of a sweep receipt's filename.
+// Two CPUs running identical binaries can disagree on the best route. Without
+// the uarch key, both CPUs' measurements land in one file, pooled as if the
+// CPUs agreed. "generic" = no uarch identity (`-march=x86-64-v*`).
 inline constexpr std::string_view build_uarch =
-#if defined(__znver5__)    // newer first: gcc/clang define exactly one
+#if defined(__znver5__)    // newer first: gcc/clang define exactly one macro
     "znver5";
 #elif defined(__znver4__)
     "znver4";
@@ -88,9 +86,9 @@ inline constexpr std::string_view build_uarch =
 #elif defined(__skylake__)
     "skylake";
 #elif defined(__apple_m4__) || defined(__APPLE__) && defined(__aarch64__)
-    "apple";            // apple-clang does not name the M-core via macro
+    "apple";            // apple-clang does not name the M-core via a macro
 #elif defined(__aarch64__)
-    "aarch64";          // -mcpu/-march macros vary by vendor; keep coarse
+    "aarch64";          // `-mcpu`/`-march` macros vary by vendor; keep coarse
 #else
     "generic";
 #endif

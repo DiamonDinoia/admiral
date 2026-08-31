@@ -1,11 +1,7 @@
-# benchmark/CMakeLists.txt
-# Benchmarks using ducc0
-
-# One benchmark, four TUs: bench_nd.cpp and bench_pass_{f,d}.cpp are compile-time splits,
-# not separate benchmarks. bench_nd.cpp holds the N-D/r2c compares (the nd_plan ->
-# col_dif_dispatch chain at both precisions); bench_pass instantiates dif_pass /
-# dif_pass_last for the whole radix set, so it splits again per precision. Shared
-# harness in bench_harness.hpp.
+# One benchmark, four TUs: a compile-time split, not separate benchmarks.
+# `bench_nd.cpp` holds the N-D/r2c compares (`nd_plan` -> `col_dif_dispatch` at both
+# precisions); `bench_pass_{f,d}.cpp` instantiates `dif_pass` / `dif_pass_last` for
+# the whole radix set, split per precision. Shared harness in `bench_harness.hpp`.
 add_executable(admiral_benchmark
     bench_pass_f.cpp
     bench_pass_d.cpp
@@ -13,10 +9,9 @@ add_executable(admiral_benchmark
     bench_nd.cpp
 )
 
-# Link against: admiral_internal, ducc::ducc0 (reference), nanobench (timing).
-# Threads::Threads is unconditional even at ADM_ENABLE_THREADS=OFF. The build
-# compiles ducc0's threading.cc either way, and the link misses pthread_* on toolchains
-# whose libc predates the 2.34 merge.
+# `Threads::Threads` is unconditional even at `ADM_ENABLE_THREADS=OFF`: the build
+# compiles `threading.cc` from `ducc0` either way, and the link misses `pthread_*` on
+# libc before 2.34.
 find_package(Threads REQUIRED)
 target_link_libraries(admiral_benchmark
     PRIVATE
@@ -26,7 +21,7 @@ target_link_libraries(admiral_benchmark
         Threads::Threads
 )
 
-# Third-party headers as SYSTEM so they cannot trip the project's -Werror profile.
+# Third-party headers as `SYSTEM` so they cannot trip the project's `-Werror` profile.
 foreach(dep ducc::ducc0 nanobench)
     get_target_property(dep_includes ${dep} INTERFACE_INCLUDE_DIRECTORIES)
     if(dep_includes)
@@ -34,16 +29,15 @@ foreach(dep ducc::ducc0 nanobench)
     endif()
 endforeach()
 
-# Optional FFTW reference path (-DADM_BENCH_FFTW=ON). The option and the
-# PkgConfig::FFTW imported target are defined in cmake/Dependencies.cmake.
+# Optional FFTW reference (`-DADM_BENCH_FFTW=ON`); `cmake/Dependencies.cmake` defines
+# the option and `PkgConfig::FFTW`.
 if(ADM_BENCH_FFTW)
     target_link_libraries(admiral_benchmark PRIVATE PkgConfig::FFTW)
     target_compile_definitions(admiral_benchmark PRIVATE ADM_BENCH_FFTW)
 endif()
 
-# Multi-threaded benchmarking (-DADM_BENCH_THREADS=ON, defined in Dependencies.cmake):
-# gates the FFTW threads init/plan_with_nthreads calls and links the fftw3_threads
-# companion libs (found by name in Dependencies.cmake).
+# `-DADM_BENCH_THREADS=ON` (defined in `cmake/Dependencies.cmake`) gates the FFTW
+# `plan_with_nthreads` calls and links the `fftw3_threads` companion libs.
 if(ADM_BENCH_THREADS)
     target_compile_definitions(admiral_benchmark PRIVATE ADM_BENCH_THREADS)
     if(ADM_BENCH_FFTW)
@@ -52,9 +46,9 @@ if(ADM_BENCH_THREADS)
 endif()
 
 # The same arch/fast-math flags as the library, from the one target that defines them.
-# Deliberately not adm_apply_build_profile: benchmarks never link sanitizers. Fast
-# math is named here on purpose. The benchmark is a timing harness, and dropping it
-# would change what every number means. Tests deliberately do NOT get it.
+# Not `adm_apply_build_profile`: benchmarks never link sanitizers. Fast math is named
+# on purpose: the benchmark is a timing harness, and tests deliberately do NOT get
+# fast math.
 target_link_libraries(admiral_benchmark PRIVATE admiral_optimization_flags)
 if(TARGET admiral_fast_math_flags)
     target_link_libraries(admiral_benchmark PRIVATE admiral_fast_math_flags)
@@ -63,6 +57,5 @@ if(TARGET project_warnings)
     target_link_libraries(admiral_benchmark PRIVATE project_warnings)
 endif()
 
-# LTO is not set per target: ADM_ENABLE_LTO drives
-# CMAKE_INTERPROCEDURAL_OPTIMIZATION_<CONFIG>, which takes precedence over the
-# plain INTERPROCEDURAL_OPTIMIZATION property.
+# No per-target LTO: `ADM_ENABLE_LTO` drives
+# `CMAKE_INTERPROCEDURAL_OPTIMIZATION_<CONFIG>`, which overrides the plain property.

@@ -18,18 +18,16 @@
 
 using namespace Catch::Matchers;
 
-// Half-spectrum complex element count for a real shape. Derived here rather than read
-// back from plan_r2c::cplx_size(), so the expected layout stays independent of the code
-// under test.
+// Half-spectrum complex element count for a real shape. The count is derived here, not
+// read back from `plan_r2c::cplx_size()`, so the expected layout stays independent of
+// the code under test.
 template<std::size_t Dim>
 std::size_t cplx_count(std::array<std::size_t, Dim> shape) {
     shape[Dim - 1] = shape[Dim - 1] / 2 + 1;
     return shape_product(shape);
 }
 
-// ----------------------------------------------------------------------------
 // Forward analytical / round-trip / Parseval drivers.
-// ----------------------------------------------------------------------------
 
 // Checks the N-D forward transform against an exact analytical reference.
 //
@@ -43,7 +41,7 @@ template<typename T, std::size_t Dim>
 void check_forward_analytical(std::array<std::size_t, Dim> shape, unsigned seed) {
     const std::size_t n = shape_product(shape);
 
-    // Per-axis bin: 0 when N_d==1, else (seed+1+d) % N_d.
+    // Per-axis bin: 0 if N_d==1, else (seed+1+d) % N_d.
     std::array<std::size_t, Dim> K;
     for (std::size_t d = 0; d < Dim; ++d)
         K[d] = (shape[d] > 1) ? ((seed + 1u + static_cast<unsigned>(d)) % shape[d]) : 0u;
@@ -69,8 +67,8 @@ void check_forward_analytical(std::array<std::size_t, Dim> shape, unsigned seed)
     for (std::size_t d = 0; d < Dim; ++d)
         K_flat = K_flat * shape[d] + K[d];
 
-    // One tone: every bin zero but K_flat, which holds n. A per-element absolute
-    // check would need a tol*n fudge for that bin; relative L2 self-normalizes.
+    // One tone: every bin zero but K_flat, which holds n. A per-element absolute check
+    // there would need a tol*n fudge; relative L2 self-normalizes.
     std::vector<std::complex<T>> expected(n, std::complex<T>(T(0), T(0)));
     expected[K_flat] = std::complex<T>(static_cast<T>(n), T(0));
     INFO("forward analytical Dim=" << Dim << " Ntot=" << n);
@@ -103,12 +101,10 @@ void check_parseval(std::array<std::size_t, Dim> shape, unsigned seed) {
     require_parseval<T>(in, out, n);
 }
 
-// ----------------------------------------------------------------------------
 // r2c / c2r drivers: analytical checks and r2c -> c2r round-trip identity.
-// ----------------------------------------------------------------------------
 
-// Constant input 1 -> half-spectrum holds Ntot at DC (flat index 0), zero elsewhere.
-// No third-party oracle needed.
+// Constant input 1 gives Ntot at DC (flat index 0), zero elsewhere. No third-party
+// oracle needed.
 template<typename T, std::size_t Dim>
 void check_r2c_analytical(std::array<std::size_t, Dim> shape) {
     const std::size_t n = shape_product(shape);
@@ -136,9 +132,7 @@ void check_r2c_roundtrip(std::array<std::size_t, Dim> shape, unsigned seed) {
     require_close(back, in, fft_tol<T>());
 }
 
-// ----------------------------------------------------------------------------
 // 2D correctness vs analytical.
-// ----------------------------------------------------------------------------
 
 TEMPLATE_TEST_CASE("2D FFT vs analytical (forward)", "[nd][2d]", float, double) {
     using T = TestType;
@@ -166,7 +160,7 @@ TEMPLATE_TEST_CASE("2D FFT mixed/fallback column routes vs analytical", "[nd][2d
     // Small non-smooth (19): scalar fallback (direct DFT route).
     check_forward_analytical<T, 2>({19, 8}, 13);
     check_forward_analytical<T, 2>({8, 19}, 14);
-    // 31: scalar fallback (Bluestein route) as outer and as inner axis.
+    // 31: scalar fallback (Bluestein route), as outer and as inner axis.
     check_forward_analytical<T, 2>({31, 16}, 15);
     check_forward_analytical<T, 2>({16, 31}, 16);
 }
@@ -183,9 +177,9 @@ TEMPLATE_TEST_CASE("2D FFT round-trip identity", "[nd][2d][roundtrip]", float, d
 
 TEMPLATE_TEST_CASE("2D FFT Parseval", "[nd][2d][parseval]", float, double) {
     using T = TestType;
-    // Parseval only sees energy, so it cannot catch a permuted, conjugated or
-    // sign-flipped spectrum. Every shape checked here also gets the analytical
-    // known-answer, so none of them rests on the energy identity alone.
+    // Parseval sees energy only, so the check cannot catch a permuted, conjugated or
+    // sign-flipped spectrum. Every shape here also gets the analytical known-answer,
+    // so no shape rests on the energy identity alone.
     for (const std::array<std::size_t, 2> shape : {std::array<std::size_t, 2>{16, 16},
                                                    {12, 20},
                                                    {32, 8}}) {
@@ -225,11 +219,9 @@ TEMPLATE_TEST_CASE("rank-0 plan is the identity", "[nd][edge]", float, double) {
     REQUIRE(a == C{T(0.5), T(-0.75)});
 }
 
-// ----------------------------------------------------------------------------
-// Large-outer / small-inner: the outer axis takes the gather -> row-FFT ->
-// scatter (small_inner) path when the contiguous inner batch is too narrow or
-// non-W-aligned. Must match analytical and round-trip for both precisions.
-// ----------------------------------------------------------------------------
+// Large-outer / small-inner shapes. If the contiguous inner batch is too narrow or
+// not W-aligned, the outer axis takes the gather -> row-FFT -> scatter (`small_inner`)
+// path. Both precisions must match the analytical reference and the round-trip.
 
 TEMPLATE_TEST_CASE("2D large-outer/small-inner vs analytical", "[nd][2d][small-inner]",
                    float, double) {
@@ -243,19 +235,16 @@ TEMPLATE_TEST_CASE("2D large-outer/small-inner vs analytical", "[nd][2d][small-i
     check_roundtrip<T, 2>({1024, 64}, 313);
 }
 
-// Live cover for the elected 16384 chain on the COLUMN driver: a
-// strided non-innermost axis executes 8-16-16-8 there, which the row-form harness
-// cannot see.
+// Live cover for the elected 16384 chain on the COLUMN driver: a strided
+// non-innermost axis executes 8-16-16-8 there. The row-form harness cannot see that.
 //
-// Double only: both entries are keyed on batch<double>::size==8.
+// Double only: both entries key on `xsimd::batch<double>::size == 8`.
 TEST_CASE("2D 16384-long strided f64 axis vs analytical", "[nd][2d]") {
     check_forward_analytical<double, 2>({16384, 4}, 321);
     check_roundtrip<double, 2>({16384, 4}, 322);
 }
 
-// ----------------------------------------------------------------------------
-// Dim=1: nd_plan must reproduce the legacy 1D path.
-// ----------------------------------------------------------------------------
+// Dim=1: `nd_plan` must reproduce the legacy 1D path.
 
 TEMPLATE_TEST_CASE("1D via nd_plan matches legacy 1D FFT", "[nd][1d]", float, double) {
     using T = TestType;
@@ -275,9 +264,7 @@ TEMPLATE_TEST_CASE("1D via nd_plan matches legacy 1D FFT", "[nd][1d]", float, do
     }
 }
 
-// ----------------------------------------------------------------------------
 // Dim=3 smoke (vs analytical + round-trip).
-// ----------------------------------------------------------------------------
 
 TEMPLATE_TEST_CASE("3D FFT smoke vs analytical", "[nd][3d]", float, double) {
     using T = TestType;
@@ -288,7 +275,6 @@ TEMPLATE_TEST_CASE("3D FFT smoke vs analytical", "[nd][3d]", float, double) {
     check_roundtrip<T, 3>({8, 8, 8}, 55);
 }
 
-// 3D hardening: Parseval, fallback-route outer/middle/inner axes, degenerate.
 TEMPLATE_TEST_CASE("3D FFT Parseval", "[nd][3d][parseval]", float, double) {
     using T = TestType;
     for (const std::array<std::size_t, 3> shape : {std::array<std::size_t, 3>{8, 8, 8},
@@ -317,9 +303,7 @@ TEMPLATE_TEST_CASE("3D FFT degenerate extents", "[nd][3d][edge]", float, double)
     check_roundtrip<T, 3>({1, 13, 1}, 124);
 }
 
-// ----------------------------------------------------------------------------
 // Dim=4 smoke (vs analytical + round-trip).
-// ----------------------------------------------------------------------------
 
 TEMPLATE_TEST_CASE("4D FFT smoke vs analytical", "[nd][4d]", float, double) {
     using T = TestType;
@@ -327,10 +311,8 @@ TEMPLATE_TEST_CASE("4D FFT smoke vs analytical", "[nd][4d]", float, double) {
     check_roundtrip<T, 4>({2, 3, 4, 5}, 132);
 }
 
-// ----------------------------------------------------------------------------
 // r2c / c2r: analytical forward check and round-trip identity, 1D/2D/3D, both
 // precisions, even and odd innermost N (odd exercises the full-c2c fallback).
-// ----------------------------------------------------------------------------
 
 TEMPLATE_TEST_CASE("r2c forward vs analytical", "[nd][r2c]", float, double) {
     using T = TestType;
@@ -342,9 +324,10 @@ TEMPLATE_TEST_CASE("r2c forward vs analytical", "[nd][r2c]", float, double) {
     check_r2c_analytical<T, 2>({8, 16});
     check_r2c_analytical<T, 2>({12, 20});
     check_r2c_analytical<T, 2>({8, 15});   // odd inner -> fallback
-    // WS-B batched even path: rows not a multiple of the SIMD width W exercise the
-    // tile loop + the <W scalar tail (rows=6: f64 W=4 tail=2, f32 rows<8 all-tail;
-    // rows=14: f64 tail=2, f32 W=8 tail=6), with a mixed-radix inner M.
+    // WS-B batched even path: row counts not a multiple of the SIMD width W exercise
+    // the tile loop and the <W scalar tail, with a mixed-radix inner M. Coverage per
+    // build: rows=6 gives f64 W=4 tail=2 and f32 rows<8 all-tail; rows=14 gives f64
+    // tail=2 and f32 W=8 tail=6.
     check_r2c_analytical<T, 2>({6, 16});
     check_r2c_analytical<T, 2>({14, 24});  // M=12 = 4*3
     // 3D
@@ -364,7 +347,7 @@ TEMPLATE_TEST_CASE("r2c -> c2r round-trip identity", "[nd][r2c][roundtrip]", flo
     check_r2c_roundtrip<T, 2>({9, 8}, 215);    // odd outer (even inner)
     check_r2c_roundtrip<T, 2>({8, 9}, 216);    // odd inner -> fallback
     check_r2c_roundtrip<T, 2>({8, 15}, 225);   // odd inner -> fallback
-    check_r2c_roundtrip<T, 2>({6, 16}, 222);   // WS-B W-tail (see r2c-vs-analytical above)
+    check_r2c_roundtrip<T, 2>({6, 16}, 222);   // WS-B W-tail (see the r2c-vs-analytical case)
     check_r2c_roundtrip<T, 2>({14, 24}, 223);
     check_r2c_roundtrip<T, 3>({4, 6, 8}, 217);
     check_r2c_roundtrip<T, 3>({5, 4, 6}, 226);
@@ -372,9 +355,7 @@ TEMPLATE_TEST_CASE("r2c -> c2r round-trip identity", "[nd][r2c][roundtrip]", flo
     check_r2c_roundtrip<T, 3>({4, 4, 9}, 227); // odd inner -> fallback
 }
 
-// ----------------------------------------------------------------------------
-// Runtime-rank dispatch (nd_runtime_plan) agrees with the compile-time API.
-// ----------------------------------------------------------------------------
+// Runtime-rank dispatch (`nd_runtime_plan`) agrees with the compile-time API.
 
 TEMPLATE_TEST_CASE("Runtime nd_execute matches compile-time nd_plan", "[nd][dispatch]",
                    float, double) {
@@ -398,9 +379,8 @@ TEMPLATE_TEST_CASE("Runtime nd_execute matches compile-time nd_plan", "[nd][disp
     run({31, 8}, 63);
 }
 
-// ----------------------------------------------------------------------------
-// Unified admiral::plan<T> handles every rank from a runtime shape (no Dim param).
-// ----------------------------------------------------------------------------
+// The unified `admiral::plan<T>` handles every rank from a runtime shape (no Dim
+// parameter).
 
 TEMPLATE_TEST_CASE("Unified plan<T> handles N-D via runtime shape", "[nd][plan]",
                    float, double) {
@@ -415,7 +395,8 @@ TEMPLATE_TEST_CASE("Unified plan<T> handles N-D via runtime shape", "[nd][plan]"
         auto a = in;
         p.forward(a.data());
 
-        // Reference: compile-time forward (verified analytically by check_forward_analytical).
+        // Reference: compile-time `forward` (verified analytically by
+        // `check_forward_analytical`).
         auto ref = in;
         admiral::forward(ref.data(), shape);
         require_close(a, ref, fft_tol<T>());
@@ -442,10 +423,11 @@ TEMPLATE_TEST_CASE("Unified plan<T> handles N-D via runtime shape", "[nd][plan]"
     }
 }
 
-// The narrow-run criterion of choose_line_route is a pure function of the shape, but no
-// tensor a portable test can afford elects it. It needs a slab past L2 behind a run of
-// one or two elements. This case drives it directly, with the budget read from the same
-// helper the criterion uses, so the sizes hold on any cache geometry.
+// The narrow-run criterion of `choose_line_route` is a pure function of the shape, but
+// no affordable test tensor elects the criterion: the criterion needs a slab past L2
+// behind a run of one or two elements. This case drives `choose_line_route` directly.
+// The budget comes from the same helper the criterion uses, so the sizes hold on any
+// cache geometry.
 TEMPLATE_TEST_CASE("choose_line_route narrow-run criterion", "[nd][route]", float, double) {
     using T = TestType;
     using admiral::detail::choose_line_route;
@@ -459,25 +441,25 @@ TEMPLATE_TEST_CASE("choose_line_route narrow-run criterion", "[nd][route]", floa
     const std::size_t wide = budget / (len * sizeof(std::complex<T>)) + 1;
     REQUIRE(len * wide * sizeof(std::complex<T>) > budget);
 
-    // 2*run_len <= batch size for every ISA: batch<T>::size is at least 2.
+    // 2*run_len <= batch size on every ISA: `xsimd::batch<T>::size` is at least 2.
     constexpr std::size_t run_len = 1;
     CHECK(choose_line_route<T>(st, len, wide, run_len, 1) == line_route::transposed);
-    // Same run, a slab that fits: the criterion must be able to answer the other way,
-    // or the check above would pass on a function that always returns transposed.
+    // Same run, a slab that fits. The criterion must answer the other way here, or the
+    // check above would pass on a function that always returns `line_route::transposed`.
     CHECK(choose_line_route<T>(st, len, 1, run_len, 1) == line_route::col_dif);
     // A run wide enough to fill the register keeps the column route even uncached.
     const std::size_t full = xsimd::batch<T>::size;
     CHECK(choose_line_route<T>(st, len, wide, full, 1) == line_route::col_dif);
-    // No column chain: transposed is the only thing left, whatever the shape says.
+    // Without a column chain, `line_route::transposed` is the only route.
     st.dif = false;
     CHECK(choose_line_route<T>(st, len, 1, full, 1) == line_route::transposed);
 }
 
-// real_run_copy is nd_plan's band-pack helper. Its `full` branch (n >= W, one
+// `real_run_copy` is the band-pack helper of `nd_plan`. Its `full` branch (n >= W: one
 // unmasked batch ahead of the masked remainder) runs only for a band at least a
-// register wide; the only call site passes 2*band_width. This case sweeps every
-// length the type admits rather than spot-checking, because which branch a given n
-// takes follows W and therefore the build.
+// register wide; the only call site passes 2*band_width. This case sweeps every length
+// the type admits instead of spot-checking. Which branch a given n takes follows W,
+// and W follows the build.
 TEMPLATE_TEST_CASE("real_run_copy copies exactly its run", "[nd][swizzle]", float, double) {
     using T = TestType;
     constexpr std::size_t W = xsimd::batch<T>::size;
@@ -498,17 +480,17 @@ TEMPLATE_TEST_CASE("real_run_copy copies exactly its run", "[nd][swizzle]", floa
         std::vector<T> dst(3 * W, T(-1));
         cp(src.data(), dst.data());
         for (std::size_t i = 0; i < n; ++i) REQUIRE(dst[i] == src[i]);
-        // Nothing past the run may move: a mask that is too wide would show up here and
-        // in the real caller it would corrupt the neighbouring band.
+        // Nothing past the run may move. A too-wide mask shows up here, and in the real
+        // caller the same mask would corrupt the neighbouring band.
         for (std::size_t i = n; i < dst.size(); ++i) REQUIRE(dst[i] == T(-1));
     }
     REQUIRE(saw_full);     // the sweep must reach both branches, or it proves nothing
     REQUIRE(saw_masked);
 }
 
-// The measuring efforts race candidate routes at plan time. test_plan.cpp covers that
-// for 1-D; N-D reaches it once per axis through a different planner (nd_runtime_plan),
-// which is where a per-axis race would go wrong without showing up in 1-D.
+// The measuring efforts race candidate routes at plan time. `test_plan.cpp` covers
+// the 1-D race. N-D reaches the race once per axis through a different planner
+// (`nd_runtime_plan`), so a per-axis race can go wrong without showing up in 1-D.
 TEMPLATE_TEST_CASE("N-D plans honour the measuring efforts", "[nd][effort]", float, double) {
     using T = TestType;
     const std::array<std::size_t, 2> shape{40, 24};

@@ -1,6 +1,7 @@
-// One direction of the column DIF engine. The <Forward> leaf is the instantiation
-// boundary: a route referencing it compiles against a declaration only, and the
-// direction-free interior instantiates once in inst_dif_thunks_* (src/CMakeLists.txt).
+// One direction of the column DIF engine. The `Forward` leaf is the
+// instantiation boundary: a route that references the leaf compiles against a
+// declaration only. The direction-free interior instantiates once in
+// `inst_dif_thunks_*` (`src/CMakeLists.txt`).
 #include "admiral/detail/dif_col_driver.hpp"
 
 namespace admiral {

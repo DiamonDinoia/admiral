@@ -1,16 +1,11 @@
 #pragma once
 
 // ============================================================================
-// N-D FFT plan: row-column algorithm (sequence of batched 1D transforms).
-//
-// Innermost axis (contiguous, stride 1): plan_impl::execute(span) verbatim.
-//
-// Outer axes (stride > 1): batched/strided column transform.
-//   - Smooth lengths (all prime factors <= 11): col_dif_execute_ws (SIMD DIF).
-//   - Other lengths: scalar gather -> plan_impl::execute -> scatter.
-//
-// Normalization: each axis applies its own 1/len on inverse, product = 1/Ntot.
-// Forward is unscaled. Axes processed innermost-first (separable).
+// N-D FFT plan: row-column algorithm, a batched 1D transform per axis. Axes run
+// innermost-first. The innermost axis (stride 1) runs `plan_impl::execute` verbatim.
+// An outer axis runs the SIMD DIF column pass (`col_dif_execute_ws`) on smooth
+// lengths, else scalar gather -> `plan_impl` -> scatter. Each axis applies its own
+// 1/len on inverse; forward is unscaled.
 // ============================================================================
 
 #include <algorithm>
@@ -23,26 +18,25 @@
 #include <optional>
 #include <stdexcept>
 #include <vector>
-#include "cxx_compat.hpp"  // ADM_UNLIKELY, span, detail::has_single_bit
+#include "cxx_compat.hpp"  // `ADM_UNLIKELY`, span, `detail::has_single_bit`
 
-#include <admiral/errors.hpp>  // size_error
+#include <admiral/errors.hpp>  // `size_error`
 
-#include "simd.hpp"     // batch<T>::size (SIMD-lane block alignment)
+#include "simd.hpp"     // `batch<T>::size` (SIMD-lane block alignment)
 
-#include "dif_col_driver.hpp"  // col_dif_execute_ws, col_dif_dispatch, nd_col_block
-#include "math.hpp"            // is_codelet_supported
-#include "plan.hpp"           // plan_impl
-#include "scratch.hpp"        // soa_scratch
-#include "thread_pool.hpp"    // thread_pool, parallel_for (plan-owned multithreading)
-#include "twiddles.hpp"       // dif_twiddle_set, build_dif_twiddle_set, dif_factor_plan
-#include "macros.hpp"         // ADM_ALWAYS_INLINE
+#include "dif_col_driver.hpp"  // `col_dif_execute_ws`, `col_dif_dispatch`, `nd_col_block`
+#include "math.hpp"            // `is_codelet_supported`
+#include "plan.hpp"           // `plan_impl`
+#include "scratch.hpp"        // `soa_scratch`
+#include "thread_pool.hpp"    // `thread_pool`, `parallel_for` (plan-owned multithreading)
+#include "twiddles.hpp"       // `dif_twiddle_set`, `build_dif_twiddle_set`, `dif_factor_plan`
+#include "macros.hpp"         // `ADM_ALWAYS_INLINE`
 
 namespace admiral {
 namespace detail {
 
-// Product of extents, or nullopt if any extent is 0 or the product overflows.
-// A wrapped total would reach an array bound downstream, so the API boundary rejects
-// it rather than truncating it.
+// Product of extents; nullopt on a zero extent or overflow, because a wrapped total
+// would reach an array bound downstream.
 [[nodiscard]] inline std::optional<std::size_t> extent_product(
     span<const std::size_t> shape) noexcept {
     std::size_t total = 1;
@@ -53,9 +47,8 @@ namespace detail {
     return total;
 }
 
-// Per-axis state. Exactly one of {dtw, plan} is active:
-//   dif == true : batched SIMD DIF column pass (dtw).
-//   dif == false: plan_impl (innermost row or scalar fallback).
+// Per-axis state. Exactly one of {dtw, plan} is active: dtw for the batched SIMD DIF
+// column pass, plan for the innermost row or scalar fallback.
 template<typename T>
 struct nd_axis_state {
     std::size_t length = 0;
@@ -64,11 +57,11 @@ struct nd_axis_state {
     std::optional<plan_impl<T>> plan;   // active iff !dif (row pass or scalar fallback)
 };
 
-// cpu_cache() and nd_col_block<T>() live in dif_col_driver.hpp to avoid circular
-// nd_plan <-> plan includes and to enable reuse by four_step_large.
+// `cpu_cache()` and `nd_col_block<T>()` live in `dif_col_driver.hpp` to avoid circular
+// `nd_plan` <-> plan includes and to enable reuse by `four_step_large`.
 
-// Radix-4-only factorization (one trailing radix-2 for odd powers).
-// Fallback for small-inner pow2 f32 axes to avoid register spills.
+// Radix-4-only factorization (one trailing radix-2 for odd powers): the fallback
+// for small-inner `pow2` f32 axes, which avoids register spills.
 [[nodiscard]] inline dif_factor_plan build_radix4_plan(std::size_t n) {
     dif_factor_plan p;
     while (n % 4 == 0) { p.push(4); n /= 4; }
@@ -76,14 +69,10 @@ struct nd_axis_state {
     return p;
 }
 
-// Build per-axis state for an axis of given length and inner stride.
-// Innermost axes: plan_impl row path (contiguous, full 1D SIMD).
-// Outer smooth axes: batched DIF column path (col_dif_execute_ws).
-// Outer non-smooth axes: scalar gather -> plan_impl -> scatter.
-//
-// Small-inner pow2 f32 exception: radix-8 DIF spills on AVX2's 16 YMM; radix-4
-// stays spill-free and the extra pass costs less than spill traffic at small B.
-// f64 (W=4) fits radix-8, so it keeps the default.
+// Per-axis state: innermost takes the `plan_impl` row path, outer smooth axes the
+// `col_dif_execute_ws` column path, outer non-smooth axes gather -> `plan_impl` -> scatter.
+// Small-inner `pow2` f32 exception: radix-8 DIF spills on AVX2's 16 YMM and radix-4's
+// extra pass costs less than the spills at small B; f64 (W=4) fits radix-8.
 template<typename T>
 [[nodiscard]] inline nd_axis_state<T> make_nd_axis_state(std::size_t length, std::size_t inner,
                                                          bool is_forward, bool innermost,
@@ -93,7 +82,7 @@ template<typename T>
     nd_axis_state<T> st;
     st.length = length;
     if (length <= 1) {
-        // Degenerate axis: identity (size-1 plan_impl is a no-op).
+        // Degenerate axis: identity (size-1 `plan_impl` is a no-op).
         st.plan.emplace(length, is_forward, nthreads, nullptr, eff);
         return st;
     }
@@ -101,13 +90,12 @@ template<typename T>
         st.dif = true;
         dif_factor_plan r4;
         const dif_factor_plan* ov = nullptr;
-        // f32 ONLY: on f64 the r16 passes spill, but the pass-count saving still
-        // outweighs the spills at every band width, so forcing radix 4 there loses.
+        // f32 only: on f64 the r16 passes spill, but the pass-count saving outweighs
+        // the spills at every band width, so forcing radix 4 there loses.
         if constexpr (sizeof(T) == 4) {
             constexpr std::size_t W = xsimd::batch<T>::size;
-            // A plan-time PROXY for the executed tile, not a bound in either
-            // direction. `nruns` is per-call, so pin it to 1 (narrower tile) while
-            // passing the axis stride `inner` for the run length (usually wider);
+            // Plan-time proxy for the executed tile, not a bound: nruns pinned to 1
+            // (narrower tile) with stride inner as the run length (usually wider);
             // the two errors have opposite signs.
             const bool small_inner =
                 (nd_col_block<T>(length, inner, nthreads, /*nruns=*/1) / W) < 4
@@ -115,32 +103,24 @@ template<typename T>
             const bool pow2 = detail::has_single_bit(length);
             if (small_inner && pow2) { r4 = build_radix4_plan(length); ov = &r4; }
         }
-        // Col form (fuse_packed=false): feeds col_dif_execute_ws with plain per-pass tables.
+        // Col form (`fuse_packed`=false): feeds `col_dif_execute_ws` with plain per-pass tables.
         st.dtw = build_dif_twiddle_set<T>(length, ov, /*fuse_packed=*/false);
     }
-    // Every strided axis needs the 1D plan: non-dif axes have no other route, and
-    // dif axes fall back to it per call when choose_line_route picks transposed.
-    // Both the run width and the thread count arrive at execute time, so the choice
-    // cannot happen here and both forms have to stay resident.
+    // Every strided axis keeps the 1D plan: non-dif axes have no other route, and dif
+    // axes fall back per call when `choose_line_route` picks transposed. Run width and
+    // thread count arrive at execute time, so both forms stay resident.
     st.plan.emplace(length, is_forward, nthreads, nullptr, eff);
     return st;
 }
 
-// Per-axis executors, shared by the full-tensor N-D driver (nd_apply_axis) and
-// the box-restricted single-axis driver (axis_plan). `line_base(i)` returns the
-// flat offset of line i.
-//   apply_lines_contiguous: `nrows` contiguous rows of length `len`.
-//   apply_lines_strided:    `nruns` runs of `run_len` contiguous columns at
-//     stride `inner`, down one of the two `line_route`s below.
-//   apply_bands_strided_packed: both bands of the same lines as one run.
-// Two decisions select among them, in this order. choose_band_form ranks the band
-// PAIR. choose_line_route ranks one run, and runs per call, because the two bands of
-// a `split` differ in width.
+// Per-axis executors, shared by `nd_apply_axis` and the single-axis `axis_plan`.
+// `line_base`(i) is the flat offset of line i. Selection order: `choose_band_form` ranks
+// the band pair, then `choose_line_route` ranks one run per call, because the two bands
+// of a split differ in width.
 
-// `row_stride` non-zero means line_base(r) == line_base(0) + r*row_stride, which lets
-// the whole chunk go through one execute_many, which resolves the route once per
-// chunk instead of once per line and drops the caller's index decode too. Zero
-// means the rows are addressed individually (a box that skips).
+// Non-zero `row_stride` means `line_base`(r) == `line_base`(0) + r*`row_stride`, so the whole
+// chunk takes one `execute_many`: route and index decode resolve once per chunk, not
+// per line.
 template<typename T, typename LineBase>
 ADM_ALWAYS_INLINE void apply_lines_contiguous(std::complex<T>* data, std::size_t len,
                                               const nd_axis_state<T>& st, std::optional<T> fct,
@@ -148,7 +128,7 @@ ADM_ALWAYS_INLINE void apply_lines_contiguous(std::complex<T>* data, std::size_t
                                               std::size_t total_elems, LineBase line_base,
                                               std::size_t row_stride = 0) {
     // The axis plan gets no pool here. Sub-plans that must thread internally own
-    // their pool by construction (see make_nd_axis_state).
+    // their pool by construction (see `make_nd_axis_state`).
     const exec_options<T> opts{fct};
     parallel_for(pool, nrows, total_elems, [&](std::size_t b, std::size_t e, std::size_t) {
         if (row_stride) {
@@ -166,26 +146,24 @@ enum class line_route : std::uint8_t {
     transposed,  // move the run to contiguous, 1D-plan each column, move back
 };
 
-// Columns moved per transposed sweep: as many as keep the contiguous buffer inside
-// half of L2, never more than the run.
+// Columns per transposed sweep: as many as keep the contiguous buffer inside half of
+// L2, never more than the run.
 template<typename T>
 [[nodiscard]] inline std::size_t transpose_group(std::size_t len, std::size_t run_len) {
     const std::size_t cap = (cpu_cache().l2 / 2) / (len * sizeof(std::complex<T>));
     return std::clamp<std::size_t>(cap, 1, run_len);
 }
 
-// One mechanism makes the transposed form pay: register fill. The column chain
-// vectorizes over columns, so a run narrower than half a batch leaves lanes idle.
-// The rule also carries a footprint term (the slab must be out of cache), reading
-// the thread-scaled tile budget. Some threaded cells are known losses and stay on
-// purpose, because a one-thread gate would forfeit the threaded wins.
+// The transposed form pays when register fill is low: the column chain vectorizes
+// over columns, so a run below half a batch leaves lanes idle. A footprint term (slab
+// out of cache) reads the thread-scaled tile budget. Some threaded cells are known
+// losses, kept because a one-thread gate would forfeit the threaded wins.
 template<typename T>
 [[nodiscard]] inline line_route choose_line_route(const nd_axis_state<T>& st, std::size_t len,
                                                   std::size_t inner, std::size_t run_len,
                                                   std::size_t nthreads) {
-    // Availability first: without a column twiddle set there is no chain to run, so
-    // the transposed form is the only route (this is the non-smooth-length fallback,
-    // where it is a necessity rather than a preference).
+    // Availability first: without a column twiddle set the transposed form is the only
+    // route (the non-smooth-length fallback; a necessity, not a preference).
     if (!st.dif) return line_route::transposed;
     if (2 * run_len <= xsimd::batch<T>::size
         && len * inner * sizeof(std::complex<T>) > col_cache_budget(nthreads))
@@ -193,9 +171,8 @@ template<typename T>
     return line_route::col_dif;
 }
 
-// Move `gw` columns at stride `inner` into `buf` as gw contiguous runs of `len`
-// (Gather), or back (!Gather). Deliberately scalar: the move is memory-bound, so
-// do not vectorize without first showing the move is the bottleneck.
+// Move gw columns at stride inner into buf as gw contiguous runs of len (Gather), or
+// back (!Gather). Deliberately scalar: the move is memory-bound.
 template<bool Gather, typename T>
 void move_run(std::complex<T>* line, std::size_t inner, std::size_t len, std::size_t gw,
               std::complex<T>* buf) {
@@ -213,10 +190,9 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
                                            thread_pool* pool, std::size_t nruns,
                                            std::size_t run_len, std::size_t total_elems,
                                            LineBase line_base) {
-    // Work is a flat [0,nunits) range chunked across threads; each unit is a
-    // (run, sub) pair. Rather than u/sub_count + u%sub_count per unit (two 64-bit
-    // divisions in the inner loop), decode the chunk start once and advance a
-    // (run, sub) odometer, recomputing the run base only when `run` steps.
+    // Work is a flat [0,nunits) range of (run, tile) units chunked across threads:
+    // an odometer advances run/tile instead of two 64-bit divisions per unit, and the
+    // run base recomputes only when run steps.
     const std::size_t nthreads = pool_size(pool);
     if (choose_line_route<T>(st, len, inner, run_len, nthreads) == line_route::col_dif) {
         const std::size_t Bt = nd_col_block<T>(len, run_len, nthreads, nruns);
@@ -237,15 +213,12 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
         });
         return;
     }
-    // Transpose the run into contiguous columns (move_run), transform each with the
-    // 1D plan, transpose back. Moving a GROUP per sweep: one column at a time takes
-    // one complex out of each 64-byte line and the transform evicts them before the
-    // next column reuses them; batching reads each line once. The group is capped so
-    // its scratch stays L2-resident.
+    // Transpose the run into contiguous columns, 1D-plan each, transpose back. One
+    // column at a time would re-read each cache line per column; batching reads each
+    // line once, and the group cap keeps the scratch L2-resident.
     std::size_t group = transpose_group<T>(len, run_len);
-    // A pool with fewer work units than threads runs the axis serially. Keep at
-    // least ~2 units per thread; shrink the move width toward one cache line of
-    // complex, below which a group re-reads its lines and the move stops paying.
+    // Keep ~2 units per thread or a pool runs the axis serially; shrink the move
+    // width toward one cache line of complex, below which a group re-reads its lines.
     if (pool && nruns * ((run_len + group - 1) / group) < 2 * nthreads) {
         constexpr std::size_t kLine = kCacheLine / sizeof(std::complex<T>);
         const std::size_t target =
@@ -264,26 +237,23 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
             const std::size_t gw = std::min(group, run_len - c0);
             auto* const line = data + line_base(u / ngroups) + c0;
             move_run<true>(line, inner, len, gw, buf);
-            // The move lands the group as gw contiguous runs of len, i.e. uniform
-            // stride, so the whole group resolves its route once.
+            // The move lands the group as gw contiguous runs of len, so the whole
+            // group resolves its route once under uniform stride.
             st.plan->execute_many(buf, gw, len, opts);
             move_run<false>(line, inner, len, gw, buf);
         }
     });
 }
 
-// Out-of-place twin of apply_lines_strided: src and dst may carry independent
-// element strides (`line` between the elements of one line, `batch` between the
-// same element of consecutive lines). The col route needs both batch strides 1:
-// the pass kernels walk columns contiguously, and the first pass then reads the
-// source straight (fused copy-in through col_dif's first_src). Every other
-// stride pattern takes the transposed route, whose gather/scatter carry the two
-// batch strides explicitly. The route reads the SOURCE layout only: a route is
-// what picks the numbers, so pricing the destination in would make a transform's
-// bits depend on where the result lands. dst == src is legal only when the two
-// layouts match: each route reads a tile fully before it writes that tile, so a
-// tile is safe in place, but a differing stride pair makes one tile's writes
-// land in the next tile's reads.
+// Out-of-place twin of `apply_lines_strided`, with independent src/dst strides. The col
+// route needs both batch strides 1: the pass kernels walk columns contiguously, and the
+// first pass reads the source straight (the `first_src` of `col_dif`). Every other
+// pattern
+// takes the transposed route. The route reads the source layout only, because the route
+// picks the numbers. Pricing the destination in would make a transform's bits depend
+// on where the result lands. dst == src is legal only when the layouts match. A route
+// reads a tile fully before it writes that tile. A differing stride pair then makes
+// one tile's writes land in the next tile's reads.
 template<typename T, typename SrcBase, typename DstBase>
 ADM_ALWAYS_INLINE void
 apply_lines_strided_oop(const std::complex<T>* src, std::size_t src_line,
@@ -320,9 +290,8 @@ apply_lines_strided_oop(const std::complex<T>* src, std::size_t src_line,
         });
         return;
     }
-    // Transposed route (any strides, and the only route without a column chain):
-    // gather a cache-resident group of columns out of src, 1D-plan each, scatter
-    // into dst. Same grouping rule as the in-place form.
+    // Transposed route (any strides; the only one without a column chain): gather a
+    // cache-resident group, 1D-plan each column, scatter. Same grouping rule as in place.
     std::size_t group = transpose_group<T>(len, run_len);
     if (pool && nruns * ((run_len + group - 1) / group) < 2 * nthreads) {
         constexpr std::size_t kLine = kCacheLine / sizeof(std::complex<T>);
@@ -361,10 +330,9 @@ enum class band_form : std::uint8_t {
     split,   // one call per band (the second is skipped when there is no second band)
 };
 
-// Packing costs a gather and a scatter, 2 passes over the slab, and saves one
-// whole pass chain, so it pays only once the chain is long enough. `dif` is an
-// availability test: with no column chain there is nothing to save. When a chain
-// exists, the packed slab is itself one full-width chain over the qualifying columns.
+// Packing costs a gather and a scatter (2 passes over the slab) and saves one whole
+// pass chain. The trade pays only for a chain that is long enough. `dif` tests
+// availability: with no column chain there is nothing to save.
 inline constexpr std::size_t kPackMinPasses = 5;
 
 [[nodiscard]] constexpr band_form choose_band_form(bool dif, std::size_t n_passes,
@@ -372,21 +340,17 @@ inline constexpr std::size_t kPackMinPasses = 5;
                                                   std::size_t simd_width) {
     if (w1 == 0) return band_form::split;  // one band; nothing to pair it with
     if (dif && w0 + w1 <= simd_width && n_passes >= kPackMinPasses) return band_form::packed;
-    // Equal widths are 2*nruns independent runs of one run_len, so they fit in ONE call.
-    // The parallel unit count is nruns * ceil(w/Bt) and Bt bottoms out at one SIMD batch,
-    // so a band of <= W is a single tile: split in two, each call had one unit and ran
-    // serially. Unequal widths cannot merge, since run_len is one value per call.
+    // Equal widths are 2*nruns runs of one `run_len`, so they fit in one call; split,
+    // a band of <= W columns is one tile (Bt >= one batch), and two single-unit calls
+    // would run serially. Unequal widths cannot merge: `run_len` is one value per call.
     if (w0 == w1) return band_form::merged;
     return band_form::split;
 }
 
-// Two disjoint column bands of the same lines, transformed as one packed run.
-// A sub-register band pays for a whole pass chain regardless of its width, because the
-// column tail runs one masked piece per row whether that row holds 2 columns or W.
-// Packing both bands into a single Bp = w0 + w1 <= W slab removes an entire
-// chain. The gather/scatter pair costs 2 passes over the slab against the chain's
-// log(len), and the gather reads exactly the strided elements the first pass would
-// have read anyway. Caller guarantees Bp <= W, st.dif, and disjoint bands.
+// Two disjoint column bands transformed as one packed run: a sub-register band pays a
+// whole pass chain regardless of width, so packing into one Bp = w0 + w1 <= W slab
+// removes a chain for the cost of a gather/scatter pair (2 slab passes against the
+// chain's log(len)). Caller guarantees Bp <= W, st.dif, and disjoint bands.
 template<typename T, typename LineBases>
 void apply_bands_strided_packed(std::complex<T>* data, std::size_t len, std::size_t inner,
                                 bool forward, const nd_axis_state<T>& st, std::optional<T> fct,
@@ -394,7 +358,7 @@ void apply_bands_strided_packed(std::complex<T>* data, std::size_t len, std::siz
                                 std::size_t w1, std::size_t total_elems, LineBases line_bases) {
     const std::size_t Bp = w0 + w1;
     const T scale = fct.value_or(forward ? T(1) : T(1) / static_cast<T>(len));
-    // Bands are complex, the copies are real: 2*w <= 2*W reals, so one real_run_copy
+    // Bands are complex, the copies are real: 2*w <= 2*W reals, so one `real_run_copy`
     // each, mask built once here rather than per row.
     const auto cp0 = real_run_copy<T>::make(2 * w0);
     const auto cp1 = real_run_copy<T>::make(2 * w1);
@@ -423,11 +387,9 @@ void apply_bands_strided_packed(std::complex<T>* data, std::size_t len, std::siz
     });
 }
 
-// Apply one full axis transform in place. Full-tensor special case of the
-// executors above: total/(len*inner) contiguous slabs of len*inner, so a
-// slab's whole inner block [0,inner) is one contiguous column run.
-//   total = product of all extents; len = this axis' extent;
-//   inner = product of inner (faster) extents = axis stride (1 for innermost).
+// One full axis transform in place: total/(len*inner) contiguous slabs of len*inner,
+// so a slab's whole inner block is one contiguous column run. inner is the product of
+// the faster extents, i.e. the axis stride (1 for innermost).
 template<typename T>
 void nd_apply_axis(std::complex<T>* data, std::size_t total, std::size_t len,
                    std::size_t inner, bool innermost, bool is_forward,
@@ -443,8 +405,8 @@ void nd_apply_axis(std::complex<T>* data, std::size_t total, std::size_t len,
                                total, [len, inner](std::size_t r) { return r * (len * inner); });
 }
 
-// N-D plan engine. Rank is runtime; per-axis state precomputed once, reused across
-// execute() calls. Per-axis loop is not the hot path, so no Dim template is needed.
+// N-D plan engine. Rank is runtime; per-axis state is built once and reused. The
+// per-axis loop is not the hot path, so there is no Dim template.
 template<typename T>
 class nd_runtime_plan {
     struct M {
@@ -452,20 +414,17 @@ class nd_runtime_plan {
         bool is_forward;
         std::size_t total;
         std::vector<nd_axis_state<T>> axes;
-        // Plan-owned workers for the batch loops (executes, not re-entrant).
-        // Built iff nthreads > 1 AND some axis' batch loop can thread
-        // (see the ctor): single-line shapes instead carry the pool in the
-        // axis sub-plan, so one direction plan owns at most one active pool.
+        // Plan-owned workers for the batch loops, built iff nthreads > 1 and some
+        // axis' batch loop can thread (see the ctor); single-line shapes instead carry
+        // the pool in the axis sub-plan, so a plan owns at most one active pool.
         std::unique_ptr<thread_pool> pool;
     } m;
 
 public:
-    // Out-of-line (extern-template): avoids re-instantiating the route tree per TU,
-    // which costs an order of magnitude in consumer-TU peak memory. size() stays inline.
-    // nthreads: threads that will drive execute(); only the route choice of a
-    // long innermost axis depends on it (see plan_impl). nthreads > 1 builds
-    // the threading state here (batch loops) and/or inside the axis sub-plans;
-    // eff flows to each axis's 1-D engine (measure races its ranked candidates).
+    // Out-of-line (extern-template): an inline body re-instantiates the route tree in
+    // every consumer TU. nthreads drives `execute()`; only a long innermost axis' route
+    // choice depends on it. nthreads > 1 builds threading state here and/or inside the
+    // axis sub-plans; eff flows to each axis's 1-D engine.
     nd_runtime_plan(span<const std::size_t> shape, bool is_forward,
                     std::size_t nthreads = 1,
                     admiral::effort eff = admiral::effort::estimate);
@@ -476,11 +435,9 @@ public:
     [[nodiscard]] std::size_t size() const noexcept { return m.total; }
 
 private:
-    // exec_options::debug >= dbg_route, rank >= 2 only: rank 1 hands its single line
-    // to the axis plan, which traces itself. The axis plans below get no debug on
-    // purpose, because their batch loops would print once per line. Out of line and
-    // cold, so the call-site guard is the whole cost when tracing is off. The rank >= 2
-    // tails are split out so the rank-1 arm keeps a leaf frame.
+    // `exec_options::debug` >= `dbg_route` traces here; rank >= 2 only, since rank 1 hands
+    // its line to the axis plan, and the axis plans get no debug (a batch loop would
+    // print per line). Cold, out of line, split out so the rank-1 arm keeps a leaf frame.
     ADM_NOINLINE void execute_nd(std::complex<T>* data, const exec_options<T>& opts) const;
     ADM_NOINLINE void execute_nd(const std::complex<T>* src, std::complex<T>* dst,
                                  const exec_options<T>& opts) const;
@@ -495,9 +452,8 @@ private:
                       m.axes[d].dif ? "col_dif" : m.axes[d].plan->route_name());
     }
 
-    // Distribute opts.fct across axes. Direction default: each axis uses nullopt
-    // (byte-identical). Custom fct: folded into one axis (innermost with extent>1);
-    // all others use T(1).
+    // Distribute opts.fct across axes. Default: every axis uses nullopt. Custom fct:
+    // folded into one axis (innermost with extent > 1); all others use T(1).
     struct scale_plan {
         bool custom;
         T fct;
@@ -535,12 +491,10 @@ nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forwa
     std::size_t inner = 1;
     for (std::size_t di = 0; di < m.shape.size(); ++di) {
         const std::size_t d = m.shape.size() - 1 - di;
-        // Plan-time threading split: an axis sub-plan threads internally
-        // (routes so, and owns a pool) only when the batch loop above it cannot
-        // thread. Otherwise it runs serially inside parallel_for and must be
-        // built as a 1-thread plan. There is no per-call pool anymore, so this
-        // ctor decision is the ONLY one: routing and execution cannot diverge
-        // the way a routed-serial plan handed a pool at execute could.
+        // Plan-time threading split: an axis sub-plan threads internally only when
+        // the batch loop above it cannot thread; otherwise it is a 1-thread plan
+        // running serially inside `parallel_for`. No per-call pool exists, so this ctor
+        // decision is final.
         const std::size_t units = m.total / m.shape[d];
         const bool threads_above = units >= 2 && m.total >= kThreadMinElems;
         batch_threadable |= threads_above && m.shape[d] > 1;
@@ -554,17 +508,16 @@ nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forwa
         m.pool = std::make_unique<thread_pool>(nthreads);
 }
 
-// Threads the batch loops on the plan-owned pool (null for serial plans; see
-// nd_apply_axis). Axis sub-plans that thread internally own their own pool.
+// Threads the batch loops on the plan-owned pool (null for serial plans); axis
+// sub-plans that thread internally own their own pool.
 template<typename T>
 void nd_runtime_plan<T>::execute(std::complex<T>* data, const exec_options<T>& opts) const {
-    // rank-0 (m.total==1): the axis loop below is empty and the degenerate-tensor
-    // branch at the end applies any custom fct, so this path needs no special case.
+    // rank-0 (m.total==1): the empty axis loop plus the degenerate-tensor branch below
+    // already cover this path, custom fct included.
     const std::size_t ndim = m.shape.size();
     if (ndim == 1) {
-        // Rank-1: hand the single line straight to the axis plan; the generic path
-        // wraps it in layers that do zero work at nrows==1. A custom fct always
-        // lands on the (only) axis, degenerate shape{1} included.
+        // Rank-1 goes straight to the axis plan; the generic path adds zero-work
+        // layers at nrows==1. A custom fct always lands on the only axis, shape{1} included.
         const scale_plan sp = make_scale_plan(opts.fct);
         m.axes[0].plan->execute(span<std::complex<T>>(data, m.total),
                                 {sp.custom ? std::optional<T>(sp.fct) : std::nullopt,
@@ -591,11 +544,9 @@ void nd_runtime_plan<T>::execute_nd(std::complex<T>* data, const exec_options<T>
     if (sp.custom && sp.scale_axis == ndim) scale_inplace(data, m.total, sp.fct);
 }
 
-// src == dst: in-place (same contract as plan_impl::execute(p, p)). Dispatched to
-// the in-place path, which runs the batched innermost row pass.
-// src != dst: out-of-place. The innermost row pass reads src and writes dst (the
-// input copy folds into the threaded first pass), later axes run in place on dst.
-// Partial overlap is UB.
+// src == dst: in-place (same contract as `plan_impl::execute`(p, p)). src != dst: the
+// innermost row pass reads src and writes dst (the input copy folds into the threaded
+// first pass); later axes run in place on dst. Partial overlap is UB.
 template<typename T>
 void nd_runtime_plan<T>::execute(const std::complex<T>* src, std::complex<T>* dst,
                                  const exec_options<T>& opts) const {
@@ -626,10 +577,9 @@ void nd_runtime_plan<T>::execute_nd(const std::complex<T>* src, std::complex<T>*
     const nd_axis_state<T>& in_st = m.axes[ndim - 1];
     const scale_plan sp = make_scale_plan(opts.fct);
     const exec_options<T> row_opts{axis_fct(sp, ndim - 1)};
-    // Innermost pass src -> dst: iterative_dif writes dst directly; other routes
-    // copy the row then transform in place (row hot from copy). A single row
-    // (rank-1) makes the batch loop run serial-inline, and the axis plan then
-    // threads internally on ITS plan-owned pool if it has one.
+    // Innermost pass src -> dst: `iterative_dif` writes dst directly; other routes copy
+    // the row and transform in place (row hot from copy). A single row runs the batch
+    // loop serial-inline, so the axis plan threads internally on its own pool.
     parallel_for(m.pool.get(), rows, m.total, [&](std::size_t b, std::size_t e, std::size_t) {
         for (std::size_t r = b; r < e; ++r)
             in_st.plan->execute(src + r * len, dst + r * len, row_opts);

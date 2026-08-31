@@ -9,11 +9,11 @@
 #include <type_traits>
 #include <utility>
 #include <variant>
-#include "admiral/detail/cxx_compat.hpp"  // span
+#include "admiral/detail/cxx_compat.hpp"  // `span`
 
-// Thin translation layer: validate, hand the pointers to the C++ API, map
-// exceptions onto adm_status. One template per operation keeps the two
-// precisions from drifting apart.
+// Translation layer: validate, hand pointers to the C++ API, map exceptions to
+// `adm_status`. One template per operation keeps the two precisions in
+// lockstep.
 
 const char* adm_error_string(adm_status status) {
     switch (status) {
@@ -30,16 +30,16 @@ const char* adm_error_string(adm_status status) {
 
 namespace {
 
-// admiral.h's complex structs are layout-compatible with std::complex, so every
-// buffer crosses the boundary as a view, and no copy happens.
+// `admiral.h`'s complex structs are layout-compatible with `std::complex`:
+// buffers cross the boundary as views, no copy.
 template<typename T>
 admiral::span<std::complex<T>> to_cpp_span(void* data, size_t size) {
     return admiral::span<std::complex<T>>(reinterpret_cast<std::complex<T>*>(data), size);
 }
 
-// A C caller can pass an eff outside the enum, so this layer guards the cast once
-// rather than at every call site; std::nullopt is the rejection. The asserts catch layout
-// or value drift between the two declarations of the same options and efforts.
+// A C caller can pass an `eff` outside the enum, so this file guards the cast
+// once. The asserts catch drift between the C and C++ spellings of options and
+// efforts.
 static_assert(sizeof(adm_options) == sizeof(admiral::options),
               "adm_options and admiral::options are out of sync: update this mapping");
 static_assert(static_cast<int>(admiral::effort::estimate) == ADM_EFFORT_ESTIMATE);
@@ -56,14 +56,14 @@ std::optional<admiral::options> to_cpp_options(const adm_options* opts) {
 }
 
 // A shape C can pass but C++ cannot: null, or zero rank. A zero extent or an
-// overflowing product throws inside the C++ API; guarded() maps those.
+// overflowing product throws inside the C++ API, and `guarded()` maps the throw.
 bool bad_shape(const size_t* shape, size_t ndim) { return shape == nullptr || ndim == 0; }
 
-// Run `body` and translate what escapes it. The C++ side throws admiral::error
-// subclasses for caller-caused failures and std::bad_alloc for memory. A
-// caller-created shape can overflow an internal buffer, so a length_error from
-// the containers is also a size report. Anything else is an engine fault, and
-// ADM_ERROR_INTERNAL (never a mislabeled size) is what the caller sees.
+// Translate what escapes `body()`. The C++ side throws `admiral::error`
+// subclasses for caller-caused failures and `std::bad_alloc` for memory. A
+// caller-created shape can overflow an internal buffer, so `length_error` is
+// also a size report. Anything else is an engine fault: `ADM_ERROR_INTERNAL`,
+// never a mislabeled size.
 template<typename F>
 adm_status guarded(F&& body) {
     try {
@@ -73,7 +73,7 @@ adm_status guarded(F&& body) {
         return ADM_ERROR_OUT_OF_MEMORY;
     } catch (const admiral::size_error&) {
         return ADM_ERROR_INVALID_SIZE;
-    } catch (const admiral::error&) {  // unsupported_error / internal_error
+    } catch (const admiral::error&) {  // `unsupported_error` / `internal_error`
         return ADM_ERROR_INTERNAL;
     } catch (const std::length_error&) {
         return ADM_ERROR_INVALID_SIZE;
@@ -84,7 +84,6 @@ adm_status guarded(F&& body) {
     }
 }
 
-// Convert C options, reject an out-of-enum eff, then run `body(o)` under guarded().
 template<typename F>
 adm_status guarded_with(const adm_options* opts, F&& body) {
     const auto o = to_cpp_options(opts);
@@ -140,10 +139,6 @@ adm_status run_c2r(void* spec, void* out, const size_t* shape, size_t ndim,
 
 }  // namespace
 
-// ============================================================================
-// One-shot transforms
-// ============================================================================
-
 adm_status admf_forward(admf_complex* data, size_t size, const adm_options* opts) {
     return run_1d<float>(data, size, /*forward=*/true, opts);
 }
@@ -174,10 +169,6 @@ adm_status adm_inverse_nd(adm_complex* data, const size_t* shape, size_t ndim,
     return run_nd<double>(data, shape, ndim, /*forward=*/false, opts);
 }
 
-// ============================================================================
-// Real transforms
-// ============================================================================
-
 adm_status admf_r2c_nd(const float* in, admf_complex* out, const size_t* shape, size_t ndim,
                        const adm_options* opts) {
     return run_r2c<float>(in, out, shape, ndim, opts);
@@ -195,15 +186,10 @@ adm_status adm_c2r_nd(adm_complex* spec, double* out, const size_t* shape, size_
     return run_c2r<double>(spec, out, shape, ndim, opts);
 }
 
-// ============================================================================
-// Plans
-// ============================================================================
-
-// The variant owns the plan, so which precision it holds IS the type tag: no
-// enum to keep in sync, no void* to cast back, no destructor to write. The
-// monostate alternative is the error record a failed creation writes in place
-// of a plan, so the handle itself carries the failure (adm_plan_status,
-// adm_plan_error_message); execute on it re-returns the recorded status.
+// The variant is the type tag: no enum to sync, no void* to cast, no destructor
+// to write. The `monostate` arm is the error record a failed creation writes,
+// so the handle carries the failure (`adm_plan_status`,
+// `adm_plan_error_message`) and execute re-returns the recorded status.
 struct adm_plan_s {
     template<typename P, typename... Args>
     explicit adm_plan_s(std::in_place_type_t<P> tag, Args&&... args)
@@ -217,9 +203,8 @@ struct adm_plan_s {
 
 namespace {
 
-// Record the failure on the handle and return its status. Even the error record
-// can fail to allocate under memory pressure: *out stays null then, and the
-// status return alone identifies the failure.
+// Record the failure on the handle and return its status. If the record itself
+// cannot allocate, *out stays null and the status alone identifies the failure.
 adm_status plan_error(adm_plan* out, adm_status status, const char* detail) noexcept {
     *out = nullptr;
     try {
@@ -229,8 +214,8 @@ adm_status plan_error(adm_plan* out, adm_status status, const char* detail) noex
     return status;
 }
 
-// admiral::plan<T> takes a runtime shape, so 1-D and N-D are the same
-// construction over a shape span and differ only in ndim.
+// 1-D and N-D are the same construction over a shape span and differ only in
+// `ndim`, since `admiral::plan<T>` takes a runtime shape.
 template<typename T>
 adm_status make_plan(adm_plan* plan, const size_t* shape, size_t ndim, const adm_options* opts) {
     if (plan == nullptr) return ADM_ERROR_NULL_POINTER;
@@ -239,8 +224,8 @@ adm_status make_plan(adm_plan* plan, const size_t* shape, size_t ndim, const adm
         return plan_error(plan, ADM_ERROR_INVALID_SIZE, "null shape or zero rank");
     const auto o = to_cpp_options(opts);
     if (!o) return plan_error(plan, ADM_ERROR_INVALID_OPTION, "eff is outside the adm_effort enum");
-    // Not routed through guarded(): the detail must be copied while the
-    // exception is alive, so the catch lives here.
+    // The catch lives here, not in `guarded()`: the detail string must be
+    // copied while the exception is alive.
     adm_status st;
     std::string detail;
     try {
@@ -253,7 +238,7 @@ adm_status make_plan(adm_plan* plan, const size_t* shape, size_t ndim, const adm
     } catch (const admiral::size_error& e) {
         st = ADM_ERROR_INVALID_SIZE;
         detail = e.what();
-    } catch (const admiral::error& e) {  // unsupported_error / internal_error
+    } catch (const admiral::error& e) {  // `unsupported_error` / `internal_error`
         st = ADM_ERROR_INTERNAL;
         detail = e.what();
     } catch (const std::length_error& e) {
@@ -269,7 +254,7 @@ adm_status make_plan(adm_plan* plan, const size_t* shape, size_t ndim, const adm
     return plan_error(plan, st, detail.empty() ? adm_error_string(st) : detail.c_str());
 }
 
-// The variant lookup is also the precision check; a monostate variant replays
+// The variant lookup is also the precision check; a `monostate` variant replays
 // the recorded creation failure.
 template<typename T, typename U>
 adm_status plan_execute(adm_plan plan, U* data, bool forward) {

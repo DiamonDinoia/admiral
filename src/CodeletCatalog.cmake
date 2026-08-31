@@ -1,55 +1,44 @@
-# Which straight-line codelet sizes get compiled, and the sources generated for
-# them. src/CMakeLists.txt includes this file before it declares the targets.
+# Which straight-line codelet sizes get compiled, and the sources generated for them.
+# `src/CMakeLists.txt` includes this file before the caller declares the targets.
 #
-# kernel<N> codelets (radix-31/61 are ~P^2 unrolled, times {float,double}) are
-# heavy to instantiate. The build emits only ONE direction. codelet_apply<N,T,false>
-# conjugates in and out around kernel<N,T,true>, so {fwd,inv} multiplies the thin
-# boundary loops, not the unrolled body. Compiling them here, one small TU per N,
-# keeps consumer TUs free of that cost. They see only the narrow
-# codelet_dispatch<T> declaration plus the extern template in math.hpp. One TU
-# per N maximizes parallel compile and bounds peak memory per TU.
+# `kernel<N>` codelets are heavy to instantiate (radix-31/61 are ~P^2 unrolled, times
+# `{float,double}`). The build emits ONE direction: `codelet_apply<N,T,false>`
+# conjugates in and out around `kernel<N,T,true>`, so `{fwd,inv}` multiplies thin
+# boundary loops, not the unrolled body. One small TU per N keeps consumer TUs free of
+# that cost and bounds peak memory per TU. The consumers see only `codelet_dispatch<T>`
+# plus the extern template in `math.hpp`.
 #
-# Outputs, all consumed by src/CMakeLists.txt:
-#   ADM_GENERATED_INCLUDE_DIR   build-tree include dir for the generated headers
-#   ADM_CODELET_GENERATED       one .cpp per catalog size, plus the dispatch TU
-#   ADM_THREADS_LIB             Threads::Threads, or empty
+# Outputs, all consumed by `src/CMakeLists.txt`:
+#   `ADM_GENERATED_INCLUDE_DIR`   build-tree include dir for the generated headers
+#   `ADM_CODELET_GENERATED`       one `.cpp` per catalog size, plus the dispatch TU
+#   `ADM_THREADS_LIB`             `Threads::Threads`, or empty
 
-# The catalog is a bounded range minus measured exclusions: one simple knob pair,
-# still one TU per selected size, still an exact C++ dispatch sequence.
+# The catalog is a bounded range minus exclusions: still one TU per selected size,
+# still an exact C++ dispatch sequence.
 set(ADM_CODELET_MIN_N 2 CACHE STRING
     "Smallest N considered for compiled straight-line codelets")
 set(ADM_CODELET_MAX_N 64 CACHE STRING
     "Largest N considered for compiled straight-line codelets")
-# [2..64] is spill-free throughout. Every composite is a small-radix combination
-# and every prime > 11 is a Rader chiplet (a length-(p-1) convolution over the
-# smaller codelets), so no size degrades to a flat O(N^2) unroll. `admiral_benchmark
-# --verify` checks every catalog size against a reference DFT, and every size beats
-# ducc0 on a pinned cycle-true --compare.
+# [2..64] is spill-free throughout. Every composite is a small-radix combination and
+# every prime > 11 is a Rader chiplet, so no size degrades to a flat O(N^2) unroll.
 set(ADM_CODELET_EXCLUDE_SIZES "" CACHE STRING
     "Semicolon-separated sizes excluded from the generated codelet catalog")
 set(ADM_CODELET_EXTRA_SIZES "120;65;85;143;100;360" CACHE STRING
     "Semicolon-separated sizes added to the catalog beyond [MIN_N, MAX_N]")
 # 65=5*13, 85=5*17 and 143=11*13 have no other engine. The DIF tape admits a prime
-# above 11 only as a MIDDLE pass (dif_generic_radix_seq), and a two-factor size has
-# no middle slot, so each one falls through the whole ranking to Bluestein and pays
-# a 7-smooth pad: 65->135, 85->175, 143->288. A catalog codelet peels the small
-# factor and batches the 13 or 17 cofactor, which the model prices well below Bluestein.
+# above 11 only as a MIDDLE pass (`dif_generic_radix_seq`). A two-factor size has no
+# middle slot, so each falls to Bluestein and pays a smooth pad. A codelet peels the
+# small factor and batches the cofactor, priced below Bluestein.
 #
-# 100=4*25 has an engine but not its cheapest one. good_thomas needs a DFT-25 and its
-# butterfly set stops at 8, and 4*25 is the only coprime split, so the ranking drops to
-# iterative_dif with radices 10,10. A codelet is cheaper.
-#
-# 360=8*9*5 likewise falls to iterative_dif, which the model over-prices, so no cheaper
-# engine is ever reached. The codelet peels the 8 and batches the 45 cofactor, filling
-# every f32 lane.
+# 100=4*25 and 360=8*9*5 have an engine but not their cheapest. The ranking drops to
+# `iterative_dif` in both cases, and a codelet is cheaper.
 
-# Sanitizer instrumentation costs several GB per TU on the larger Rader codelets, so the
-# catalog shrinks here. The Release --verify sweep covers large-codelet correctness
-# instead. This cap is not the whole memory cost. Even with the cap active, the planner TU
-# (before the direction split) still peaked at 19.3 GB under gcc ASan+UBSan (57.8 GB at
-# -march=native), because the cost is `template class plan_impl<float>` instantiating the
-# route tree per SIMD width, which no catalog knob reaches. Hence the pinned ISA and
-# clang++ in the asan preset; see CMakePresets.json.
+# Sanitizer instrumentation costs GBs per TU on the larger Rader codelets, so the
+# catalog shrinks here; the Release `--verify` sweep covers large-codelet correctness
+# instead. The cap is not the whole cost. The planner TU still peaks at tens of GB:
+# `plan_impl<float>` instantiates the route tree per SIMD width, which no catalog knob
+# reaches. Hence the pinned ISA and `clang++` in the `asan` preset
+# (`CMakePresets.json`).
 if(NOT ADM_SANITIZER STREQUAL "none")
     set(ADM_CODELET_MAX_N 16)
     set(ADM_CODELET_EXTRA_SIZES "")
@@ -62,10 +51,9 @@ if(ADM_CODELET_MAX_N LESS ADM_CODELET_MIN_N)
     message(FATAL_ERROR "ADM_CODELET_MAX_N must be >= ADM_CODELET_MIN_N")
 endif()
 
-# The contiguous [MIN, MAX] range drives poet::dispatch as a dense jump table.
-# Appending the sparse extras to that sequence degrades it to a compare chain,
-# measured at +12-14 cycles on EVERY codelet transform, so the extras get an
-# explicit generated if-chain ahead of the table (see codelet_dispatch.cpp.in).
+# The contiguous [MIN, MAX] range drives `poet::dispatch` as a dense jump table. The
+# sparse extras would degrade the table to a compare chain, so the extras get an
+# explicit generated if-chain ahead of the table (`codelet_dispatch.cpp.in`).
 set(ADM_CODELET_RANGE_SIZES "")
 foreach(CODELET_N RANGE ${ADM_CODELET_MIN_N} ${ADM_CODELET_MAX_N})
     if(NOT CODELET_N IN_LIST ADM_CODELET_EXCLUDE_SIZES)
@@ -107,8 +95,8 @@ foreach(CODELET_N IN LISTS ADM_CODELET_EXTRA_SIZES)
     endif()
 endforeach()
 
-# codelet_max.hpp carries the same catalog to the headers, so the headers and the
-# generated TUs cannot disagree about which sizes exist.
+# `codelet_max.hpp` carries the same catalog to the headers, so the two cannot
+# disagree.
 set(ADM_GENERATED_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated/include)
 set(ADM_GENERATED_INCLUDE_DIR ${ADM_GENERATED_INCLUDE_DIR} PARENT_SCOPE)
 configure_file(
@@ -116,7 +104,7 @@ configure_file(
     ${ADM_GENERATED_INCLUDE_DIR}/admiral/detail/codelet_max.hpp
     @ONLY)
 
-# One generated header for both flags so the library and its consumers agree.
+# One generated header for both flags, so the library and its consumers agree.
 set(ADM_MEASURE_01 0)
 if(ADM_MEASURE)
     set(ADM_MEASURE_01 1)
@@ -134,8 +122,8 @@ configure_file(
     ${ADM_GENERATED_INCLUDE_DIR}/admiral/detail/config.hpp
     @ONLY)
 
-# One TU per catalog N, plus one dispatch TU whose extern-template block is
-# generated here rather than built from preprocessor macros.
+# One TU per catalog N. The `foreach` below generates the dispatch TU's
+# extern-template block here, not from preprocessor macros.
 set(ADM_CODELET_GENERATED "")
 set(ADM_CODELET_EXTERN "")
 foreach(CODELET_N IN LISTS ADM_CODELET_SIZES)

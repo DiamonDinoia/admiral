@@ -62,8 +62,8 @@ const std::array<const char*, 7> FORM_ORDER = {"codelet", "iterative_dif", "good
                                                "four_step", "four_step_batched", "rader",
                                                "bluestein"};
 
-// Every form's feature vector is zero-padded to NF; the last three slots are
-// always log2(W), log(bytes) and the clang indicator. Widest vector: four_step's ten.
+// Every form's feature vector is zero-padded to `NF`; the last three slots are
+// always log2(W), log(bytes) and the clang indicator. Widest vector: `four_step`'s ten.
 constexpr std::size_t NF = 13;
 
 double lg(double x) { return std::log2(std::max(x, 1e-12)); }
@@ -73,8 +73,8 @@ double waste(std::size_t n, std::size_t w) {
 }
 
 // One form's own features, in feature-table order. The count is the contract with
-// form_body()/feature_names(); emit() refuses to write a header that breaks it.
-// szt is sizeof(T): the leaf tables are per-precision and W does not imply one,
+// `form_body()`/`feature_names()`; `emit()` refuses to write a header that breaks it.
+// `szt` is `sizeof(T)`: the leaf tables are per-precision and W does not imply one,
 // since f64 W=8 and f32 W=8 are both real targets.
 std::vector<double> feat_own(const std::string& form, std::size_t n, std::size_t w,
                              std::size_t regs, std::size_t szt, bool& ok) {
@@ -88,10 +88,10 @@ std::vector<double> feat_own(const std::string& form, std::size_t n, std::size_t
         return szt == 4 ? four_step_cost<float>(a, b) : four_step_cost<double>(a, b);
     };
     if (form == "codelet") {
-        // The measured table, not a polynomial in n. A prime leaf is rader_apply<P>
-        // over kernel<P-1>, several times costlier than a composite neighbour. No
-        // function of (n, lpf, nfac) expresses that, since lpf(n) == n for every prime,
-        // and the gap differs per precision, so the table is per-precision too.
+        // The measured table, not a polynomial in n. A prime leaf is `rader_apply<P>`
+        // over `kernel<P-1>`, several times costlier than a composite neighbour. No
+        // function of (n, `lpf`, `nfac`) expresses that, since lpf(n) == n for every
+        // prime, and the gap differs per precision, so the table is per-precision too.
         v = {lg(double(n)), lg(leaf(n)), vecs(n, w), waste(n, w),
              double(nfac), lg(double(lpf))};
     } else if (form == "iterative_dif") {
@@ -99,9 +99,9 @@ std::vector<double> feat_own(const std::string& form, std::size_t n, std::size_t
         v = {lg(double(n)), cw, cw * lg(double(n)), double(nfac),
              lg(double(lpf)), waste(lpf, w)};
     } else if (form == "four_step" || form == "four_step_batched" || form == "good_thomas") {
-        // balanced_split maximizes n1 <= sqrt(n), so its n2 is the SMALLEST any split
-        // achieves: whenever four_step is supported both factors are in the
-        // measured table, and four_step_cost is the engine's own leaf model.
+        // `balanced_split` maximizes n1 <= sqrt(n), so its n2 is the SMALLEST any
+        // split achieves: whenever `four_step` is supported both factors are in the
+        // measured table, and `four_step_cost` is the engine's own leaf model.
         const auto [n1, n2] = balanced_split(n);
         v = {lg(double(n)),      vecs(n1, w) * double(n2) / double(n1),
              double(n2) * vecs(n1, w),    double(n1) * vecs(n2, w),
@@ -109,9 +109,10 @@ std::vector<double> feat_own(const std::string& form, std::size_t n, std::size_t
              waste(n1, w),       waste(n2, w),
              double(n) / double(w), lg(fs_cost(n1, n2))};
     } else if (form == "bluestein") {
-        // bluestein.hpp delegates to bluestein_choose_pad: {2,3,5,7}-smooth with v3<=4,
-        // v7<=2, else bit_ceil. Every one of those factors is an admissible radix, so cw is
-        // always a real chain here and needs no no_chain indicator (rader's L does).
+        // bluestein.hpp delegates to `bluestein_choose_pad`: {2,3,5,7}-smooth with
+        // v3<=4, v7<=2, else `bit_ceil`. Every one of those factors is an admissible
+        // radix, so `cw` is always a real chain here and needs no `no_chain` indicator
+        // (rader's L does).
         const std::size_t m = bluestein_choose_pad(n);
         const double cw = chain_work(m, w, regs);
         v = {lg(double(n)), lg(double(m)), double(m) / double(n), cw,
@@ -143,10 +144,8 @@ std::array<double, NF> feat(const std::string& form, std::size_t n, std::size_t 
     return v;
 }
 
-// ---------------------------------------------------------------------------
 // Receipts: key = (arch, compiler, major, W, regs, prec, uarch); value n ->
 // form -> cyc. uarch is "generic" for receipts predating the field.
-// ---------------------------------------------------------------------------
 using Key = std::tuple<std::string, std::string, int, int, int, std::string,
                        std::string>;
 using Table = std::map<Key, std::map<std::size_t, std::map<std::string, double>>>;
@@ -208,10 +207,8 @@ Table load(const std::string& data_dir) {
     return T;
 }
 
-// ---------------------------------------------------------------------------
 // Lasso on standardized features via cyclic coordinate descent, returned as
 // raw-space (w, b): objective (1/2n)||y - Xw - b||^2 + alpha*||w||_1.
-// ---------------------------------------------------------------------------
 std::pair<std::vector<double>, double>
 fit_form(const std::vector<std::array<double, NF>>& X, const std::vector<double>& y,
          double alpha) {
@@ -380,9 +377,9 @@ using Summary = std::map<Key, std::tuple<double, double, double, double>>;
 void emit(std::ostream& os, const std::vector<std::string>& present,
           const std::map<std::string, Fitted>& coef, const Summary& summary,
           std::size_t nz) {
-    // The emitted features() must compute exactly what feat_own() fitted. Checked,
+    // The emitted `features()` must compute exactly what `feat_own()` fitted. Checked,
     // not assumed. Probed at a small prime and at one above the leaf table, where
-    // balanced_split(509) = {1, 509} and the rader/bluestein preludes must stay in
+    // `balanced_split(509)` = {1, 509} and the rader/bluestein preludes must stay in
     // range.
     for (const std::string f : FORM_ORDER) {
         for (const std::size_t probe : {std::size_t{13}, std::size_t{509}}) {
@@ -396,10 +393,10 @@ void emit(std::ostream& os, const std::vector<std::string>& present,
             if (nown + 3 > NF) die("NF too small for form " + f);
         }
     }
-    // bluestein carries no no_chain indicator (rader does): its pad is
-    // {2,3,5,7}-smooth or a power of two, all admissible radices, so chain_work is
+    // bluestein carries no `no_chain` indicator (rader does): its pad is
+    // {2,3,5,7}-smooth or a power of two, all admissible radices, so `chain_work` is
     // never the sentinel. The narrow 7-radix set is checked since the wide one
-    // contains it; chain_work clamps "no chain" to 0.0, unreachable for a real pad.
+    // contains it; `chain_work` clamps "no chain" to 0.0, unreachable for a real pad.
     for (std::size_t n = NMIN; n <= NMAX; ++n) {
         const std::size_t pad = bluestein_choose_pad(n);
         if (chain_work(pad, 8, 16) == 0.0)
@@ -676,7 +673,7 @@ int run(const Args& args) {
             ") in " + args.data + ", nothing written");
 
     // pooled fit: one model per form, slopes shared across every variant and both
-    // compilers; only the is_clang slot is not shared.
+    // compilers; only the `is_clang` slot is not shared.
     struct Pool {
         std::vector<std::array<double, NF>> X;
         std::vector<double> y;
@@ -744,9 +741,9 @@ int run(const Args& args) {
               << " compilers (the table it replaces was " << per_cc << " floats + "
               << per_cc << " enums, single-compiler)\n";
 
-    // ---- score the shipped predictor: in-sample and out-of-fold route regret
-    // against the measured optimum, per build. Reported, not corrected: what the
-    // coefficients cannot rank is what effort::automatic measures at plan time.
+    // Score the shipped predictor: in-sample and out-of-fold route regret against the
+    // measured optimum, per build. Reported, not corrected: `effort::automatic`
+    // measures at plan time what the coefficients cannot rank.
     std::map<std::string, std::size_t> idx;
     std::map<std::pair<Key, std::size_t>, std::map<std::string, double>> order, oof_order;
     for (const auto& [key, d] : T) {

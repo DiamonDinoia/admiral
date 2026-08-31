@@ -3,7 +3,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "utils/reference.hpp"
 #include <admiral/admiral.hpp>
-#include <admiral/detail/plan.hpp>  // plan_impl::route_name() for the election check
+#include <admiral/detail/plan.hpp>  // `measure_batch`, `kMeasureSampleNs` (sample-interval check)
 #include <vector>
 #include <complex>
 #include <cmath>
@@ -15,7 +15,7 @@ using admiral::span;
 namespace num = admiral::detail::numbers;
 
 TEST_CASE("Plan creation and basic properties", "[plan]") {
-    // One plan type: admiral::plan<T> is bidirectional, there is no forward-only plan.
+    // One plan type: `admiral::plan<T>` is bidirectional. No forward-only plan exists.
     SECTION("Reports its size") { REQUIRE(admiral::plan<double>(128).size() == 128); }
 
     SECTION("Various sizes") {
@@ -31,8 +31,8 @@ TEST_CASE("Plan creation and basic properties", "[plan]") {
 }
 
 TEST_CASE("Plan move semantics", "[plan]") {
-    // size() alone cannot tell a correct move from one that dropped a member, so each
-    // moved-to plan has to transform and match a plan that was never moved.
+    // `size()` alone cannot tell a correct move from one that dropped a member.
+    // Each moved-to plan transforms and matches a plan that was never moved.
     std::vector<std::complex<double>> in(64);
     for (std::size_t i = 0; i < 64; ++i) in[i] = {std::sin(double(i)), std::cos(double(i))};
     auto want = in;
@@ -208,9 +208,9 @@ TEST_CASE("Plan error handling", "[plan][error]") {
     }
 }
 
-// The r2c span overloads exist for this check: its two buffers have different
-// lengths, so a caller can pass the right sizes in the wrong order and the pointer
-// overload cannot tell. n=32 -> 32 reals, 17 complex.
+// The r2c span overloads exist for this check. The two buffers of the transform
+// differ in length, so a caller can pass the right sizes in the wrong order. The
+// pointer overload cannot tell. n=32 -> 32 reals, 17 complex.
 TEST_CASE("plan_r2c span overloads validate both extents", "[plan][error]") {
     admiral::plan_r2c<double> r({32});
     REQUIRE(r.real_size() == 32);
@@ -220,8 +220,8 @@ TEST_CASE("plan_r2c span overloads validate both extents", "[plan][error]") {
     std::vector<std::complex<double>> spec(r.cplx_size());
     for (std::size_t i = 0; i < real.size(); ++i) real[i] = std::sin(0.3 * double(i));
 
-    // Against the pointer overload, not a round trip: this asserts the forwarding
-    // itself and stays true whatever the inverse scaling convention is.
+    // Against the pointer overload, not a round trip: the check asserts the
+    // forwarding itself and stays true under any inverse scaling convention.
     SECTION("forwards identically to the pointer form") {
         std::vector<std::complex<double>> spec_ptr(r.cplx_size());
         r.forward(real.data(), spec_ptr.data());
@@ -229,7 +229,7 @@ TEST_CASE("plan_r2c span overloads validate both extents", "[plan][error]") {
         REQUIRE(spec == spec_ptr);
 
         std::vector<double> back_ptr(r.real_size());
-        auto spec_copy = spec;  // inverse overwrites its spectrum
+        auto spec_copy = spec;  // `inverse` overwrites the spectrum argument
         r.inverse(spec_ptr.data(), back_ptr.data());
         r.inverse(span(spec_copy), span(back));
         REQUIRE(back == back_ptr);
@@ -250,11 +250,12 @@ TEST_CASE("plan_r2c span overloads validate both extents", "[plan][error]") {
 }
 
 // Codelet catalog routing via the public API: forward vs the O(N^2) reference
-// plus round-trip, for every catalog size and a few non-catalog sizes.
+// plus a round trip, for every catalog size and a few non-catalog sizes.
 
 namespace {
 
-// N<=64 keeps the O(N^2) reference's own error negligible, so it is a usable oracle.
+// `N` <= 64 keeps the O(N^2) reference's own error negligible; the reference stays
+// a usable oracle.
 template<typename T>
 void check_catalog_size(std::size_t N) {
     const auto input = make_input<T>(N);
@@ -268,8 +269,8 @@ void check_catalog_size(std::size_t N) {
     require_close(rt, input, fft_tol<T>(2.0));  // two transforms compound
 }
 
-// Past the catalog the O(N^2) reference accumulates too much error to be an oracle,
-// so these sizes check a round-trip instead.
+// Past the catalog, the O(N^2) reference accumulates too much error for oracle use,
+// so these sizes run only a round trip.
 template<typename T>
 void check_noncatalog_size_roundtrip(std::size_t N) {
     const auto input = make_input<T>(N);
@@ -285,17 +286,17 @@ void check_noncatalog_size_roundtrip(std::size_t N) {
 } // namespace
 
 TEST_CASE("Codelet catalog routing: public API correctness (double)", "[codelet][catalog][plan]") {
-    // The catalog is every integer in [2,64] (incl. primes 11..61 and composites
-    // with a factor >7 like 22,26,33,55,62), where the O(N^2) oracle is accurate.
+    // The catalog is every integer in [2,64], including primes 11..61 and the
+    // composites with a factor > 7 (22, 26, 33, 55, 62). The O(N^2) oracle is
+    // accurate on these sizes.
     for (std::size_t N = 2; N <= 64; ++N) {
         CAPTURE(N);
         check_catalog_size<double>(N);
     }
-    // Non-catalog sizes, round-trip only here. Not a weaker check than it looks: every
-    // one of these except 720 is <= 512, so accuracy/test_sweeps.cpp already compares it
-    // against the long-double O(N^2) DFT in both precisions. 100/128/720 are pow2 or
-    // 7-smooth through the iterative DIF pass-chain; 121=11^2 and primes 127, 251 take
-    // Bluestein.
+    // Non-catalog sizes: round trip only here. Every size except 720 is <= 512, and
+    // `test_sweeps.cpp` already compares those sizes against the long-double
+    // O(N^2) DFT in both precisions. The set covers a catalog extra (100 = 4*25),
+    // 11^2 (121), pow2 (128), 7-smooth (720) and the Rader primes (127, 251).
     for (std::size_t N : {100u, 121u, 128u, 127u, 251u, 720u}) {
         CAPTURE(N);
         check_noncatalog_size_roundtrip<double>(N);
@@ -308,19 +309,20 @@ TEST_CASE("Codelet catalog routing: public API correctness (float)", "[codelet][
         CAPTURE(N);
         check_catalog_size<float>(N);
     }
-    // Non-catalog sizes: round-trip only (float accumulation error at large N makes
-    // reference DFT comparison unreliable). 100/121/128/720 iterative DIF; 127/251 Bluestein.
+    // Non-catalog sizes: round trip only, because float accumulation error at large N
+    // makes the reference DFT comparison unreliable. Same coverage set as the double
+    // case above.
     for (std::size_t N : {100u, 121u, 128u, 127u, 251u, 720u}) {
         CAPTURE(N);
         check_noncatalog_size_roundtrip<float>(N);
     }
 }
 
-// Multi-pass pow2 / 7-smooth path: verify forward output against the O(N^2)
-// reference DFT, since a round-trip cannot catch a matching fwd/inv sign
-// error. Sizes that factor into two catalog factors and route through the
-// iterative DIF pass-chain: 100=10*10, 128=8*16, 144=12*12, 256=16*16. O(N^2)
-// reference stays accurate enough for double at these N.
+// Multi-pass pow2 / 7-smooth path: check forward output against the O(N^2)
+// reference DFT, because a round trip cannot catch a matching fwd/inv sign error.
+// These sizes factor into two catalog factors and route through the `iterative_dif`
+// pass chain: 100=10*10, 128=8*16, 144=12*12, 256=16*16. The O(N^2) reference stays
+// accurate enough for double at these N.
 TEST_CASE("Multi-pass path: forward vs reference DFT (double)", "[multipass][plan]") {
     for (std::size_t N : {100u, 128u, 144u, 256u}) {
         CAPTURE(N);
@@ -346,11 +348,11 @@ TEMPLATE_TEST_CASE("Plan precision (forward+inverse)", "[plan][precision]", floa
     require_close(input, data, fft_tol<T>());
 }
 
-// Out-of-place execute: dst gets the same result as the in-place path and src
-// stays unchanged. Every route is copy-free OOP; sizes cover each route family:
-// degenerate (1), codelet (31), good_thomas masked-tail (15, 30),
-// good_thomas/dif (60), catalog-extra codelet (120), rader (127),
-// four_step[_batched] (256), bluestein (10007), iterative_dif (4096).
+// Out-of-place execute: `dst` matches the in-place result, `src` stays unchanged.
+// Every route is copy-free out-of-place. The sizes cover each route family:
+// degenerate (1), `codelet` (31), `good_thomas` masked-tail (15, 30),
+// `good_thomas`/`iterative_dif` (60), catalog-extra `codelet` (120), `rader` (127),
+// `four_step` or `four_step_batched` (256), `bluestein` (10007), `iterative_dif` (4096).
 TEMPLATE_TEST_CASE("Plan out-of-place execute (src preserved, matches in-place)",
                    "[plan][oop]", float, double) {
     using T = TestType;
@@ -372,10 +374,10 @@ TEMPLATE_TEST_CASE("Plan out-of-place execute (src preserved, matches in-place)"
         std::vector<std::complex<T>> dst(N);
         plan.forward(src.data(), dst.data());
 
-        REQUIRE(src == input);  // exact: src must be untouched
+        REQUIRE(src == input);  // exact: `src` must be untouched
         require_close(inplace, dst, tol);
 
-        // Inverse OOP round-trips back to the input.
+        // Inverse out-of-place round-trips back to the input.
         std::vector<std::complex<T>> back(N);
         plan.inverse(dst.data(), back.data());
         require_close(input, back, tol);
@@ -389,7 +391,7 @@ TEST_CASE("plan_r2c rejects an empty or overflowing shape", "[plan][error]") {
     REQUIRE_THROWS_AS(admiral::plan_r2c<float>({0}), admiral::size_error);   // zero extent
     REQUIRE_THROWS_AS(admiral::plan_r2c<double>(
                           std::initializer_list<std::size_t>{std::size_t(-1) / 2, 4}),
-                      admiral::size_error);   // overflows size_t
+                      admiral::size_error);   // overflows `size_t`
 }
 
 TEMPLATE_TEST_CASE("plan_r2c of a 1- or 2-point signal is exact", "[plan][r2c][edge]",
@@ -417,8 +419,8 @@ TEMPLATE_TEST_CASE("plan_r2c of a 1- or 2-point signal is exact", "[plan][r2c][e
 TEMPLATE_TEST_CASE("plan with effort::measure picks a working route", "[plan][measure]",
                    float, double) {
     using T = TestType;
-    // Modelled-domain mix: smooth, coprime, four_step candidates and small primes
-    // (rader/bluestein race). Correctness only; which route wins is machine-local.
+    // Modelled-domain mix: smooth, coprime, `four_step` candidates and small primes
+    // (`rader`/`bluestein` race). Correctness only; the winning route is machine-local.
     std::mt19937 rng(1234);
     std::uniform_real_distribution<double> u(-1, 1);
     for (const std::size_t n : {16u, 60u, 67u, 105u, 143u, 243u, 256u, 384u, 500u, 512u}) {
@@ -434,11 +436,12 @@ TEMPLATE_TEST_CASE("plan with effort::measure picks a working route", "[plan][me
     }
 }
 
-// The chain race elects a radix chain the cost model never ranked first: a different
-// factorization, and then a permutation of it (measure_route stages 2 and 3). Both are
-// only shape-checked there, so a legal-but-wrong chain would ship silently. Cross-check against
-// the estimate plan, whose chain is a different one by construction: an O(N log N)
-// oracle where reference_dft's O(N^2) cannot reach.
+// The chain race elects a radix chain the cost model never ranked first: a
+// different factorization, and then a permutation of it (`measure_route` stages 2
+// and 3). Both stages are only shape-checked, so a legal-but-wrong chain would
+// ship silently. The estimate plan is the cross-check: the estimate chain differs
+// by construction and is an O(N log N) oracle where the O(N^2) `reference_dft`
+// cannot reach.
 TEMPLATE_TEST_CASE("effort::measure elects a chain that agrees with estimate",
                    "[plan][measure]", float, double) {
     using T = TestType;
@@ -450,8 +453,8 @@ TEMPLATE_TEST_CASE("effort::measure elects a chain that agrees with estimate",
         std::vector<std::complex<T>> x(n), a(n), b(n);
         for (auto& v : x) v = {T(u(rng)), T(u(rng))};
         admiral::plan<T>(n, {0, admiral::effort::estimate}).forward(x.data(), a.data());
-        // Both budgets: they stop the same race at different points, so they can elect
-        // different chains and each has to be right on its own.
+        // Both efforts: each stops the same race at a different point and can elect
+        // a different chain. Each elected chain has to be right on its own.
         for (const admiral::effort eff : {admiral::effort::automatic, admiral::effort::measure}) {
             admiral::plan<T>(n, {0, eff}).forward(x.data(), b.data());
             require_close(b, a, fft_tol<T>());
@@ -459,21 +462,21 @@ TEMPLATE_TEST_CASE("effort::measure elects a chain that agrees with estimate",
     }
 }
 
-// A small-N execution is shorter than steady_clock resolves, so a race sampling one
-// execution per candidate times the clock, not the plan, and elects on noise. Every
-// sample must therefore batch enough executions to span kMeasureSampleNs.
+// A small-N execution is shorter than `steady_clock` resolves. A race sampling one
+// execution per candidate then times the clock, not the plan, and elects on noise.
+// Every sample therefore batches enough executions to span `kMeasureSampleNs`.
 TEST_CASE("measure_batch spans the sample interval at every execution cost",
           "[plan][measure]") {
     using admiral::detail::kMeasureSampleNs;
     using admiral::detail::measure_batch;
 
-    // The race samples an execution that already spans the interval once. The large-N
-    // races must keep the sampling they had.
+    // The race samples an execution that already spans the interval once. The
+    // large-N races must keep the single-execution sampling.
     REQUIRE(measure_batch(kMeasureSampleNs) == 1);
     REQUIRE(measure_batch(kMeasureSampleNs * 100) == 1);
 
-    // A clock that reads zero is the case that made the election a coin flip: it carries no
-    // cost to divide by, so it batches as the cheapest measurable execution does.
+    // A clock that reads zero made the election a coin flip: no cost exists to
+    // divide by, so the batch matches the cheapest measurable execution's.
     REQUIRE(measure_batch(0) == measure_batch(1));
 
     // Below the interval, the batch spans it.
@@ -489,7 +492,7 @@ TEST_CASE("measure_batch spans the sample interval at every execution cost",
         REQUIRE(measure_batch(one) >= measure_batch(one + 1));
 }
 
-// With ADM_MEASURE=OFF the API must accept the knob and behave like estimate
+// With `ADM_MEASURE=OFF`, the API must accept the knob and behave like `estimate`
 // (hint semantics, FFTW-style), with the same correct result.
 TEMPLATE_TEST_CASE("plan with effort::measure at N=1 and N=2 stays exact", "[plan][measure]",
                    float, double) {

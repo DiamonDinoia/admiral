@@ -20,10 +20,9 @@
 
 using namespace Catch::Matchers;
 
-// The sweep reaches every route (codelet / iterative_dif / four_step / rader /
-// bluestein / good_thomas) somewhere in 2..512, the cost model's dense domain. Round-trip
-// for all, naive-DFT cross-check on top. The cross-check masks nothing a round-trip would:
-// sign, direction and twiddle-index bugs all surface.
+// The sweep reaches every route somewhere in 2..512, the cost model's dense domain.
+// Round-trip for all, naive-DFT cross-check on top: sign, direction and twiddle-index
+// bugs survive a round-trip but not the cross-check.
 TEMPLATE_TEST_CASE("exhaustive integer-N round-trip and forward vs naive DFT",
                    "[coverage][sweep]", float, double) {
     using T = TestType;
@@ -42,8 +41,8 @@ TEMPLATE_TEST_CASE("exhaustive integer-N round-trip and forward vs naive DFT",
     }
 }
 
-// Impulse / DC known-answers + Parseval across routing boundaries. Catches
-// off-by-one twiddle indexing that a round-trip hides. (FFTW3/numpy.)
+// Impulse / DC known-answers + Parseval across routing boundaries. The case catches
+// off-by-one twiddle indexing that a round-trip hides.
 TEMPLATE_TEST_CASE("known-answer impulse, DC, and Parseval", "[coverage][known]", float, double) {
     using T = TestType;
     const std::array<std::size_t, 14> sizes = {1, 2, 3, 5, 7, 8, 12, 16, 60, 64, 67, 120, 128, 251};
@@ -51,13 +50,13 @@ TEMPLATE_TEST_CASE("known-answer impulse, DC, and Parseval", "[coverage][known]"
         INFO("N=" << N);
 
         // Both known answers are exactly representable, so the reference carries no
-        // error of its own and the budget is the library's alone: fft_tol, not a
-        // hand-picked 1e-4 (which at f64 is 4.5e11 eps and cannot fail).
+        // error of its own. The budget is the library's alone: `fft_tol`, not a
+        // hand-picked 1e-4 (4.5e11 eps at f64, which cannot fail).
 
         // delta[0] -> flat spectrum (all bins == 1).
         {
             std::vector<std::complex<T>> x(N, std::complex<T>(0, 0));
-            x.at(0) = std::complex<T>(1, 0);  // .at(): checked, so no -Wnull-dereference
+            x.at(0) = std::complex<T>(1, 0);  // `.at()`: checked, so no `-Wnull-dereference`
             std::vector<std::complex<T>> X(N);
             admiral::forward(admiral::span<const std::complex<T>>(x), admiral::span(X));
             require_close(X, std::vector<std::complex<T>>(N, std::complex<T>(1, 0)), fft_tol<T>());
@@ -84,15 +83,14 @@ TEMPLATE_TEST_CASE("known-answer impulse, DC, and Parseval", "[coverage][known]"
 }
 
 // Large N: terminal-base DIF path (bn 8/16/32/64) and deep Bluestein for a large
-// prime, verified by round-trip + Parseval (naive DFT is infeasible).
+// prime. Round-trip + Parseval only; the naive DFT is infeasible at these sizes.
 TEST_CASE("large-N round-trip (terminal DIF and deep Bluestein)", "[coverage][large]") {
     using T = double;
-    // Pow2 leaves every pass tail unreachable (ido % W == 0) and primes go to
+    // Pow2 leaves every pass tail unreachable (`ido % W == 0`) and primes go to
     // Bluestein, so the mixed-radix sizes carry the tail coverage:
-    //   16807 = 7^5      smallest N giving a non-in-place pass ido in [4, W)
-    //                    (dif_pass_small_ido); below it the in-place prefix absorbs all.
-    //   880 = 2^4*5*11   smallest N reaching dif_pass_body's scalar tail.
-    // Both enumerated over N=2..60000 against the driver's own pass loop.
+    //   16807 = 7^5      smallest N with a non-in-place pass ido in [4, W)
+    //                    (`dif_pass_small_ido`); below 16807 the in-place prefix absorbs all
+    //   880 = 2^4*5*11   smallest N reaching `dif_pass_body`'s scalar tail
     for (std::size_t N : {std::size_t{8192}, std::size_t{16384}, std::size_t{32768},
                           std::size_t{65536}, std::size_t{8191}, std::size_t{65537},
                           std::size_t{16807}, std::size_t{880}}) {
@@ -107,21 +105,20 @@ TEST_CASE("large-N round-trip (terminal DIF and deep Bluestein)", "[coverage][la
     }
 }
 
-// Bluestein at pads crossing the six-step delegate line (bluestein.hpp): the inner
-// padded transform runs four_step_large there. 524287 pads to 2^20 (1024^2 fused);
-// 401407 pads to 802816 = 896^2 (smooth, fused). Naive DFT is infeasible at these
-// sizes, so the checks are known answers (impulse, tone: a sign flip moves the
-// bin to N-k0), round-trip and Parseval. Tolerance x64: |DFT(chirp)| is a Gauss
-// sum ~sqrt(2n), so intermediates carry sqrt(2n)x the input magnitude.
+// Bluestein at pads crossing the six-step delegate line (`bluestein.hpp`): the inner
+// padded transform runs `four_step_large` there. 524287 pads to 2^20 (1024^2 fused);
+// 401407 pads to 802816 = 896^2 (smooth, fused). The naive DFT is infeasible, so the
+// checks are known answers (impulse, tone: a sign flip moves the bin to N-k0),
+// round-trip and Parseval. Tolerance x64: |DFT(chirp)| is a Gauss sum ~sqrt(2n), so
+// intermediates carry sqrt(2n)x the input magnitude.
 TEST_CASE("Bluestein pad on the six-step delegate", "[coverage][large][bluestein]") {
     using T = double;
     using admiral::detail::bluestein_choose_pad;
     using admiral::detail::bluestein_inner_six_step_admits;
     using admiral::detail::bluestein_plan;
-    // Gate pinning: the two cells must cross and the two controls must not,
-    // 262143 pads to 2^19 (below the byte line) and 393749 pads to 787500 = 875x900
-    // (n2 % n1 != 0 -> the transpose-cycles path). Refusals are ISA-free; if the
-    // gate moves, re-pick the cells.
+    // Gate pinning: the two cells must cross and the two controls must not.
+    // 262143 pads below the byte line; 393749 pads to 875x900 (`n2 % n1 != 0`, the
+    // transpose-cycles path). Refusals are ISA-free; if the gate moves, re-pick the cells.
     REQUIRE(bluestein_inner_six_step_admits<T>(bluestein_choose_pad(std::size_t{524287})));
     REQUIRE(bluestein_inner_six_step_admits<T>(bluestein_choose_pad(std::size_t{401407})));
     REQUIRE(!bluestein_inner_six_step_admits<T>(bluestein_choose_pad(std::size_t{262143})));
@@ -143,9 +140,8 @@ TEST_CASE("Bluestein pad on the six-step delegate", "[coverage][large][bluestein
                               fft_tol<T>(64));
             }
         }
-        // Tone -> single bin at k0 (a sign/index flip moves it to N-k0). Forward
-        // tone is pre-normalized (fct=1); inverse tone is raw with fct=1/n, so
-        // both expect bin amplitude 1 (one normalization per case, not two).
+        // Tone -> single bin at k0 (a sign/index flip moves it to N-k0). Forward tone
+        // is pre-normalized and inverse tone raw with fct=1/n, so both expect amplitude 1.
         for (bool f : {true, false}) {
             constexpr std::size_t k0 = 17;
             std::vector<std::complex<T>> x(n);
@@ -169,12 +165,11 @@ TEST_CASE("Bluestein pad on the six-step delegate", "[coverage][large][bluestein
     }
 }
 
-// Public large-route gate (plan.hpp large_route_admits): above the byte line,
-// four_step_large also requires a cycle-free split at every nthreads
-// (n2 % n1 != 0 sends both transposes to the serial element-cycle fallback), plus
-// band-fused W alignment when serial. Pins are ISA-free: 787500 = 875x900 is
-// cycle-shaped on any W; 802816 = 896^2 and 810000 = 900^2 divide evenly;
-// 1048576 f32 sits below the f32 byte line, where the DIF chain still leads.
+// Public large-route gate (`plan.hpp` `large_route_admits`): above the byte line,
+// `four_step_large` also requires a cycle-free split at every nthreads and band-fused
+// W alignment when serial. Pins are ISA-free: 787500 = 875x900 fails `n2 % n1` on any
+// W; 802816 = 896^2 and 810000 = 900^2 divide evenly; 1048576 f32 sits below the f32
+// byte line, where the DIF chain still leads.
 TEST_CASE("Public large gate requires a cycle-free split", "[coverage][large]") {
     using admiral::detail::plan_impl;
     REQUIRE(std::string(plan_impl<double>(787500, true).route_name()) == "iterative_dif");
@@ -185,7 +180,7 @@ TEST_CASE("Public large gate requires a cycle-free split", "[coverage][large]") 
     REQUIRE(std::string(plan_impl<float>(1048576, true).route_name()) == "iterative_dif");
 
     // Both directions on the flipped f64 cell and the kept fused control, plus
-    // the newly admitted f32 cell end-to-end through the public API.
+    // the admitted f32 cell end-to-end through the public API.
     for (std::size_t N : {std::size_t{787500}, std::size_t{802816}}) {
         INFO("N=" << N);
         const auto in = make_signal<double>(N);
@@ -206,10 +201,10 @@ TEST_CASE("Public large gate requires a cycle-free split", "[coverage][large]") 
     }
 }
 
-// f32 small-ido cover: a non-in-place pass with 4 <= ido < W routes to
-// dif_pass_small_ido's exact-width pieces. Reachable only above N=13312 for float;
-// the sweep above stops at 512 where the in-place prefix absorbs these passes.
-// ido is 13, 8 and 15 here: three different sized_cover decompositions.
+// f32 small-ido cover: a non-in-place pass with 4 <= ido < W takes
+// `dif_pass_small_ido`'s exact-width pieces. Reachable only above N=13312 at f32; the
+// sweep above stops at 512, where the in-place prefix absorbs these passes. ido is
+// 13, 8 and 15 here.
 TEST_CASE("f32 small-ido pass cover", "[coverage][small_ido]") {
     using T = float;
     for (std::size_t N : {std::size_t{13312}, std::size_t{33000}, std::size_t{33075}}) {
@@ -224,9 +219,9 @@ TEST_CASE("f32 small-ido pass cover", "[coverage][small_ido]") {
     }
 }
 
-// f32 batched four-step: sizes 128..768 route to four_step_batched only at W=8;
-// at W=16 they take iterative_dif. Round-trip + forward-vs-naive exercise both
-// leaves of the split. (Covers four_step.hpp on the v3 build.)
+// f32 sizes 128..768 route to `four_step_batched` only at W=8 and take
+// `iterative_dif` at W=16. Round-trip + forward-vs-naive exercise both leaves of the
+// split.
 TEST_CASE("f32 batched four-step routed sizes", "[coverage][four_step]") {
     using T = float;
     for (std::size_t N : {std::size_t{128}, std::size_t{256}, std::size_t{384},
@@ -243,10 +238,10 @@ TEST_CASE("f32 batched four-step routed sizes", "[coverage][four_step]") {
     }
 }
 
-// Rader with a four-step inner convolution: for p=79, L=p-1=78 is neither a power
-// of two nor codelet-supported, so pick_inner routes the length-L convolution
-// through four_step (the rader.hpp branch the routed sweep never hits). rader_plan
-// is direction-fixed and unnormalized, as reference_dft is.
+// Rader with a four-step inner convolution: at p=79, L=p-1=78 is neither a power of
+// two nor codelet-supported. `pick_inner` routes the length-L convolution through
+// `four_step`, the `rader.hpp` branch the routed sweep never hits. `rader_plan` is
+// direction-fixed and unnormalized, as `reference_dft` is.
 TEST_CASE("Rader prime with four-step inner convolution", "[coverage][rader]") {
     using namespace admiral::detail;
     const std::size_t p = 79;

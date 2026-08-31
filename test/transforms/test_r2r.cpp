@@ -1,4 +1,4 @@
-// DCT/DST (plan_r2r) against long-double direct sums of FFTW's four r2r kinds.
+// DCT/DST (`plan_r2r`) against long-double direct sums of FFTW's four r2r kinds.
 // Both directions plus the round trip per kind: a wrong index map is symmetric
 // (DCT-III is DCT-II read backwards) and can round-trip while both directions
 // are wrong.
@@ -61,12 +61,13 @@ TEMPLATE_TEST_CASE("DCT/DST match the direct sum in both directions", "[r2r]", f
     using admiral::r2r_kind;
     const r2r_kind kinds[] = {r2r_kind::dct2, r2r_kind::dct3, r2r_kind::dst2, r2r_kind::dst3};
 
-    // A sweep, not a hand-picked list: the four kinds' index maps differ at the
-    // parity boundary (k == N/2 is the one index where the two writes per k collide)
-    // and at N == 1, so every small N is its own case. The larger sizes then cover
-    // the routes a small N never reaches: prime (251), pentanomial (121), the
-    // 5-smooth and pow2 chains, and N/2 prime > 11 (26, 46), which is what puts r2c
-    // on its scalar even path instead of the batched one.
+    // A sweep, not a hand-picked list. The index maps of the four kinds differ at
+    // the parity boundary and at N == 1. At the boundary, k == N/2 is the one index
+    // where the two writes per k collide. Every small N is its own case. The larger
+    // sizes cover routes a small N never reaches: prime (251), prime square (121),
+    // pentanomial (100, 1000), 7-smooth or pow2 chains (96, 128, 210, 256, 360,
+    // 512), and N/2 prime > 11 (26, 46), which forces the scalar r2c even path
+    // instead of the batched one.
     for (std::size_t N = 1; N <= 64; ++N) {
         for (const r2r_kind kind : kinds) {
             const auto x = make_real_input<TestType>(N, 12345u + static_cast<unsigned>(N));
@@ -96,9 +97,9 @@ TEMPLATE_TEST_CASE("DCT/DST match the direct sum in both directions", "[r2r]", f
 
 TEMPLATE_TEST_CASE("Batched r2r rows equal the same rows one at a time", "[r2r]", float, double) {
     using admiral::r2r_kind;
-    // Not bitwise: r2c has a batched tile path that rows == 1 never takes, so the two
-    // legitimately round differently. An indexing bug in the batch path is orders of
-    // magnitude larger, and this bound catches it.
+    // Not bitwise: r2c has a batched tile path that `rows == 1` never takes, so the
+    // batched and single-row runs legitimately round differently. An indexing bug in
+    // the batch path is orders of magnitude larger, and the loose bound catches it.
     for (const std::size_t N : {5u, 8u, 12u, 17u, 64u}) {
         for (const std::size_t rows : {2u, 3u, 9u}) {
             for (const r2r_kind kind : {r2r_kind::dct2, r2r_kind::dct3, r2r_kind::dst2,
@@ -120,10 +121,10 @@ TEMPLATE_TEST_CASE("Batched r2r rows equal the same rows one at a time", "[r2r]"
 
 TEMPLATE_TEST_CASE("Threaded r2r equals the serial plan", "[r2r]", float, double) {
     using admiral::r2r_kind;
-    // The pool only threads the r2c/c2r tile loop over rows, so nthreads > 1 with
-    // rows > 1 is the one configuration that constructs it at all. The case compares
-    // against the serial plan of the same shape, not bitwise, because the tile loop
-    // partitions differently per thread count.
+    // `nthreads > 1` with `rows > 1` is the only configuration that constructs the
+    // pool at all. The pool threads only the r2c/c2r tile loop over rows. The
+    // comparison against the serial plan of the same shape is not bitwise, because
+    // the tile loop partitions differently per thread count.
     constexpr std::size_t N = 40, rows = 12;
     for (const r2r_kind kind : {r2r_kind::dct2, r2r_kind::dct3, r2r_kind::dst2, r2r_kind::dst3}) {
         const auto x = make_real_input<TestType>(N * rows, 88u + static_cast<unsigned>(kind));
@@ -144,17 +145,17 @@ TEMPLATE_TEST_CASE("r2r fct replaces the default scale", "[r2r]", float, double)
     const auto x = make_real_input<TestType>(N, 4242u);
     std::vector<TestType> a(N), b(N);
 
-    // fct is an exact output scale: it REPLACES the default, so it scales linearly and
-    // fct == the default reproduces the default path bit for bit.
+    // `fct` is an exact output scale: the value REPLACES the default, so the output
+    // scales linearly. `fct` == the default reproduces the default path bit for bit.
     admiral::plan_r2r<TestType> p2(N, admiral::r2r_kind::dct2);
     p2.forward(x.data(), a.data());
-    p2.forward(x.data(), b.data(), TestType(1));   // dct2's default already is 1
+    p2.forward(x.data(), b.data(), TestType(1));   // `dct2`'s default already is 1
     CHECK(a == b);
     p2.forward(x.data(), b.data(), TestType(3));
     for (std::size_t i = 0; i < N; ++i) CHECK(b[i] == TestType(3) * a[i]);
 
     // The 2N that separates the library's convention from FFTW's is the type-3
-    // forward's default, and nothing else: at fct == 1 that direction is the type-2
+    // forward's default, nothing else. At `fct` == 1, that direction is the type-2
     // kind's exact inverse instead.
     admiral::plan_r2r<TestType> p3(N, admiral::r2r_kind::dct3);
     p3.forward(x.data(), a.data());
@@ -164,9 +165,10 @@ TEMPLATE_TEST_CASE("r2r fct replaces the default scale", "[r2r]", float, double)
 
 TEMPLATE_TEST_CASE("r2r runs in place", "[r2r]", float, double) {
     using admiral::r2r_kind;
-    // Both cores stage the whole input into scratch before storing anything, so
-    // out == in is legal at any rows. Bitwise, because it is the same code either way.
-    // A reorder that interleaved the passes would corrupt this and nothing else.
+    // Both cores (`dct2_rows`, `dct3_rows`) stage the whole input into scratch
+    // before storing anything, so out == in is legal at any `rows`. The comparison
+    // is bitwise: in-place and out-of-place run the same code. A pass-interleaving
+    // reorder would corrupt the in-place run and nothing else.
     for (const std::size_t N : {7u, 16u, 45u}) {
         for (const r2r_kind kind : {r2r_kind::dct2, r2r_kind::dct3, r2r_kind::dst2,
                                     r2r_kind::dst3}) {

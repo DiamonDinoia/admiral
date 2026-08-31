@@ -1,57 +1,43 @@
 #pragma once
 
 // ============================================================================
-// DIF (Gentleman-Sande) column passes: batched-along-stride analogue of
-// dif_passes.hpp. Used by the N-D row-column driver for every non-innermost
-// transform axis. Vectorizes over contiguous column lane c in [0,B) with a
-// broadcast scalar twiddle (axis pos a only, not column).
-//
-// Working-buffer layout (planar SoA, axis_extent * B elements):
-//   element (axis pos p, column c) at index p * B + c.
-//   Input:  p = a + ido*(j + IP*b)   (j radix, b group, a in [0,ido))
-//   Output: p = a + ido*(b + l1*k)
-//
-// AoS boundary (first/last/fused) reads/writes std::complex<T>* with
-// axis_stride between consecutive axis positions; aos_deinterleave /
-// aos_interleave applies identically to the 1D fused passes.
-// All radix math reused via dif_butterfly<T,Fwd,IP> (V-generic); the last pass
-// uses dif_butterfly_terminal, which prefers the PFA where emit is a bare store.
+// DIF (Gentleman-Sande) column passes, the batched-along-stride analogue of
+// `dif_passes.hpp`, for the N-D row-column driver's non-innermost axes. Vectorized
+// over the contiguous column lane c in [0,B) with a broadcast scalar twiddle.
+// Planar buffer layout: element (axis pos p, column c) at p * B + c, with
+// p = a + ido*(j + IP*b) in and p = a + ido*(b + l1*k) out. Boundary passes read
+// and write AoS at `axis_stride`. Radix math via `dif_butterfly` (V-generic); the last
+// pass uses `dif_butterfly_terminal`, which prefers the PFA where emit is a bare store.
 // ============================================================================
 
-#include <array>  // lane_prefix_mask lane-index sequence
+#include <array>  // `lane_prefix_mask` lane-index sequence
 #include <cassert>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
 
-#include <poet/poet.hpp>  // poet::static_for (runtime tail width -> compile-time mask)
-#include "cxx_compat.hpp"  // detail::bit_width
+#include <poet/poet.hpp>  // `poet::static_for` (runtime tail width -> compile-time mask)
+#include "cxx_compat.hpp"  // `detail::bit_width`
 #include "simd.hpp"
 
-#include "butterfly.hpp"      // dif_butterfly
+#include "butterfly.hpp"      // `dif_butterfly`
 #include "cache.hpp"          // kCacheLine
-#include "simd_swizzle.hpp"   // aos_deinterleave / aos_interleave, sized_cover
-#include "macros.hpp"         // ADM_ALWAYS_INLINE / ADM_NOINLINE / ADM_FLATTEN
+#include "simd_swizzle.hpp"   // `aos_deinterleave` / `aos_interleave`, `sized_cover`
+#include "macros.hpp"         // `ADM_ALWAYS_INLINE` / `ADM_NOINLINE` / `ADM_FLATTEN`
 
 namespace admiral {
 namespace detail {
 
-// Sub-batch column tails. On a long strided axis the L2 budget drives B BELOW W, where
-// the vector loop `c + W <= B` never runs, so the tail is not a thin remainder.
+// Sub-batch column tails: a long strided axis drives B BELOW W, so the tail is not a
+// thin remainder. `sized_cover` (`simd_swizzle.hpp`) covers it with exact-width pieces,
+// widest first, plus one backward-aligned full-width piece; no runtime mask.
 //
-// sized_cover (simd_swizzle.hpp) covers it: exact-width pieces, widest first, plus one
-// backward-aligned full-width piece where that beats narrowing. No runtime mask: the
-// same mechanism and gate as the row driver's small-ido pass, out here in the column
-// index.
+// The tail gets its OWN loop nest: a second body inside the bulk nest degrades the
+// bulk loop's codegen even at widths where the tail is provably dead.
 //
-// The tail gets its OWN loop nest rather than sharing the bulk one. Its start column is
-// loop-invariant, and a second body inside the bulk nest degrades the bulk loop's codegen
-// even at widths where the tail is provably dead. Two nests keep the bulk literal and
-// cost a second pass over the tile only when B % W != 0.
-//
-// Each piece is a free function template with PW as a template parameter, NOT a generic
-// lambda in the pass body. gcc 14.2 ICEs on an alias template instantiated from a
-// generic lambda's own parameter at this instantiation depth.
+// Each piece is a free function template with PW as a template parameter, NOT a
+// generic lambda in the pass body: gcc 14.2 ICEs on an alias template instantiated
+// from a generic lambda's own parameter at this instantiation depth.
 
 // One radix-IP butterfly over the PW contiguous columns at c: planar in, planar out.
 template<typename T, std::size_t IP, std::size_t PW>
@@ -83,25 +69,19 @@ ADM_ALWAYS_INLINE void dif_col_piece(const T* ccre, const T* ccim,
     });
 }
 
-// [c, B) in ONE full-width masked butterfly. Planar both sides, so a lane mask is the
-// whole story, with no swizzle to widen. Whichever of this and the piece cover needs fewer
-// ops wins; the crossover is "does the cover finish in one piece" (one_piece_cover below
-// picks per call).
+// [c, B) in ONE full-width masked butterfly: planar both sides, so a lane mask is the
+// whole story. `one_piece_cover` picks per call between this and the piece cover.
 //
-// Which mask FORM is cheaper is an ISA property, not a winner:
-//   AVX-512: a k-mask is a native operand, so building it at runtime is a few
-//   loop-invariant ops for the whole pass, whereas a constant TailN needs a W-1 arm
-//   chain that grows the shared tail function.
-//   AVX2: no mask register, so a constant mask lowers to plain narrow moves rather than
-//   vmaskmov, and the arm chain is short.
-// 32 vector registers is this codebase's wide-ISA proxy (see dif_wide_radices); on x86
-// it coincides with having mask registers.
+// Mask form is an ISA property: AVX-512 has native k-mask operands, so the runtime
+// mask is loop-invariant and cheap, while a constant TailN needs a W-1 arm chain;
+// AVX2 has no mask register, so a constant mask lowers to plain narrow moves, not
+// vmaskmov. The 32-register count is the wide-ISA proxy (`dif_wide_radices`); on x86
+// it coincides with mask registers.
 inline constexpr bool kRuntimeTailMask = poet::vector_register_count() >= 32;
 
-// True when sized_cover covers [first, last) with a single piece: the remainder is itself
-// an available width, or the backward-aligned overlap applies.
-// Precondition: the remainder is a sub-batch one, i.e. last - first < W. Callers pass a
-// W-aligned first; the mask is 64-bit, so the shift is in range for any shipped width.
+// True when `sized_cover` can cover [first, last) with ONE piece: the remainder is an
+// available width, or the backward-aligned overlap applies. Precondition: the
+// remainder is sub-batch, last - first < W, so the kPieceWidths shift stays in range.
 template<typename T>
 [[nodiscard]] constexpr bool one_piece_cover(std::size_t first, std::size_t last) {
     constexpr std::size_t W = xsimd::batch<T>::size;
@@ -110,11 +90,10 @@ template<typename T>
     return rem == 0 || ((kPieceWidths<T> >> rem) & 1u) != 0u || (last >= W && 2 * rem >= W);
 }
 
-// Mask generic over its form: xsimd's masked load/store take a batch_bool_constant just as
-// well as a batch_bool, so both gate arms share this one body.
-// FLATTEN, same reason as dif_pass_last_block: without it gcc-14 emits an out-of-line
-// radix_sym_dft for this butterfly, then folds the BULK pass's identical butterfly onto
-// it and calls it, so cells that never enter the tail pay for it.
+// Mask generic over its form, so both gate arms share this one body. FLATTEN, same
+// reason as `dif_pass_last_block`. Without it, gcc-14 emits an out-of-line
+// `radix_sym_dft` for this butterfly and folds the BULK pass's identical butterfly
+// onto the tail copy. Cells that never enter the tail would pay for it.
 template<typename T, std::size_t IP, typename Mask>
 ADM_ALWAYS_INLINE ADM_FLATTEN void dif_col_piece_masked(const T* ccre,
                                             const T* ccim,
@@ -144,7 +123,7 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_col_piece_masked(const T* ccre,
     });
 }
 
-// Same, reading AoS (axis_stride between axis positions) and writing planar.
+// Same, reading AoS (`axis_stride` between axis positions) and writing planar.
 template<typename T, bool Forward, std::size_t IP, std::size_t PW>
 ADM_ALWAYS_INLINE void dif_col_piece_first(const std::complex<T>* data,
                                            std::size_t axis_stride,
@@ -175,9 +154,9 @@ ADM_ALWAYS_INLINE void dif_col_piece_first(const std::complex<T>* data,
     });
 }
 
-// Masked twin of dif_col_piece_first: ONE full-width piece for a sub-batch block, instead of
-// a width descent. AoS side masked to 2*rem reals, planar side to rem lanes; the planar row
-// stride is B, so an unmasked store would clobber the next row.
+// Masked twin of `dif_col_piece_first`: ONE full-width piece instead of a width
+// descent. Stores need the mask: the planar row stride is B, so an unmasked store
+// would clobber the next row.
 template<typename T, bool Forward, std::size_t IP, bool HiHalf, typename Mask, typename AMask>
 ADM_ALWAYS_INLINE ADM_FLATTEN void dif_col_piece_first_masked(
     const std::complex<T>* data, std::size_t axis_stride, T* chre,
@@ -227,8 +206,8 @@ ADM_ALWAYS_INLINE void dif_col_piece_last(const T* ccre, const T* ccim,
     });
 }
 
-// Masked twin of dif_col_piece_last: planar loads masked (stride B, and the last row would
-// otherwise read past the scratch buffer), AoS store masked to 2*B reals.
+// Masked twin of `dif_col_piece_last`: planar loads masked (row stride B; the last row
+// would otherwise read past the scratch buffer), AoS store masked to 2*B reals.
 template<typename T, bool Forward, std::size_t IP, bool HiHalf, typename Mask, typename AMask>
 ADM_ALWAYS_INLINE ADM_FLATTEN void dif_col_piece_last_masked(
     const T* ccre, const T* ccim, std::complex<T>* data,
@@ -269,10 +248,9 @@ ADM_ALWAYS_INLINE void dif_col_piece_fused(std::complex<T>* data,
     });
 }
 
-// Rows of the compile-time-mask tail, one instantiation per width. NOINLINE for the reason
-// the whole tail is outlined: W-1 copies of this nest inside dif_col_tail regress the cover
-// path too. The runtime-mask arm has no wrapper at all. Even an ALWAYS_INLINE one pushes
-// dif_col_pass over gcc's inlining budget, which then outlines the bulk butterfly.
+// Rows of the compile-time-mask tail, one instantiation per width. `ADM_NOINLINE` like the
+// rest of the tail: even an `ADM_ALWAYS_INLINE` copy pushes `dif_col_pass` over gcc's inlining
+// budget, which then outlines the bulk butterfly. The runtime-mask arm has no wrapper.
 template<typename T, std::size_t IP, std::size_t TailN>
 ADM_NOINLINE void dif_col_masked_rows_ct(const T* ccre,
                                          const T* ccim, T* chre,
@@ -289,8 +267,8 @@ ADM_NOINLINE void dif_col_masked_rows_ct(const T* ccre,
                                                  twre, twim, m);
 }
 
-// Masked arm of the first pass, own frame for the reason the whole tail is outlined. HiHalf is
-// fixed per arm so the body carries no branch.
+// Masked arm of the first pass, outlined like the rest of the tail. HiHalf is fixed
+// per arm, so the body carries no branch.
 template<typename T, bool Forward, std::size_t IP, bool HiHalf>
 ADM_NOINLINE void dif_col_masked_rows_first(const std::complex<T>* data,
                                             std::size_t axis_stride, T* chre,
@@ -308,8 +286,8 @@ ADM_NOINLINE void dif_col_masked_rows_first(const std::complex<T>* data,
                                                               am);
 }
 
-// Compile-time-mask twins of the two nests above, for the arm where a constant mask is the
-// cheaper form. TailN fixes HiHalf too, so there is one arm per width, not two.
+// Compile-time-mask twins of the two nests above, for the arm where a constant mask
+// is the cheaper form. TailN fixes HiHalf too: one arm per width, not two.
 template<typename T, bool Forward, std::size_t IP, std::size_t TailN>
 ADM_NOINLINE void dif_col_masked_rows_first_ct(const std::complex<T>* data,
                                               std::size_t axis_stride, T* chre,
@@ -343,10 +321,10 @@ ADM_NOINLINE void dif_col_masked_rows_last_ct(const T* ccre,
             ccre, ccim, data, axis_stride, l1, B, b, 0, scale_val, m, aos_ct_masks<TailN, T>{});
 }
 
-// Runs f with the sub-batch width as a compile-time constant, over the widths that are NOT
-// themselves piece widths, the only ones a cover would have to descend for, so the arm
-// chain is far shorter than W-1. False when no arm matches, so callers keep their cover as
-// the fallback rather than silently skipping the tail.
+// Runs `f` with the sub-batch width as a compile-time constant, over the widths that
+// are NOT piece widths. A cover descends only those widths; the arm chain is far
+// shorter than W-1. Returns false when no arm matches, so callers keep the cover as
+// fallback.
 template<typename T, typename F>
 [[nodiscard]] ADM_ALWAYS_INLINE bool dispatch_masked_width(std::size_t rem, const F& f) {
     constexpr std::size_t W = xsimd::batch<T>::size;
@@ -363,17 +341,14 @@ template<typename T, typename F>
 }
 
 // ----------------------------------------------------------------------------
-// Column-tail nests, one per pass. ADM_NOINLINE: even in its own loop nest the
-// tail degrades the bulk loop's codegen at widths where it provably never runs
-// (B % W == 0 or B < W). Outlining costs one call per pass invocation and keeps
-// the bulk literal.
+// Column-tail nests, one per pass, all `ADM_NOINLINE`: even in its own loop nest the
+// tail degrades the bulk loop's codegen at widths where it provably never runs.
 // ----------------------------------------------------------------------------
 
-// Runs f with the piece width as a compile-time constant when [cfull, cfull+rem) is
-// covered by ONE piece of an available width >= 2, else returns false. Width 1 is
-// excluded: a specialised scalar piece does not beat the generic body. Widths >= W are
-// unreachable: every caller enters a tail only for a sub-batch remainder, since cfull != B
-// gives rem = B % W, and the _last pass gates on B < W.
+// Runs f with the piece width as a compile-time constant when one available width
+// >= 2 covers [cfull, cfull+rem), else returns false. Width 1 is excluded: a scalar
+// piece does not beat the generic body. rem < W at every caller: tails start only at
+// a sub-batch remainder (the `_last` pass gates on B < W).
 template<typename T, typename F>
 [[nodiscard]] ADM_ALWAYS_INLINE bool dispatch_one_piece(std::size_t rem, F&& f) {
     constexpr std::size_t W = xsimd::batch<T>::size;
@@ -434,10 +409,8 @@ ADM_NOINLINE void dif_col_tail(const T* ccre, const T* ccim,
                                std::size_t cfull,
                                const T* twre, const T* twim) {
     constexpr std::size_t W = xsimd::batch<T>::size;
-    // Out of place, so the backward-aligned overlap is legal: it rewrites the
-    // recomputed columns with identical values.
-    // Cover outermost: the width descent is per pass, not per (b, a); see the note
-    // on dif_col_tail_last_general.
+    // Out of place, so the backward-aligned overlap rewrites recomputed columns with
+    // identical values and is legal. Cover outermost: the width descent is per pass.
     if (!one_piece_cover<T>(cfull, B)) {
         if constexpr (kRuntimeTailMask) {
             const auto m = lane_prefix_mask<T>(B - cfull);
@@ -469,10 +442,9 @@ ADM_NOINLINE void dif_col_tail_first(const std::complex<T>* data,
                                      std::size_t cfull,
                                      const T* twre, const T* twim) {
     constexpr std::size_t W = xsimd::batch<T>::size;
-    // Same two-arm shape as dif_col_tail: a block that is not itself a piece width would
-    // otherwise descend to scalar (f32 has no 2-wide batch, so 3 = 1+1+1 is three full row
-    // passes). One masked full-width piece replaces the descent, in whichever mask form the
-    // ISA prefers.
+    // Same two-arm shape as `dif_col_tail`: without the masked full-width arm a
+    // non-piece width descends to scalar (f32 has no 2-wide batch, so 3 = 1+1+1
+    // costs three full row passes).
     if (!one_piece_cover<T>(cfull, B)) {
         if constexpr (kRuntimeTailMask) {
             if (2 * (B - cfull) > W)
@@ -506,8 +478,7 @@ ADM_NOINLINE void dif_col_tail_last_general(const T* ccre,
                                            std::size_t axis_stride, std::size_t l1, std::size_t B,
                                            T scale_val) {
     constexpr std::size_t W = xsimd::batch<T>::size;
-    // Cover outside the row loop: the width descent (one guard per candidate width) is
-    // then paid once per pass instead of once per row.
+    // Cover outside the row loop: the width descent is paid once per pass, not per row.
     sized_cover<T, W, true>(0, B, [&](auto PWc, std::size_t c) {
         for (std::size_t b = 0; b < l1; ++b)
             dif_col_piece_last<T, Forward, IP, PWc.value>(ccre, ccim, data, axis_stride,
@@ -527,10 +498,8 @@ ADM_NOINLINE void dif_col_tail_last_masked(const T* ccre, const T* ccim,
                                                           B, b, 0, scale_val, m, am);
 }
 
-// Three frames on purpose. The arm chain shares a stack frame with nothing else:
-// dif_col_pass_last is register-tight from the AoS store-align peel, so folding the chain
-// into the caller, or placing it in front of the general cover, regresses cells whose
-// executed path never reaches it. The extra call on the general path amortises over l1 rows.
+// Three frames on purpose: `dif_col_pass_last` is register-tight from the store-align
+// peel, so folding the arm chain into the caller regresses cells that never reach it.
 template<typename T, bool Forward, std::size_t IP>
 ADM_NOINLINE void dif_col_tail_last(const T* ccre, const T* ccim,
                                     std::complex<T>* data, std::size_t axis_stride,
@@ -568,11 +537,9 @@ ADM_NOINLINE void dif_col_tail_fused(std::complex<T>* data, std::size_t axis_str
                                      std::size_t l1, std::size_t B, std::size_t cfull,
                                      T scale_val) {
     constexpr std::size_t W = xsimd::batch<T>::size;
-    // Overlap disabled: this pass is IN PLACE, so a backward-aligned piece would
-    // re-read the columns the bulk loop already overwrote. Exact-width pieces only.
-    // Row loop OUTSIDE the cover here, unlike the other three passes: an in-place piece
-    // cannot keep its loads live across rows the way a separate-buffer piece can, and
-    // hoisting the cover regresses it.
+    // IN PLACE: a backward-aligned piece would re-read columns the bulk loop already
+    // overwrote, so exact-width pieces only. Row loop outside the cover, unlike the
+    // other passes: an in-place piece cannot keep its loads live across rows.
     for (std::size_t b = 0; b < l1; ++b)
         sized_cover<T, W, false>(cfull, B, [&](auto PWc, std::size_t c) {
             dif_col_piece_fused<T, Forward, IP, PWc.value>(data, axis_stride, l1, b, c,
@@ -580,8 +547,6 @@ ADM_NOINLINE void dif_col_tail_fused(std::complex<T>* data, std::size_t axis_str
         });
 }
 
-// Generic vectorized column DIF pass: planar SoA in -> planar SoA out.
-// Vectorizes over the contiguous column lane c in [0,B); broadcast twiddle.
 template<typename T, std::size_t IP>
 void dif_col_pass(const T* ccre, const T* ccim,
                   T* chre, T* chim,
@@ -625,9 +590,8 @@ void dif_col_pass(const T* ccre, const T* ccim,
             dif_col_tail<T, IP>(ccre, ccim, chre, chim, l1, ido, B, cfull, twre, twim);
 }
 
-// First pass: reads AoS std::complex<T>* (axis_stride between axis positions),
-// writes planar SoA. l1 == 1 for the first pass; ido >= 2 (single-factor axes
-// take the fused path), so the output twiddle is always present.
+// First pass: AoS in (`axis_stride` between axis positions), planar out. l1 == 1 and
+// ido >= 2 here (single-factor axes take the fused path), so the output twiddle exists.
 template<typename T, bool Forward, std::size_t IP>
 void dif_col_pass_first(const std::complex<T>* data, std::size_t axis_stride,
                         T* chre, T* chim,
@@ -674,9 +638,8 @@ void dif_col_pass_first(const std::complex<T>* data, std::size_t axis_stride,
                                               twre, twim);
 }
 
-// Last pass: reads planar SoA, writes AoS std::complex<T>* (axis_stride between
-// axis positions). ido == 1 always for the last pass (l1 == axis_extent/IP), so
-// the output twiddle is W^0 = 1 (twre/twim unused).
+// Last pass: planar in, AoS out (`axis_stride` between axis positions). ido == 1 always
+// (l1 == `axis_extent`/IP), so the output twiddle is W^0 = 1 and twre/twim go unused.
 template<typename T, bool Forward, std::size_t IP>
 void dif_col_pass_last(const T* ccre, const T* ccim,
                        std::complex<T>* data, std::size_t axis_stride,
@@ -686,8 +649,7 @@ void dif_col_pass_last(const T* ccre, const T* ccim,
     using batch = xsimd::batch<T>;
     constexpr std::size_t W = batch::size;
 
-    // Invariant: the last DIF pass always has ido == 1: no output twiddle.
-    assert(ido == 1);
+    assert(ido == 1);  // last-pass invariant: no output twiddle
 
     if (B < W) {
         dif_col_tail_last<T, Forward, IP>(ccre, ccim, data, axis_stride, l1, B, scale_val);
@@ -695,16 +657,15 @@ void dif_col_pass_last(const T* ccre, const T* ccim,
     }
 
     // Peel leading columns to align the scattered AoS output stores to cache lines
-    // (see aos_store_align_peel). Invariant across b (depends only on data, stride).
+    // (see `aos_store_align_peel`). Invariant across b (depends only on data, stride).
     const std::size_t peel = aos_store_align_peel<T>(data, axis_stride, B);
 
     for (std::size_t b = 0; b < l1; ++b) {
-        // Butterfly W columns at c, then store via `store` (dst, re, im). The store
-        // is a template functor so the aligned bulk (plain aos_interleave) and the
-        // head/tail (compile-time prefix/suffix dispatch) are SEPARATE instantiations:
-        // the hot bulk body carries none of the partial-store dispatch. The pass writes each
-        // column exactly once with identical vector arithmetic, which preserves
-        // 1-vs-N-thread bit identity (scalar FMAs contract differently).
+        // Butterfly W columns at c, then store via the functor: the aligned bulk
+        // (plain `aos_interleave`) and the head/tail (prefix/suffix dispatch) are
+        // SEPARATE instantiations, so the hot bulk carries no partial-store dispatch.
+        // Each column is written once with identical vector arithmetic, which
+        // preserves 1-vs-N-thread bit identity.
         const auto vec_block = [&](std::size_t c, auto store) {
             batch tr[IP], ti[IP];
             for (std::size_t j = 0; j < IP; ++j) {
@@ -720,8 +681,7 @@ void dif_col_pass_last(const T* ccre, const T* ccim,
                 store(dst, xr, xi);
             });
         };
-        // Head [0,peel) aligns bulk stores; tail block at B-W covers the remainder.
-        // Both in-bounds and disjoint from bulk: each column written exactly once.
+        // Head [0,peel) aligns bulk stores; the tail block at B-W covers the remainder.
         std::size_t c = 0;
         if (peel > 0) {                            // head: store lanes [0,peel)
             vec_block(0, [peel](T* d, batch r, batch i) { aos_interleave_prefix_n<T>(d, r, i, peel); });
@@ -736,9 +696,8 @@ void dif_col_pass_last(const T* ccre, const T* ccim,
     }
 }
 
-// Single-pass (fused first+last): reads and writes AoS. Reached when the axis
-// length factors to a single radix, so l1 == 1 and ido == 1 (twiddle trivial).
-// Invariant: ido == 1, so this pass carries no ido>1 twiddle branch.
+// Single-pass (fused first+last), AoS in place: reached when the axis length is one
+// radix, so l1 == 1 and ido == 1 and the twiddle is trivial.
 template<typename T, bool Forward, std::size_t IP>
 void dif_col_pass_fused(std::complex<T>* data, std::size_t axis_stride,
                         std::size_t l1, [[maybe_unused]] std::size_t ido, std::size_t B,
@@ -747,22 +706,20 @@ void dif_col_pass_fused(std::complex<T>* data, std::size_t axis_stride,
     using batch = xsimd::batch<T>;
     constexpr std::size_t W = batch::size;
 
-    // ido == 1 invariant: twiddles are W^0 = 1 (not needed).
     const std::size_t cfull = B - B % W;
 
     if (B >= W) {
         for (std::size_t b = 0; b < l1; ++b) {
-            // a = 0 only (ido == 1).
             for (std::size_t c = 0; c < cfull; c += W) {
                 batch tr[IP], ti[IP];
                 for (std::size_t j = 0; j < IP; ++j) {
-                    const std::size_t p = j + IP * b;  // a==0, ido==1 → a + ido*(j+IP*b) = j+IP*b
+                    const std::size_t p = j + IP * b;  // a==0, ido==1 gives j+IP*b
                     const T* src = reinterpret_cast<const T*>(data + p * axis_stride + c);
                     auto [dr, di] = plane_refs<Forward>(tr[j], ti[j]);
                     aos_deinterleave<T>(src, dr, di);
                 }
                 dif_butterfly_terminal<T, IP>(tr, ti, [&](const auto k, batch sr, batch si) {
-                    const std::size_t p = b + l1 * k;  // a==0, ido==1 → a + ido*(b+l1*k) = b+l1*k
+                    const std::size_t p = b + l1 * k;  // a==0, ido==1 gives b+l1*k
                     T* dst = reinterpret_cast<T*>(data + p * axis_stride + c);
                     const batch sv(scale_val);
                     const auto [xr, xi] = plane_vals<Forward>(sr * sv, si * sv);
@@ -776,7 +733,7 @@ void dif_col_pass_fused(std::complex<T>* data, std::size_t axis_stride,
 }
 
 // ----------------------------------------------------------------------------
-// Runtime-radix dispatch functors (mirror dif_passes.hpp).
+// Runtime-radix dispatch functors (mirror `dif_passes.hpp`).
 // ----------------------------------------------------------------------------
 
 template<typename T>

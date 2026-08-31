@@ -1,7 +1,7 @@
-// The float half of the exported ABI; see cpp_api.hpp for the definitions.
+// The float half of the exported ABI; see `cpp_api.hpp` for the definitions.
 
 #include "cpp_api.hpp"
-#include "admiral/detail/cxx_compat.hpp"  // span
+#include "admiral/detail/cxx_compat.hpp"  // `span`
 
 namespace admiral {
 

@@ -1,15 +1,11 @@
-# Optional regeneration of include/admiral/detail/base_cost_model.hpp.
-#
-# OFF by default, and no build needs it. The checked-in header is coefficients
-# only, pooled over every swept build. effort::automatic recovers a size those
-# coefficients misprice at plan time.
-#
-# Turn it on to fold a new compiler, version or target into the pool. No Python.
-# The fitter is C++ (tools/fit_cost_model.cpp).
+# Optional regeneration of `include/admiral/detail/base_cost_model.hpp`: coefficients
+# only, pooled over every swept build; `effort::automatic` recovers a mispriced size
+# at plan time. OFF by default; turn on to fold a new compiler, version or target
+# into the pool. The fitter is C++20 stdlib-only (`tools/fit_cost_model.cpp`), no
+# Python.
 #   cmake -B b -DADM_FIT_COST_MODEL=ON
 #   cmake --build b --target admiral_cost_sweep   # measure THIS build
-#   cmake --build b --target admiral_cost_model   # refit the header from all
-#                                                 # receipts in the data dir
+#   cmake --build b --target admiral_cost_model   # refit from all receipts
 
 option(ADM_FIT_COST_MODEL
        "Expose targets that re-measure and refit the routing cost model" OFF)
@@ -22,18 +18,14 @@ set(ADM_COST_MODEL_DATA "${CMAKE_CURRENT_SOURCE_DIR}/bench-results" CACHE PATH
     "Directory of BASECOST receipts to fit the routing cost model from")
 file(MAKE_DIRECTORY "${ADM_COST_MODEL_DATA}")
 
-# Defaults write the shipped header in-tree, like any code generator; point this
-# elsewhere to dry-run a refit without dirtying the checkout.
+# The default overwrites the shipped header in-tree; point elsewhere to dry-run a refit.
 set(ADM_COST_MODEL_OUT
     "${CMAKE_CURRENT_SOURCE_DIR}/include/admiral/detail/base_cost_model.hpp"
     CACHE FILEPATH "Header the admiral_cost_model target (re)generates")
 
-# The receipt file name only has to be unique; its contents are self-describing
-# (BASECOST-ENV records compiler, version, width and register count). Compile
-# flags hash in as well. Two builds of one compiler at different -march are different
-# codegen and must not share a receipt. The uarch mixes in too, because identical
-# flags on different silicon share the flags-hash, and one machine must not clobber
-# another's.
+# The receipt name only has to be unique; the receipt contents self-describe via
+# `BASECOST-ENV` (compiler, version, width, register count). Flags hash in, and the
+# uarch too. Two builds sharing flags but not silicon must not share a receipt.
 get_target_property(_adm_opts admiral_optimization_flags INTERFACE_COMPILE_OPTIONS)
 set(_adm_flags)
 foreach(_o IN LISTS _adm_opts)
@@ -42,7 +34,7 @@ foreach(_o IN LISTS _adm_opts)
   endif()
 endforeach()
 if(NOT CMAKE_CROSSCOMPILING)
-  # try_run is (<runResult> <compileResult>): here, run-exit = 0, compiled = TRUE.
+  # `try_run` takes (<runResult> <compileResult>): here run-exit = 0, compiled = TRUE.
   try_run(_adm_ua_exit _adm_ua_compiled ${CMAKE_CURRENT_BINARY_DIR}/uarch_probe
     SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/cmake/probe_uarch.cpp
     CMAKE_FLAGS
@@ -77,10 +69,8 @@ else()
     VERBATIM)
 endif()
 
-# tools/fit_cost_model.cpp is stdlib-only and deterministic, so the header is
-# reproducible from the receipts. It reads math.hpp for the measured codelet cost
-# table that the fitted features use. A second copy in the fitter could
-# silently drift from what the engine runs.
+# `tools/fit_cost_model.cpp` is stdlib-only and reads the measured codelet-cost table
+# in `math.hpp`, so the fitter cannot silently drift from what the engine runs.
 add_executable(admiral_fit_cost_model tools/fit_cost_model.cpp)
 target_include_directories(admiral_fit_cost_model PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/include ${ADM_GENERATED_INCLUDE_DIR})

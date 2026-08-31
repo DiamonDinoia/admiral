@@ -1,5 +1,5 @@
 // The long double half of the exported C++ ABI: definitions live in
-// cpp_api.hpp; the scalar engine is in include/admiral/detail/scalar_fft.hpp.
+// `cpp_api.hpp`; the scalar engine is in `include/admiral/detail/scalar_fft.hpp`.
 
 #include "cpp_api.hpp"
 

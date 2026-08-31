@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """Interleaved A/B wall-clock compare of two admiral_benchmark binaries.
 
-Runner timing is drift-heavy, so the protocol interleaves. Each cell runs
-back-to-back inside the same window, round order rotates AB/BA, and the answer
-is the min per binary. The ratios only claim direction unless the
-spread columns are small.
+Runner timing drifts, so each cell runs back-to-back inside one window, round order
+rotates AB/BA, and the answer is the min per binary. Ratios claim direction only
+unless the spread columns are small.
 
 usage: ci_perf_ab.py BIN_A BIN_B [--rounds=6] [--grid=ci|full] [--json=path]
 
-Grid lines: N,prec,iters, picked so each arm-call is ~20-100 ms. The bench
-includes a per-call buffer copy, which compresses ratios toward 1 at large N.
-Requires both binaries to offer --size=N --iters=M --prec=f32|f64 (built with
-ADM_BUILD_BENCHMARKS=ON).
+Grid lines are N,prec,iters picked for ~20-100 ms per arm-call. The bench's per-call
+buffer copy compresses ratios toward 1 at large N. Both binaries must offer
+--size=N --iters=M --prec=f32|f64 (built with ADM_BUILD_BENCHMARKS=ON).
 """
 import argparse, json, re, subprocess, sys
 import math
@@ -64,7 +62,7 @@ def main():
         results[f"{n},{p}"] = {"A": a, "B": b, "ratio": a / b, "spreadA": sa, "spreadB": sb}
         rows.append(f"{n:>9} {p:>4} {a:>10.3f} {b:>10.3f} {a/b:>7.3f} {sa:>6.1f} {sb:>6.1f}")
     print("\n".join(rows))
-    # Slowest geometric-mean ratio across cells: the one-number verdict.
+    # Geometric mean of the per-cell ratios, the one-number verdict.
     geo = math.exp(sum(math.log(v["ratio"]) for v in results.values()) / len(results))
     print(f"geomean A/B = {geo:.4f} over {len(results)} cells")
     if args.json:

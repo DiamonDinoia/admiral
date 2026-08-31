@@ -1,5 +1,5 @@
-// strides_plan transforms a batch of strided lines out of place, under FFTW's
-// plan_many(rank = 1) geometry. Source and destination carry independent (stride,
+// `strides_plan` transforms a batch of strided lines out of place, under FFTW's
+// `plan_many(rank = 1)` geometry. Source and destination carry independent (stride,
 // dist) pairs, so one call transforms every column of a row-major matrix and writes
 // the result column-major.
 #include <admiral/admiral.hpp>

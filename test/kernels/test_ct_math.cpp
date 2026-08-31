@@ -1,12 +1,12 @@
-// ct_math.hpp holds the compile-time number-theory helpers behind kernel generation.
+// `ct_math.hpp` holds the compile-time number-theory helpers behind kernel generation.
 //
 // Two layers on purpose:
-//   * static_assert is the actual contract. These run in the constant evaluator,
-//     which is how the generators call them, and a violation is a build failure
+//   * `static_assert` is the actual contract: the constant evaluator runs the checks,
+//     the way the generators call the helpers, and a violation is a build failure
 //     rather than a red test.
-//   * the TEST_CASE calls the same helpers through volatile arguments, which forces
-//     the RUNTIME instantiation no generator emits. That is a coverage path, not a
-//     second assertion of the same fact, so it only spot-checks.
+//   * the `TEST_CASE` calls the same helpers through `volatile` arguments, which forces
+//     the RUNTIME instantiation no generator emits. The runtime call is a coverage path,
+//     not a second assertion of the same fact, so spot-checks suffice.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -21,7 +21,7 @@
 
 using namespace admiral::detail;
 
-// --- smallest_radix / codelet_radix peel the expected factor ---
+// --- `smallest_radix` / `codelet_radix` peel the expected factor ---
 static_assert(smallest_radix(4) == 4);
 static_assert(smallest_radix(8) == 4);    // 8 % 4 == 0
 static_assert(smallest_radix(6) == 2);    // even, not a multiple of 4
@@ -29,7 +29,7 @@ static_assert(smallest_radix(9) == 3);
 static_assert(smallest_radix(25) == 5);
 static_assert(smallest_radix(49) == 7);
 static_assert(smallest_radix(121) == 11);
-static_assert(smallest_radix(13) == 13);  // prime to our radix set
+static_assert(smallest_radix(13) == 13);  // prime, outside the radix set
 static_assert(codelet_radix(32) == 8);    // special-cased radix-8 peel
 static_assert(codelet_radix(60) == 5);    // special-cased
 static_assert(codelet_radix(16) == 4);
@@ -54,8 +54,8 @@ static_assert(is_rader_prime(19));
 static_assert(is_rader_prime(97));
 static_assert(!is_rader_prime(100));      // composite
 
-// g is a primitive root iff its powers hit every residue in [1,p) exactly once.
-// The constant evaluator checks it for the primes Rader plans.
+// `g` is a primitive root iff the powers of `g` reach every residue in [1,p) exactly
+// once. The constant evaluator checks the property for the primes Rader plans.
 constexpr bool generates_group(std::size_t p) {
     const std::size_t g = ct_primitive_root(p);
     if (g < 2) return false;
@@ -71,17 +71,17 @@ static_assert(generates_group(17));
 static_assert(generates_group(97));
 static_assert(generates_group(101));
 
-// --- the twiddle fold is accurate at whatever width F carries ---
+// --- the twiddle fold is accurate at whatever width `F` carries ---
 //
-// ct_sincos_turns is the ONLY twiddle source for the butterflies, so its error
-// is a phase error the whole transform inherits. Nothing else can catch a fold
-// that is short: every transform test compares against a reference folded the
-// same way, or against a tolerance scaled to the element type rather than to
-// the fold. libm is the independent reference here.
+// `ct_sincos_turns` is the ONLY twiddle source for the butterflies, so a fold error is a
+// phase error the whole transform inherits. Every transform test compares against a
+// reference folded the same way, or against a tolerance scaled to the element type
+// rather than to the fold. Neither catches a short fold; libm is the independent
+// reference here.
 //
-// F = long double is the case that bites. It is 64 bits on x86, 113 on aarch64
-// and 53 on arm64 macOS, so a fold calibrated to one of those is wrong on the
-// others, and only this test says so.
+// `F` = `long double` is the case that bites. `long double` is 64 bits on x86, 113 on
+// aarch64 and 53 on arm64 macOS. A fold calibrated to one of those widths is wrong on
+// the others, and only this test says so.
 template<typename F, std::size_t Den>
 ADM_CONSTEVAL std::array<ct_sincos_v<F>, Den> folded_turns() {
     std::array<ct_sincos_v<F>, Den> a{};
@@ -89,8 +89,8 @@ ADM_CONSTEVAL std::array<ct_sincos_v<F>, Den> folded_turns() {
     return a;
 }
 
-// Worst |folded - libm| over one den, in eps(F). Den is a template parameter
-// because ct_sincos_turns is consteval: the table has to fold at compile time.
+// Worst |folded - libm| over one `Den`, in eps(`F`). `Den` is a template parameter
+// because `ct_sincos_turns` is `consteval`: the table must fold at compile time.
 template<typename F, std::size_t Den>
 F turns_err() {
     constexpr std::array<ct_sincos_v<F>, Den> tab = folded_turns<F, Den>();
@@ -106,8 +106,8 @@ F turns_err() {
     return worst;
 }
 
-// den 7 is the sharp one: the octant residual reaches (pi/4)*6/7, where a short
-// series has the least room. The catalog reaches every den below.
+// `Den` = 7 is the sharp case: the octant residual reaches (pi/4)*6/7, where a short
+// series has the least room. The catalog reaches every `Den` below.
 template<typename F>
 F worst_turns_err() {
     F w = 0;
@@ -125,10 +125,11 @@ TEST_CASE("ct_sincos_turns matches libm at the fold precision", "[ct_math][numer
     REQUIRE(wd <= 8);
 }
 
-// The SIMD engines fold at double; only the scalar long double backend asks for more,
-// and it is the width that varies across the CI hosts. Tagged so the valgrind legs can
-// drop it: valgrind emulates x87 80-bit long double in 64-bit, so the fold computes at
-// double while eps() still reads 2^-64, and the ratio alone reports 9216 eps.
+// The SIMD engines fold at `double`; only the scalar `long double` backend asks for
+// more, and the `long double` width varies across the CI hosts. The tag lets the
+// valgrind legs drop the case: valgrind emulates x87 80-bit `long double` in 64-bit, so
+// the fold computes at `double` while `epsilon()` still reads 2^-64. The ratio alone
+// reports 9216 eps.
 TEST_CASE("ct_sincos_turns matches libm at the long double fold precision",
           "[ct_math][numerics][longdouble]") {
     const double wl = static_cast<double>(worst_turns_err<long double>());
@@ -137,8 +138,9 @@ TEST_CASE("ct_sincos_turns matches libm at the long double fold precision",
     REQUIRE(wl <= 8);
 }
 
-// The helpers are constexpr, not consteval, so nothing above emits a runtime
-// definition. Call them through volatile arguments to cover that instantiation.
+// The helpers are `constexpr`, not `consteval`, so nothing above emits a runtime
+// definition. Call the helpers through `volatile` arguments to cover the runtime
+// instantiation.
 TEST_CASE("ct_math helpers evaluate at runtime too", "[coverage][ct_math]") {
     auto rt = [](std::size_t n) { volatile std::size_t v = n; return smallest_radix(v); };
     REQUIRE(rt(8) == 4);
@@ -147,7 +149,7 @@ TEST_CASE("ct_math helpers evaluate at runtime too", "[coverage][ct_math]") {
     auto cr = [](std::size_t n) { volatile std::size_t v = n; return codelet_radix(v); };
     REQUIRE(cr(32) == 8);
     REQUIRE(cr(60) == 5);
-    REQUIRE(cr(16) == 4);   // neither special case: the smallest_radix fall-through
+    REQUIRE(cr(16) == 4);   // neither special case: the `smallest_radix` fall-through
 
     auto ip = [](std::size_t n) { volatile std::size_t v = n; return ct_is_prime(v); };
     REQUIRE(ip(65537));

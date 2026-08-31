@@ -1,6 +1,6 @@
-// Undefines the macros from admiral/detail/macros.hpp so they never leak into user
-// translation units. Include at the end of every detail header that included
-// macros.hpp. Mirrors POET's undef_macros.hpp convention.
+// Undefines the `macros.hpp` symbols so they never leak into user translation
+// units. In every detail header that included `macros.hpp`, include this
+// header last.
 
 #undef ADM_DETAIL_MACROS_ACTIVE
 #undef ADM_ALWAYS_INLINE

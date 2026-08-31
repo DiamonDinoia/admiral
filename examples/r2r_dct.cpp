@@ -1,4 +1,4 @@
-// DCT-II and its exact inverse DCT-III (dct2/dct3; the dst pair works the same).
+// DCT-II and its exact inverse DCT-III (`dct2`/`dct3`; the `dst` pair works the same).
 #include <admiral/admiral.hpp>
 
 #include <cmath>
@@ -22,7 +22,7 @@ int main() {
         return 1;
     }
 
-    // Batched form: rows contiguous lines of n at once (N-D = transpose yourself).
+    // Batched form: transforms contiguous lines of n at once (N-D: transpose between axes).
     admiral::plan_r2r<double> batched(n, admiral::r2r_kind::dct2, 8);
     std::vector<double> block(8 * n, 1.0), bout(8 * n);
     batched.forward(block, bout);

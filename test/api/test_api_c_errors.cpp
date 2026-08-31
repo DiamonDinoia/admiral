@@ -1,6 +1,6 @@
-// C API error paths: every adm_status string, and the argument validation on the
-// 1-D / N-D / plan / r2c-c2r entry points. The happy paths live in test_api_c.cpp;
-// these are the branches a working caller never takes.
+// C API error paths: every `adm_status` string, and the argument validation on the
+// 1-D / N-D / plan / r2c-c2r entry points. The happy paths live in `test_api_c.cpp`;
+// a working caller never takes the branches covered here.
 
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -26,8 +26,9 @@ TEST_CASE("C API error strings cover every status", "[coverage][c_api]") {
     REQUIRE(std::string(adm_error_string(ADM_ERROR_OUT_OF_MEMORY)) == "Out of memory");
     REQUIRE(std::string(adm_error_string(ADM_ERROR_INVALID_PLAN)) == "Invalid plan");
     REQUIRE(std::string(adm_error_string(ADM_ERROR_INTERNAL)) == "Internal error");
-    // 3 is inside adm_status' value range (enumerators -6..0 => 4 signed bits => -8..7)
-    // but is not an enumerator, so this hits the default branch with defined behaviour.
+    // 3 is inside the `adm_status` value range (enumerators -6..0 => 4 signed bits
+    // => -8..7) but is not an enumerator. The call takes the default branch with
+    // defined behaviour.
     REQUIRE(std::string(adm_error_string(static_cast<adm_status>(3))) == "Unknown error");
 }
 
@@ -40,7 +41,8 @@ TEST_CASE("C API plan handle carries the creation failure", "[coverage][c_api]")
     REQUIRE(adm_plan_status(p) == ADM_ERROR_INVALID_SIZE);
     REQUIRE(std::string(adm_plan_error_message(p)).find("greater than 0") != std::string::npos);
     std::vector<adm_complex> buf(8);
-    REQUIRE(adm_plan_execute_forward(p, buf.data()) == ADM_ERROR_INVALID_SIZE);  // replays err
+    // Executing the failed plan replays the creation error.
+    REQUIRE(adm_plan_execute_forward(p, buf.data()) == ADM_ERROR_INVALID_SIZE);
     REQUIRE(adm_plan_size(p) == 0);
     adm_plan_destroy(p);
 
@@ -51,7 +53,7 @@ TEST_CASE("C API plan handle carries the creation failure", "[coverage][c_api]")
     REQUIRE(std::string(adm_plan_error_message(good)).empty());
     adm_plan_destroy(good);
 
-    // A null handle: status reads as the pointer error.
+    // For a null handle, `adm_plan_status` returns the pointer error.
     REQUIRE(adm_plan_status(nullptr) == ADM_ERROR_NULL_POINTER);
 }
 
@@ -68,7 +70,7 @@ TEST_CASE("C API transform argument validation", "[coverage][c_api]") {
     REQUIRE(adm_inverse(nullptr, 4, nullptr) == ADM_ERROR_NULL_POINTER);
     REQUIRE(adm_inverse(&d, 0, nullptr) == ADM_ERROR_INVALID_SIZE);
 
-    // A valid single-element float transform (exercises the success path too).
+    // A valid single-element float transform also exercises the success path.
     REQUIRE(admf_forward(&f, 1, nullptr) == ADM_SUCCESS);
 }
 
@@ -83,9 +85,9 @@ TEST_CASE("C API N-D and plan argument validation", "[coverage][c_api]") {
     REQUIRE(adm_forward_nd(buf.data(), bad.data(), 2, nullptr) == ADM_ERROR_INVALID_SIZE);
     REQUIRE(admf_inverse_nd(nullptr, shape.data(), 2, nullptr) == ADM_ERROR_NULL_POINTER);
 
-    // Plan constructors: a failure does not leave null; it writes a queryable
-    // error record (covered by "plan handle carries the creation failure"),
-    // which each call here destroys.
+    // Plan constructors: a failure does not leave null. The constructor writes a
+    // queryable error record, and each call here destroys that record. The case
+    // "plan handle carries the creation failure" covers the query side.
     adm_plan p = nullptr;
     REQUIRE(admf_plan_1d(nullptr, 4, nullptr) == ADM_ERROR_NULL_POINTER);
     REQUIRE(admf_plan_1d(&p, 0, nullptr) == ADM_ERROR_INVALID_SIZE);
@@ -160,9 +162,9 @@ TEMPLATE_TEST_CASE("C API r2c/c2r round-trip and validation", "[coverage][c_api]
     }
 }
 
-// adm_options is the C mirror of admiral::options: same three knobs, nullptr for the
-// defaults. The C layer must reject an eff outside the enum rather than cast it,
-// because C cannot stop a caller from inventing one.
+// `adm_options` is the C mirror of `admiral::options`: same three knobs, `nullptr` for
+// the defaults. The C layer must reject an `eff` outside the enum rather than cast the
+// value, because C cannot stop a caller from inventing one.
 TEST_CASE("adm_options reaches threads, effort and debug", "[c_api][options]") {
     constexpr size_t N = 240;
     std::vector<adm_complex> data(N);
@@ -187,8 +189,8 @@ TEST_CASE("adm_options reaches threads, effort and debug", "[c_api][options]") {
     REQUIRE(adm_plan_size(plan) == N);
     adm_plan_destroy(plan);
 
-    // 3 is the largest value adm_effort's range can hold and is not an enumerator, so it
-    // is the only unnamed value a cast can produce without an unspecified result.
+    // 3 is the largest value the `adm_effort` range can hold and is not an enumerator.
+    // Every other unnamed value a cast produces has an unspecified result.
     const adm_options bad = {1, static_cast<adm_effort>(3), 0};
     REQUIRE(adm_forward(data.data(), N, &bad) == ADM_ERROR_INVALID_OPTION);
     REQUIRE(adm_plan_1d(&plan, N, &bad) == ADM_ERROR_INVALID_OPTION);

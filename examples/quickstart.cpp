@@ -1,4 +1,4 @@
-// The README Quick start, runnable. Returns nonzero if the round trip fails.
+// The README Quick start, runnable. The program returns nonzero if the round trip fails.
 #include <admiral/admiral.hpp>
 
 #include <cmath>

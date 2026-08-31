@@ -3,7 +3,7 @@
 
 #include "utils/reference.hpp"
 
-#include <admiral/admiral.hpp>   // strides_plan, plan
+#include <admiral/admiral.hpp>   // `strides_plan`, `plan`
 
 #include <algorithm>
 #include <complex>
@@ -13,10 +13,10 @@
 #include <limits>
 #include <vector>
 
-// strides_plan<T> transforms a batch of strided lines out of place:
+// `strides_plan<T>` transforms a batch of strided lines out of place:
 //   transform l, element p:
 //       src[p * in_stride + l * in_dist] -> dst[p * out_stride + l * out_dist]
-// Oracle: one admiral::plan<T> per line, gathered and scattered by hand.
+// Oracle: gather each line, transform with `admiral::plan<T>`, scatter into `want`.
 
 using admiral::span;
 
@@ -71,8 +71,8 @@ TEMPLATE_TEST_CASE("strides_plan matches per-line plan", "[transforms][strides]"
         check<T>(64, 8, 1, 64, 1, 64, forward);
         check<T>(64, 8, 1, 96, 1, 80, forward);
         // Contiguous rows in, column layout out: the per-line engine writes through
-        // one line of scratch and scatters. Unit in-stride is the only side that is
-        // contiguous, so no other case reaches this scatter.
+        // one line of scratch and scatters. `in_stride` == 1 is the only contiguous
+        // side, so no other case reaches this scatter.
         check<T>(64, 16, 1, 64, 16, 1, forward);
         check<T>(37, 11, 1, 37, 11, 1, forward);
         // Column layout of a (len x nbatch) contiguous tensor, axis 0.
@@ -91,8 +91,8 @@ TEMPLATE_TEST_CASE("strides_plan matches per-line plan", "[transforms][strides]"
         // Non-codelet length (prime): only the transposed route exists.
         check<T>(37, 16, 16, 1, 16, 1, forward);
         check<T>(37, 9, 18, 2, 18, 4, forward);
-        // Prime length with unit in-dist and a spread destination: the slab route
-        // needs a col chain, so this length falls through to the transposed one.
+        // Prime length, unit `in_dist`, spread destination: the slab route needs a
+        // col chain, so a prime length falls through to the transposed route.
         check<T>(37, 12, 37, 1, 37, 3, forward);
         // Narrow batch into a wide destination stride: the col route must hold
         // (the route reads the input geometry only), not flip on the output.
@@ -140,7 +140,7 @@ TEMPLATE_TEST_CASE("strides_plan in place and scaled", "[transforms][strides]", 
         }
     }
 
-    // Threads change how the batch loop and the column tiles are cut, so run the
+    // Threads change how the batch loop and the column tiles are cut. Run the
     // same geometry against the same oracle with the pool forced on.
     {
         admiral::options opts;
@@ -159,7 +159,7 @@ TEMPLATE_TEST_CASE("strides_plan in place and scaled", "[transforms][strides]", 
         }
     }
 
-    // Custom scale rides the out-of-place call.
+    // The custom scale applies through the out-of-place call.
     const auto src = make_input<T>(len * nbatch, 0x5CA1E);
     std::vector<std::complex<T>> out(len * nbatch);
     std::vector<std::complex<T>> want(len * nbatch);
@@ -177,7 +177,7 @@ TEMPLATE_TEST_CASE("strides_plan in place and scaled", "[transforms][strides]", 
 TEMPLATE_TEST_CASE("strides_plan degenerate and rejected geometry", "[transforms][strides]",
                    float, double) {
     using T = TestType;
-    // len == 1: identity axis, a scaled strided copy.
+    // `len` == 1: identity axis, a scaled strided copy.
     const auto src = make_input<T>(4, 0x1DE71);
     std::vector<std::complex<T>> out(4);
     admiral::strides_plan<T> lp(1, 4, 1, 1, 1, 1);
@@ -196,7 +196,7 @@ TEMPLATE_TEST_CASE("strides_plan degenerate and rejected geometry", "[transforms
     // separate and zero is legal on either side.
     REQUIRE_NOTHROW((admiral::strides_plan<T>(4, 1, 1, 0, 1, 0)));
 
-    // len * nbatch has to fit size_t: the plan sizes its scratch from that product.
+    // `len` * `nbatch` must fit in `size_t`: the plan sizes its scratch from that product.
     constexpr std::size_t big = std::numeric_limits<std::size_t>::max() / 2;
     REQUIRE_THROWS_AS((admiral::strides_plan<T>(big, 4, 1, 1, 1, 1)), admiral::size_error);
 
@@ -208,23 +208,22 @@ TEMPLATE_TEST_CASE("strides_plan degenerate and rejected geometry", "[transforms
 
 // Bit-identical across alignment classes.
 //
-// The column engine clones its store-policy lambda per inline context, and under
-// fast-math the compiler is free to contract and reassociate each clone
-// differently. Which clone covers a column depends on where the data starts, so
-// without the numerics pin in src/CMakeLists.txt one transform returns
-// 1-ULP-different bits per alignment class. Every check above compares against a
-// tolerance and passes right through that; only bitwise equality catches it.
+// The column engine clones its store-policy lambda per inline context; under
+// fast-math the compiler contracts and reassociates each clone differently.
+// Which clone covers a column depends on where the data starts. Without the
+// numerics pin in `src/CMakeLists.txt`, one transform returns 1-ULP-different
+// bits per alignment class. Every check above compares against a tolerance and
+// passes right through a 1-ULP difference; only bitwise equality catches one.
 //
-// The check is a real one. Strip the pin and rebuild: at Release/x86-64-v4/gcc
-// 14.2 this case fails on its first assertion, len 20 nbatch 16 forward through
-// axis_plan at offset 1, 2 of 320 elements differing at f32 and 38 of 320 at f64.
+// The check is a real one. Strip the pin and rebuild: this case fails at
+// Release/x86-64-v4 with gcc 14.2.
 namespace {
 
 // Runs one transform at every element offset 0..15 into the start of a buffer and
 // requires the results to agree bit for bit. Two plan types, one engine.
 template<typename T>
 void require_align_stable(std::size_t len, std::size_t nbatch, bool forward, bool axis) {
-    constexpr std::size_t kOff = 16;   // covers W for every ISA level admiral targets
+    constexpr std::size_t kOff = 16;   // covers `W` for every ISA level admiral targets
     const std::size_t n = len * nbatch;
     const auto in = make_input<T>(n, 0xA11C);
     std::vector<std::complex<T>> ref(n);
@@ -258,9 +257,10 @@ void require_align_stable(std::size_t len, std::size_t nbatch, bool forward, boo
 
 // One input layout, several output layouts, results gathered to logical (p, l)
 // order: bitwise equal. The route and the factoring proxy pick the numbers, so
-// this holds only while both read the input geometry alone. Pricing the output
-// stride into either breaks it: the wide-stride layout then flips the chooser
-// (f64 needs 2 * nbatch <= W, so v4 there) and, at pow2 f32, the radix-4 proxy.
+// bitwise equality holds only while both read the input geometry alone. Price the
+// output stride into the route or the proxy and bitwise equality breaks: the
+// wide-stride layout flips the chooser (f64 needs 2 * nbatch <= W, so v4 hits
+// the flip), and pow2 f32 flips the radix-4 proxy.
 template<typename T>
 void require_output_layout_stable(std::size_t len, std::size_t nbatch, std::size_t in_stride,
                                   std::size_t in_dist, bool forward) {
@@ -301,9 +301,10 @@ TEMPLATE_TEST_CASE("strides_plan bits do not depend on the output layout",
                    "[transforms][strides][numerics]", float, double) {
     using T = TestType;
     for (const bool forward : {true, false}) {
-        // Col-route input (pow2 and non-pow2), a transposed-route input whose wide
-        // element stride puts every output layout on the gather path, and a rows
-        // input (per-line engine, direct store vs line scratch and scatter).
+        // Col-route inputs (pow2 and non-pow2), a transposed-route input, and a
+        // rows input (per-line engine, direct store versus line scratch and
+        // scatter). The wide element stride puts every output layout on the gather
+        // path.
         require_output_layout_stable<T>(64, 2, 2, 1, forward);
         require_output_layout_stable<T>(60, 2, 2, 1, forward);
         require_output_layout_stable<T>(64, 2, 8192, 1, forward);
@@ -314,7 +315,7 @@ TEMPLATE_TEST_CASE("strides_plan bits do not depend on the output layout",
 TEMPLATE_TEST_CASE("column engine is bit-identical across alignment classes",
                    "[transforms][strides][numerics]", float, double) {
     using T = TestType;
-    // gcc breaks at len 20; clang needs len 60. 256 adds radix coverage.
+    // 20 and 60 broke without the pin; 256 adds radix coverage.
     for (const std::size_t len : {std::size_t{20}, std::size_t{60}, std::size_t{256}})
         for (const bool forward : {true, false})
             for (const bool axis : {true, false})

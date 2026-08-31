@@ -1,15 +1,14 @@
 #pragma once
-// Batched DIF multipass over size M in V-space: W independent sub-transforms, one
-// per SIMD lane, twiddles scalar-broadcast, two ping-pong V-plane pairs. No
-// kernel_batched<M> instantiation. real_fft.hpp drives this as the r2c/c2r tile engine.
+// Batched DIF multipass over size M in V-space: W independent sub-transforms,
+// one per SIMD lane, twiddles scalar-broadcast, two ping-pong V-plane pairs.
+// `real_fft.hpp` drives this file as the r2c/c2r tile engine.
 //
-// This is phase 2 of the three-phase ducc0 cfftp_vecpass architecture for
-// N = W*M. Phases 1 and 3 (the pack and the per-lane W_N^{l*k2} twist + size-W
-// cross-lane DFT) have no plan-side route. The benchmark's --vpass probe exercises
-// them.
+// Phase 2 of the ducc0 cfftp_vecpass architecture for N = W*M. Phases 1 and 3
+// (the pack and the per-lane twist + size-W cross-lane DFT) have no plan-side
+// route; the benchmark's `--vpass` probe exercises them.
 
-#include <admiral/detail/butterfly.hpp>    // dif_butterfly<T,IP,V> (forward-only)
-#include <admiral/detail/twiddles.hpp>     // build_dif_factor_plan, dif_factor_plan
+#include <admiral/detail/butterfly.hpp>    // `dif_butterfly<T,IP,V>` (forward-only)
+#include <admiral/detail/twiddles.hpp>     // `build_dif_factor_plan`, `dif_factor_plan`
 #include <admiral/detail/portable_trig.hpp>
 #include <vector>
 
@@ -22,18 +21,17 @@ struct pass_info {
     std::size_t ip;
     std::size_t l1;
     std::size_t ido;
-    std::size_t tw_offset; // index into the flat tw_re/tw_im tables
+    std::size_t tw_offset; // index into the flat `tw_re`/`tw_im` tables
 };
 
-// Read-only Phase-2 tables: DIF factor plan + flat per-pass W_M twiddles.
-// DIRECTION-FREE: only the forward table lives here. The inverse multiplies the
-// forward twiddle inside the swapped emit (see vpass_one): swap(w * swap(v)) is
-// conj(w) * v, so the result is bitwise the inverse-table form with half the storage.
+// Read-only phase-2 tables: DIF factor plan + flat per-pass W_M twiddles.
+// Forward only: the inverse runs the same table inside the swapped emit (see
+// `vpass_one`), where swap(w * swap(v)) is conj(w) * v, at half the storage.
 template<typename T>
 struct multipass_tables {
     admiral::detail::dif_factor_plan fp{};
     std::vector<pass_info>       passes;
-    std::vector<T>               tw_re, tw_im; // flat W_M^{j*l1*a} tables (forward)
+    std::vector<T>               tw_re, tw_im; // flat `W_M^{j*l1*a}` tables (forward)
     std::size_t                  M = 0;
 
     void build(std::size_t M_) {
@@ -77,12 +75,11 @@ namespace detail {
 //   src: src_re/im[a + ido*(j + ip*b)],  dst: dst_re/im[a + ido*(b + l1*k)]
 //   Twiddle: tw_re/im[(j-1)*ido + a] = W_M^{j*l1*a}, broadcast to V.
 //
-// dif_butterfly is forward-only; the inverse runs it in swapped domain,
-// swap(fwd(swap x)) == inv(x). The swap cannot move to the chain boundary
-// here. That boundary is real data (im == 0), where exchanging planes would zero
-// the real part. The twiddle multiply therefore moves INSIDE the swapped emit
-// (swap(w*t) is the conjugated multiply), which is what makes one forward table
-// serve both directions.
+// `dif_butterfly` is forward-only; the inverse runs the butterfly swapped
+// (swap(fwd(swap x)) == inv(x)). The swap cannot move to the chain boundary:
+// that boundary is real data (im == 0), where exchanging planes would zero
+// the real part. The twiddle multiply therefore moves inside the swapped
+// emit, where swap(w*t) is the conjugated multiply.
 template<std::size_t IP, typename T, bool Forward, typename V>
 ADM_ALWAYS_INLINE void vpass_one(const V* src_re, const V* src_im,
                                  V* dst_re, V* dst_im,
@@ -126,10 +123,9 @@ ADM_ALWAYS_INLINE void vpass_one(const V* src_re, const V* src_im,
     }
 }
 
-// poet::dispatch adapter: maps runtime radix to compile-time IP of vpass_one.
-// A struct, not a lambda: C++17 lambdas cannot take template parameters, and
-// poet::dispatch calls f.template operator()<IP>(args...), which a member template
-// serves the same way.
+// `poet::dispatch` adapter: runtime radix to `vpass_one`'s compile-time IP.
+// A struct, not a lambda: a C++17 lambda cannot declare a templated
+// `operator()`.
 template<typename T, bool Forward, typename V>
 struct vpass_invoke_t {
     template<std::size_t IP>
@@ -154,9 +150,9 @@ ADM_ALWAYS_INLINE void vpass_dispatch(std::size_t ip,
 
 } // namespace detail
 
-// Phase-2 batched DIF multipass over size M in V-space (ping-pong).
-// Each SIMD lane is an independent size-M transform (no four-step twist).
-// Input in cur_*; returns the plane pair with the natural-order result. UN-normalized.
+// Phase-2 batched DIF multipass in V-space; every SIMD lane is one
+// independent size-M transform. In: `cur_*`. Out: the natural-order pair,
+// un-normalized.
 template<typename T, bool Forward, typename V>
 inline std::pair<const V*, const V*>
 multipass_run(const multipass_tables<T>& tab,

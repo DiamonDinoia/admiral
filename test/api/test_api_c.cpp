@@ -126,7 +126,7 @@ TEST_CASE("C API plan error handling", "[c_api][plan]") {
     SECTION("Zero size") {
         adm_plan plan = nullptr;
         REQUIRE(adm_plan_1d(&plan, 0, nullptr) == ADM_ERROR_INVALID_SIZE);
-        adm_plan_destroy(plan);   // a failure still writes an owned error record
+        adm_plan_destroy(plan);   // a failed call still writes an owned error record
     }
 
     SECTION("Null plan in execute") {
@@ -215,9 +215,7 @@ TEST_CASE("C API round-trip size sweep (float)", "[c_api][sweep]") {
     }
 }
 
-// ============================================================================
-// N-D C API
-// ============================================================================
+// N-D C API.
 
 TEST_CASE("C API N-D round-trip identity (double)", "[c_api][nd]") {
     // 2D and 3D shapes over the catalog / 7-smooth / fallback column routes.
@@ -259,9 +257,9 @@ TEST_CASE("C API N-D round-trip identity (float)", "[c_api][nd]") {
     }
 }
 
-// A rank-1 axis is the identity along that axis, so an N-D transform of shape
-// {1, N} (or {N, 1}) must reproduce the 1D transform of size N, and this case
-// verifies that through the C API alone.
+// A rank-1 axis is the identity along that axis, so shapes {1, N} and {N, 1} must
+// reproduce the 1D transform of size N. This case verifies the contract through the
+// C API alone.
 TEST_CASE("C API N-D shape {1,N}/{N,1} matches 1D (double)", "[c_api][nd]") {
     for (size_t N : {8u, 16u, 13u, 31u}) {
         CAPTURE(N);
@@ -357,8 +355,9 @@ TEST_CASE("C API N-D reusable plan matches one-shot (float)", "[c_api][nd][plan]
 }
 
 TEST_CASE("C API threaded plans (double)", "[c_api][plan][threads]") {
-    // 1<<16 f64 crosses the threaded four_step_large line (1 MiB), so p4 does run
-    // on the per-plan pool. nthreads = 0 is the documented auto value.
+    // 1<<16 f64 (1 MiB of complex) crosses the threaded `four_step_large` line.
+    // All three plans here take the default nullptr options (`nthreads` = 0, auto);
+    // an auto-threaded plan runs on its per-plan pool. The three results must agree.
     const size_t N = 1 << 16;
     std::vector<adm_complex> in(N);
     for (size_t i = 0; i < N; ++i) {
@@ -377,7 +376,7 @@ TEST_CASE("C API threaded plans (double)", "[c_api][plan][threads]") {
     std::vector<adm_complex> c = in;
     REQUIRE(adm_plan_execute_forward(pa, c.data()) == ADM_SUCCESS);
     require_close_c(c.data(), a.data(), N, fft_tol<double>(8));
-    // Threaded N-D: the nd runtime owns one pool per plan.
+    // Threaded N-D: the N-D runtime owns one pool per plan.
     adm_plan pn = nullptr;
     const size_t shape[2] = {64, 512};
     REQUIRE(adm_plan_nd(&pn, shape, 2, nullptr) == ADM_SUCCESS);

@@ -1,4 +1,4 @@
-// float half of the --pass microbench; the definition is in bench_pass.hpp.
+// Float half of the --pass microbench; the definition is in `bench_pass.hpp`.
 #include "bench_pass.hpp"
 
 namespace bench {

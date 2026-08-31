@@ -1,5 +1,4 @@
-# CompilerWarnings.cmake
-# Sets up compiler warnings for the project
+# Warning flags for the project, exported as the `project_warnings` INTERFACE target.
 
 function(set_project_warnings target_name)
     set(MSVC_WARNINGS
@@ -26,8 +25,7 @@ function(set_project_warnings target_name)
         /permissive- # standards conformance mode
     )
 
-    # Warnings shared by both Clang and GCC. Verified zero-warning-clean on clang
-    # and gcc.
+    # Shared by Clang and GCC; verified zero-warning-clean on both.
     set(COMMON_WARNINGS
         -Wall
         -Wextra
@@ -45,11 +43,10 @@ function(set_project_warnings target_name)
         -Wformat=2
         -Wimplicit-fallthrough
         -Wsuggest-override
-        # Additional flags, zero-warning-clean on both compilers:
         -Wcast-qual          # drop-const casts
-        # -Wfloat-equal is OFF: butterfly.hpp uses if constexpr(w.c == 0.0) for
-        # compile-time special-case detection; those are exact constant comparisons,
-        # not runtime imprecision. The check is a false positive throughout.
+        # `-Wfloat-equal` is OFF: `butterfly.hpp` compares exact compile-time
+        # constants via `if constexpr(w.c == 0.0)`; the check false-positives
+        # throughout.
         -Wswitch-enum        # switch missing an enum case
         -Wundef              # macro used in #if before definition
         -Wredundant-decls    # duplicate declarations
@@ -62,13 +59,11 @@ function(set_project_warnings target_name)
         -Wextra-semi                     # redundant semicolons after definitions
     )
 
-    # -Wpedantic above makes clang 22 reject Catch2's __COUNTER__ as a C2y extension,
-    # reported against the test files where its macros expand. This must follow
-    # -Wpedantic, or -Wpedantic re-enables the diagnostic. Older clang (18 tested)
-    # does not know the spelling and errors on the unknown option under -Werror, so
-    # probe instead of assuming the option exists. The probe needs -Werror: without
-    # it clang reports unknown -Wno- options only when some other diagnostic fires,
-    # so a bare check would false-positive.
+    # The `-Wpedantic` of clang 22 rejects Catch2's `__COUNTER__` as a C2y extension,
+    # so this suppression must follow `-Wpedantic`. Older clang errors on the unknown
+    # option under `-Werror`, so probe. The probe needs `-Werror`: without the flag,
+    # clang reports unknown `-Wno-` options only when another diagnostic fires, and a
+    # bare check false-positives.
     include(CheckCXXCompilerFlag)
     check_cxx_compiler_flag("-Werror -Wno-c2y-extensions" ADM_HAVE_WNO_C2Y_EXTENSIONS)
     if(ADM_HAVE_WNO_C2Y_EXTENSIONS)
@@ -101,6 +96,5 @@ function(set_project_warnings target_name)
     target_compile_options(${target_name} INTERFACE ${PROJECT_WARNINGS})
 endfunction()
 
-# Create an interface library for project warnings
 add_library(project_warnings INTERFACE)
 set_project_warnings(project_warnings)

@@ -1,6 +1,6 @@
-// Correctness tests for the generic metaprogrammed codelet kernel<N, T, Forward>.
-// Each case checks one instantiation against a direct O(N^2) reference DFT, the
-// ground truth the generic Cooley-Tukey recursion must reproduce.
+// Correctness tests for the generic metaprogrammed codelet `kernel<N, T, Forward>`. Each
+// case checks one instantiation against a direct O(N^2) reference DFT, the ground truth
+// the generic Cooley-Tukey recursion must reproduce.
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -16,23 +16,24 @@
 using namespace admiral::detail;
 
 // --- Cofactor-SIMD gate: an even cofactor is eligible from one batch tile up, no cap ---
-// Written in tiles, not in literal M, because the batch width follows the ISA. Wc+2 and
-// 3*Wc are both even and both at least one tile wide, so both are eligible; Wc-2 is even
-// but narrower than a tile, and no other clause admits it.
+// The assertions are written in tiles, not in literal `M`, because the batch width follows
+// the ISA. `Wc` names `cofactor_batch_width<T, R>()`. `Wc`+2 and 3*`Wc` are both even and
+// at least one tile wide, so both are eligible. `Wc`-2 is even but narrower than a tile,
+// and no other clause admits `Wc`-2.
 static_assert(cofactor_simd_profitable<double, 4>(cofactor_batch_width<double, 4>() + 2));
 static_assert(cofactor_simd_profitable<double, 4>(3 * cofactor_batch_width<double, 4>()));
 static_assert(!cofactor_simd_profitable<double, 4>(cofactor_batch_width<double, 4>() - 2));
 static_assert(cofactor_simd_profitable<float, 8>(cofactor_batch_width<float, 8>() + 2));
 static_assert(cofactor_simd_profitable<float, 8>(3 * cofactor_batch_width<float, 8>()));
 static_assert(!cofactor_simd_profitable<float, 8>(cofactor_batch_width<float, 8>() - 2));
-// The six above all take the Wc == R exit, so they never reach the width gate. R=3 gives
-// Wc > R for both precisions, which routes an even_m cofactor through a masked load. Which
-// masked-load arm is live follows the ISA, so tie the assertion to Wc rather than to a
-// literal. A 16-byte Wc is cheap and admits any even M, a 32-byte one first has to clear
-// R*M >= kMaskedLoad256MinWork.
+// The six above all take the `Wc` == `R` exit, so the six never reach the width gate.
+// `R` = 3 gives `Wc` > `R` for both precisions, which routes an `even_m` cofactor through
+// a masked load. The ISA picks the live masked-load arm, so tie the assertion to `Wc`, not
+// to a literal. A 16-byte `Wc` is cheap and admits any even `M`; a 32-byte `Wc` must first
+// clear `R*M >= kMaskedLoad256MinWork`.
 constexpr bool kMasked256F64 = cofactor_batch_width<double, 3>() * sizeof(double) > 16;
 static_assert(kMasked256F64 == !cofactor_simd_profitable<double, 3>(8));  // 3*8 < 27
-static_assert(cofactor_simd_profitable<double, 3>(10));  // 3*10 >= 27, the smallest even M
+static_assert(cofactor_simd_profitable<double, 3>(10));  // 3*10 >= 27, the smallest even `M`
 static_assert(cofactor_simd_profitable<float, 3>(cofactor_batch_width<float, 3>()));
 
 namespace {
@@ -84,7 +85,7 @@ TEST_CASE("codelet kernel<N> matches reference DFT", "[codelet]") {
     check_size<32>();
     check_size<36>();
     check_size<48>();
-    check_size<52>();  // cofactor-SIMD batched path (4 x flat radix-13) for double
+    check_size<52>();  // cofactor-SIMD batched path (4 x flat radix-13) for `double`
     check_size<60>();
     check_size<64>();
     check_size<120>();
@@ -96,10 +97,11 @@ TEST_CASE("codelet kernel<N> small primes (direct DFT path)", "[codelet]") {
     check_size<13>();
 }
 
-// A non-pow2 leaf takes dif_butterfly_terminal instead of a cofactor combine, and the
-// check_size cases above only cover that branch while the bound admits the size. Assert
-// the bound, so widening or narrowing it cannot drop the coverage in silence. A pow2 leaf
-// uses the whole file and every other leaf the usable part, so the two split at 32.
+// A non-pow2 leaf takes `dif_butterfly_terminal` instead of a cofactor combine, and the
+// `check_size` cases above only cover that branch while the bound admits the size. Assert
+// the bound, so widening or narrowing the bound cannot drop the coverage in silence. A
+// pow2 leaf uses the whole register file and every other leaf the usable part, so the two
+// split at 32.
 TEST_CASE("a small non-pow2 codelet takes the flat leaf", "[codelet]") {
     if constexpr (poet::vector_register_count() == 32) {
         CHECK(kernel_batched<11, double, true>::flat_leaf);        // 22 <= 24 usable
@@ -110,13 +112,14 @@ TEST_CASE("a small non-pow2 codelet takes the flat leaf", "[codelet]") {
 }
 
 // The scalar leaf competes with the cofactor-SIMD path rather than with a combine, so
-// M > r decides it. The check_size cases cover both outcomes but not which one ran;
-// assert the bound so a widening cannot silently take 10 away from the cofactor path.
+// `M` > `r` is the decider. The `check_size` cases cover both outcomes but not which one
+// ran. Assert the bound, so a widening cannot silently take the size 10 away from the
+// cofactor path.
 TEST_CASE("the scalar flat leaf yields to a larger cofactor", "[codelet]") {
     if constexpr (poet::vector_register_count() == 32) {
-        CHECK(kernel<11, double, true>::flat_leaf);        // prime, M == 1
-        CHECK(kernel<12, double, true>::flat_leaf);        // 4x3: M <= r
-        CHECK_FALSE(kernel<10, double, true>::flat_leaf);  // 2x5: M > r, cofactor batches 5
+        CHECK(kernel<11, double, true>::flat_leaf);        // prime, `M` == 1
+        CHECK(kernel<12, double, true>::flat_leaf);        // 4x3: `M` <= `r`
+        CHECK_FALSE(kernel<10, double, true>::flat_leaf);  // 2x5: `M` > `r`, cofactor batches 5
     }
     CHECK_FALSE(kernel<16, double, true>::flat_leaf);  // pow2 above the 8 cap, every ISA
     CHECK_FALSE(kernel<CODELET_CATALOG_MAX, double, true>::flat_leaf);
@@ -134,9 +137,9 @@ TEST_CASE("codelet kernel<N> prime composites (cofactor-SIMD batched path)", "[c
     check_size<62>();  // 2*31
 }
 
-// Batched four-step (N = N1*N2, both <= 64 catalog, both multiples of W): the
-// composition-of-kernels path for N > 64. Validate the index/twiddle math against
-// the O(N^2) reference DFT on planar buffers.
+// Batched four-step (`N` = `N1`*`N2`, both <= 64 catalog, both multiples of `W`): the
+// composition-of-kernels path for `N` > 64. Validate the index/twiddle math against the
+// O(N^2) reference DFT on planar buffers.
 template<unsigned N1, unsigned N2, typename T>
 void check_four_step() {
     constexpr unsigned N = N1 * N2;
@@ -171,8 +174,8 @@ void check_four_step() {
         require_close(got, ref, fft_tol<T>());
     }
 
-    // Reference-free roundtrip: forward then inverse must recover x (up to 1/N).
-    // No large-angle reference involved, so this is a tight check on the math.
+    // Reference-free roundtrip: forward then inverse must recover `x` (up to 1/N). No
+    // large-angle reference is involved, so the roundtrip is a tight check on the math.
     run(true);
     std::vector<T> f_re = out_re, f_im = out_im;
     for (std::size_t i = 0; i < N; ++i) { in_re[i] = f_re[i]; in_im[i] = f_im[i]; }
@@ -192,11 +195,11 @@ TEST_CASE("batched four-step matches reference DFT (composition of kernels, N>64
     check_four_step<32, 64, float>();    // 2048
 }
 
-// kernel<N>::apply_sink: the sink emits every output index exactly once (mixed
-// scalar T and sized-batch V chunks). got starts poisoned, so a
-// skipped or double-emitted index surfaces; values go against reference_dft and
-// apply()'s own output within tolerance (the two paths reassociate differently
-// under fast-math, so bitwise equality is not a property of the interface).
+// `kernel<N>::apply_sink`: the sink emits every output index exactly once (mixed scalar
+// `T` and sized-batch `V` chunks). `got` starts poisoned, so a skipped or double-emitted
+// index surfaces. Values check against `reference_dft` and `apply()`'s own output within
+// tolerance: the two paths reassociate in different orders under fast-math, so bitwise
+// equality is not a property of the interface.
 TEST_CASE("codelet kernel<N>::apply_sink matches apply and reference DFT", "[codelet]") {
     auto check = [](auto Nc, auto forward, auto tag) {
         constexpr unsigned N = decltype(Nc)::value;
@@ -238,7 +241,7 @@ TEST_CASE("codelet kernel<N>::apply_sink matches apply and reference DFT", "[cod
     };
     both(std::integral_constant<unsigned, 2>{});
     both(std::integral_constant<unsigned, 6>{});
-    both(std::integral_constant<unsigned, 12>{});  // cofactor tile-less (M=3 < Wc)
+    both(std::integral_constant<unsigned, 12>{});  // cofactor tile-less (`M` = 3 < `Wc`)
     both(std::integral_constant<unsigned, 13>{});  // Rader forward-through
     both(std::integral_constant<unsigned, 15>{});  // odd composite recursion
     both(std::integral_constant<unsigned, 16>{});  // cofactor single tile

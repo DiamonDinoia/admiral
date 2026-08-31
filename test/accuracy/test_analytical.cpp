@@ -11,9 +11,9 @@
 
 using namespace Catch::Matchers;
 
-// Three closed forms of the DFT, each checked as a whole spectrum: a delta
-// transforms to a constant, a constant to a delta of height N, and a tone at bin k
-// to a delta of height N at k.
+// Three DFT closed forms, each checked as a whole spectrum. A delta maps to a
+// constant, a constant to a delta of height N at bin 0. A tone at bin k maps to a
+// delta of height N at k.
 namespace {
 
 template<typename T>
@@ -52,13 +52,10 @@ TEMPLATE_TEST_CASE("FFT analytical: delta, constant, tone", "[fft][analytical]",
 TEMPLATE_TEST_CASE("FFT analytical: Gaussian spectrum matches its closed form",
                    "[fft][analytical]", float, double) {
     using T = TestType;
-    // The periodized Gaussian's DFT is, up to double-exponentially small images,
-    // the sampled Gaussian: X_k = sigma*sqrt(2*pi)*exp(-k'^2/(2 s^2)) with
-    // k' = 2*pi*sigma*min(k,N-k)/N. Check values rather than decay alone. A decay-only
-    // check passes a DC-dominated transform.
-    const std::size_t N = 128;
-    // Periodization wraps the tails, so the only approximation is the spectral
+    // The periodized Gaussian's DFT is the sampled Gaussian up to the spectral
     // alias sum, O(exp(-2 pi^2 sigma^2)): e^-1243 at N=128 with sigma = N/16.
+    // Check values, not decay alone: a decay-only check passes a DC-dominated transform.
+    const std::size_t N = 128;
     const T sigma = T(N) / T(16);
     std::vector<std::complex<T>> input(N);
     for (std::size_t n = 0; n < N; ++n) {
@@ -70,12 +67,11 @@ TEMPLATE_TEST_CASE("FFT analytical: Gaussian spectrum matches its closed form",
     admiral::forward(admiral::span(input), admiral::span(output));
 
     const T peak = sigma * std::sqrt(T(2) * admiral::detail::numbers::pi_v<T>);
-    // The test measures error against the peak rather than each bin, so the budget
-    // covers the whole spectrum's accumulated rounding rather than one bin's.
+    // Errors scale with the peak, so the budget covers the whole spectrum's rounding.
     constexpr T kPeakRelTol = T(50);
     for (std::size_t k = 0; k <= N / 2; ++k) {
         const T kk = T(2) * admiral::detail::numbers::pi_v<T> * sigma * T(k) / T(N);
-        // The Gaussian peaks at INDEX N/2, and a half-period shift is a (-1)^k phase.
+        // The centered Gaussian peaks at index N/2, and the half-period shift is a (-1)^k phase.
         const T want = ((k & 1) ? T(-1) : T(1)) * peak * std::exp(-kk * kk / T(2));
         if (std::abs(want) < peak * T(1e-30)) break;  // both sides have underflowed there
         REQUIRE(std::abs(output[k] - want)
@@ -119,7 +115,7 @@ TEMPLATE_TEST_CASE("FFT round-trip with scaled tolerance", "[fft][roundtrip][ana
 
 TEMPLATE_TEST_CASE("FFT convolution theorem", "[fft][analytical][properties]", float, double) {
     using T = TestType;
-    // Convolution theorem: FFT(x * y) = FFT(x) . FFT(y), * = circular convolution.
+    // Convolution theorem: FFT(x * y) = FFT(x) . FFT(y), with * circular convolution.
     const std::size_t N = 32;
     const double tolerance = fft_tol<T>(10);
 
@@ -129,7 +125,6 @@ TEMPLATE_TEST_CASE("FFT convolution theorem", "[fft][analytical][properties]", f
         y[i] = {std::cos(T(i) * T(0.3)), T(0)};
     }
 
-    // Circular convolution in the time domain.
     std::vector<std::complex<T>> conv_time(N, {T(0), T(0)});
     for (std::size_t n = 0; n < N; ++n) {
         for (std::size_t m = 0; m < N; ++m) {
@@ -194,9 +189,9 @@ TEMPLATE_TEST_CASE("FFT symmetry for real signals", "[fft][analytical][propertie
     std::vector<std::complex<T>> output(N);
     admiral::forward(admiral::span(input), admiral::span(output));
 
-    // X[k] == conj(X[N-k]), compared as a whole spectrum. Relative L2 needs no
-    // amplitude fudge for the O(N) bins. k=0 and k=N/2 map to themselves, so this
-    // check also forces those two bins real and no separate check for them exists.
+    // X[k] == conj(X[N-k]) as a whole spectrum. k=0 and k=N/2 map to themselves,
+    // so the whole-spectrum check forces the two bins real; no separate check for the
+    // two exists.
     std::vector<std::complex<T>> mirrored(N);
     for (std::size_t k = 0; k < N; ++k) mirrored[k] = std::conj(output[(N - k) % N]);
     require_close(output, mirrored, fft_tol<T>());

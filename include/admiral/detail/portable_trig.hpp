@@ -1,24 +1,21 @@
 #pragma once
 
-// ----------------------------------------------------------------------------
 // portable_trig: sincos for rational turn fractions, at plan construction.
 //
 // FFT twiddles are exp(+/-2*pi*i*num/den) with INTEGER num,den. Argument
 // reduction is exact integer arithmetic (reduce mod den, round to nearest
-// quadrant) and leaves a residual in [-pi/4,pi/4] for the polynomial. No
-// Payne-Hanek needed, and more accurate than it for large arguments.
-// Polynomial kernel (Horner in u=t^2 on [0,(pi/4)^2]) vendored from
-// DiamonDinoia/polyfit (examples/portable_trig.hpp).
+// quadrant), and the polynomial sees a residual in [-pi/4, pi/4]. No
+// Payne-Hanek needed. Polynomial kernel (Horner in u=t^2) vendored from
+// `DiamonDinoia/polyfit` (`examples/portable_trig.hpp`).
 //
-// Compile-time twiddles use ct_sincos_turns in ct_math.hpp.
-// ----------------------------------------------------------------------------
+// Compile-time twiddles use `ct_sincos_turns` in `ct_math.hpp`.
 
 #include <array>
 #include <cstddef>
 #include <utility>
 
 #include <poet/poet.hpp>
-#include "cxx_compat.hpp"  // detail::numbers
+#include "cxx_compat.hpp"  // `detail::numbers`
 
 namespace admiral {
 namespace detail {
@@ -57,14 +54,14 @@ constexpr std::pair<double, double> sincos_reduced_turns(std::size_t num, std::s
     const std::size_t q = (four_num + den / 2) / den;   // round-to-nearest in [0, 4]
 
     // Residual angle = 2*pi * (four_num - q*den)/(4*den) in [-pi/4, pi/4]. The
-    // numerator is signed, so the code forms it in double: both operands are integers
-    // below 2^53, hence the subtraction is exact.
+    // numerator forms in `double`: both operands are integers below 2^53, so
+    // the subtraction is exact.
     const double residual = (2.0 * pi) *
                             (static_cast<double>(four_num) - static_cast<double>(q * den)) /
                             static_cast<double>(4 * den);
     const auto sc = reduced_sincos(residual);
 
-    // Quadrant remap: rotate (sin,cos) by q*pi/2.
+    // Quadrant remap: the switch rotates (sin,cos) by q*pi/2.
     switch (q & 3) {
         case 0:  return {sc.first, sc.second};
         case 1:  return {sc.second, -sc.first};
@@ -74,12 +71,12 @@ constexpr std::pair<double, double> sincos_reduced_turns(std::size_t num, std::s
 }
 
 // {sin(theta), cos(theta)} for theta = (Forward ? -1 : +1) * 2*pi * num/den.
-// num, den: non-negative integer magnitudes; sign from Forward. den > 0.
+// num, den: non-negative integer magnitudes; the sign comes from `Forward`. den > 0.
 template<bool Forward>
 constexpr std::pair<double, double> sincos_turns(std::size_t num, std::size_t den) noexcept {
     num %= den;                              // 0 <= num < den
     if constexpr (Forward) {
-        if (num != 0) num = den - num;       // negate the turn fraction, keep it in [0, den)
+        if (num != 0) num = den - num;       // negates the turn fraction, keeps num in [0, den)
     }
     return sincos_reduced_turns(num, den);
 }

@@ -1,23 +1,11 @@
 #pragma once
 
 // ============================================================================
-// Vectorized PFA (Good-Thomas) DFT kernel: N = N1*N2*N3 pairwise coprime, no inter-stage
-// twiddle factors. Generic over T (f32/f64) and W = xsimd::batch<T>::size; eligibility
-// predicate good_thomas_eligible<T,N1,N2,N3>() routes it.
-//
-// Index maps, derived at compile time from the factors:
-//   in  (Ruritanian): in_idx(n1,n2,n3) = (n1*N/N1 + n2*N/N2 + n3*N/N3) % N
-//   out (CRT):        k -> (k%N1, k%N2, k%N3), applied directly in the output
-//                     permutation table, with no modular inverse needed.
-// Butterflies run dif_butterfly; gathers are binary two-input shuffle trees
-// (GatherMasks / good_thomas_gather). Inverse via conjugate identity:
-// IDFT(x) = conj(FWD(conj(x))). UN-normalized; caller applies 1/N for inverse.
-// Every extent, index and factor here is std::size_t: the natural type leaves nothing
-// to cast.
-//
-// Ref: Good, "The interaction algorithm and practical Fourier analysis", J. R.
-// Stat. Soc. B 20 (1958) 361, DOI 10.1111/j.2517-6161.1958.tb00300.x; Thomas,
-// "Using a computer to solve problems in physics", Appl. Digital Computers (1963).
+// Vectorized Good-Thomas PFA kernel: N = N1*N2*N3 pairwise coprime, no inter-stage
+// twiddles. UN-normalized; the inverse runs the forward kernel on conjugated data.
+// Every index and extent is `std::size_t`, so nothing casts.
+// Refs: Good, J. R. Stat. Soc. B 20 (1958) 361, DOI 10.1111/j.2517-6161.1958.tb00300.x;
+// Thomas, Appl. Digital Computers (1963).
 // ============================================================================
 
 #include <algorithm>
@@ -25,15 +13,15 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
-#include <numeric>   // std::gcd
+#include <numeric>   // `std::gcd`
 
 #include "simd.hpp"
-#include "cxx_compat.hpp"  // ADM_CONSTEVAL, detail::bit_floor, detail::has_single_bit
+#include "cxx_compat.hpp"  // `ADM_CONSTEVAL`, `detail::bit_floor`, `detail::has_single_bit`
 #include <poet/poet.hpp>
 
-#include "butterfly.hpp"  // dif_butterfly (symmetric odd-radix + recursive Cooley-Tukey DIF pow2)
-#include "simd_swizzle.hpp"  // aos_even_lane, aos_odd_lane (shared de-interleave generators)
-#include "macros.hpp"   // ADM_ALWAYS_INLINE (butterfly.hpp undefs it on the way out)
+#include "butterfly.hpp"  // `dif_butterfly` (symmetric odd-radix + recursive Cooley-Tukey DIF pow2)
+#include "simd_swizzle.hpp"  // `aos_even_lane`, `aos_odd_lane` (shared de-interleave generators)
+#include "macros.hpp"   // `ADM_ALWAYS_INLINE` (`butterfly.hpp` undefs it on the way out)
 
 namespace admiral {
 namespace detail {
@@ -42,7 +30,7 @@ namespace detail {
     return std::gcd(a, b) == 1;
 }
 
-// Natural input index from cube coordinates: Ruritanian map, coeff_i = N/Ni.
+// Ruritanian input map.
 template<std::size_t N1, std::size_t N2, std::size_t N3>
 [[nodiscard]] constexpr std::size_t good_thomas_in_idx(std::size_t n1, std::size_t n2,
                                                        std::size_t n3) noexcept {
@@ -50,28 +38,20 @@ template<std::size_t N1, std::size_t N2, std::size_t N3>
     return (n1 * (N/N1) + n2 * (N/N2) + n3 * (N/N3)) % N;
 }
 
-// ============================================================================
-// Gather mask builder (W-parametrized, GatherMasks as NTTP).
-// make_batch_constant requires Arr.size()==W; masks are std::array<U,W>.
-//
-// xsimd::shuffle(a, b, mask): mask[i] in [0,W-1] → a[mask[i]], [W,2W-1] → b[mask[i]-W].
-// ============================================================================
+// Gather mask builder. `xsimd::shuffle(a, b, mask)`: mask[i] in [0,W) selects a[mask[i]],
+// in [W,2W) selects b[mask[i]-W]. `make_batch_constant` requires Arr.size()==W.
 
-// Shuffle index type: uint32_t (f32/32-bit lanes), uint64_t (f64/64-bit lanes).
+// Shuffle index width matches the lane width.
 template<typename T>
 using good_thomas_mask_u = std::conditional_t<sizeof(T) == 8, uint64_t, uint32_t>;
 
-// S-input gather → one W-wide result: binary tree of S-1 two-input shuffles.
-// Split: L=bit_floor(S-1) left, R=S-L right. Lone source = leaf; S==1 = single swizzle.
-// One W-wide mask per internal node, pre-order.
+// S-input gather: a binary tree of two-input shuffles, one mask per internal node.
 
 // Split rule, shared by every level of the tree so the gather and its masks agree.
 constexpr std::size_t gt_split_left(std::size_t S) noexcept { return detail::bit_floor(S - 1); }
 
-// Shuffle mask for one tree node: a=[lo,lo+L), b=[lo+L,lo+L+R).
-// Leaf contributes lane slane; subtree holds value at lane i.
-// Don't-care lanes fold to b (subtree-a node) or identity (leaf), overwritten higher up.
-// One lane of the node mask: source `s`/`l`, node covers [lo,lo+L+R), output lane i.
+// One mask lane i for one tree node: a covers [lo,lo+L), b covers [lo+L,lo+L+R). A lane
+// whose source lies outside the node is don't-care; an upper node overwrites the lane.
 template<typename U>
 [[nodiscard]] constexpr U gt_combine_lane(std::size_t s, std::size_t l,
                                           std::size_t lo, std::size_t L, std::size_t R,
@@ -82,11 +62,9 @@ template<typename U>
     return static_cast<U>(a_leaf ? i : W + i);
 }
 
-// Mask plumbing. No stage stores a mask table: a gather's masks ride generator TYPES
-// (get(i, size)) keyed by integral NTTPs, the stage Map plus the (entry, lo, S, nb) node
-// coordinates, and xsimd materializes each batch_constant straight from the generator.
-// Map::get(entry, ml) returns {source batch, source lane} for one lane of one table slot;
-// gt_combine_lane turns that into the shuffle index.
+// Masks ride generator types keyed by integral NTTPs (class NTTPs are C++20-only); xsimd
+// materializes each `batch_constant` from the generator. `Map::get(entry, ml)` returns
+// {source batch, source lane} for one lane of one table slot.
 template<std::size_t N1, std::size_t N2, std::size_t N3, std::size_t W, std::size_t BA>
 struct gt_map_a {
     [[nodiscard]] static constexpr std::array<std::size_t, 2> get(std::size_t entry,
@@ -149,8 +127,7 @@ struct gt_map_out {
     }
 };
 
-// Generator for one node mask of one table entry. S == 1 is the leaf-table case
-// (good_thomas_make_masks stores the raw slane there); S >= 2 is one combine node.
+// Generator for one node mask of one table entry; S == 1 is the leaf.
 template<class Map, std::size_t W, class U, std::size_t Entry,
          std::size_t Lo, std::size_t S, std::size_t Nb>
 struct gt_mask_gen {
@@ -192,14 +169,12 @@ template<std::size_t NumSrc, class Map, std::size_t W, class U, std::size_t Entr
     return gt_gather_sub<0, NumSrc, 0, Map, W, U, Entry>(src);
 }
 
-// Apply radix-Radix butterfly to arm slots {k*B+Z : k in [0,Radix)} of SoA (re,im) buffers.
-// Shared by all three PFA stages (A/B/C). Radix==1 is a no-op.
+// Radix butterfly on arm slots {k*B+Z}, shared by all three stages. Radix==1 no-op.
 template<std::size_t Radix, std::size_t B, std::size_t Z, typename Batch, std::size_t S>
 ADM_ALWAYS_INLINE void good_thomas_apply_dft(std::array<Batch, S>& xr,
                                              std::array<Batch, S>& xi) noexcept {
     if constexpr (Radix >= 2) {
-        // Gather arm slots, run dif_butterfly (butterfly.hpp, forward-only), scatter back.
-        // PFA inverse via conjugation, so this stays forward.
+        // forward-only: the PFA inverse conjugates outside, so the butterfly stays forward.
         using T = typename Batch::value_type;
         Batch tr[Radix], ti[Radix];
         poet::static_for<Radix>([&](auto K) { tr[K] = xr[K*B+Z]; ti[K] = xi[K*B+Z]; });
@@ -210,14 +185,8 @@ ADM_ALWAYS_INLINE void good_thomas_apply_dft(std::array<Batch, S>& xr,
     }
 }
 
-// ============================================================================
-// good_thomas_eligible<T, N1, N2, N3>()
-//
-// Returns true iff factors are pairwise coprime, in the butterfly set
-// {1,2,3,4,5,8,16}, and some stage boundary fits the register file. The register
-// bounds over-count peak live registers: base_cost_model.hpp is the final routing
-// authority.
-// ============================================================================
+// True iff: pairwise coprime, factors in {1,2,3,4,5,8,16}, and some stage boundary fits
+// the register file. The register bounds over-count; `base_cost_model.hpp` routes finally.
 template<typename T, std::size_t N1, std::size_t N2, std::size_t N3>
 [[nodiscard]] ADM_CONSTEVAL bool good_thomas_eligible() noexcept {
     constexpr std::size_t N  = N1*N2*N3;
@@ -225,21 +194,18 @@ template<typename T, std::size_t N1, std::size_t N2, std::size_t N3>
     constexpr std::size_t S  = (N + W - 1) / W;          // ceil(N/W)
     constexpr std::size_t Mx = std::max({N1, N2, N3});
 
-    // (1) pairwise coprime
     if (!good_thomas_coprime(N1, N2) || !good_thomas_coprime(N1, N3) || !good_thomas_coprime(N2, N3))
         return false;
 
-    // (2) factors in supported butterfly set (1 is a no-op identity stage)
+    // 1 is a no-op identity stage.
     auto supported = [](std::size_t f) {
         return f==1 || f==2 || f==3 || f==4 || f==5 || f==8 || f==16;
     };
     if (!supported(N1) || !supported(N2) || !supported(N3))
         return false;
 
-    // (3a) A gather loop holds the stage it reads plus the stage it fills, so the live
-    // set at each stage boundary is one adjacent pair plus the butterfly temporaries. A
-    // kernel over the register file at every boundary spills throughout; over it at only
-    // some boundaries it still wins, so the test is the minimum.
+    // (3a) Tightest stage boundary must fit the register file: a kernel over budget at
+    // every boundary spills throughout, so the test is the minimum boundary.
     constexpr std::size_t BA = (N1*N2 + W - 1) / W;
     constexpr std::size_t BB = (N1*N3 + W - 1) / W;
     constexpr std::size_t BC = (N2*N3 + W - 1) / W;
@@ -247,27 +213,19 @@ template<typename T, std::size_t N1, std::size_t N2, std::size_t N3>
         4 + 2 * std::min({S + N3*BA, N3*BA + N2*BB, N2*BB + N1*BC, N1*BC + S});
     if (min_boundary > poet::vector_register_count()) return false;
 
-    // (3b) register fit OR small-N. 2S+2Mx+4 over-counts peak live regs (the butterfly
-    // reuses arm temps via callback), false-excluding a band of small sizes.
-    // W>=4 excludes SSE-f64 (W=2) large-buffer instantiations.
+    // (3b) register fit OR small-N. The bound over-counts peak live registers: the
+    // butterfly callback reuses arm temps. W>=4 excludes SSE-f64 large-buffer kernels.
     if (2*S + 2*Mx + 4 <= poet::vector_register_count()) return true;
-    // A power-of-two largest factor runs pow2_dif_butterfly, which emits each arm temp
-    // through the callback rather than holding 2*Mx live, so the bound above over-counts
-    // that case by Mx. The relaxed bound is STRICT: the CRT permutation cost grows with
-    // S while the arm arithmetic does not, so a form that exactly saturates the register
-    // file loses to iterative_dif.
+    // A pow2 largest factor emits each arm temp through the callback, so the bound
+    // over-counts that case by Mx. The relaxed bound stays strict: exact register
+    // saturation loses to `iterative_dif` because the CRT permutation cost grows with S.
     if (detail::has_single_bit(Mx) && 2*S + Mx + 4 < poet::vector_register_count()) return true;
     return N <= 32 && W >= 4;
 }
 
-// good_thomas_execute<T, N1, N2, N3>(in, out, forward)
-//
-// DFT-N on AoS complex<T>[N], N = N1*N2*N3, pairwise coprime. UN-normalized.
-// in==out: in-place. in!=out: reads in (preserved), writes out.
-// Inverse: negate Im before and after the forward kernel.
-// One instantiation covers both: the kernel loads all of `in` before it writes
-// any of `out`, so aliasing needs no separate arm.
-// ============================================================================
+// DFT-N on AoS `std::complex<T>`[N]. UN-normalized; the inverse negates Im before and
+// after. If `in==out`, the call is safe: the kernel loads all of `in` before writing
+// any of `out`, so one instantiation covers both.
 template<typename T, std::size_t N1, std::size_t N2, std::size_t N3, bool Forward>
 ADM_NOINLINE void good_thomas_execute(const std::complex<T>* in,
                                       std::complex<T>* out) noexcept {
@@ -278,18 +236,14 @@ ADM_NOINLINE void good_thomas_execute(const std::complex<T>* in,
     using Arch  = typename Batch::arch_type;
     static constexpr std::size_t N  = N1*N2*N3;
     static constexpr std::size_t W  = Batch::size;
-    static constexpr std::size_t NS = (N + W - 1) / W;   // ceil(N/W): source ZMMs
+    static constexpr std::size_t NS = (N + W - 1) / W;   // ceil(N/W): source batches
     static constexpr std::size_t BA = (N1*N2 + W - 1) / W;
     static constexpr std::size_t BB = (N1*N3 + W - 1) / W;
     static constexpr std::size_t BC = (N2*N3 + W - 1) / W;
     using U = good_thomas_mask_u<T>;
 
-    // -------------------------------------------------------------------------
-    // 1. AoS → SoA: load N complex<T> → NS ZMM pairs (re[s], im[s]).
-    //    Direct unaligned load, tail masked at 2N. No ADM_RESTRICT and no staging
-    //    buffer: step 1 loads every input before step 6 writes anything, so in==out
-    //    is safe, and restrict would make that call UB.
-    // -------------------------------------------------------------------------
+    // 1. AoS -> SoA, tail masked at 2N. No `ADM_RESTRICT`: step 1 loads all of `in`
+    //    before step 6 writes, so `in==out` is safe and `ADM_RESTRICT` would be UB.
     std::array<Batch, NS> re_src, im_src;
     const T* ip = reinterpret_cast<const T*>(in);
     auto load_tail = [&](auto o_ic) {
@@ -317,9 +271,7 @@ ADM_NOINLINE void good_thomas_execute(const std::complex<T>* in,
         poet::static_for<0, NS>([&](const auto s) { im_src[s] = -im_src[s]; });
     }
 
-    // -------------------------------------------------------------------------
-    // 2. Stage A: DFT-N3 over n3 axis.  N3 arms × BA ZMMs each.
-    // -------------------------------------------------------------------------
+    // 2. Stage A: DFT-N3 over the n3 axis.
     std::array<Batch, N3*BA> Ar, Ai;
     poet::static_for<0, N3*BA>([&](const auto JZ) {
         constexpr std::size_t jz = decltype(JZ)::value;
@@ -330,9 +282,7 @@ ADM_NOINLINE void good_thomas_execute(const std::complex<T>* in,
         good_thomas_apply_dft<N3, BA, Z>(Ar, Ai);
     });
 
-    // -------------------------------------------------------------------------
-    // 3. Stage B: DFT-N2 over n2 axis.  N2 arms × BB ZMMs each.
-    // -------------------------------------------------------------------------
+    // 3. Stage B: DFT-N2 over the n2 axis.
     std::array<Batch, N2*BB> Br, Bi;
     poet::static_for<0, N2*BB>([&](const auto JPZ) {
         constexpr std::size_t jpz = decltype(JPZ)::value;
@@ -343,9 +293,7 @@ ADM_NOINLINE void good_thomas_execute(const std::complex<T>* in,
         good_thomas_apply_dft<N2, BB, Z>(Br, Bi);
     });
 
-    // -------------------------------------------------------------------------
-    // 4. Stage C: DFT-N1 over n1 axis.  N1 arms × BC ZMMs each.
-    // -------------------------------------------------------------------------
+    // 4. Stage C: DFT-N1 over the n1 axis.
     std::array<Batch, N1*BC> Cr, Ci;
     poet::static_for<0, N1*BC>([&](const auto K1Z) {
         constexpr std::size_t k1z = decltype(K1Z)::value;
@@ -356,9 +304,7 @@ ADM_NOINLINE void good_thomas_execute(const std::complex<T>* in,
         good_thomas_apply_dft<N1, BC, Z>(Cr, Ci);
     });
 
-    // -------------------------------------------------------------------------
-    // 5. Output gather: CRT permutation, N1*BC Stage-C ZMMs → NS natural-order.
-    // -------------------------------------------------------------------------
+    // 5. Output gather: CRT permutation back to natural order.
     std::array<Batch, NS> Or, Oi;
     poet::static_for<0, NS>([&](const auto ZO) {
         constexpr std::size_t zo = decltype(ZO)::value;
@@ -370,9 +316,7 @@ ADM_NOINLINE void good_thomas_execute(const std::complex<T>* in,
         poet::static_for<0, NS>([&](const auto s) { Oi[s] = -Oi[s]; });
     }
 
-    // -------------------------------------------------------------------------
-    // 6. SoA → AoS: interleave re/im, store to out. Same aliasing as step 1.
-    // -------------------------------------------------------------------------
+    // 6. SoA -> AoS. Same aliasing as step 1.
     T* op = reinterpret_cast<T*>(out);
     auto store_tail = [&](auto o_ic, const Batch& v) {
         constexpr std::size_t O = std::decay_t<decltype(o_ic)>::value;
@@ -392,11 +336,8 @@ ADM_NOINLINE void good_thomas_execute(const std::complex<T>* in,
     });
 }
 
-// ============================================================================
-// PFA catalog: one good_thomas_desc per routed size. This pack generates the
-// eligibility predicate and the dispatch, so adding or removing a size is a one-line
-// diff. base_cost_model.hpp owns per-cell precision routing.
-// ============================================================================
+// PFA catalog: one `good_thomas_desc` per routed size; a size is a one-line diff here.
+// `base_cost_model.hpp` owns per-cell precision routing.
 template<std::size_t N1, std::size_t N2, std::size_t N3>
 struct good_thomas_desc {
     static constexpr std::size_t n = N1 * N2 * N3;
@@ -414,7 +355,7 @@ struct good_thomas_catalog_t {
     static constexpr bool available(std::size_t n) noexcept {
         return ((Ds::template admits<T> && n == Ds::n) || ...);
     }
-    // admits<T> mirrors available(); ineligible kernels are never instantiated.
+    // `admits<T>` mirrors `available()`; ineligible kernels are never instantiated.
     template<typename T, bool Forward>
     static void run(const std::complex<T>* in, std::complex<T>* out, std::size_t n) noexcept {
         ([&] {
@@ -436,9 +377,8 @@ using good_thomas_catalog = good_thomas_catalog_t<
     good_thomas_desc<16, 3, 1>,        // 48
     good_thomas_desc<3, 4, 5>>;        // 60
 
-// Trampoline: one extern template per precision and direction keeps the whole
-// PFA kernel tree out of every TU that only routes to it. Defined in
-// inst_gt_f.cpp / inst_gt_d.cpp.
+// Trampoline: the extern templates keep the PFA tree out of routing TUs. Defined in
+// `inst_gt_f.cpp` / `inst_gt_d.cpp`.
 template<typename T, bool Forward>
 void good_thomas_run(const std::complex<T>* in, std::complex<T>* out, std::size_t n) noexcept {
     good_thomas_catalog::run<T, Forward>(in, out, n);

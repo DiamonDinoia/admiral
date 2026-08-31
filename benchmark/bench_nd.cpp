@@ -1,7 +1,7 @@
 // N-D and r2c paired compares against ducc0 (and FFTW when built).
 //
-// Split out of bench_fft.cpp for compile time. This instantiates the
-// nd_plan -> col_dif_dispatch chain for c2c and r2c at both precisions.
+// Split out of bench_fft.cpp for compile time. The TU instantiates the
+// `nd_plan` -> `col_dif_dispatch` chain for c2c and r2c at both precisions.
 // Explicitly instantiated at the bottom; bench_harness.hpp declares the
 // instantiations extern so the rest of the benchmark sees declarations only.
 
@@ -38,7 +38,7 @@ std::string shape_to_string(const std::vector<std::size_t>& shape) {
 //
 // The caller owns `out`: a per-rep allocation plus first-touch of the output must
 // not land in ducc0's time while the library arm writes into a hoisted buffer.
-// `in == out` runs ducc0 in place, as the library's round-trip inverse does.
+// `in` == `out` runs ducc0 in place, as the library's round-trip inverse does.
 template<typename T>
 void ducc0_c2c_nd(const std::complex<T>* in, std::complex<T>* out,
                   const std::vector<std::size_t>& shape, bool forward, size_t nthreads = 1) {
@@ -92,8 +92,8 @@ void ducc0_c2r_nd(const std::complex<T>* in, T* out, const std::vector<std::size
 
 namespace bench {
 
-// Identity-control floor: below this, an arm-vs-itself ratio is allocation-position
-// spread, not a real difference.
+// Identity-control floor: below `kIdentControlTol`, an arm-vs-itself ratio is
+// allocation-position spread, not a real difference.
 constexpr double kIdentControlTol = 0.03;
 
 template<typename T>
@@ -148,8 +148,8 @@ bool compare_nd(const std::vector<std::size_t>& shape, int reps, long inner, int
 #endif
     (void)sink;
 
-    // Threaded (nthreads>1): force wall-clock, because the per-process cycle counter only
-    // sees the calling thread and undercounts the workers.
+    // If `nthreads` > 1, force wall-clock: the per-process cycle counter sees only
+    // the calling thread and undercounts the workers.
     const bool use_cyc = nthreads == 1
                       && fft_fwd.cyc > 0.0 && ducc_fwd.cyc > 0.0
                       && fft_rt.cyc > 0.0 && ducc_rt.cyc > 0.0;
@@ -270,8 +270,8 @@ bool compare_nd_r2c(const std::vector<std::size_t>& shape, int reps, long inner,
 #endif
     (void)sink;
 
-    // Threaded (nthreads>1): force wall-clock, because the per-process cycle counter only
-    // sees the calling thread and undercounts the workers.
+    // If `nthreads` > 1, force wall-clock: the per-process cycle counter sees only
+    // the calling thread and undercounts the workers.
     const bool use_cyc = nthreads == 1
                       && fft_fwd.cyc > 0.0 && ducc_fwd.cyc > 0.0
                       && fft_rt.cyc > 0.0 && ducc_rt.cyc > 0.0;
@@ -333,8 +333,8 @@ bool compare_nd_robust(const std::vector<std::size_t>& shape, int rounds, int re
         auto plan = std::make_shared<admiral::plan<T>>(sp, admiral::options{nt});
         auto buf  = std::make_shared<std::vector<std::complex<T>>>(Ntot);
         ab_engine e;
-        // Out-of-place forward (data -> buf): preserves the input like ducc0's c2c
-        // does, and folds the copy into the cache-hot innermost pass.
+        // Out-of-place forward (`data` -> `buf`): preserves the input like ducc0's
+        // c2c does, and folds the copy into the cache-hot innermost pass.
         e.fwd = [&, plan, buf]() {
             plan->forward(data.data(), buf->data());
             sink += (*buf)[Ntot / 2].real();

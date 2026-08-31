@@ -1,4 +1,4 @@
-// See inst_gt_f.cpp.
+// See `inst_gt_f.cpp`.
 #include "admiral/detail/good_thomas.hpp"
 namespace admiral::detail {
 

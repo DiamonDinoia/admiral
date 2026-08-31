@@ -1,4 +1,4 @@
-// axis_plan transforms ONE axis of a tensor, possibly a rectangular sub-box.
+// `axis_plan` transforms ONE axis of a tensor, possibly a rectangular sub-box.
 // Chaining both axes equals the full 2-D transform.
 #include <admiral/admiral.hpp>
 

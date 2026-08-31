@@ -1,9 +1,7 @@
 #pragma once
 
-// ============================================================================
-// Cache geometry, probed once from the OS. Sizes cache tiles and residency
-// decisions only; SIMD width is compile-time via -march.
-// ============================================================================
+// Cache geometry, probed once from the OS. These values size cache tiles and
+// residency decisions only; SIMD width is compile-time via `-march`.
 
 #include <cstddef>
 #if defined(__APPLE__)
@@ -20,30 +18,29 @@
 namespace admiral {
 namespace detail {
 
-// Coherence-line bytes on every ISA targeted; the library's one documented non-arch
-// constant. Not std::hardware_destructive_interference_size (absent under clang++) and
-// not the arch alignment() (a register width would put four atomics on one line).
+// Coherence-line bytes on every ISA targeted; the library's one documented
+// non-arch constant. Not `hardware_destructive_interference_size` (absent under
+// clang), not arch `alignment()` (a register width would share one line).
 inline constexpr std::size_t kCacheLine = 64;
 
-// L1d tile bytes: the in-place pass's phase-A store / phase-B reload block limit,
-// and the same bound the routing model prices that pass against. A fixed 32 KiB
-// rather than the probed L1 because the pass is written around this tile width.
+// L1d tile bytes: the in-place pass's phase-A store / phase-B reload block
+// limit, and the bound the routing model prices that pass against. Fixed
+// rather than the probed L1 because the pass's tiling assumes `kIpTileBytes`.
 inline constexpr std::size_t kIpTileBytes = 32u * 1024u;
 
-// L1d tile bytes for the fused multi-pass bodies. Each divides it by the number of
-// planes it keeps live at once, so the sum stays inside one tile whatever the fusion
-// depth. Independent of kIpTileBytes above: a fused body tiles planes, not blocks.
+// L1d tile bytes for the fused multi-pass bodies. Each fused body divides the
+// tile by the body's live plane count, so the sum stays in one tile. A fused
+// body tiles planes, not blocks, so `kFusedTileBytes` is independent of
+// `kIpTileBytes`.
 inline constexpr std::size_t kFusedTileBytes = 16u * 1024u;
 
-// Cache sizes (bytes), probed once (function-local static). sysconf on Linux,
-// sysctl on macOS/BSD; otherwise uses the fallbacks below. l3_cores counts the
-// CPUs sharing the L3 that `l3` measures. A caller divides a threaded per-worker
-// footprint by that count, not by a machine-wide thread count.
-// 0 = "unknown" = divide by nthreads verbatim.
-// Used when the OS reports nothing: a mid-range workstation's L2 and LLC.
+// Cache sizes (bytes), probed once (function-local static); `sysconf` on
+// Linux, `sysctl` on macOS/BSD, the fallbacks when the OS reports nothing.
 inline constexpr std::size_t kFallbackL2Bytes = std::size_t{2} << 20;
 inline constexpr std::size_t kFallbackL3Bytes = std::size_t{45} << 20;
 
+// `l3_cores` counts the CPUs sharing the L3 that `l3` measures: a per-worker
+// footprint divides by that count, not by a machine-wide `nthreads`. 0 = unknown.
 struct cache_bytes { std::size_t l2, l3, l3_cores; };
 [[nodiscard]] inline const cache_bytes& cpu_cache() {
     static const cache_bytes c = [] {

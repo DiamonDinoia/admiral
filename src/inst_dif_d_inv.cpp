@@ -1,4 +1,4 @@
-// See inst_dif_f_fwd.cpp.
+// See `inst_dif_f_fwd.cpp`.
 #include "admiral/detail/dif_driver.hpp"
 
 namespace admiral {

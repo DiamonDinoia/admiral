@@ -1,21 +1,22 @@
-// Coverage for the large-N four_step_large route (f64 above ~786k points) and for
-// pointer-alignment variants of the public execute() path.
+// Coverage for the large-N `four_step_large` route (f64 above ~786k points) and
+// for pointer-alignment variants of the public `execute()` path.
 //
-// Two gaps this closes:
-//   1. four_step_large: forward against an analytical single-tone reference (exact
-//      at machine precision for any N), plus round-trip identity, across the
-//      L3-transpose-fuse boundary and a non-power-of-two unbalanced split.
-//   2. Unaligned INPUT and OUTPUT buffers through the store-align peel in
-//      dif_col_pass_last / four_step_large: user data is not cache-line aligned,
-//      so every (in,out) alignment pairing runs.
+// The file closes two gaps:
+//   1. `four_step_large`: forward against an analytical single-tone reference
+//      (exact at machine precision for any N), plus round-trip identity. Sizes
+//      cross the L3-transpose-fuse boundary; one split is non-power-of-two and
+//      unbalanced.
+//   2. Unaligned input and output buffers through the store-align peel in
+//      `dif_col_pass_last` / `four_step_large`: user data is not cache-line
+//      aligned, so every (in,out) alignment pairing runs.
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_template_test_macros.hpp>
 #include "utils/reference.hpp"
 
 #include <admiral/admiral.hpp>
-#include <admiral/detail/four_step_large.hpp>   // four_step_transpose_inplace, tested directly
-#include <admiral/detail/plan.hpp>   // plan_impl::route_name: keeps the fsl cells honest
-#include <admiral/detail/scratch.hpp>  // span_align: the alignment the kernels assume
+#include <admiral/detail/four_step_large.hpp>   // `four_step_transpose_inplace`, tested directly
+#include <admiral/detail/plan.hpp>   // `plan_impl::route_name`: keeps the fsl cells honest
+#include <admiral/detail/scratch.hpp>  // `span_align`: the alignment the kernels assume
 #include <algorithm>
 #include <cmath>
 #include <complex>
@@ -45,10 +46,10 @@ std::vector<std::complex<T>> tone_spectrum(std::size_t N, std::size_t K) {
 }
 
 // Owns an over-aligned buffer and hands out a pointer offset `off_elems` complex
-// elements past a span_align boundary. span_align rather than a literal 64
-// because that is the alignment the kernels assume, so off_elems=0 is
-// the aligned case on every ISA. off_elems in {1,2,3} => 16/32/48-byte misaligned
-// (complex<double> is 16 B), which exercises the store-align peel's masked windows.
+// elements past a `span_align` boundary. `span_align`, not a literal 64, is the
+// alignment the kernels assume, so `off_elems` == 0 is the aligned case on every
+// ISA. `off_elems` in {1,2,3} gives 16/32/48-byte misalignment (complex<double> is
+// 16 B) and exercises the store-align peel's masked windows.
 template<typename T>
 struct offset_buffer {
     static constexpr std::size_t kAlign = admiral::detail::span_align<T>;
@@ -62,11 +63,11 @@ struct offset_buffer {
     }
 };
 
-// four_step_large routes for f64 when N*sizeof(complex<double>) > 12 MiB
+// `four_step_large` routes for f64 when N*sizeof(complex<double>) > 12 MiB
 // (N > 786432). The six-step engine's in-place transpose decomposes by split
 // shape: square (1M, 4M), block-grid at C = 2*R (2M), element cycles otherwise.
-// Every size below must pass the public serial gate (four_step_large_fused_shape)
-// or the case is vacuously iterative_dif, so each case pins the route.
+// Every size below must pass the public serial gate (`four_step_large_fused_shape`)
+// or the case is vacuously `iterative_dif`, so each case pins the route.
 constexpr std::size_t kBelowFuse = 1048576;   // 16 MB, square split 1024x1024
 constexpr std::size_t kRect2M    = 2097152;   // 32 MB, block split 1024x2048
 constexpr std::size_t kNonPow2   = 2073600;   // 33 MB, non-pow2 1440x1440
@@ -77,7 +78,7 @@ constexpr std::size_t kAboveFuse = 8294400;   // 132 MB, non-pow2 2880x2880, pas
 TEST_CASE("four_step_large forward vs analytical (double)", "[large][fourstep]") {
     for (const std::size_t N : {kBelowFuse, kRect2M, kNonPow2}) {
         CAPTURE(N);
-        // Pin the route here too, else this "fsl" case could silently become a dif test.
+        // Pin the route here too, else this "fsl" case degenerates into a dif test.
         CHECK(std::string(admiral::detail::plan_impl<double>(N, true).route_name())
               == "four_step_large");
         const std::size_t K = N / 4 + 7;
@@ -95,7 +96,7 @@ TEST_CASE("four_step_large forward vs analytical (double)", "[large][fourstep]")
 TEST_CASE("four_step_large round-trip identity (double)", "[large][fourstep]") {
     for (const std::size_t N : {kBelowFuse, kRect2M, kNonPow2, kAboveFuse}) {
         CAPTURE(N);
-        // Pin the route, else this "fsl" case could silently become a dif test.
+        // Pin the route, else this "fsl" case degenerates into a dif test.
         CHECK(std::string(admiral::detail::plan_impl<double>(N, true).route_name())
               == "four_step_large");
         const auto in = make_input<double>(N, 77u + unsigned(N));
@@ -109,8 +110,8 @@ TEST_CASE("four_step_large round-trip identity (double)", "[large][fourstep]") {
     }
 }
 
-// Impulse at n0: X[k] = exp(-2*pi*i*k*n0/N), flat |X| == 1. The OOP (two-pointer)
-// path runs P1's band transpose, and a nonzero n0 pins the split-twist's phases:
+// Impulse at `n0`: X[k] = exp(-2*pi*i*k*n0/N), flat |X| == 1. The OOP (two-pointer)
+// path runs P1's band transpose, and a nonzero `n0` pins the split-twist's phases:
 // a twist applied on the wrong side of the n2 DFT still round-trips but fails here.
 TEST_CASE("four_step_large impulse flatness (double)", "[large][fourstep]") {
     constexpr std::size_t N = 1048576;
@@ -127,9 +128,9 @@ TEST_CASE("four_step_large impulse flatness (double)", "[large][fourstep]") {
 }
 
 // Band-fused P4+P5 shapes: impulse known-answer in every (direction, placement)
-// pairing, at the square 4M split (2048x2048) and the defer 2M split
-// (1024x2048). A nonzero n0 pins phase across the fused sweep's band order;
-// in-place runs the whole fused engine on one buffer.
+// pairing, at the square 4M split (2048x2048) and the defer 2M split (1024x2048).
+// A nonzero `n0` pins phase across the fused sweep's band order; in-place calls
+// run the whole fused engine on one buffer.
 TEST_CASE("four_step_large fused-band impulse (double)", "[large][fourstep]") {
     for (const std::size_t N : {kRect2M, std::size_t{4194304}}) {
         CAPTURE(N);
@@ -160,8 +161,8 @@ TEST_CASE("four_step_large fused-band impulse (double)", "[large][fourstep]") {
 }
 
 // f32 direction-sensitive absolute oracle (round-trip alone is blind to an f32-width
-// sweep-shape bug). Serial 4M/2M sit inside the f32 serial window (16 MiB line, 32 MiB
-// bound); the threaded 1M cell crosses the line every nthreads > 1 shares.
+// sweep-shape bug). Serial 4M/2M sit inside the f32 serial window (16 MiB line,
+// 32 MiB bound); the threaded 1M cell crosses the line shared by every `nthreads` > 1.
 TEST_CASE("four_step_large tone and impulse (float)", "[large][fourstep]") {
     for (const auto& [N, nt] : {std::pair{std::size_t{4194304}, std::size_t{1}},
                                 {std::size_t{2097152}, std::size_t{1}},
@@ -188,15 +189,15 @@ TEST_CASE("four_step_large tone and impulse (float)", "[large][fourstep]") {
 }
 
 // Every (input, output) cache-line-alignment pairing through the OOP execute
-// path. Covers both a four_step_large size (store-align peel in the col pass)
-// and an iterative_dif size (peel in dif_col_pass_last). The forward runs against
-// the analytical tone reference, so a mis-peeled store fails here rather than
-// passing as self-consistent.
+// path. The case covers both a `four_step_large` size (store-align peel in the
+// col pass) and an `iterative_dif` size (peel in `dif_col_pass_last`). The forward
+// runs against the analytical tone reference, so a mis-peeled store fails here
+// rather than passing as self-consistent.
 TEMPLATE_TEST_CASE("execute() input/output alignment variants vs analytical",
                    "[large][align]", float, double) {
     using T = TestType;
-    // four_step_large is f64-only; for f32 this size routes iterative_dif, still
-    // a valid alignment probe of the shared peel.
+    // `four_step_large` is f64-only; at f32 the 1M size routes to `iterative_dif`,
+    // still a valid alignment probe of the shared peel.
     for (const std::size_t N : {std::size_t{4096}, std::size_t{1048576}}) {
         CAPTURE(N);
         const std::size_t K = N / 4 + 7;
@@ -218,21 +219,23 @@ TEMPLATE_TEST_CASE("execute() input/output alignment variants vs analytical",
                 std::vector<std::complex<T>> got(dst.ptr, dst.ptr + N);
                 require_close(got, ref, tol);
 
-                // The OOP path must leave src untouched at every alignment.
+                // The OOP path must leave `src` untouched at every alignment.
                 for (std::size_t i = 0; i < N; ++i) REQUIRE(src.ptr[i] == in[i]);
             }
         }
     }
 }
 
-// The out-aliased SoA pair: dif_execute_in_place lends `out` to the driver as the second
-// ping-pong pair when the tape's parity leaves it dead, halving the scratch. The control arm
-// needs no build flag: a span_align-misaligned `out` fails dif_out_aliasable's alignment
-// clause and takes the 4-plane fallback, which also pins that clause. That arm compares
-// to tolerance, not bitwise. The same misalignment also makes the last pass take its AoS
-// store peel, whose partial-row block groups the same values differently. Bitwise still
-// holds where alignment matches, the in == out arm below. `fired` guards the whole case
-// against passing vacuously if the parity predicate ever stops admitting these sizes.
+// The out-aliased SoA pair: `dif_execute_in_place` lends `out` to the driver as
+// the second ping-pong pair when the tape's parity leaves `out` dead. The loan
+// halves the scratch. The control arm needs no build flag: `dif_out_aliasable`
+// rejects an `out` misaligned off `span_align`, and `dif_execute_in_place` takes
+// the 4-plane fallback. The rejection also pins the alignment clause. The control
+// arm compares to tolerance, not bitwise. The same misalignment also makes the
+// last pass take its AoS store peel, whose partial-row block groups the same
+// values differently. Bitwise equality still holds where alignment matches: the
+// in == out arm below. `fired` guards the whole case against passing vacuously
+// if the parity predicate ever stops admitting these sizes.
 TEMPLATE_TEST_CASE("out-aliased SoA pair equals the 4-plane path", "[dif][align]", float, double) {
     using T = TestType;
     std::size_t fired = 0;
@@ -252,12 +255,14 @@ TEMPLATE_TEST_CASE("out-aliased SoA pair equals the 4-plane path", "[dif][align]
                           std::vector<std::complex<T>>(aligned.ptr, aligned.ptr + N),
                           fft_tol<T>());
 
-            // in == out is the shape the alias ships into: bluestein's and rader's
-            // inner DIF both call dif_execute_in_place(buf, buf, ...) on soa_scratch memory,
-            // which is aligned, so they take the aliased path on every qualifying chain.
-            // It is also the only case where lending `out` out is not clearly safe: pass 1
-            // writes the lent pair, and that pair IS the input. Legal because pass 0 fully
-            // drains `in` before pass 1 runs, but "legal by argument" is what a test is for.
+            // in == out is the shape the alias ships into. The inner DIF of `bluestein`
+            // and `rader` runs `dif_execute_in_place` with `buf` as both pointers, on
+            // `soa_scratch` memory. The memory is aligned, so the inner DIF takes the
+            // aliased path on every qualifying chain. The `ip` arm below is the one
+            // case where the loan of `out` is not clearly safe. Pass 1 writes the lent
+            // pair, and the lent pair is the input. The loan is legal because pass 0
+            // fully drains `in` before pass 1 runs; "legal by argument" is what a test
+            // is for.
             offset_buffer<T> ip(N, 0);
             std::copy(in.begin(), in.end(), ip.ptr);
             admiral::detail::dif_execute_in_place<T>(forward, ip.ptr, ip.ptr, N, tw, T(1));
@@ -268,10 +273,10 @@ TEMPLATE_TEST_CASE("out-aliased SoA pair equals the 4-plane path", "[dif][align]
     REQUIRE(fired > 0);
 }
 
-// four_step_transpose_inplace over all four shape branches, including the
-// non-divisible one (C % R != 0 and R % C != 0) that the public gate currently
-// rejects and no route therefore reaches. That branch is a whole separate
-// kernel; without this it is untested code.
+// `four_step_transpose_inplace` over all four shape branches. The non-divisible
+// branch (C % R != 0 and R % C != 0) is one the public gate currently rejects, so
+// no route reaches the branch. The branch is a whole separate kernel; without
+// this case the kernel stays untested.
 TEMPLATE_TEST_CASE("four_step_transpose_inplace vs naive", "[large][fourstep]", float, double) {
     using T = TestType;
     // square, C = m*R, R = m*C, and three non-divisible shapes (both < and >

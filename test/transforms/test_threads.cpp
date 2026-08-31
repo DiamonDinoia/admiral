@@ -2,9 +2,9 @@
 #include <catch2/catch_template_test_macros.hpp>
 #include "utils/reference.hpp"
 
-#include <admiral/admiral.hpp>   // admiral::plan, admiral::plan_r2c (nthreads ctor param)
-#include <admiral/detail/plan.hpp>         // plan_impl::route_name route pins
-#include <admiral/detail/thread_pool.hpp>   // parallel_for's exception contract
+#include <admiral/admiral.hpp>   // `admiral::plan`, `admiral::plan_r2c` (`nthreads` ctor param)
+#include <admiral/detail/plan.hpp>         // `plan_impl::route_name` route pins
+#include <admiral/detail/thread_pool.hpp>   // `parallel_for`'s exception contract
 
 #include <algorithm>
 #include <atomic>
@@ -16,29 +16,29 @@
 #include <string>
 #include <vector>
 
-// With ADM_THREADS=0 the pool is a serial inline stub, so every nthreads>1
-// expectation below is meaningless there. Guard the whole TU off; Catch2's
-// discovery on an empty file exits 4, which the presets register as skip.
+// If `ADM_THREADS`=0, the pool is a serial inline stub, so every `nthreads>1`
+// expectation below is meaningless there. Guard the whole TU off. Catch2 discovery
+// on an empty file exits 4, and the presets register exit 4 as a skip.
 #if ADM_THREADS
 
-// Multithreading correctness gate: nthreads=1 (the tuned serial path) and
-// nthreads=4 must agree to the FFT's own rounding floor. Threading changes the
-// ORDER in which a SIMD column/tile pass groups its FMAs (chunk vs full sweep),
-// which under -ffast-math perturbs the last bit: serial and threaded are two valid
-// FFTs of the same data, differing by rounding, not zero.
+// Multithreading correctness gate: `nthreads=1` (the tuned serial path) and
+// `nthreads=4` must agree to the FFT's own rounding floor. Threading changes the
+// ORDER in which a SIMD column/tile pass groups FMAs (chunk vs full sweep). Under
+// `-ffast-math` the regrouping perturbs the last bit. Serial and threaded are two
+// valid FFTs of the same data; the outputs differ by rounding, not by zero.
 //
 // Higham (Accuracy & Stability of Num. Algorithms, Thm 24.2): a Cooley-Tukey FFT
-// satisfies ||fl(y)-y||_2 / ||y||_2 <= c*u*log2(N), u = eps/2. Both paths obey it,
-// so ||threaded-serial||_2/||serial||_2 <= 2*c*u*log2(N); forecast_tol() below is
-// C*u*log2(N) with C covering 2c plus twiddle/butterfly constants and still ~1e5x
-// tighter than any real race/chunk bug (those are O(1e-3)+).
+// satisfies ||fl(y)-y||_2 / ||y||_2 <= c*u*log2(N), u = eps/2. Both paths obey the
+// bound, so ||threaded-serial||_2/||serial||_2 <= 2*c*u*log2(N). `forecast_tol()`
+// below is C*u*log2(N). C covers 2c plus the twiddle/butterfly constants and stays
+// ~1e5x tighter than any real race/chunk bug (O(1e-3)+).
 //
-// Shapes are sized so each threaded path crosses the dispatch gate (outer >= 2 &&
-// total >= 1<<15). A 1D {N} has one line, so the batch loop cannot thread and the
-// axis sub-plan owns the pool: small N runs serial, a DRAM-bound N routes to
-// four_step_large and threads its own passes ({1<<20}); {64,512}/{16,8192} thread
-// the row + column-DIF passes; {67,512}'s outer prime axis exercises the
-// scalar-fallback column pass; the 3D shape threads a middle axis. r2c adds the
+// Every shape crosses the dispatch gate on the threaded path (`outer >= 2 &&
+// total >= 1<<15`). A 1D {N} has one line, so the batch loop cannot thread and the
+// axis sub-plan owns the pool. A small N then runs serial; a DRAM-bound N routes to
+// `four_step_large` and threads its own passes ({1<<20}). {64,512} and {16,8192}
+// thread the row and column-DIF passes. The outer prime axis of {67,512} exercises
+// the scalar-fallback column pass. The 3D shape threads a middle axis. r2c adds the
 // batched real tile loop.
 
 namespace {
@@ -51,7 +51,7 @@ std::string shape_str(const std::vector<std::size_t>& s) {
 
 constexpr std::size_t kNthreads = 4;
 
-// Analytical serial-vs-threaded agreement bound: C*u*log2(N) (see file header).
+// Analytical serial-vs-threaded agreement bound: C*u*log2(N) (see the file header).
 template<typename T>
 double forecast_tol(std::size_t N) {
     const double u = 0.5 * static_cast<double>(std::numeric_limits<T>::epsilon());
@@ -64,8 +64,8 @@ TEMPLATE_TEST_CASE("c2c N-D nthreads=1 vs 4 agrees within the FFT rounding floor
     using T = TestType;
     const std::vector<std::vector<std::size_t>> shapes = {
         {4096},          // 1D: single line, below the DRAM route -> serial, must still match
-        {1 << 20},       // 1D f64 16 MB: four_step_large, threads its own col/row passes
-        {1 << 21},       // 1D f64 32 MB: four_step_large defer split (n2 = 2*n1, m=2 panels)
+        {1 << 20},       // 1D f64 16 MB: `four_step_large` threads its own col/row passes
+        {1 << 21},       // 1D f64 32 MB: `four_step_large` defer split (n2 = 2*n1, m=2 panels)
         {64, 512},       // 2D: threads the innermost row pass
         {16, 8192},      // 2D: threads the row pass + the batched column-DIF pass
         {67, 512},       // outer prime axis (>catalog) -> scalar-fallback column pass
@@ -99,7 +99,7 @@ TEMPLATE_TEST_CASE("r2c/c2r N-D nthreads=1 vs 4 agrees within the FFT rounding f
         {64, 512},
         {16, 8192},
         {8, 8, 512},
-        {512, 513},      // odd innermost real axis -> threads the r2c_odd/c2r_odd row loop
+        {512, 513},      // odd innermost real axis -> threads the `r2c_odd`/`c2r_odd` row loop
     };
     for (const auto& shape : shapes) {
         INFO("shape=" << shape_str(shape) << " prec=" << (sizeof(T) == 4 ? "f32" : "f64"));
@@ -115,7 +115,7 @@ TEMPLATE_TEST_CASE("r2c/c2r N-D nthreads=1 vs 4 agrees within the FFT rounding f
         threaded.forward(rin.data(), cb.data());
         REQUIRE(relerrtwonorm(ca, cb) < tol);
 
-        // c2r consumes its complex input -> feed each a private copy.
+        // `c2r` consumes the complex input, so feed each plan a private copy.
         auto ca_in = ca, cb_in = cb;
         std::vector<T> ra(serial.real_size()), rb(serial.real_size());
         serial.inverse(ca_in.data(), ra.data());
@@ -124,9 +124,10 @@ TEMPLATE_TEST_CASE("r2c/c2r N-D nthreads=1 vs 4 agrees within the FFT rounding f
     }
 }
 
-// nthreads=0 resolves to the allowed physical cores at the ctor boundary and must
-// not crash or change the result vs the serial path (to the FFT rounding floor;
-// see file header). On a single-core host it resolves to 1 (serial).
+// `nthreads` = 0 resolves to the allowed physical cores at the ctor boundary. The
+// auto path must not crash, and it must not change the result vs the serial path
+// (to the FFT rounding floor; see the file header). On a single-core host the
+// resolution is 1 (serial).
 TEMPLATE_TEST_CASE("nthreads=0 auto-select matches serial", "[threads]", float, double) {
     using T = TestType;
     const std::vector<std::size_t> shape = {16, 8192};
@@ -142,16 +143,18 @@ TEMPLATE_TEST_CASE("nthreads=0 auto-select matches serial", "[threads]", float, 
     REQUIRE(relerrtwonorm(a, b) < forecast_tol<T>(16 * 8192));
 }
 
-// parallel_for's documented contract: "First exception wins; rethrown after join."
-// No FFT body throws, so this is unreachable through the public plan API and needs
-// the pool directly. It is live error handling and not dead code. Every
-// four_step_large and real_fft body constructs a soa_scratch, which past SBO_MAX
-// calls ::operator new[] and can therefore throw bad_alloc on a WORKER thread.
-// Uncaught, that escapes the thread's callable and terminates the process.
-// n=64 over 4 threads gives chunk 16, so the throwing chunk (begin==0) belongs to a
-// worker while the caller runs the last one, i.e. the capture-and-rethrow path,
-// not a plain local throw. Holds for ADM_THREADS=0 too, where parallel_for runs the
-// body inline and the exception propagates directly.
+// `parallel_for`'s documented contract: "First exception wins; rethrown after join."
+// No FFT body throws, so the contract is unreachable through the public plan API and
+// needs the pool directly. The path is live error handling, not dead code. Every
+// `four_step_large` and `real_fft` body constructs a `soa_scratch`, and past
+// `SBO_MAX` the scratch calls `::operator new[]` and can throw `bad_alloc` on a
+// WORKER thread. Uncaught there, the exception escapes the thread's callable and
+// terminates the process. n=64 over 4 threads gives chunk 16, so the throwing chunk
+// (`begin==0`) belongs to a worker and the caller runs the last chunk. The
+// chunk-to-thread assignment runs the capture-and-rethrow path, not a plain local
+// throw. The test also holds for
+// `ADM_THREADS=0`, where `parallel_for` runs the body inline and the exception
+// propagates directly.
 TEST_CASE("parallel_for propagates a body exception, then resets", "[threads]") {
     admiral::detail::thread_pool pool(4);
 
@@ -162,8 +165,8 @@ TEST_CASE("parallel_for propagates a body exception, then resets", "[threads]") 
     }), std::runtime_error);
     REQUIRE(ran.load() > 0);
 
-    // The captured exception must not leak into the next call, or one failed
-    // transform would poison every later one on the same plan.
+    // The captured exception must not leak into the next call; one failed transform
+    // would poison every later transform on the same plan.
     std::atomic<std::size_t> sum{0};
     REQUIRE_NOTHROW(pool.parallel_for(64, [&](std::size_t b, std::size_t e, std::size_t) {
         for (std::size_t i = b; i < e; ++i) sum += i;
@@ -185,9 +188,9 @@ TEST_CASE("parallel_for with fewer units than threads leaves workers idle", "[th
     REQUIRE(sum.load() == 1);
 }
 
-// 810000 = 900^2 has n2 % n1 == 0 but 900 % W != 0. The serial gate refuses it and
-// the threaded gate admits it, so the pool runs the unfused sweeps, executable
-// only in this configuration.
+// 810000 = 900^2 has `n2 % n1 == 0` but `900 % W != 0`. The serial gate refuses the
+// size and the threaded gate admits the size, so the pool runs the unfused sweeps.
+// The unfused sweeps are executable only in this threaded configuration.
 TEST_CASE("threaded unfused four_step_large agrees across nthreads (double)",
           "[threads][fourstep]") {
     constexpr std::size_t N = 810000;

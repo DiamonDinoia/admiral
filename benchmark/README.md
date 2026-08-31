@@ -46,8 +46,8 @@ over its threaded time. At 16 threads, shapes under ~16k elements run slower
 than serial (0.7-1.0×). Threading pays from about 32k elements (32³: 4.2-6.4×,
 192²: 2.6-3.5×), reaches 6-7× at 512² and 8-9× at 64³, and 10-11× at 256³-scale
 and up (128³: 10-11×, 509²: 10-12×). Rectangles split on the innermost extent:
-64×4096 reaches 9×, 4096×64 only 2×. The `nthreads = 0` auto heuristic
-(`kAutoSerialElems` / `kAutoElemsPerThread` in `thread_pool.hpp`) comes from
+64×4096 reaches 9×, 4096×64 only 2×. The `nthreads = 0` auto law
+(`kAutoSerialElems` / `resolve_nthreads` in `thread_pool.hpp`) comes from
 this sweep.
 
 1-D threading is the one late case: the threaded route (four_step_large) admits

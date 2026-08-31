@@ -77,11 +77,14 @@ inline constexpr std::size_t kThreadMinElems = std::size_t{1} << 15;
 
 #if ADM_THREADS
 
-// Auto-selection heuristic: a pool costs more than it saves below
-// `kAutoSerialElems` elements. Above it, one worker per `kAutoElemsPerThread`,
-// capped at the machine's allowed physical cores.
+// Auto-selection law: serial below `kAutoSerialElems`; above it the count rises
+// in log2(total) steps of a power of two, capped by the machine's allowed
+// physical cores. The limiting cost is the pool's per-dispatch wake/join
+// latency, which grows with the worker count and must amortize against
+// per-thread work; the pow2 floor keeps the count a divisor of the passes'
+// radix-structured unit counts, which load-imbalance the static chunks at
+// off-divisor counts.
 inline constexpr std::size_t kAutoSerialElems = std::size_t{1} << 15;
-inline constexpr std::size_t kAutoElemsPerThread = std::size_t{1} << 12;
 
 // Distinct physical cores among the CPUs this process may run on (Linux topology
 // plus the affinity mask; the same method as finufft's getOptimalThreadCount).
@@ -128,11 +131,16 @@ inline constexpr std::size_t kAutoElemsPerThread = std::size_t{1} << 12;
     return auto_n;
 }
 
-// Size-aware form: heuristic count for total elements, 1 meaning no pool. n != 0 verbatim.
+// Size-aware form: the fitted law for total elements, 1 meaning no pool. n != 0 verbatim.
+// Ramp: 8 threads at [2^15, 2^17), +1 octave per octave to 16 at [2^17, 2^22),
+// 32 at [2^22, 2^26), 64 above; the pow2 floor means only those steps are reachable.
 [[nodiscard]] inline std::size_t resolve_nthreads(std::size_t n, std::size_t total) {
     if (n != 0) return n;
     if (total < kAutoSerialElems) return 1;
-    return std::clamp(total / kAutoElemsPerThread, std::size_t{1}, resolve_nthreads(0));
+    const std::size_t lg = static_cast<std::size_t>(bit_width(total)) - 1;
+    const std::size_t ramp =
+        lg < 17 ? 8 : lg < 22 ? 16 + (lg - 17) * 2 : 24 + (lg - 21) * 8;
+    return std::min(bit_floor(ramp), resolve_nthreads(0));
 }
 
 // `kSpinIters` * pause latency must cover a typical inter-dispatch gap yet park quickly

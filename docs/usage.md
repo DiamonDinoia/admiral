@@ -15,7 +15,7 @@ call site names what it sets and nothing else. The C API mirrors it as
 
 | field | default | what it does |
 |-------|---------|--------------|
-| `nthreads` | `0` | worker threads owned by the plan. `0` is auto: a size-aware heuristic, serial for small transforms, ramping to one per physical core at 1024²/64³ scale. `1` forces serial, `n` forces `n` |
+| `nthreads` | `0` | worker threads owned by the plan. `0` is auto: a size-aware law, serial for small transforms, stepping 8 / 16 / 32 / 64 threads at 2^15 / 2^17 / 2^22 / 2^26 elements, capped at the allowed physical cores. `1` forces serial, `n` forces `n` |
 | `eff` | `estimate` | how hard construction works to pick a route. `estimate` uses the fitted cost model, so it is fast and reproducible. `automatic` also times the model's top candidates; pick it when one plan serves many transforms. `measure` is the same race, kept for the FFTW flag mapping |
 | `debug` | `0` | stderr trace per execute: `0` silent, `1` what ran, `2` adds the shape, `3` adds the cost-model ranking |
 

@@ -54,6 +54,18 @@ Anything else that moves is a regression to explain.
 The two builds are NOT link-compatible: `admiral::span` is `std::span` at C++20 and the
 polyfill at C++17.
 
+## Auto thread count is a fitted step law, re-fit it like the four_step lines
+
+`resolve_nthreads(0, total)` in `thread_pool.hpp` selects the pool width at every
+public entry point. Serial < 2^15 elements, then steps 8/16/32/64 at 2^15/2^17/2^22/2^26
+(pow2-floor of a log ramp), capped by allowed physical cores. The limiting cost is the
+pool's per-dispatch wake/join price at high worker counts (0.2-0.8 ms per dispatch at
+64+ cores on 2P nodes; see the 2026-08-31 sweep in the logbook), not per-element work.
+Re-fit by sweeping time(shape, nthreads) on at least one 2P node plus one workstation and
+minimizing per-cell regret; the pow2 quantization is load-bearing (off-divisor counts load-
+imbalance the passes' static chunks by 2-4x). `nthreads=0` timing on 2P nodes is bistable at
+1-D 2^15-2^18 through the `effort::measure` race — do not fit to a single run there.
+
 ## Alignment hazard that's already handled
 
 codelet.hpp's cofactor `Wc == r` fast arm reinterprets scalar pointers as aligned batch

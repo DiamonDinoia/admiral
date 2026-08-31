@@ -220,13 +220,13 @@ TEST_CASE("threaded out-of-place four_step_large matches serial (double)",
     require_close(o4, o1, forecast_tol<double>(N));
 }
 
-// The auto count has no flat ceiling: a transform large enough to thread gets every
-// physical core the affinity mask allows. A reintroduced `min(cores, K)` fails the
-// first two REQUIREs on any host with more than K cores, and the third on every host.
+// The auto count has no flat ceiling below the law's top knot (64 threads at 2^26
+// elements): a transform large enough to thread gets the law's count, capped by the
+// physical cores the affinity mask allows. A reintroduced `min(cores, K)` with K <
+// min(cores, 8) fails the first knot REQUIRE on any host with more than K cores.
 // The ramp itself is the small-transform guard, so it is pinned here too.
-TEST_CASE("nthreads=0 ramps to every allowed physical core", "[threads]") {
+TEST_CASE("nthreads=0 follows the fitted ramp, capped by cores", "[threads]") {
     using admiral::detail::allowed_physical_cores;
-    using admiral::detail::kAutoElemsPerThread;
     using admiral::detail::kAutoSerialElems;
     using admiral::detail::resolve_nthreads;
 
@@ -234,9 +234,19 @@ TEST_CASE("nthreads=0 ramps to every allowed physical core", "[threads]") {
     REQUIRE(cores >= 1);
     REQUIRE(resolve_nthreads(0) == cores);
 
-    // total/kAutoElemsPerThread saturates the core count well before SIZE_MAX.
-    REQUIRE(resolve_nthreads(0, std::numeric_limits<std::size_t>::max()) == cores);
-    REQUIRE(resolve_nthreads(0, cores * kAutoElemsPerThread) == cores);
+    // Ramp steps (log2 total, threads), floored to a power of two.
+    REQUIRE(resolve_nthreads(0, std::size_t{1} << 15) == std::min<std::size_t>(cores, 8));
+    REQUIRE(resolve_nthreads(0, std::size_t{1} << 16) == std::min<std::size_t>(cores, 8));
+    REQUIRE(resolve_nthreads(0, std::size_t{1} << 17) == std::min<std::size_t>(cores, 16));
+    REQUIRE(resolve_nthreads(0, std::size_t{1} << 20) == std::min<std::size_t>(cores, 16));
+    REQUIRE(resolve_nthreads(0, std::size_t{1} << 22) == std::min<std::size_t>(cores, 32));
+    REQUIRE(resolve_nthreads(0, std::numeric_limits<std::size_t>::max()) ==
+            std::min<std::size_t>(cores, 256));
+
+    // The ramp never reverses: more elements never mean fewer workers.
+    for (std::size_t lg = 15; lg < 62; ++lg)
+        REQUIRE(resolve_nthreads(0, std::size_t{1} << (lg + 1)) >=
+                resolve_nthreads(0, std::size_t{1} << lg));
 
     // Below the serial floor the pool never appears, whatever the machine.
     REQUIRE(resolve_nthreads(0, kAutoSerialElems - 1) == 1);

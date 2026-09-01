@@ -1,22 +1,19 @@
-// FFTW3-compatible shim over `admiral::plan<T>`. See `include/admiral/fftw3.h`
-// for the covered API and conventions (unnormalized both directions; flags
-// ignored).
 
 #include "admiral/fftw3.h"
 #include "admiral/admiral.hpp"
-#include "admiral/detail/scratch.hpp"  // `span_align`: the alignment the kernels assume
+#include "admiral/detail/scratch.hpp"
 
 #include <complex>
-#include <cstdlib>   // `posix_memalign`, `free`
+#include <cstdlib>
+#if defined(_MSC_VER)
+#include <malloc.h>
+#endif
 #include <memory>
 #include <new>
 #include <utility>
 #include <vector>
-#include "admiral/detail/cxx_compat.hpp"  // `span`
+#include "admiral/detail/cxx_compat.hpp"
 
-// One handle per precision. The handle owns the admiral plan plus the arrays
-// and direction captured at plan time, so `fftw_execute(p)` replays them. The
-// handle's type IS the precision tag; no enum, no void*, no destructor.
 template<typename T>
 struct fftw_handle {
     using value_type = T;
@@ -31,28 +28,36 @@ struct fftw_handle {
     void* out;
 };
 
-// The two names `fftw3.h` declares. Separate types make `fftw_execute()` on an
-// `fftwf_plan` a compile error rather than a silent no-op.
 struct fftw_plan_s  : fftw_handle<double> { using fftw_handle<double>::fftw_handle; };
 struct fftwf_plan_s : fftw_handle<float>  { using fftw_handle<float>::fftw_handle; };
 
 namespace {
 
-// FFTW guarantees SIMD-friendly alignment; `span_align` is arch-derived and
-// precision-independent, so one number covers both entry points.
 constexpr size_t kAlign = admiral::detail::span_align<double>;
 static_assert(kAlign == admiral::detail::span_align<float>);
 
 void* aligned_malloc(size_t n) {
-    void* p = nullptr;
     if (n == 0) n = 1;
+#if defined(_MSC_VER)
+    return _aligned_malloc(n, kAlign);
+#else
+    void* p = nullptr;
     if (posix_memalign(&p, kAlign, n) != 0) return nullptr;
     return p;
+#endif
 }
 
-// fct=1: FFTW is unnormalized both ways. in == out runs in place.
+// MSVC pairs `_aligned_malloc` with `_aligned_free`; handing that block to `free` is undefined.
+void aligned_free(void* p) noexcept {
+#if defined(_MSC_VER)
+    _aligned_free(p);
+#else
+    free(p);
+#endif
+}
+
 template<typename H>
-void run(const H* p, void* in, void* out) {
+void run(H* p, void* in, void* out) {
     using T = typename H::value_type;
     if (in == nullptr || out == nullptr) return;
     auto* ci = static_cast<const std::complex<T>*>(in);
@@ -75,13 +80,9 @@ H* make_plan(int rank, const int* n, void* in, void* out, int sign, unsigned fla
         if (n[i] < 1) return nullptr;
         shape[i] = static_cast<size_t>(n[i]);
     }
-    // `FFTW_MEASURE` is zero, so `FFTW_ESTIMATE` is the only detectable flag;
-    // the flag opts out of the candidate race. Everything else takes
-    // `effort::automatic`: one search budget (`admiral.hpp`).
     const admiral::effort eff =
         (flags & FFTW_ESTIMATE) ? admiral::effort::estimate : admiral::effort::automatic;
     try {
-        // `nthreads` stays 1: the shim's documented contract is single-threaded plans.
         return std::make_unique<H>(sign, in, out, admiral::span<const size_t>(shape),
                                    admiral::options{1, eff})
             .release();
@@ -90,7 +91,7 @@ H* make_plan(int rank, const int* n, void* in, void* out, int sign, unsigned fla
     }
 }
 
-}  // namespace
+}
 
 extern "C" {
 
@@ -122,7 +123,7 @@ extern "C" {
     } \
     void     PREFIX##_destroy_plan(PREFIX##_plan p) { delete p; } \
     void*    PREFIX##_malloc(size_t n)                 { return aligned_malloc(n); } \
-    void     PREFIX##_free(void* p)                    { free(p); } \
+    void     PREFIX##_free(void* p)                    { aligned_free(p); } \
     T*       PREFIX##_alloc_real(size_t n)             { return static_cast<T*>(aligned_malloc(n * sizeof(T))); } \
     COMPLEX_T* PREFIX##_alloc_complex(size_t n)        { return static_cast<COMPLEX_T*>(aligned_malloc(n * sizeof(COMPLEX_T))); } \
     void     PREFIX##_cleanup(void)                    {}
@@ -130,4 +131,4 @@ extern "C" {
 ADM_FFTW_SHIM(fftw,  double, fftw_complex)
 ADM_FFTW_SHIM(fftwf, float,  fftwf_complex)
 
-}  // extern "C"
+}

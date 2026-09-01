@@ -20,6 +20,7 @@
 #include <vector>
 #include "cxx_compat.hpp"  // `ADM_UNLIKELY`, span, `detail::has_single_bit`
 
+#include <cstdlib>   // std::getenv (the ADM_E2_OFF campaign knob)
 #include <admiral/errors.hpp>  // `size_error`
 
 #include "simd.hpp"     // `batch<T>::size` (SIMD-lane block alignment)
@@ -72,6 +73,14 @@ struct nd_axis_state {
     return p;
 }
 
+// ADM_E2_OFF=1 (temporary, campaign-only): disables the E2 col-batched arm so node
+// A/Bs can attribute the ice ST 64^2 regression (+32%, standing at standings-3) to
+// E2-vs-route interactions. Removal target: iteration close, once ruled in or out.
+[[nodiscard]] inline bool col_codelet_enabled() {
+    const char* e = std::getenv("ADM_E2_OFF");
+    return e == nullptr || e[0] != '1';
+}
+
 // Per-axis state: innermost takes the `plan_impl` row path, outer smooth axes the
 // `col_dif_execute_ws` column path, outer non-smooth axes gather -> `plan_impl` -> scatter.
 // Small-inner `pow2` f32 exception: radix-8 DIF spills on AVX2's 16 YMM and radix-4's
@@ -97,7 +106,7 @@ template<typename T>
         // per-tile slab reuse wins (len x inner A/B sweep, SP-class AVX-512,
         // 2026-08-31).
         st.col_codelet = length >= 8 && length <= kFourStepLeafMax &&
-                         is_codelet_catalog(length) && inner <= 64;
+                         is_codelet_catalog(length) && inner <= 64 && col_codelet_enabled();
         dif_factor_plan r4;
         const dif_factor_plan* ov = nullptr;
         // f32 only: on f64 the r16 passes spill, but the pass-count saving outweighs

@@ -265,9 +265,10 @@ TEST_CASE("resolve_nthreads wake law: serial floor, knee, pocket, pow2, cap", "[
 
     // Knee clamp: work that dwarfs every dhat entry buys the saturating width and
     // no more. Below the knee each doubling halves the work; at and past it the
-    // work is flat and the dhat term only grows.
+    // work is flat and the dhat term only grows. 2^30 f64 elements (16 GB) is past
+    // every row's gateMB, so the deep tier is read.
     for (const unsigned cls : {0u, 1u, 2u}) {
-        const std::size_t knee = fam.knee[cls];
+        const std::size_t knee = fam.knee[cls][1];
         const std::size_t want = knee <= P ? knee : std::size_t{1}
                                    << (admiral::detail::bit_width(P) - 1);
         REQUIRE(resolve_nthreads(0, std::size_t{1} << 30, 1, 1e12, cls) == want);
@@ -277,8 +278,9 @@ TEST_CASE("resolve_nthreads wake law: serial floor, knee, pocket, pow2, cap", "[
     // rider and the two fixed-point gap iterations, then require the shipped
     // argmin to match. Catches a mis-fed K/W/class, the loop bounds and the
     // quantization; a wrong pocket or knee constant lands a different argmin.
-    const auto law_eval = [&](std::size_t K, double w_ns, unsigned cls) {
-        const std::size_t knee = fam.knee[cls];
+    const auto law_eval = [&](std::size_t total, std::size_t K, double w_ns, unsigned cls) {
+        const bool deep = double(total) * 16.0 > double(fam.gateMB[cls]) * 1e6;
+        const std::size_t knee = fam.knee[cls][deep];   // hand-mirrors the shipped gate
         std::size_t best = 1;
         double best_t = w_ns;
         for (std::size_t nt = 2; nt <= P; nt <<= 1) {
@@ -304,13 +306,20 @@ TEST_CASE("resolve_nthreads wake law: serial floor, knee, pocket, pow2, cap", "[
             for (const double w : {1e5, 9e6, 3e9}) {
                 INFO("K=" << c << " cls=" << cls << " w=" << w);
                 REQUIRE(resolve_nthreads(0, std::size_t{1} << 24, c, w, cls) ==
-                        law_eval(c, w, cls));
+                        law_eval(std::size_t{1} << 24, c, w, cls));
             }
 
-    // Exact picks on the probed host classes, W priced the way the fsl plan
-    // prices it (leaf-64-streamed log-octave estimate at the measured core
-    // frequency). Values are the modeler table (t0-modeler-r2.md sect. 2b),
-    // quadrant (fsl, K=5). On other hosts the table is not applicable.
+    // Exact picks on the probed host classes (fi/mt t0-modeler-r3.md receipt table,
+    // t0/scoring-final-r3.txt), one per knee regime. W is priced the way the plans
+    // price it: fsl pays kFourStepOverhead over the large split, ND sums the
+    // per-axis line work, both at the shelves' core frequency. Hand-verified
+    // arithmetics (ns, two fixed-point gap iterations):
+    // * shallow regime, rome 2-D 2048^2 (64 MB <= 256 MB gate -> knee 16):
+    //   T(16) = 1.054e6 + 2*17.1e3 = 1.088e6 < T(32) = 1.054e6 + 2*31.0e3 = 1.116e6 -> 16.
+    // * deep regime, rome 1-D 2^22 (67.1 MB > 64 MB gate -> knee 32):
+    //   T(32) = 5.96e5 + 5*23.0e3 = 7.11e5 < T(16) = 1.19e6 + 5*13.0e3 = 1.26e6 -> 32.
+    // * gate-inert row, ice 1-D 2^21 (ice fsl layer is (32,32)):
+    //   T(16) = 5.28e5 + 5*211.5e3 = 1.585e6 < T(32) = 2.64e5 + 5*298.1e3 = 1.754e6 -> 16.
     const auto fsl_pick = [&](std::size_t lg) {
         const std::size_t n = std::size_t{1} << lg;
         const auto sp = admiral::detail::choose_large_split(n);
@@ -321,17 +330,28 @@ TEST_CASE("resolve_nthreads wake law: serial floor, knee, pocket, pow2, cap", "[
                        : admiral::detail::line_work_cyc<double>(n);
         return resolve_nthreads(0, n, 5, cyc / admiral::detail::core_cyc_per_ns(), 0);
     };
-    if (P == 128 && C0 == 64) {          // rome: v2 holds 16 from 2^21 on up
+    const auto sq2_pick = [&](std::size_t e) {   // 2-D: K = 2, cls = 1, summed line work
+        const std::size_t n = std::size_t{1} << e;
+        const double cyc = 2.0 * double(n) * admiral::detail::line_work_cyc<double>(n);
+        return resolve_nthreads(0, n * n, 2, cyc / admiral::detail::core_cyc_per_ns(), 1);
+    };
+    if (P == 128 && C0 == 64) {          // rome: 2^21 stays 16 (shallow), 2^22 moves to 32 (deep)
         REQUIRE(fsl_pick(21) == 16);
-        REQUIRE(fsl_pick(22) == 16);
+        REQUIRE(fsl_pick(22) == 32);
+        REQUIRE(sq2_pick(11) == 16);     // 2048^2, the shallow regime above
+        REQUIRE(sq2_pick(13) == 32);     // 8192^2: accepted +6.5% loss (r3 sect. 4 item 3)
     }
-    if (P == 64 && C0 == 32) {           // icelake: 2^20 holds 16, 2^21 moves to 32
+    if (P == 64 && C0 == 32) {           // icelake: 2^20 -> 8, 2^21 -> 16
+        REQUIRE(fsl_pick(20) == 8);
+        REQUIRE(fsl_pick(21) == 16);
+        REQUIRE(sq2_pick(11) == 32);     // 2048^2 (deep tier, dhat-dominated)
+        REQUIRE(sq2_pick(12) == 64);     // 4096^2
+    }
+    if (P == 96 && C0 == 48) {           // genoa: 2^20 -> 16, 2^21 -> 32
         REQUIRE(fsl_pick(20) == 16);
         REQUIRE(fsl_pick(21) == 32);
-    }
-    if (P == 96 && C0 == 48) {           // genoa: 2^20/2^21 move to 32
-        REQUIRE(fsl_pick(20) == 32);
-        REQUIRE(fsl_pick(21) == 32);
+        REQUIRE(sq2_pick(10) == 32);     // 1024^2
+        REQUIRE(sq2_pick(13) == 64);     // 8192^2 (deep gate)
     }
 }
 #endif  // ADM_THREADS

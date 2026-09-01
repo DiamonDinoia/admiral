@@ -190,12 +190,13 @@ inline constexpr std::size_t kAutoSerialElems = std::size_t{1} << 15;
     return cyc_per_ns;
 }
 
-// Auto-selection law v2 (2026-08-31 campaign, fi/mt t0-modeler-r2.md):
-//   nt* = argmin over pow2 nt <= P of  T(nt) = W / min(nt, knee[cls]) + K * Dhat(nt, gap^),
+// Auto-selection law (2026-08-31/09-01 campaign, fi/mt t0-modeler-r2.md + r3.md):
+//   nt* = argmin over pow2 nt <= P of  T(nt) = W / min(nt, knee_eff) + K * Dhat(nt, gap^),
 // gap^ the self-consistent per-dispatch gap (two fixed-point iterations), W the serial
-// work estimate in ns, K the dispatches per execute. The knee clamps the work term at
-// the memory-fabric saturation width; Dhat prices the pool's per-dispatch wake/join.
-// pow2 quantization stands: off-divisor counts load-imbalance the passes' static chunks.
+// work estimate in ns, K the dispatches per execute, knee_eff the class's two-tier
+// knee (home-domain width below the array-size gate, additive-cap past it). Dhat
+// prices the pool's per-dispatch wake/join. pow2 quantization stands: off-divisor
+// counts load-imbalance the passes' static chunks.
 
 // Pocket constants. G0: onset gap — the pair-RTT p50 stays hot at gap <= 30 us on all
 // 15 class x family probe cells, so pools leave the hot band only past this column
@@ -205,12 +206,18 @@ inline constexpr double kPocketOnsetNs = 30e3;
 // pair-RTT leaves hot in (30, 300] us).
 inline constexpr double kPocketTierNs = 100e3;
 
-// One probed host class: thread counts, knee per engine class, and the wake grid.
-// knee[cls]: 0 = 1-D four_step_large, 1 = 2-D lines, 2 = 3-D lines.
+// One probed host class: thread counts, two-tier knee per engine class, and the wake
+// grid. cls: 0 = 1-D four_step_large, 1 = 2-D lines, 2 = 3-D lines. knee[cls][0] is
+// the home-domain (NUMA-node) width, knee[cls][1] the additive-cap tier; the gate
+// switches to deep when the array's f64 bytes pass gateMB[cls] (fi/mt
+// t0-modeler-r3.md sect. 5: below the gate passes stay aggregate-L3-resident and the
+// home domain wins; past it passes are DRAM streams and the controllers engage
+// broadly).
 struct wake_family_row {
     std::size_t P;
     std::size_t C0;
-    std::size_t knee[3];
+    std::size_t knee[3][2];   // [cls][shallow|deep]
+    std::size_t gateMB[3];    // MB of array at which the deep tier engages
     double dhat[12][6];   // mean_ns - 51 ns over nt grid x gap grid {0,30us,100us,300us,1ms,10ms}
 };
 
@@ -219,9 +226,10 @@ struct wake_family_row {
 // Rows past a class's own P repeat its deepest probe row; the argmin never reads past P.
 [[nodiscard]] inline const wake_family_row& wake_family_for(std::size_t P, std::size_t C0) {
     static constexpr wake_family_row rows[3] = {
-        // icelake (2x32): knees (32,64,64); probe verdict CONFIRMED: sock0/L3 knee = 32
-        // exact, node tier additive to 64 (fi/mt t0/topo-probe-results.md mem_scale).
-        {64, 32, {32, 64, 64}, {
+        // icelake (2x32): pass knee 32 all classes (probe verdict CONFIRMED: sock0/L3
+        // knee = 32 exact), deep 64; gates 48MB (receipts: 2d 2048^2/4096^2 wins;
+        // fi/mt pass-knee-results.md, 2026-08-31, jobs 6970068-70).
+        {64, 32, {{32, 32}, {32, 64}, {32, 64}}, {48, 48, 48}, {
             {417.6, 2190.3, 3249.3, 44969.9, 69767.1, 71166.9},
             {659.4, 3325.1, 4036.6, 83426.6, 85974.7, 94599.9},
             {863.2, 4290.9, 67169.3, 103528.2, 107990.6, 105262.3},
@@ -235,9 +243,10 @@ struct wake_family_row {
             {478692.6, 466653.6, 469364.1, 462019.9, 396584.9, 436007.0},
             {478692.6, 466653.6, 469364.1, 462019.9, 396584.9, 436007.0},
         }},
-        // rome (2x64): knees (16,32,32); fsl = one NPS4 node width (probe plateau at
-        // nt 16), nd = 2 nodes (probe verdicts + receipt runs fft/fft2-rome).
-        {128, 64, {16, 32, 32}, {
+        // rome (2x64): shallow = one NPS4 node width (pass-knee 16, sfill arm), deep
+        // 32; gates fsl 64MB / nd 256MB (fi/mt pass-knee-results.md sec 2 + cluster
+        // receipts; the 8192^2 loss is accepted against a deeper tier).
+        {128, 64, {{16, 32}, {16, 32}, {16, 32}}, {64, 256, 256}, {
             {845.5, 854.3, 4660.3, 5585.7, 12267.9, 29903.1},
             {1221.8, 1200.2, 5997.1, 7244.4, 15280.6, 32800.4},
             {1271.6, 1212.2, 6494.1, 8201.1, 19119.3, 34722.1},
@@ -251,10 +260,10 @@ struct wake_family_row {
             {44709.1, 134241.8, 165196.5, 212308.3, 209231.0, 651361.0},
             {279548.0, 291422.2, 290223.4, 287607.0, 291248.4, 810145.2},
         }},
-        // genoa (2x48): knees (32,32,64); fsl/nd2 between the probe CCD knee (2-4) and
-        // the socket tier (>48), nd3 = 64: 512^3 measured 439 GB/s aggregate > one
-        // socket's 251 GB/s probed cap (receipt fft-genoa.csv; probe mem_scale sock0@48).
-        {96, 48, {32, 32, 64}, {
+        // genoa (2x48): shallow 32, deep fsl 32 / nd 64; gates 512MB. Receipts outrank
+        // the probe rows verbatim at 1-D 2^24 (+114% refuted) and all-classes 96 (256^3);
+        // nd3 deep 64 kills the 256^3 r2 exception (fi/mt t0-modeler-r3.md sect. 3).
+        {96, 48, {{32, 32}, {32, 64}, {32, 64}}, {512, 512, 512}, {
             {803.6, 734.4, 5502.3, 6529.2, 7360.2, 21300.4},
             {1314.9, 1256.1, 7467.7, 8481.8, 9172.5, 23979.8},
             {1694.2, 1656.0, 10002.0, 10627.2, 12025.9, 26398.2},
@@ -316,7 +325,13 @@ struct wake_family_row {
     static const std::size_t P = resolve_nthreads(0);
     static const std::size_t C0 = cores_per_socket();
     static const wake_family_row& fam = wake_family_for(P, C0);
-    const std::size_t knee = fam.knee[std::min(cls, 2u)];
+    const std::size_t cls_i = std::min(cls, 2u);
+    // f64-array gate: past it the per-array pass working set is a DRAM stream and the
+    // additive-cap knee engages. f64 bytes regardless of T: the receipts that tiered
+    // the gates are f64-only (the bench is double-precision).
+    const bool deep = static_cast<double>(total) * 16.0 >
+                      static_cast<double>(fam.gateMB[cls_i]) * 1e6;
+    const std::size_t knee = fam.knee[cls_i][deep];
     std::size_t best = 1;
     double best_t = work_ns;
     for (std::size_t nt = 2; nt <= P; nt <<= 1) {

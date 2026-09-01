@@ -220,40 +220,118 @@ TEST_CASE("threaded out-of-place four_step_large matches serial (double)",
     require_close(o4, o1, forecast_tol<double>(N));
 }
 
-// The auto count has no flat ceiling below the law's top knot (64 threads at 2^26
-// elements): a transform large enough to thread gets the law's count, capped by the
-// physical cores the affinity mask allows. A reintroduced `min(cores, K)` with K <
-// min(cores, 8) fails the first knot REQUIRE on any host with more than K cores.
-// The ramp itself is the small-transform guard, so it is pinned here too.
-TEST_CASE("nthreads=0 follows the fitted ramp, capped by cores", "[threads]") {
-    using admiral::detail::allowed_physical_cores;
+// The auto count is the wake-law argmin (fi/mt t0-modeler-r2.md, 2026-08-31):
+//   nt* = argmin over pow2 nt <= P of  W / min(nt, knee[cls]) + K * Dhat(nt, gap^),
+// W the serial work estimate, K the dispatches per execute, Dhat the probed
+// wake-cost grid. This case pins the law's named regimes against hand-computed
+// values; the machine-dependent rows come from the probed tables in
+// `wake_family_row`, so the same checks hold on any host.
+TEST_CASE("resolve_nthreads wake law: serial floor, knee, pocket, pow2, cap", "[threads]") {
+    using admiral::detail::dhat_ns;
+    using admiral::detail::has_single_bit;
     using admiral::detail::kAutoSerialElems;
+    using admiral::detail::kPocketOnsetNs;
+    using admiral::detail::kPocketTierNs;
     using admiral::detail::resolve_nthreads;
+    using admiral::detail::wake_family_for;
+    using admiral::detail::wake_family_row;
 
-    const std::size_t cores = allowed_physical_cores();
-    REQUIRE(cores >= 1);
-    REQUIRE(resolve_nthreads(0) == cores);
+    const std::size_t P = resolve_nthreads(0);
+    const std::size_t C0 = admiral::detail::cores_per_socket();
+    REQUIRE(P >= 1);
+    REQUIRE(C0 >= 1);
+    const wake_family_row& fam = wake_family_for(P, C0);
 
-    // Ramp steps (log2 total, threads), floored to a power of two.
-    REQUIRE(resolve_nthreads(0, std::size_t{1} << 15) == std::min<std::size_t>(cores, 8));
-    REQUIRE(resolve_nthreads(0, std::size_t{1} << 16) == std::min<std::size_t>(cores, 8));
-    REQUIRE(resolve_nthreads(0, std::size_t{1} << 17) == std::min<std::size_t>(cores, 16));
-    REQUIRE(resolve_nthreads(0, std::size_t{1} << 20) == std::min<std::size_t>(cores, 16));
-    REQUIRE(resolve_nthreads(0, std::size_t{1} << 22) == std::min<std::size_t>(cores, 32));
-    REQUIRE(resolve_nthreads(0, std::numeric_limits<std::size_t>::max()) ==
-            std::min<std::size_t>(cores, 256));
+    // Serial floor: below 2^15 elements, or K == 0, there is never a pool.
+    REQUIRE(resolve_nthreads(0, kAutoSerialElems - 1, 3, 1e9, 1) == 1);
+    REQUIRE(resolve_nthreads(0, std::size_t{1} << 30, 0, 1e9, 1) == 1);
 
-    // The ramp never reverses: more elements never mean fewer workers.
-    for (std::size_t lg = 15; lg < 62; ++lg)
-        REQUIRE(resolve_nthreads(0, std::size_t{1} << (lg + 1)) >=
-                resolve_nthreads(0, std::size_t{1} << lg));
-
-    // Below the serial floor the pool never appears, whatever the machine.
-    REQUIRE(resolve_nthreads(0, kAutoSerialElems - 1) == 1);
-    REQUIRE(resolve_nthreads(0, 1) == 1);
-
-    // An explicit count is still returned verbatim, ramp or no ramp.
+    // An explicit count is still returned verbatim.
     REQUIRE(resolve_nthreads(3) == 3);
     REQUIRE(resolve_nthreads(3, 1) == 3);
+    REQUIRE(resolve_nthreads(3, kAutoSerialElems - 1, 0, 0, 0) == 3);
+
+    // Quantization and cap over the whole (size, K, class, work) box: pow2-or-1
+    // and never past the machine count.
+    for (std::size_t lg = 15; lg < 34; ++lg)
+        for (const std::size_t K : {std::size_t{1}, std::size_t{2}, std::size_t{3}, std::size_t{5}})
+            for (const unsigned cls : {0u, 1u, 2u})
+                for (const double w : {1e4, 1e7, 1e12}) {
+                    const std::size_t nt =
+                        resolve_nthreads(0, std::size_t{1} << lg, K, w, cls);
+                    REQUIRE(nt <= P);
+                    REQUIRE((nt == 1 || has_single_bit(nt)));
+                }
+
+    // Knee clamp: work that dwarfs every dhat entry buys the saturating width and
+    // no more. Below the knee each doubling halves the work; at and past it the
+    // work is flat and the dhat term only grows.
+    for (const unsigned cls : {0u, 1u, 2u}) {
+        const std::size_t knee = fam.knee[cls];
+        const std::size_t want = knee <= P ? knee : std::size_t{1}
+                                   << (admiral::detail::bit_width(P) - 1);
+        REQUIRE(resolve_nthreads(0, std::size_t{1} << 30, 1, 1e12, cls) == want);
+    }
+
+    // Hand-computed eval: re-derive T(nt) from the probed table with the pocket
+    // rider and the two fixed-point gap iterations, then require the shipped
+    // argmin to match. Catches a mis-fed K/W/class, the loop bounds and the
+    // quantization; a wrong pocket or knee constant lands a different argmin.
+    const auto law_eval = [&](std::size_t K, double w_ns, unsigned cls) {
+        const std::size_t knee = fam.knee[cls];
+        std::size_t best = 1;
+        double best_t = w_ns;
+        for (std::size_t nt = 2; nt <= P; nt <<= 1) {
+            const double work = w_ns / double(std::min(nt, knee));
+            const double gh = work / double(K);
+            const bool pocket = gh < kPocketOnsetNs && nt >= C0 / 2;
+            double gap = pocket ? std::max(gh, kPocketTierNs) : gh;
+            double dh = dhat_ns(fam, nt, gap);
+            for (int i = 0; i < 2; ++i) {
+                const double t = work + double(K) * dh;
+                gap = t / double(K);
+                if (pocket) gap = std::max(gap, kPocketTierNs);
+                dh = dhat_ns(fam, nt, gap);
+            }
+            if (const double t = work + double(K) * dh; t < best_t) { best_t = t; best = nt; }
+        }
+        return best;
+    };
+    // A pocket-positive cell (hot gap < 30 us at >= half a socket), a parked cell
+    // (work per dispatch in the ms range) and a near-serial cell.
+    for (const auto& c : {std::size_t{5}, std::size_t{1}, std::size_t{2}})
+        for (const unsigned cls : {0u, 1u, 2u})
+            for (const double w : {1e5, 9e6, 3e9}) {
+                INFO("K=" << c << " cls=" << cls << " w=" << w);
+                REQUIRE(resolve_nthreads(0, std::size_t{1} << 24, c, w, cls) ==
+                        law_eval(c, w, cls));
+            }
+
+    // Exact picks on the probed host classes, W priced the way the fsl plan
+    // prices it (leaf-64-streamed log-octave estimate at the measured core
+    // frequency). Values are the modeler table (t0-modeler-r2.md sect. 2b),
+    // quadrant (fsl, K=5). On other hosts the table is not applicable.
+    const auto fsl_pick = [&](std::size_t lg) {
+        const std::size_t n = std::size_t{1} << lg;
+        const auto sp = admiral::detail::choose_large_split(n);
+        const double cyc =
+            sp.valid() ? admiral::detail::kFourStepOverhead *
+                             (double(sp.n1) * admiral::detail::line_work_cyc<double>(sp.n2) +
+                              double(sp.n2) * admiral::detail::line_work_cyc<double>(sp.n1))
+                       : admiral::detail::line_work_cyc<double>(n);
+        return resolve_nthreads(0, n, 5, cyc / admiral::detail::core_cyc_per_ns(), 0);
+    };
+    if (P == 128 && C0 == 64) {          // rome: v2 holds 16 from 2^21 on up
+        REQUIRE(fsl_pick(21) == 16);
+        REQUIRE(fsl_pick(22) == 16);
+    }
+    if (P == 64 && C0 == 32) {           // icelake: 2^20 holds 16, 2^21 moves to 32
+        REQUIRE(fsl_pick(20) == 16);
+        REQUIRE(fsl_pick(21) == 32);
+    }
+    if (P == 96 && C0 == 48) {           // genoa: 2^20/2^21 move to 32
+        REQUIRE(fsl_pick(20) == 32);
+        REQUIRE(fsl_pick(21) == 32);
+    }
 }
 #endif  // ADM_THREADS

@@ -22,18 +22,10 @@ namespace admiral {
 
 namespace detail {
 
-// `resolve_nthreads` runs at state construction: routing needs the real worker
-// count, not the 0-means-auto sentinel. `options::debug` is the one field the
-// engine plan does not keep, so each state holds a copy and replays it per
-// execute.
-
-// The auto heuristic needs the transform's element count; on overflow the plan
-// constructor reports the bad shape itself, so a saturated max is fine here.
-[[nodiscard]] inline std::size_t resolve_auto(const admiral::options& opts,
-                                              span<const std::size_t> shape) {
-    return resolve_nthreads(opts.nthreads, extent_product(shape).value_or(
-                                               std::numeric_limits<std::size_t>::max()));
-}
+// The 0-means-auto sentinel resolves inside the engine states, where the route
+// and the dispatch count are known (the wake law in `thread_pool.hpp`).
+// `options::debug` is the one field the engine plan does not keep, so each state
+// holds a copy and replays it per execute.
 
 template<typename T>
 [[nodiscard]] std::optional<T> as_optional(const T* p) {
@@ -42,17 +34,22 @@ template<typename T>
 
 // Threading split for the single-axis plans; `nd_runtime_plan` folds the same
 // rule over every axis. The batch loop owns the pool when the loop can thread,
-// so the axis sub-plan routes 1-threaded. A single line hands the axis the real
-// count, which only `four_step_large` reads.
+// so the axis sub-plan routes 1-threaded. A single line keeps the raw request: 0
+// there self-resolves inside the axis plan, whose route class the law needs.
+template<typename T>
 inline std::size_t split_batch_threads(std::size_t requested, std::size_t total,
-                                       std::size_t lines,
+                                       std::size_t lines, std::size_t len,
                                        std::unique_ptr<thread_pool>& pool) {
-    const std::size_t nthreads = resolve_nthreads(requested, total);
     if (lines >= 2 && total >= kThreadMinElems) {
+        // One dispatch for the batch loop (K=1). The strides slab adds its
+        // scatter second dispatch at its own call site, which re-prices there.
+        const std::size_t nthreads =
+            resolve_nthreads(requested, total, 1,
+                             double(lines) * line_work_cyc<T>(len) / core_cyc_per_ns(), 1);
         if (nthreads > 1) pool = std::make_unique<thread_pool>(nthreads);
         return 1;
     }
-    return nthreads;
+    return requested;
 }
 
 template<typename T>
@@ -62,8 +59,8 @@ struct plan_state {
     unsigned debug;
 
     plan_state(span<const std::size_t> shape, const admiral::options& opts)
-        : fwd{shape, /*is_forward=*/true, resolve_auto(opts, shape), opts.eff},
-          inv{shape, /*is_forward=*/false, resolve_auto(opts, shape), opts.eff},
+        : fwd{shape, /*is_forward=*/true, opts.nthreads, opts.eff},
+          inv{shape, /*is_forward=*/false, opts.nthreads, opts.eff},
           debug(opts.debug) {}
 
     [[nodiscard]] std::size_t size() const noexcept { return fwd.size(); }
@@ -82,7 +79,7 @@ struct plan_state {
 template<>
 struct plan_state<long double> : scalar_plan_state<long double> {
     plan_state(span<const std::size_t> shape, const admiral::options& opts)
-        : scalar_plan_state(shape, resolve_auto(opts, shape)) {}
+        : scalar_plan_state(shape, opts.nthreads) {}
 };
 
 template<typename T>
@@ -121,10 +118,11 @@ struct axis_state {
             if (d != axis && (innermost || d + 1 != shape.size())) bd.push_back(d);
         // prod(shape[d != axis]) bounds the batch loop's unit count for both
         // forms, so a single-line box (finufft with `ntrans` == 1) hands the
-        // axis the real thread count.
+        // axis the raw request, which self-resolves inside the axis plan.
         st = make_nd_axis_state<T>(shape[axis], stride[axis], forward, innermost,
-                                   split_batch_threads(opts.nthreads, *total,
-                                                       *total / shape[axis], pool),
+                                   split_batch_threads<T>(opts.nthreads, *total,
+                                                          *total / shape[axis], shape[axis],
+                                                          pool),
                                    opts.eff);
     }
 };
@@ -155,7 +153,8 @@ struct strides_state {
         const auto total = extent_product(span<const std::size_t>(dims, 2));
         if (!total) throw size_error("strides_plan: len and nbatch must be > 0 and their"
                                      " product must fit");
-        const std::size_t axis_threads = split_batch_threads(opts.nthreads, *total, n, pool);
+        const std::size_t axis_threads =
+            split_batch_threads<T>(opts.nthreads, *total, n, len_, pool);
         // The INPUT stride, not max over both sides. The axis state's factoring
         // proxy picks the numbers, and the route rule below promises bits that
         // do not depend on the output layout.
@@ -166,9 +165,17 @@ struct strides_state {
         // Allocate at plan time so a call never allocates and a failure lands
         // at plan time. The gate repeats `run()`'s chooser call, so the slab
         // exists iff `run()` reads it.
-        if (len_ > 1 && istride != 1 && idist == 1 && odist != 1 &&
-            (slab_route(fwd) || slab_route(inv)))
-            slab = detail::make_aligned_buffer<std::complex<T>>(*total);
+        const bool need_slab = len_ > 1 && istride != 1 && idist == 1 && odist != 1 &&
+                               (slab_route(fwd) || slab_route(inv));
+        if (need_slab && pool && opts.nthreads == 0) {
+            // The slab's scatter doubles the dispatches: re-price the count once
+            // with K=2 (the col pass + the scatter).
+            const std::size_t n1 =
+                resolve_nthreads(0, *total, 2,
+                                 double(n) * line_work_cyc<T>(len_) / core_cyc_per_ns(), 1);
+            if (n1 > 1 && n1 != pool->size()) pool = std::make_unique<thread_pool>(n1);
+        }
+        if (need_slab) slab = detail::make_aligned_buffer<std::complex<T>>(*total);
     }
 
     // The slab's extra scatter pass pays only when the chooser picks the col
@@ -255,7 +262,7 @@ struct real_state {
     unsigned debug;
 
     real_state(span<const std::size_t> shape, const admiral::options& opts)
-        : plan{shape, resolve_auto(opts, shape), opts.eff}, debug(opts.debug) {}
+        : plan{shape, opts.nthreads, opts.eff}, debug(opts.debug) {}
 
     void forward(const T* in, std::complex<T>* out, std::optional<T> fct) const {
         plan.forward(in, out, {fct, debug});
@@ -271,7 +278,7 @@ struct real_state {
 template<>
 struct real_state<long double> : scalar_real_state<long double> {
     real_state(span<const std::size_t> shape, const admiral::options& opts)
-        : scalar_real_state(shape, resolve_auto(opts, shape)) {}
+        : scalar_real_state(shape, opts.nthreads) {}
 };
 
 template<typename T>
@@ -279,7 +286,9 @@ struct r2r_state {
     r2r_plan<T> plan;   // owns its pool when `nthreads` > 1 and `rows` > 1
 
     r2r_state(std::size_t N, r2r_kind kind, std::size_t rows, const admiral::options& opts)
-        : plan{N, kind, rows, opts.eff, resolve_nthreads(opts.nthreads, sat_elems(N, rows))} {}
+        : plan{N, kind, rows, opts.eff,
+               resolve_nthreads(opts.nthreads, sat_elems(N, rows), 1,
+                                double(rows) * line_work_cyc<T>(N) / core_cyc_per_ns(), 1)} {}
 };
 
 }  // namespace detail
@@ -303,8 +312,7 @@ void one_shot_1d(span<const std::complex<T>> input, span<std::complex<T>> output
         detail::plan_state<T>(span<const std::size_t>(&n, 1), opts)
             .run(is_forward, input.data(), output.data(), fct ? &*fct : nullptr);
     } else {
-        detail::plan_impl<T>(output.size(), is_forward,
-                             detail::resolve_nthreads(opts.nthreads, output.size()), nullptr,
+        detail::plan_impl<T>(output.size(), is_forward, opts.nthreads, nullptr,
                              effort::estimate)
             .execute(input.data(), output.data(), {fct, opts.debug});
     }
@@ -316,8 +324,7 @@ void one_shot_nd(std::complex<T>* data, span<const std::size_t> shape, bool is_f
     if constexpr (std::is_same_v<T, long double>) {
         detail::plan_state<T>(shape, opts).run(is_forward, data, fct ? &*fct : nullptr);
     } else {
-        detail::nd_runtime_plan<T>(shape, is_forward, detail::resolve_auto(opts, shape),
-                                   effort::estimate)
+        detail::nd_runtime_plan<T>(shape, is_forward, opts.nthreads, effort::estimate)
             .execute(data, {fct, opts.debug});
     }
 }
@@ -385,7 +392,7 @@ forward(const T* in, std::complex<T>* out, span<const std::size_t> shape,
     if constexpr (std::is_same_v<T, long double>) {
         detail::real_state<T>(shape, opts).forward(in, out, fct);
     } else {
-        detail::nd_real_plan<T>(shape, detail::resolve_auto(opts, shape), effort::estimate)
+        detail::nd_real_plan<T>(shape, opts.nthreads, effort::estimate)
             .forward(in, out, {fct, opts.debug});
     }
 }
@@ -402,7 +409,7 @@ inverse(std::complex<T>* spec, T* out, span<const std::size_t> shape,
     if constexpr (std::is_same_v<T, long double>) {
         detail::real_state<T>(shape, opts).inverse(spec, out, fct);
     } else {
-        detail::nd_real_plan<T>(shape, detail::resolve_auto(opts, shape), effort::estimate)
+        detail::nd_real_plan<T>(shape, opts.nthreads, effort::estimate)
             .inverse(spec, out, {fct, opts.debug});
     }
 }

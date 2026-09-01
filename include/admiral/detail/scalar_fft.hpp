@@ -24,6 +24,7 @@
 
 #include "butterfly.hpp"        // `sub_dft`: the engine's radix butterflies at `V = T`
 #include "cxx_compat.hpp"       // `span`, `detail::numbers`
+#include "math.hpp"             // `line_work_cyc` (wake-law work estimate)
 #include "real_recombine.hpp"  // `r2c_even_bin`, `c2r_even_bin`
 #include "thread_pool.hpp"      // `thread_pool`, `parallel_for`, `will_thread`
 
@@ -487,13 +488,40 @@ private:
     mutable std::vector<std::vector<std::complex<T>>> buf_;  // pack buffer, per `tid`
 };
 
+// Auto count for the scalar backend: the wake law over the per-axis line loops,
+// the work priced on the f64 line table (the nearest narrower measured precision).
+template<typename T>
+[[nodiscard]] inline std::size_t scalar_resolve(span<const std::size_t> shape,
+                                                std::size_t nthreads) {
+    if (nthreads != 0) return nthreads;
+    std::size_t total = 1, dispatches = 0;
+    double work_cyc = 0.0;
+    for (const std::size_t d : shape) {
+        if (d == 0) return 1;   // the state ctor reports the invalid shape itself
+        total = sat_elems(total, d);
+        if (d > 1) {
+            ++dispatches;
+            work_cyc += double(total / d) * line_work_cyc<T>(d);
+        }
+    }
+    return resolve_nthreads(0, total, dispatches, work_cyc / core_cyc_per_ns(),
+                            shape.size() >= 3 ? 2 : 1);
+}
+
 // `plan_state<long double>`. The interface mirrors `plan_state<T>`; effort
 // and debug settings have no counterpart here and are ignored.
 template<typename T>
 struct scalar_plan_state {
     scalar_plan_state(span<const std::size_t> shape, std::size_t nthreads)
+        : scalar_plan_state(shape, scalar_resolve<T>(shape, nthreads), resolved_tag{}) {}
+
+private:
+    struct resolved_tag {};
+    scalar_plan_state(span<const std::size_t> shape, std::size_t nthreads, resolved_tag)
         : plan(shape, axis_count(shape), nthreads),
           pool_(nthreads > 1 ? std::make_unique<thread_pool>(nthreads) : nullptr) {}
+
+public:
     [[nodiscard]] std::size_t size() const noexcept { return plan.size(); }
     // `fct == nullptr` takes the direction's default: 1 forward, 1/N inverse.
     void run(bool is_forward, std::complex<T>* data, const T* fct) const {
@@ -517,17 +545,48 @@ private:
     std::unique_ptr<thread_pool> pool_;
 };
 
+// Auto count for the scalar real states: the inner row loop plus the outer axes.
+template<typename T>
+[[nodiscard]] inline std::size_t scalar_real_resolve(span<const std::size_t> shape,
+                                                     std::size_t nthreads) {
+    if (nthreads != 0) return nthreads;
+    if (shape.empty() || shape.back() == 0) return 1;   // the state ctor reports it
+    std::size_t rows = 1;
+    double work_cyc = 0.0;
+    std::size_t dispatches = 1;   // the r2c/c2r row loop
+    for (std::size_t d = 0; d + 1 < shape.size(); ++d) {
+        if (shape[d] == 0) return 1;
+        rows = sat_elems(rows, shape[d]);
+        if (shape[d] > 1) {
+            ++dispatches;
+            work_cyc += double(rows / shape[d]) * double(shape.back() / 2 + 1) *
+                       line_work_cyc<T>(shape[d]);
+        }
+    }
+    const std::size_t nh = shape.back() / 2 + 1;
+    work_cyc += double(rows) * line_work_cyc<T>(nh);
+    return resolve_nthreads(0, sat_elems(rows, shape.back()), dispatches,
+                            work_cyc / core_cyc_per_ns(), shape.size() >= 3 ? 2 : 1);
+}
+
 // `real_state<long double>`: r2c/c2r on the last axis, then c2c over the
 // remaining axes of the half-spectrum, in `nd_real_plan`'s order.
 template<typename T>
 struct scalar_real_state {
     scalar_real_state(span<const std::size_t> shape, std::size_t nthreads)
+        : scalar_real_state(shape, scalar_real_resolve<T>(shape, nthreads), resolved_tag{}) {}
+
+private:
+    struct resolved_tag {};
+    scalar_real_state(span<const std::size_t> shape, std::size_t nthreads, resolved_tag)
         : n_(last_extent(shape)),
           nh_(n_ / 2 + 1),
           rows_(outer_extent_product(shape)),
           inner_(n_, nthreads),
           outer_(half_spectrum_shape(shape, nh_), shape.size() - 1, nthreads),
           pool_(nthreads > 1 ? std::make_unique<thread_pool>(nthreads) : nullptr) {}
+
+public:
 
     [[nodiscard]] std::size_t real_size() const noexcept { return rows_ * n_; }
     [[nodiscard]] std::size_t cplx_size() const noexcept { return rows_ * nh_; }

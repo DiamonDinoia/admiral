@@ -121,6 +121,28 @@ template<typename T>
     return cyc > 0.0 ? cyc : double(n);
 }
 
+// Per-element-per-octave butterfly cost in cycles, from the measured leaf-64 price
+// above: codelet_cost_cyc_<T>[64]/(64 elems * 6 octaves). Provenance: the leaf-sweep
+// protocol of the tables, not a fit.
+template<typename T>
+[[nodiscard]] constexpr double stream_octave_cyc() {
+    return (sizeof(T) == 4 ? codelet_cost_cyc_f32 : codelet_cost_cyc_f64)[kFourStepLeafMax] /
+           (double(kFourStepLeafMax) * 6.0);
+}
+
+// Serial-work estimate for one length-n line, in cycles: the measured leaf price on
+// the dense catalog, else n*log2(n) octaves at the stream rate. Input to the threading
+// law's work term (fi/mt t0-modeler-r2.md: +-30 % of W moves no scored pick), not a
+// route price.
+template<typename T>
+[[nodiscard]] inline double line_work_cyc(std::size_t n) {
+    if (n <= 1) return 0.0;
+    if (n <= kFourStepLeafMax) {
+        if (const double c = catalog_leaf_cyc<T>(n); c > 0.0) return c;
+    }
+    return double(n) * std::log2(double(n)) * stream_octave_cyc<T>();
+}
+
 // Every dense-range leaf is priced in all three tables and every caller gates on
 // `is_codelet_catalog` first, so the fallback never fires there.
 

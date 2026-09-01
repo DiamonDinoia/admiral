@@ -54,17 +54,25 @@ Anything else that moves is a regression to explain.
 The two builds are NOT link-compatible: `admiral::span` is `std::span` at C++20 and the
 polyfill at C++17.
 
-## Auto thread count is a fitted step law, re-fit it like the four_step lines
+## Auto thread count is the wake law; its constants are probe-provenanced, not fitted
 
-`resolve_nthreads(0, total)` in `thread_pool.hpp` selects the pool width at every
-public entry point. Serial < 2^15 elements, then steps 8/16/32/64 at 2^15/2^17/2^22/2^26
-(pow2-floor of a log ramp), capped by allowed physical cores. The limiting cost is the
-pool's per-dispatch wake/join price at high worker counts (0.2-0.8 ms per dispatch at
-64+ cores on 2P nodes; see the 2026-08-31 sweep in the logbook), not per-element work.
-Re-fit by sweeping time(shape, nthreads) on at least one 2P node plus one workstation and
-minimizing per-cell regret; the pow2 quantization is load-bearing (off-divisor counts load-
-imbalance the passes' static chunks by 2-4x). `nthreads=0` timing on 2P nodes is bistable at
-1-D 2^15-2^18 through the `effort::measure` race — do not fit to a single run there.
+`resolve_nthreads(n, total, K, w_ns, cls)` in `thread_pool.hpp` selects the pool width
+at every public entry point, resolved inside the engine constructors where the route is
+known (`route_plan` in `plan.hpp` for 1-D, the `nd_runtime_plan` ctor for N-D, the
+axis/strides split in `cpp_api.hpp`). The law (fi/mt t0-modeler-r2.md, 2026-08-31
+campaign): argmin over pow2 nt <= P of `W/min(nt, knee[fam][cls]) + K * Dhat(nt, gap^)`,
+with gap^ the self-consistent per-dispatch gap (two fixed-point iterations) and the
+pocket rider (hot gap < 30 us at >= C0/2 prices Dhat at >= 100 us). Serial below 2^15
+elements or at K == 0. K = 5 (1-D four_step_large) / rank (N-D batch loops) / 1,
+2 with the strides slab (axis loops). W = `line_work_cyc` (leaf-priced <= 64, n log2 n
+octave stream beyond) at the measured core frequency (`core_cyc_per_ns`: a 3-cycle
+IMUL latency chain, NOT rdtsc — the invariant TSC ticks at base clock and miscalibrates
+W by the boost ratio). Dhat is the 12x6 wake-probe grid per host class keyed by
+(C0=soc cores, P): icelake 2x32, rome 2x64, genoa 2x48; unknown hosts take the rome row.
+Re-fit on a new host class: probe once (`mt_scaling --mode=probe`), add a row; the pow2
+quantization stays load-bearing (off-divisor counts load-imbalance the passes' static
+chunks by 2-4x). `nthreads=0` timing on 2P nodes is bistable at 1-D 2^15-2^18 through
+the `effort::measure` race — do not fit to a single run there.
 
 ## Alignment hazard that's already handled
 

@@ -76,6 +76,10 @@ public:
         dif_factor_plan dif_chain;
     };
 
+    // Dispatches per execute on the four_step_large route: P1 band-transpose + the
+    // P2/P3 twist-sweep pair + the P4/P5 pair (fi/mt t0-profiler-r1.md sect. b).
+    static constexpr std::size_t kLargeDispatches = 5;
+
     static constexpr bool good_thomas_available(std::size_t n) noexcept {
         return good_thomas_catalog::available<T>(n);
     }
@@ -148,21 +152,79 @@ public:
     // serial: threaded routes are exercised through the nthreads ctor below.
     plan_impl(std::size_t size, bool is_forward, route_kind forced, std::size_t nthreads = 1);
 
-    // `nthreads`: thread count of this plan. Only `four_step_large` executes its own
-    // passes in parallel, so only that route choice reads `nthreads` (see
-    // `large_route_bytes`); `nthreads` > 1 also builds the plan-owned pool here.
-    // `eff`: `effort::measure` times the ranked candidates on this machine.
+    // `nthreads`: thread count of this plan; 0 = auto (the wake law, resolved with the
+    // elected route). Only `four_step_large` executes its own passes in parallel, so
+    // only that route choice reads `nthreads` (see `large_route_bytes`); `nthreads` > 1
+    // also builds the plan-owned pool here. `eff`: `effort::measure` times the ranked
+    // candidates on this machine.
     plan_impl(std::size_t size, bool is_forward, std::size_t nthreads = 1,
               const dif_factor_plan* dif_override = nullptr,
               admiral::effort eff = admiral::effort::estimate);
 
 private:
+    // Route plus the thread count it was elected at, bundled for the delegating ctor.
+    struct routed_plan {
+        measured_choice ch;
+        std::size_t nthreads;
+        const dif_factor_plan* dif_override;
+    };
+
     // Route-resolved delegate: the pool gate reads the route, and the initializer
     // list of `m` cannot reference the route (clang -Werror,-Wuninitialized). `choice`
     // is by value: a won chain re-ordering must outlive `build_dif_twiddle_set` in the
     // body.
+    plan_impl(std::size_t size, bool is_forward, routed_plan rp);
     plan_impl(std::size_t size, bool is_forward, std::size_t nthreads,
-              const dif_factor_plan* dif_override, measured_choice choice);
+              const dif_factor_plan* dif_override, measured_choice choice)
+        : plan_impl(size, is_forward, routed_plan{choice, nthreads, dif_override}) {}
+
+    // Serial-work estimate (ns) for the four_step_large split: the kFourStepOverhead
+    // form over the two leaf-priced legs, at the probed clock.
+    static double large_work_ns(std::size_t size) {
+        const large_split sp = choose_large_split(size);
+        const double cyc =
+            sp.valid() ? kFourStepOverhead * (double(sp.n1) * line_work_cyc<T>(sp.n2) +
+                                              double(sp.n2) * line_work_cyc<T>(sp.n1))
+                       : line_work_cyc<T>(size);
+        return cyc / core_cyc_per_ns();
+    }
+
+    // Elect the route and the thread count together. An explicit count elects at that
+    // count (unchanged path). 0 = auto: elect at the machine count, then price
+    // threading by route. four_step_large pays the wake law's K dispatches; every
+    // other route builds no pool and resolves serial.
+    static routed_plan route_plan(std::size_t size, bool is_forward, std::size_t nthreads,
+                                  const dif_factor_plan* dif_override, admiral::effort eff) {
+        // Routing is undefined at 0, and this runs before the delegate's size guard:
+        // `is_pentanomial(0)` divides 0 by 2 forever. Answer trivially and let the
+        // delegate throw.
+        if (size == 0) ADM_UNLIKELY return {measured_choice{}, 1, dif_override};
+        if (dif_override) return {measured_choice{route_kind::iterative_dif, {}}, nthreads, dif_override};
+        const auto elect = [&](std::size_t nt) {
+            return eff != admiral::effort::estimate
+                       ? measured_route(size, is_forward, nt)
+                       : measured_choice{select_route(size, nt), {}};
+        };
+        if (nthreads != 0) return {elect(nthreads), nthreads, dif_override};
+        const std::size_t P = resolve_nthreads(0);
+        routed_plan rp{elect(P), P, dif_override};
+        if (rp.ch.route != route_kind::four_step_large) {
+            rp.nthreads = 1;
+            return rp;
+        }
+        rp.nthreads = resolve_nthreads(0, size, kLargeDispatches, large_work_ns(size), 0);
+        if (rp.nthreads == P) return rp;
+        // The admission lines move with the count: re-elect once at the resolved count
+        // and accept the outcome (a flip off four_step_large resolves serial).
+        measured_choice rerun = elect(rp.nthreads);
+        if (rerun.route != route_kind::four_step_large) {
+            rp.ch = rerun;
+            rp.nthreads = 1;
+            return rp;
+        }
+        rp.ch = rerun;
+        return rp;
+    }
 
     // Emplace route state into `m.st` (`m.route` already set). Shared by both ctors.
     // `codelet`/`good_thomas` live in .rodata; `codelet_state` is the variant default.
@@ -533,39 +595,26 @@ plan_impl<T>::plan_impl(std::size_t size, bool is_forward, std::size_t nthreads,
                         const dif_factor_plan* dif_override, admiral::effort eff)
     // dif_override forces iterative_dif: select_route could otherwise ignore the
     // override and time a false A/B baseline. Only --factors/--factors-ab supplies it.
-    // Route resolved once here so the delegate can gate the pool on it.
-    : plan_impl(size, is_forward, nthreads, dif_override,
-                [&] {
-                    // Routing is undefined at 0, and this lambda runs before the
-                    // delegate's size guard: `is_pentanomial(0)` divides 0 by 2
-                    // forever. Answer trivially and let the delegate throw.
-                    if (size == 0) ADM_UNLIKELY return measured_choice{};
-                    if (dif_override) return measured_choice{route_kind::iterative_dif, {}};
-                    // effort::measure is kept for the FFTW mapping, not for a second budget.
-                    if (eff != admiral::effort::estimate)
-                        return measured_route(size, is_forward, nthreads);
-                    return measured_choice{select_route(size, nthreads), {}};
-                }()) {}
+    : plan_impl(size, is_forward, route_plan(size, is_forward, nthreads, dif_override, eff)) {}
 
 template<typename T>
-plan_impl<T>::plan_impl(std::size_t size, bool is_forward, std::size_t nthreads,
-                        const dif_factor_plan* dif_override, measured_choice choice)
+plan_impl<T>::plan_impl(std::size_t size, bool is_forward, routed_plan rp)
     : m{size, is_forward,
-        choice.route,
+        rp.ch.route,
         {},
-        make_route_pool(nthreads, size, choice.route)}
+        make_route_pool(rp.nthreads, size, rp.ch.route)}
 {
     if (size == 0) ADM_UNLIKELY {
         throw size_error("Plan size must be greater than 0");
     }
     // Every radix in dif_radix_set is 11-smooth, so no chain can represent a
     // non-smooth N. Forcing one would time a garbage A/B baseline. Reject loudly.
-    if (dif_override && !route_available(route_kind::iterative_dif, size))
+    if (rp.dif_override && !route_available(route_kind::iterative_dif, size))
         throw unsupported_error("forced dif: size is not 11-smooth");
     const dif_factor_plan* chain =
-        dif_override != nullptr      ? dif_override
-        : choice.dif_chain.count != 0 ? &choice.dif_chain
-                                      : nullptr;
+        rp.dif_override != nullptr        ? rp.dif_override
+        : rp.ch.dif_chain.count != 0 ? &rp.ch.dif_chain
+                                     : nullptr;
     emplace_route_state(size, is_forward, chain);
 }
 

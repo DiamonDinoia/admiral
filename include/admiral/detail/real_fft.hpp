@@ -382,7 +382,7 @@ public:
     // Out-of-line (see `real_adm_plan` above). The WHOLE tree must sit behind one
     // instantiation: a partial move inlines and contracts the serial path where the
     // threaded path calls, breaking the 1-vs-N-thread bit identity `test_fft_threads`
-    // checks for r2c. nthreads > 1 builds the plan-owned pool.
+    // checks for r2c. nthreads > 1 builds the plan-owned pool; 0 = auto (wake law).
     explicit nd_real_plan(span<const std::size_t> shape, std::size_t nthreads = 1,
                           admiral::effort eff = admiral::effort::estimate);
 
@@ -467,6 +467,23 @@ nd_real_plan<T>::nd_real_plan(span<const std::size_t> shape, std::size_t nthread
         m.inv_axes[d] = make_nd_axis_state<T>(m.shape[d], inner, /*is_forward=*/false,
                                               /*innermost=*/false, 1, eff);
         inner *= m.shape[d];
+    }
+    if (nthreads == 0) {
+        // Wake law: the r2c/c2r tile loop plus one `parallel_for` per non-trivial
+        // outer axis are the dispatches; the half-spectrum rows price the work.
+        if (n >= 2 && m.rows >= 2 && m.total_c >= kThreadMinElems) {
+            std::size_t dispatches = 1;
+            double work_cyc = double(m.rows) * line_work_cyc<T>(m.Nh);
+            for (std::size_t d = 0; d + 1 < n; ++d) {
+                if (m.shape[d] <= 1) continue;
+                ++dispatches;
+                work_cyc += double(m.total_c / m.shape[d]) * line_work_cyc<T>(m.shape[d]);
+            }
+            nthreads = resolve_nthreads(0, m.total_c, dispatches, work_cyc / core_cyc_per_ns(),
+                                        n >= 3 ? 2 : 1);
+        } else {
+            nthreads = 1;
+        }
     }
     if (nthreads > 1) m.pool = std::make_unique<thread_pool>(nthreads);
 }

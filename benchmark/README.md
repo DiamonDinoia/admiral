@@ -47,8 +47,8 @@ than serial (0.7-1.0×). Threading pays from about 32k elements (32³: 4.2-6.4×
 192²: 2.6-3.5×), reaches 6-7× at 512² and 8-9× at 64³, and 10-11× at 256³-scale
 and up (128³: 10-11×, 509²: 10-12×). Rectangles split on the innermost extent:
 64×4096 reaches 9×, 4096×64 only 2×. The `nthreads = 0` auto law
-(`kAutoSerialElems` / `resolve_nthreads` in `thread_pool.hpp`) comes from
-this sweep.
+(`resolve_nthreads` in `thread_pool.hpp`) is the wake law from the 2026-08-31
+campaign: argmin of work/saturating-knee plus per-dispatch probed wake cost.
 
 1-D threading is the one late case: the threaded route (four_step_large) admits
 a size only past its byte budget line (~512 KiB floor at 16 threads), so below

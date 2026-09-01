@@ -38,6 +38,8 @@ inline void cpu_relax() noexcept {
 
 #if ADM_THREADS
 #include <atomic>
+#include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <exception>
 #include <fstream>
@@ -122,7 +124,7 @@ inline constexpr std::size_t kAutoSerialElems = std::size_t{1} << 15;
 
 // 0 -> allowed physical cores (fallback 1). The count is cached in a static:
 // affinity is fixed for the run in practice. No flat ceiling: the size-aware
-// overload below keeps a small transform off a big machine, and a transform large
+// law below keeps a small transform off a big machine, and a transform large
 // enough to thread wants every core the process may use.
 // >=1 returned verbatim; the caller decides whether to build a pool.
 [[nodiscard]] inline std::size_t resolve_nthreads(std::size_t n) {
@@ -131,16 +133,224 @@ inline constexpr std::size_t kAutoSerialElems = std::size_t{1} << 15;
     return auto_n;
 }
 
-// Size-aware form: the fitted law for total elements, 1 meaning no pool. n != 0 verbatim.
-// Ramp: 8 threads at [2^15, 2^17), +1 octave per octave to 16 at [2^17, 2^22),
-// 32 at [2^22, 2^26), 64 above; the pow2 floor means only those steps are reachable.
+// Physical cores per socket: distinct `physical_package_id` over the affinity mask,
+// same sysfs idiom as `allowed_physical_cores` above. Fallback C0 = P when topology
+// is absent, i.e. the machine reads as one socket.
+[[nodiscard]] inline std::size_t cores_per_socket() {
+#if defined(__linux__)
+    static const std::size_t c0 = [] {
+        cpu_set_t aff;
+        if (sched_getaffinity(0, sizeof(aff), &aff) == 0) {
+            long long pkgs[64]{};   // distinct package ids; > 64 sockets is not a host class
+            std::size_t np = 0;
+            for (std::size_t cpu = 0; cpu < static_cast<std::size_t>(CPU_SETSIZE); ++cpu) {
+                if (!CPU_ISSET(cpu, &aff)) continue;
+                std::ifstream f("/sys/devices/system/cpu/cpu" + std::to_string(cpu) +
+                                "/topology/physical_package_id");
+                long long id = -1;
+                if (!(f >> id) || id < 0) continue;
+                bool seen = false;
+                for (std::size_t k = 0; k < np; ++k) seen |= pkgs[k] == id;
+                if (!seen && np < 64) pkgs[np++] = id;
+            }
+            if (np > 0)
+                return std::max<std::size_t>(1, allowed_physical_cores() / np);
+        }
+        return allowed_physical_cores();
+    }();
+    return c0;
+#else
+    return allowed_physical_cores();
+#endif
+}
+
+// cycles -> ns for the law's work estimate: the effective core frequency, measured
+// once (~1 ms) as a dependent-multiply latency chain against steady_clock. The chain
+// runs at the IMUL r64 latency (3 cycles on every scored host), so 3*iters/elapsed is
+// the core's cycles per ns at current boost. Not rdtsc: the invariant TSC ticks at
+// base clock while an executing core boosts 1.3-1.6x above it, which would over-price
+// W by that ratio and flip the law's picks toward knot on icelake/genoa.
+[[nodiscard]] inline double core_cyc_per_ns() {
+    static const double cyc_per_ns = [] {
+        using clock = std::chrono::steady_clock;
+        std::uint64_t x = 0x9E3779B97F4A7C15ull;
+        std::uint64_t n  = 0;
+        long long ns = 0;
+        const auto t0 = clock::now();
+        do {
+            for (int i = 0; i < 64; ++i)
+                x = x * 6364136223846793005ull + 1442695040888963407ull;
+            n += 64;
+            ns = std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now() - t0).count();
+        } while (ns < 1000000);
+        volatile std::uint64_t sink = x;   // the chain must not fold away
+        (void)sink;
+        return static_cast<double>(3 * n) / static_cast<double>(ns);
+    }();
+    return cyc_per_ns;
+}
+
+// Auto-selection law v2 (2026-08-31 campaign, fi/mt t0-modeler-r2.md):
+//   nt* = argmin over pow2 nt <= P of  T(nt) = W / min(nt, knee[cls]) + K * Dhat(nt, gap^),
+// gap^ the self-consistent per-dispatch gap (two fixed-point iterations), W the serial
+// work estimate in ns, K the dispatches per execute. The knee clamps the work term at
+// the memory-fabric saturation width; Dhat prices the pool's per-dispatch wake/join.
+// pow2 quantization stands: off-divisor counts load-imbalance the passes' static chunks.
+
+// Pocket constants. G0: onset gap — the pair-RTT p50 stays hot at gap <= 30 us on all
+// 15 class x family probe cells, so pools leave the hot band only past this column
+// (fi/mt t0/topo-probe-results.md, 2026-08-31, jobs 6969062-64, table (a)).
+inline constexpr double kPocketOnsetNs = 30e3;
+// G1: parked pricing tier — the first pool-probe column in the parked regime (the
+// pair-RTT leaves hot in (30, 300] us).
+inline constexpr double kPocketTierNs = 100e3;
+
+// One probed host class: thread counts, knee per engine class, and the wake grid.
+// knee[cls]: 0 = 1-D four_step_large, 1 = 2-D lines, 2 = 3-D lines.
+struct wake_family_row {
+    std::size_t P;
+    std::size_t C0;
+    std::size_t knee[3];
+    double dhat[12][6];   // mean_ns - 51 ns over nt grid x gap grid {0,30us,100us,300us,1ms,10ms}
+};
+
+// Dhat grids: `mt_scaling --mode=probe` reduced as mean_ns - 51 ns serial floor, the
+// 3 ms column dropped (rome deep-C bimodal arm). fi/mt out/probe-<fam>.csv, 2026-08-31.
+// Rows past a class's own P repeat its deepest probe row; the argmin never reads past P.
+[[nodiscard]] inline const wake_family_row& wake_family_for(std::size_t P, std::size_t C0) {
+    static constexpr wake_family_row rows[3] = {
+        // icelake (2x32): knees (32,64,64); probe verdict CONFIRMED: sock0/L3 knee = 32
+        // exact, node tier additive to 64 (fi/mt t0/topo-probe-results.md mem_scale).
+        {64, 32, {32, 64, 64}, {
+            {417.6, 2190.3, 3249.3, 44969.9, 69767.1, 71166.9},
+            {659.4, 3325.1, 4036.6, 83426.6, 85974.7, 94599.9},
+            {863.2, 4290.9, 67169.3, 103528.2, 107990.6, 105262.3},
+            {994.6, 4697.1, 56299.3, 121667.0, 115548.8, 122090.8},
+            {1285.1, 5051.3, 100853.2, 147251.1, 137009.1, 135459.1},
+            {1572.6, 193924.6, 201834.1, 213123.9, 149816.5, 146465.7},
+            {66344.2, 260911.9, 195271.4, 276801.4, 198020.8, 173496.2},
+            {2629.2, 2608.2, 285792.7, 302605.0, 228081.9, 199131.2},
+            {349718.6, 353449.7, 360336.7, 356031.5, 285706.6, 320509.6},
+            {478692.6, 466653.6, 469364.1, 462019.9, 396584.9, 436007.0},
+            {478692.6, 466653.6, 469364.1, 462019.9, 396584.9, 436007.0},
+            {478692.6, 466653.6, 469364.1, 462019.9, 396584.9, 436007.0},
+        }},
+        // rome (2x64): knees (16,32,32); fsl = one NPS4 node width (probe plateau at
+        // nt 16), nd = 2 nodes (probe verdicts + receipt runs fft/fft2-rome).
+        {128, 64, {16, 32, 32}, {
+            {845.5, 854.3, 4660.3, 5585.7, 12267.9, 29903.1},
+            {1221.8, 1200.2, 5997.1, 7244.4, 15280.6, 32800.4},
+            {1271.6, 1212.2, 6494.1, 8201.1, 19119.3, 34722.1},
+            {1274.6, 1294.8, 6963.1, 8795.1, 20654.7, 113723.9},
+            {1351.2, 1321.7, 9080.8, 11508.1, 20858.1, 219841.6},
+            {1301.3, 1348.6, 10175.6, 13851.7, 23216.0, 446072.1},
+            {7976.1, 2117.7, 15984.7, 21724.2, 32476.7, 456294.1},
+            {30277.8, 2163.2, 21722.2, 27728.3, 36682.4, 475597.9},
+            {47854.7, 3083.9, 29885.5, 41650.8, 55572.8, 541734.9},
+            {80238.7, 3355.9, 48328.7, 54941.1, 64184.7, 553153.7},
+            {44709.1, 134241.8, 165196.5, 212308.3, 209231.0, 651361.0},
+            {279548.0, 291422.2, 290223.4, 287607.0, 291248.4, 810145.2},
+        }},
+        // genoa (2x48): knees (32,32,64); fsl/nd2 between the probe CCD knee (2-4) and
+        // the socket tier (>48), nd3 = 64: 512^3 measured 439 GB/s aggregate > one
+        // socket's 251 GB/s probed cap (receipt fft-genoa.csv; probe mem_scale sock0@48).
+        {96, 48, {32, 32, 64}, {
+            {803.6, 734.4, 5502.3, 6529.2, 7360.2, 21300.4},
+            {1314.9, 1256.1, 7467.7, 8481.8, 9172.5, 23979.8},
+            {1694.2, 1656.0, 10002.0, 10627.2, 12025.9, 26398.2},
+            {2018.3, 2011.8, 12647.3, 14096.7, 13916.3, 28574.9},
+            {2000.8, 1985.7, 17464.6, 17207.0, 18543.0, 31657.5},
+            {2094.6, 2158.6, 21817.9, 20548.1, 21579.8, 35592.9},
+            {2458.7, 2356.6, 30047.4, 28170.2, 29060.9, 40903.5},
+            {2768.7, 2703.4, 41071.3, 35955.3, 37372.9, 47862.6},
+            {3237.2, 3005.4, 76411.8, 72413.6, 62735.4, 66301.4},
+            {73738.4, 4793.8, 119574.1, 141263.5, 142164.6, 137390.7},
+            {261820.4, 231940.8, 236950.1, 275106.1, 296582.1, 266333.0},
+            {261820.4, 231940.8, 236950.1, 275106.1, 296582.1, 266333.0},
+        }},
+    };
+    for (const wake_family_row& r : rows)
+        if (r.P == P && r.C0 == C0) return r;
+    return rows[1];   // unknown host class: the rome grid (the most benign arm)
+}
+
+// Dhat(nt, gap_ns) in ns; bilinear over the family grid, gap clamped to the grid,
+// result floored at 0 (the floor constant can exceed a mean on the hottest cells).
+[[nodiscard]] inline double dhat_ns(const wake_family_row& fam, std::size_t nt, double gap_ns) {
+    static constexpr std::size_t nts[12] = {2, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128};
+    static constexpr double gaps[6] = {0.0, 30e3, 100e3, 300e3, 1e6, 1e7};
+    if (nt <= 1) return 0.0;
+    if (nt > nts[11]) nt = nts[11];
+    gap_ns = std::min(std::max(gap_ns, 0.0), gaps[5]);
+    std::size_t hi = 1;
+    while (hi < 11 && nts[hi] < nt) ++hi;   // first index with nts[hi] >= nt
+    double row[6];
+    if (nts[hi] == nt) {
+        for (std::size_t j = 0; j < 6; ++j) row[j] = fam.dhat[hi][j];
+    } else {
+        const std::size_t lo = hi - 1;
+        const double t =
+            static_cast<double>(nt - nts[lo]) / static_cast<double>(nts[hi] - nts[lo]);
+        for (std::size_t j = 0; j < 6; ++j)
+            row[j] = (1.0 - t) * fam.dhat[lo][j] + t * fam.dhat[hi][j];
+    }
+    for (std::size_t i = 0; i + 1 < 6; ++i) {
+        if (gap_ns <= gaps[i + 1]) {
+            const double t = (gap_ns - gaps[i]) / (gaps[i + 1] - gaps[i]);
+            return std::max((1.0 - t) * row[i] + t * row[i + 1], 0.0);
+        }
+    }
+    return std::max(row[5], 0.0);
+}
+
+// Size-aware form: the law above, 1 meaning no pool. n != 0 is returned verbatim.
+// `dispatch_k` is the engine's dispatches per execute (5 for 1-D four_step_large,
+// rank for the N-D batch loops, 1..2 for the axis/strides loops, 0 where the route
+// builds no pool). `work_ns` is the serial-work estimate in ns. `cls` indexes the
+// knee row: 0 = 1-D four_step_large, 1 = 2-D lines, 2 = 3-D lines.
+[[nodiscard]] inline std::size_t resolve_nthreads(std::size_t n, std::size_t total,
+                                                  std::size_t dispatch_k, double work_ns,
+                                                  unsigned cls) {
+    if (n != 0) return n;
+    if (total < kAutoSerialElems || dispatch_k == 0) return 1;
+    static const std::size_t P = resolve_nthreads(0);
+    static const std::size_t C0 = cores_per_socket();
+    static const wake_family_row& fam = wake_family_for(P, C0);
+    const std::size_t knee = fam.knee[std::min(cls, 2u)];
+    std::size_t best = 1;
+    double best_t = work_ns;
+    for (std::size_t nt = 2; nt <= P; nt <<= 1) {
+        const double work = work_ns / static_cast<double>(std::min(nt, knee));
+        const double gh = work / static_cast<double>(dispatch_k);
+        // Pocket rule: a hot pass-gap below G0 at >= half a socket can land the pool
+        // in the parked basin; price the dispatch at >= G1 so the argmin prefers a
+        // cheaper arm. Probe: pair-RTT table (a) + pool-probe columns cited above.
+        const bool pocket = gh < kPocketOnsetNs && nt >= C0 / 2;
+        double gap = pocket ? std::max(gh, kPocketTierNs) : gh;
+        double dh = dhat_ns(fam, nt, gap);
+        for (int i = 0; i < 2; ++i) {   // gap^ fixed point: T(nt)/K is the real gap
+            const double t = work + static_cast<double>(dispatch_k) * dh;
+            gap = t / static_cast<double>(dispatch_k);
+            if (pocket) gap = std::max(gap, kPocketTierNs);
+            dh = dhat_ns(fam, nt, gap);
+        }
+        if (const double t = work + static_cast<double>(dispatch_k) * dh; t < best_t) {
+            best_t = t;   // strict < : ties resolve toward the smaller count
+            best = nt;
+        }
+    }
+    return best;
+}
+
+// Route-blind compat form: one batched-lines dispatch, generic serial-work estimate
+// = total * log2(total) * 1.669 cycles with u = codelet_cost_cyc_f64[64]/(64*6)
+// (math.hpp, measured leaf price) at the probed clock. Route-aware plans call the
+// (dispatch_k, work_ns, cls) form instead.
 [[nodiscard]] inline std::size_t resolve_nthreads(std::size_t n, std::size_t total) {
     if (n != 0) return n;
-    if (total < kAutoSerialElems) return 1;
-    const std::size_t lg = static_cast<std::size_t>(bit_width(total)) - 1;
-    const std::size_t ramp =
-        lg < 17 ? 8 : lg < 22 ? 16 + (lg - 17) * 2 : 24 + (lg - 21) * 8;
-    return std::min(bit_floor(ramp), resolve_nthreads(0));
+    const double w_ns = static_cast<double>(total) * std::log2(static_cast<double>(total | 1)) *
+                        1.669 / core_cyc_per_ns();
+    return resolve_nthreads(n, total, 1, w_ns, 1);
 }
 
 // `kSpinIters` * pause latency must cover a typical inter-dispatch gap yet park quickly
@@ -266,6 +476,9 @@ private:
 
 [[nodiscard]] inline std::size_t resolve_nthreads(std::size_t) noexcept { return 1; }
 [[nodiscard]] inline std::size_t resolve_nthreads(std::size_t, std::size_t) noexcept { return 1; }
+[[nodiscard]] inline std::size_t resolve_nthreads(std::size_t, std::size_t, std::size_t, double,
+                                                  unsigned) noexcept { return 1; }
+[[nodiscard]] inline double core_cyc_per_ns() noexcept { return 1.0; }
 
 // Kept complete (never instantiated: `resolve_nthreads` == 1) so `std::unique_ptr` stays valid.
 class thread_pool {

@@ -424,7 +424,9 @@ public:
     // Out-of-line (extern-template): an inline body re-instantiates the route tree in
     // every consumer TU. nthreads drives `execute()`; only a long innermost axis' route
     // choice depends on it. nthreads > 1 builds threading state here and/or inside the
-    // axis sub-plans; eff flows to each axis's 1-D engine.
+    // axis sub-plans; eff flows to each axis's 1-D engine. nthreads == 0 resolves the
+    // auto count from the shape: the wake law when a batch loop can thread, else the
+    // single threading-capable axis' own route-aware count.
     nd_runtime_plan(span<const std::size_t> shape, bool is_forward,
                     std::size_t nthreads = 1,
                     admiral::effort eff = admiral::effort::estimate);
@@ -486,8 +488,29 @@ nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forwa
     m.total = *total;
     // Every partial product below is <= m.total, so the strides cannot overflow.
     // inner = product of faster extents = this axis' stride (suffix product).
-    m.axes.resize(m.shape.size());
     bool batch_threadable = false;
+    for (const std::size_t d : m.shape) {
+        if (d == 0) continue;
+        // An axis' batch loop threads when it has >= 2 lines over a big-enough tensor.
+        const std::size_t units = m.total / d;
+        batch_threadable |= units >= 2 && m.total >= kThreadMinElems && d > 1;
+    }
+    if (nthreads == 0 && batch_threadable) {
+        // Wake law (fi/mt t0-modeler-r2.md): K = rank dispatches per execute (one
+        // `parallel_for` per non-trivial axis), W = the summed per-axis line work.
+        std::size_t dispatches = 0;
+        double work_cyc = 0.0;
+        for (const std::size_t d : m.shape) {
+            if (d <= 1) continue;
+            ++dispatches;
+            work_cyc += double(m.total / d) * line_work_cyc<T>(d);
+        }
+        const unsigned cls = m.shape.size() >= 3 ? 2 : 1;
+        nthreads = resolve_nthreads(0, m.total, dispatches, work_cyc / core_cyc_per_ns(), cls);
+    }
+    // !batch_threadable with nthreads == 0: the count stays 0 and the one
+    // threading-capable axis' sub-plan resolves its own route-aware count below.
+    m.axes.resize(m.shape.size());
     std::size_t inner = 1;
     for (std::size_t di = 0; di < m.shape.size(); ++di) {
         const std::size_t d = m.shape.size() - 1 - di;
@@ -497,7 +520,6 @@ nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forwa
         // decision is final.
         const std::size_t units = m.total / m.shape[d];
         const bool threads_above = units >= 2 && m.total >= kThreadMinElems;
-        batch_threadable |= threads_above && m.shape[d] > 1;
         const std::size_t axis_threads = threads_above ? 1 : nthreads;
         m.axes[d] = make_nd_axis_state<T>(m.shape[d], inner, is_forward,
                                           /*innermost=*/d == m.shape.size() - 1, axis_threads,

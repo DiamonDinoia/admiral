@@ -62,10 +62,35 @@ void codelet_dispatch_many(std::complex<T>* data, std::size_t nlines, std::size_
                    data, nlines, stride, fct);
 }
 
+// Out-of-place lanes-as-lines twin. Same dense-jump-table + extras-if-chain shape.
+template<typename T, bool Forward>
+struct codelet_apply_many_oop_invoke {
+    template<std::size_t N>
+    void operator()(const std::complex<T>* in, std::complex<T>* out, std::size_t nlines,
+                    std::size_t in_stride, std::size_t out_stride, T fct) const {
+        codelet_apply_many_oop<N, T, Forward>(in, out, nlines, in_stride, out_stride, fct);
+    }
+};
+
+template<typename T, bool Forward>
+void codelet_dispatch_many_oop(const std::complex<T>* in, std::complex<T>* out,
+                               std::size_t nlines, std::size_t in_stride,
+                               std::size_t out_stride, std::size_t N, T fct) {
+@ADM_CODELET_EXTRA_DISPATCH_MANY_OOP@
+    poet::dispatch(codelet_apply_many_oop_invoke<T, Forward>{},
+                   poet::dispatch_param<codelet_catalog_seq>{N},
+                   in, out, nlines, in_stride, out_stride, fct);
+}
+
 template void codelet_dispatch_many<float,  true >(std::complex<float>*,  std::size_t, std::size_t, std::size_t, float);
 template void codelet_dispatch_many<float,  false>(std::complex<float>*,  std::size_t, std::size_t, std::size_t, float);
 template void codelet_dispatch_many<double, true >(std::complex<double>*, std::size_t, std::size_t, std::size_t, double);
 template void codelet_dispatch_many<double, false>(std::complex<double>*, std::size_t, std::size_t, std::size_t, double);
+
+template void codelet_dispatch_many_oop<float,  true >(const std::complex<float>*,  std::complex<float>*,  std::size_t, std::size_t, std::size_t, std::size_t, float);
+template void codelet_dispatch_many_oop<float,  false>(const std::complex<float>*,  std::complex<float>*,  std::size_t, std::size_t, std::size_t, std::size_t, float);
+template void codelet_dispatch_many_oop<double, true >(const std::complex<double>*, std::complex<double>*, std::size_t, std::size_t, std::size_t, std::size_t, double);
+template void codelet_dispatch_many_oop<double, false>(const std::complex<double>*, std::complex<double>*, std::size_t, std::size_t, std::size_t, std::size_t, double);
 
 template void codelet_dispatch<float,  true >(const std::complex<float>*,  std::complex<float>*,  std::size_t);
 template void codelet_dispatch<float,  false>(const std::complex<float>*,  std::complex<float>*,  std::size_t);

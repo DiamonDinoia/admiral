@@ -80,6 +80,7 @@ set(ADM_CODELET_SEQUENCE "std::integer_sequence<std::size_t, ${ADM_CODELET_RANGE
 
 set(ADM_CODELET_EXTRA_DISPATCH "")
 set(ADM_CODELET_EXTRA_DISPATCH_MANY "")
+set(ADM_CODELET_EXTRA_DISPATCH_MANY_OOP "")
 foreach(CODELET_N IN LISTS ADM_CODELET_EXTRA_SIZES)
     if(NOT CODELET_N IN_LIST ADM_CODELET_RANGE_SIZES)
         string(APPEND ADM_CODELET_EXTRA_DISPATCH
@@ -90,6 +91,11 @@ foreach(CODELET_N IN LISTS ADM_CODELET_EXTRA_SIZES)
         string(APPEND ADM_CODELET_EXTRA_DISPATCH_MANY
             "    if (N == ${CODELET_N}) {\n"
             "        codelet_apply_many<${CODELET_N}, T, Forward>(data, nlines, stride, fct);\n"
+            "        return;\n"
+            "    }\n")
+        string(APPEND ADM_CODELET_EXTRA_DISPATCH_MANY_OOP
+            "    if (N == ${CODELET_N}) {\n"
+            "        codelet_apply_many_oop<${CODELET_N}, T, Forward>(in, out, nlines, in_stride, out_stride, fct);\n"
             "        return;\n"
             "    }\n")
     endif()
@@ -133,15 +139,19 @@ foreach(CODELET_N IN LISTS ADM_CODELET_SIZES)
         @ONLY)
     list(APPEND ADM_CODELET_GENERATED
          ${CMAKE_CURRENT_BINARY_DIR}/codelet_${CODELET_N}.cpp)
-    string(APPEND ADM_CODELET_EXTERN
-        "extern template void codelet_apply<${CODELET_N}, float,  true >(const std::complex<float>*, std::complex<float>*);\n"
-        "extern template void codelet_apply<${CODELET_N}, float,  false>(const std::complex<float>*, std::complex<float>*);\n"
-        "extern template void codelet_apply<${CODELET_N}, double, true >(const std::complex<double>*, std::complex<double>*);\n"
-        "extern template void codelet_apply<${CODELET_N}, double, false>(const std::complex<double>*, std::complex<double>*);\n"
-        "extern template void codelet_apply_many<${CODELET_N}, float,  true >(std::complex<float>*,  std::size_t, std::size_t, float);\n"
-        "extern template void codelet_apply_many<${CODELET_N}, float,  false>(std::complex<float>*,  std::size_t, std::size_t, float);\n"
-        "extern template void codelet_apply_many<${CODELET_N}, double, true >(std::complex<double>*, std::size_t, std::size_t, double);\n"
-        "extern template void codelet_apply_many<${CODELET_N}, double, false>(std::complex<double>*, std::size_t, std::size_t, double);\n")
+        string(APPEND ADM_CODELET_EXTERN
+            "extern template void codelet_apply<${CODELET_N}, float,  true >(const std::complex<float>*, std::complex<float>*);\n"
+            "extern template void codelet_apply<${CODELET_N}, float,  false>(const std::complex<float>*, std::complex<float>*);\n"
+            "extern template void codelet_apply<${CODELET_N}, double, true >(const std::complex<double>*, std::complex<double>*);\n"
+            "extern template void codelet_apply<${CODELET_N}, double, false>(const std::complex<double>*, std::complex<double>*);\n"
+            "extern template void codelet_apply_many<${CODELET_N}, float,  true >(std::complex<float>*,  std::size_t, std::size_t, float);\n"
+            "extern template void codelet_apply_many<${CODELET_N}, float,  false>(std::complex<float>*,  std::size_t, std::size_t, float);\n"
+            "extern template void codelet_apply_many<${CODELET_N}, double, true >(std::complex<double>*, std::size_t, std::size_t, double);\n"
+            "extern template void codelet_apply_many<${CODELET_N}, double, false>(std::complex<double>*, std::size_t, std::size_t, double);\n"
+            "extern template void codelet_apply_many_oop<${CODELET_N}, float,  true >(const std::complex<float>*,  std::complex<float>*,  std::size_t, std::size_t, std::size_t, float);\n"
+            "extern template void codelet_apply_many_oop<${CODELET_N}, float,  false>(const std::complex<float>*,  std::complex<float>*,  std::size_t, std::size_t, std::size_t, float);\n"
+            "extern template void codelet_apply_many_oop<${CODELET_N}, double, true >(const std::complex<double>*, std::complex<double>*, std::size_t, std::size_t, std::size_t, double);\n"
+            "extern template void codelet_apply_many_oop<${CODELET_N}, double, false>(const std::complex<double>*, std::complex<double>*, std::size_t, std::size_t, std::size_t, double);\n")
 endforeach()
 
 configure_file(

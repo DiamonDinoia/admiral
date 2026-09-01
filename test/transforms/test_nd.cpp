@@ -506,3 +506,68 @@ TEMPLATE_TEST_CASE("N-D plans honour the measuring efforts", "[nd][effort]", flo
         require_close(v, in, fft_tol<T>());
     }
 }
+
+namespace {
+
+// N-D reference: 1-D `reference_dft` along every axis (long double accumulation),
+// independent of every admiral kernel.
+template<typename T>
+std::vector<std::complex<T>> reference_nd(const std::vector<std::complex<T>>& x,
+                                          const std::vector<std::size_t>& shape,
+                                          bool forward) {
+    std::vector<std::complex<T>> cur = x, next(x.size());
+    std::size_t inner = 1;
+    for (std::size_t d = shape.size(); d-- > 0;) {
+        const std::size_t len = shape[d], outer = x.size() / (len * inner);
+        for (std::size_t o = 0; o < outer; ++o)
+            for (std::size_t g = 0; g < inner; ++g) {
+                std::vector<std::complex<T>> line(len);
+                for (std::size_t p = 0; p < len; ++p) line[p] = cur[o * len * inner + p * inner + g];
+                const auto out = reference_dft<T>(line, forward);
+                for (std::size_t p = 0; p < len; ++p) next[o * len * inner + p * inner + g] = out[p];
+            }
+        cur = next;
+        inner *= len;
+    }
+    return cur;
+}
+
+} // namespace
+
+// Out-of-place N-D plans batch catalog-sized innermost rows through
+// `codelet_dispatch_many_oop` (one call per pool chunk, len <= 32) instead of
+// per-line `plan->execute`. The batched path must match an independent reference
+// across its row geometries: fewer rows than a tile, a partial tail tile, the
+// N in {2,4} per-line arms, rows past 32 (the dispatch gate's per-line loop), a
+// catalog extra past 64, and non-catalog rows.
+TEMPLATE_TEST_CASE("N-D out-of-place catalog rows match the reference DFT", "[nd][oop]",
+                   float, double) {
+    using T = TestType;
+    const std::vector<std::vector<std::size_t>> shapes{
+        {3, 2}, {5, 4}, {3, 8}, {5, 16}, {9, 32}, {2, 64}, {64, 64}, {3, 120},
+        {2, 360}, {4, 66}, {5, 96}, {4, 8, 16}, {3, 4, 4}};
+    for (const std::vector<std::size_t>& shape : shapes) {
+        const std::size_t n = shape_product(shape);
+        const auto in = make_input<T>(n, 4000u + unsigned(n));
+        admiral::plan<T> p(admiral::span<const std::size_t>(shape.data(), shape.size()));
+
+        INFO("shape rank=" << shape.size() << " n=" << n);
+        std::vector<std::complex<T>> out(n);
+        p.forward(in.data(), out.data());
+        require_close(out, reference_nd(in, shape, true), fft_tol<T>());
+
+        // Inverse: the library applies 1/N; the reference DFT is unnormalized.
+        auto ref = reference_nd(out, shape, false);
+        for (auto& v : ref) v /= static_cast<T>(n);
+        std::vector<std::complex<T>> back(n);
+        p.inverse(out.data(), back.data());
+        require_close(back, ref, fft_tol<T>());
+
+        // Custom fct on the batched path: it folds into the row pass.
+        auto fwd2 = reference_nd(in, shape, true);
+        for (auto& v : fwd2) v *= T(2);
+        std::vector<std::complex<T>> out2(n);
+        p.forward(in.data(), out2.data(), T(2));
+        require_close(out2, fwd2, fft_tol<T>());
+    }
+}

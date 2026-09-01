@@ -174,5 +174,71 @@ void codelet_apply_many(std::complex<T>* data, std::size_t nlines, std::size_t s
     }
 }
 
+// Out-of-place twin of `codelet_apply_many`: the same W-line tiles, masked entry and
+// prefix-store exit, `in` and `out` at their own uniform strides. The per-line
+// arithmetic is the in-place twin's. Why a separate copy exists: the ND OOP row pass
+// (nd_plan.hpp execute_nd) and only it reads this pattern.
+template<unsigned N, typename T, bool Forward>
+void codelet_apply_many_oop(const std::complex<T>* in, std::complex<T>* out,
+                            std::size_t nlines, std::size_t in_stride,
+                            std::size_t out_stride, T fct) {
+    using V = xsimd::batch<T>;
+    constexpr std::size_t W = V::size;
+    constexpr std::size_t kBlocks = (N + W - 1) / W;
+
+    std::size_t r = 0;
+    if constexpr (N != 2 && N != 4) {
+        const V fr(fct), fi(Forward ? fct : -fct);
+        for (; r + W <= nlines; r += W) {
+            const T* ibase = reinterpret_cast<const T*>(in + r * in_stride);
+            T* obase = reinterpret_cast<T*>(out + r * out_stride);
+            V re[N], im[N], yr[N], yi[N];
+
+            poet::static_for<0, kBlocks>([&](auto B) {
+                constexpr std::size_t j0 = B * W;
+                constexpr std::size_t cols = (N - j0 < W) ? N - j0 : W;
+                V rb[W], ib[W];
+                for (std::size_t l = 0; l < W; ++l)
+                    aos_deinterleave_masked<(2 * cols > W), T>(
+                        ibase + l * 2 * in_stride + 2 * j0, rb[l], ib[l],
+                        aos_ct_masks<cols, T>{});
+                xsimd::transpose(rb, rb + W);  // rb[j].lane(l) = Re x_{j0+j} of line l
+                xsimd::transpose(ib, ib + W);
+                poet::static_for<0, cols>([&](auto J) {
+                    re[j0 + J] = rb[J];
+                    im[j0 + J] = Forward ? ib[J] : -ib[J];
+                });
+            });
+
+            kernel_batched<N, T, true, V>::apply(re, im, 1, yr, yi);
+
+            poet::static_for<0, kBlocks>([&](auto B) {
+                constexpr std::size_t j0 = B * W;
+                constexpr std::size_t cols = (N - j0 < W) ? N - j0 : W;
+                V tr[W], ti[W];
+                poet::static_for<0, W>([&](auto J) {
+                    // Lanes past the block width land in columns the prefix store drops.
+                    constexpr std::size_t j = J;  // `J` is signed; `cols` is not
+                    constexpr std::size_t k = (j < cols) ? j0 + j : 0;
+                    tr[J] = yr[k] * fr;
+                    ti[J] = yi[k] * fi;
+                });
+                xsimd::transpose(tr, tr + W);  // tr[l].lane(j) = Re X_{j0+j} of line l
+                xsimd::transpose(ti, ti + W);
+                for (std::size_t l = 0; l < W; ++l)
+                    aos_interleave_prefix<cols, T>(obase + l * 2 * out_stride + 2 * j0,
+                                                   tr[l], ti[l]);
+            });
+        }
+    }
+    // Tail, and the whole run for `N` in {2,4} or `nlines` < `W` (same rule as the
+    // in-place twin).
+    const bool unit = (fct == T(1));
+    for (; r < nlines; ++r) {
+        codelet_apply<N, T, Forward>(in + r * in_stride, out + r * out_stride);
+        if (!unit) scale_inplace(out + r * out_stride, N, fct);
+    }
+}
+
 } // namespace detail
 } // namespace admiral

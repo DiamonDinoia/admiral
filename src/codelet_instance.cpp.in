@@ -18,5 +18,10 @@ template void codelet_apply_many<@CODELET_N@, float,  false>(std::complex<float>
 template void codelet_apply_many<@CODELET_N@, double, true >(std::complex<double>*, std::size_t, std::size_t, double);
 template void codelet_apply_many<@CODELET_N@, double, false>(std::complex<double>*, std::size_t, std::size_t, double);
 
+template void codelet_apply_many_oop<@CODELET_N@, float,  true >(const std::complex<float>*,  std::complex<float>*,  std::size_t, std::size_t, std::size_t, float);
+template void codelet_apply_many_oop<@CODELET_N@, float,  false>(const std::complex<float>*,  std::complex<float>*,  std::size_t, std::size_t, std::size_t, float);
+template void codelet_apply_many_oop<@CODELET_N@, double, true >(const std::complex<double>*, std::complex<double>*, std::size_t, std::size_t, std::size_t, double);
+template void codelet_apply_many_oop<@CODELET_N@, double, false>(const std::complex<double>*, std::complex<double>*, std::size_t, std::size_t, std::size_t, double);
+
 } // namespace detail
 } // namespace admiral

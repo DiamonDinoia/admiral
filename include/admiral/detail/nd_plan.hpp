@@ -599,10 +599,25 @@ void nd_runtime_plan<T>::execute_nd(const std::complex<T>* src, std::complex<T>*
     const nd_axis_state<T>& in_st = m.axes[ndim - 1];
     const scale_plan sp = make_scale_plan(opts.fct);
     const exec_options<T> row_opts{axis_fct(sp, ndim - 1)};
-    // Innermost pass src -> dst: `iterative_dif` writes dst directly; other routes copy
-    // the row and transform in place (row hot from copy). A single row runs the batch
-    // loop serial-inline, so the axis plan threads internally on its own pool.
+    // Innermost pass src -> dst: a batched lanes-as-lines call per chunk when the row
+    // is a catalog size (the per-line loop pays an out-of-line dispatch per row, several
+    // times the transform cost at small len). `iterative_dif` writes dst directly; other
+    // routes copy the row and transform in place (row hot from copy). A single row runs
+    // the batch loop serial-inline, so the axis plan threads internally on its own pool.
     parallel_for(m.pool.get(), rows, m.total, [&](std::size_t b, std::size_t e, std::size_t) {
+        // Batched rows pay where the per-line dispatch dominates (len <= 32); at len
+        // 64 the per-line codelet_apply out-runs the unzip/batch/zip tile (measured
+        // (rows, len) sweep, SP-class AVX-512, 2026-08-31 campaign).
+        if (len <= 32 && is_codelet_catalog(len)) {
+            const T fct = row_opts.fct.value_or(m.is_forward ? T(1) : T(1) / static_cast<T>(len));
+            if (m.is_forward)
+                codelet_dispatch_many_oop<T, true >(src + b * len, dst + b * len, e - b,
+                                                    len, len, len, fct);
+            else
+                codelet_dispatch_many_oop<T, false>(src + b * len, dst + b * len, e - b,
+                                                    len, len, len, fct);
+            return;
+        }
         for (std::size_t r = b; r < e; ++r)
             in_st.plan->execute(src + r * len, dst + r * len, row_opts);
     });

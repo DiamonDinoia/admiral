@@ -364,6 +364,18 @@ extern template void codelet_dispatch_many<float,  false>(std::complex<float>*, 
 extern template void codelet_dispatch_many<double, true >(std::complex<double>*, std::size_t, std::size_t, std::size_t, double);
 extern template void codelet_dispatch_many<double, false>(std::complex<double>*, std::size_t, std::size_t, std::size_t, double);
 
+// Out-of-place twin of `codelet_dispatch_many`: independent src/dst strides.
+// Reached by the N-D out-of-place row pass (`nd_plan.hpp`), not from dispatch_many.
+template<typename T, bool Forward>
+void codelet_dispatch_many_oop(const std::complex<T>* in, std::complex<T>* out,
+                               std::size_t nlines, std::size_t in_stride,
+                               std::size_t out_stride, std::size_t N, T fct);
+
+extern template void codelet_dispatch_many_oop<float,  true >(const std::complex<float>*,  std::complex<float>*,  std::size_t, std::size_t, std::size_t, std::size_t, float);
+extern template void codelet_dispatch_many_oop<float,  false>(const std::complex<float>*,  std::complex<float>*,  std::size_t, std::size_t, std::size_t, std::size_t, float);
+extern template void codelet_dispatch_many_oop<double, true >(const std::complex<double>*, std::complex<double>*, std::size_t, std::size_t, std::size_t, std::size_t, double);
+extern template void codelet_dispatch_many_oop<double, false>(const std::complex<double>*, std::complex<double>*, std::size_t, std::size_t, std::size_t, std::size_t, double);
+
 } // namespace detail
 } // namespace admiral
 

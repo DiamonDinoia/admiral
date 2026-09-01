@@ -1,59 +1,7 @@
 #pragma once
 
-// ============================================================================
-// FFTW3-compatible header for Admiral.
-//
-// Include this header instead of <fftw3.h> and link `admiral::fftw`. Existing
-// FFTW code inside the list below compiles and runs unchanged: same spellings,
-// same sign convention, same row-major layout, same unscaled result in both
-// directions.
-//
-//   #include <admiral/fftw3.h>
-//
-//   fftw_complex* in  = fftw_alloc_complex(N);
-//   fftw_complex* out = fftw_alloc_complex(N);
-//   fftw_plan p = fftw_plan_dft_1d(N, in, out, FFTW_FORWARD, FFTW_ESTIMATE);
-//   fftw_execute(p);
-//   fftw_destroy_plan(p);
-//   fftw_free(in); fftw_free(out);
-//
-// What is covered
-//   `fftw_plan_dft`, `fftw_plan_dft_1d`/`fftw_plan_dft_2d`/`fftw_plan_dft_3d`
-//   `fftw_execute`, `fftw_execute_dft`, `fftw_destroy_plan`
-//   `fftw_malloc`, `fftw_free`, `fftw_alloc_real`, `fftw_alloc_complex`,
-//   `fftw_cleanup`
-//   the `fftwf_` single-precision mirror of the above
-//
-// What is not
-//   Real transforms (r2c, c2r, r2r): use `admiral::plan_r2c<T>` from
-//   `<admiral/admiral.hpp>`. The guru, advanced and split interfaces. Wisdom.
-//   `fftw_plan_with_nthreads`: pass a thread count to `admiral::plan` instead.
-//   Nothing here silently degrades: an impossible call does not compile.
-//
-// Where the behaviour differs from FFTW
-//   The shim honours the planning flags and accepts and ignores the rest.
-//   `FFTW_ESTIMATE` picks from the fitted cost model with no search; every
-//   other flag combination, the default `FFTW_MEASURE` included, races the
-//   model's candidates. One search budget, so `FFTW_PATIENT` and
-//   `FFTW_EXHAUSTIVE` add nothing. Planning never reads or writes the arrays,
-//   so a measuring flag cannot clobber filled data; every plan behaves as
-//   `FFTW_PRESERVE_INPUT`.
-//
-//   `fftw_execute()` replays the pointers and direction captured at plan time,
-//   as in FFTW. `fftw_execute_dft()` runs the same plan on other arrays;
-//   alignment and in/out-of-place character need not match the plan. The shim
-//   ignores `FFTW_WISDOM_ONLY` and still returns a live plan. An out-of-range
-//   sign computes a backward transform, as in FFTW. The shim rejects a rank-0
-//   plan (`NULL`); FFTW defines rank 0 as a scalar copy.
-//
-//   Plans are single-threaded here. Do not call one plan from two threads at
-//   once; separate plans are independent. in == out is in place; arrays that
-//   partially overlap are undefined behaviour, as in FFTW.
-// ============================================================================
-
 #include <stddef.h>
 
-// The build hides every symbol by default, so the public ones opt back in.
 #if defined(_WIN32) || defined(__CYGWIN__)
 #  define FFTW_C_API __declspec(dllexport)
 #elif defined(__GNUC__) || defined(__clang__)
@@ -66,21 +14,17 @@
 extern "C" {
 #endif
 
-/// Interleaved [real, imag], as in FFTW and layout-compatible with `std::complex`.
+// Complex-to-complex DFT subset of FFTW. No r2c, no r2r, no guru, no wisdom, no threads API.
+// Both directions are unnormalized as in FFTW, so a forward then a backward scales by N.
 typedef double fftw_complex[2];
 typedef float  fftwf_complex[2];
 
-/// Distinct incomplete types, as in FFTW. Passing a float plan to the double
-/// API is a compile error, not a silent failure at execute time.
 typedef struct fftw_plan_s*  fftw_plan;
 typedef struct fftwf_plan_s* fftwf_plan;
 
-// Sign of the exponent: forward is exp(-2*pi*i*k*n/N).
 #define FFTW_FORWARD  (-1)
 #define FFTW_BACKWARD (+1)
 
-// ESTIMATE / MEASURE / PATIENT / EXHAUSTIVE pick the planning effort, and the shim
-// accepts and ignores the rest. See the header note.
 #define FFTW_MEASURE         (0U)
 #define FFTW_DESTROY_INPUT   (1U << 0)
 #define FFTW_UNALIGNED       (1U << 1)
@@ -91,13 +35,8 @@ typedef struct fftwf_plan_s* fftwf_plan;
 #define FFTW_ESTIMATE        (1U << 6)
 #define FFTW_WISDOM_ONLY     (1U << 21)
 
-// ---- double precision -------------------------------------------------------
-/// A plan call returns `NULL` on a bad rank, a non-positive extent, or
-/// allocation failure. Executing or destroying `NULL` is safe and does nothing.
-/// The alloc helpers return memory aligned to the build's kernel alignment (at
-/// least 64 bytes); free it with `fftw_free`.
-/// `fftw_cleanup()` is a no-op: no wisdom cache or other global state exists,
-/// and `fftw_destroy_plan` releases everything a plan owns.
+// Only FFTW_ESTIMATE is read: it routes from the cost model instead of timing candidates at plan
+// time. Every other flag is ignored. Planning never touches `in` or `out`. NULL on failure.
 FFTW_C_API fftw_plan fftw_plan_dft_1d(int n0, fftw_complex* in, fftw_complex* out,
                                       int sign, unsigned flags);
 FFTW_C_API fftw_plan fftw_plan_dft_2d(int n0, int n1, fftw_complex* in, fftw_complex* out,
@@ -107,17 +46,20 @@ FFTW_C_API fftw_plan fftw_plan_dft_3d(int n0, int n1, int n2, fftw_complex* in,
 FFTW_C_API fftw_plan fftw_plan_dft(int rank, const int* n, fftw_complex* in,
                                    fftw_complex* out, int sign, unsigned flags);
 
+// `fftw_execute` reuses the plan-time `in`/`out`, so two concurrent calls race on that one output
+// array; `fftw_execute_dft` takes fresh buffers. Either runs in place at `in == out`.
+// `fftw_destroy_plan` accepts NULL.
 FFTW_C_API void fftw_execute(const fftw_plan p);
 FFTW_C_API void fftw_execute_dft(const fftw_plan p, fftw_complex* in, fftw_complex* out);
 FFTW_C_API void fftw_destroy_plan(fftw_plan p);
 
+// `fftw_malloc` returns memory aligned for the SIMD engine, or NULL. `fftw_cleanup` is a no-op.
 FFTW_C_API void*         fftw_malloc(size_t n);
 FFTW_C_API void          fftw_free(void* p);
 FFTW_C_API double*       fftw_alloc_real(size_t n);
 FFTW_C_API fftw_complex* fftw_alloc_complex(size_t n);
 FFTW_C_API void          fftw_cleanup(void);
 
-// ---- single precision (same contract as above) -------------------------------
 FFTW_C_API fftwf_plan fftwf_plan_dft_1d(int n0, fftwf_complex* in, fftwf_complex* out,
                                         int sign, unsigned flags);
 FFTW_C_API fftwf_plan fftwf_plan_dft_2d(int n0, int n1, fftwf_complex* in, fftwf_complex* out,

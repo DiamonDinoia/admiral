@@ -19,13 +19,9 @@ TEMPLATE_TEST_CASE("FFT size 1", "[fft][edge]", float, double) {
 
     admiral::forward(admiral::span<const std::complex<T>>(input), admiral::span(output));
 
-    // N=1 is the identity, so the equality check is exact, not "within 1e-6".
     REQUIRE(output.size() == 1);
     REQUIRE(output[0] == input[0]);
 }
-
-// Round-trip batteries for the free API live in `accuracy/test_sweeps.cpp` (N=2..512
-// vs the naive DFT); the plan batteries are in `transforms/test_plan.cpp`.
 
 TEMPLATE_TEST_CASE("FFT known values (size 4)", "[fft][known]", float, double) {
     using T = TestType;
@@ -68,7 +64,6 @@ TEMPLATE_TEST_CASE("FFT Parseval's theorem", "[fft][properties]", float, double)
         std::vector<std::complex<T>> fft_result(N);
         admiral::forward(admiral::span(input), admiral::span(fft_result));
 
-        // `scale` 1 asks `require_parseval` for the 32eps bound.
         require_parseval<T>(input, fft_result, N, 1.0);
     };
 
@@ -80,7 +75,6 @@ TEMPLATE_TEST_CASE("FFT Parseval's theorem", "[fft][properties]", float, double)
 
 TEMPLATE_TEST_CASE("FFT linearity", "[fft][properties]", float, double) {
     using T = TestType;
-    // FFT(a*x + b*y) = a*FFT(x) + b*FFT(y)
 
     const std::size_t N = 16;
     const T a = T(2.5);
@@ -92,7 +86,6 @@ TEMPLATE_TEST_CASE("FFT linearity", "[fft][properties]", float, double) {
         y[i] = std::complex<T>(std::cos(T(i) * T(2)), std::sin(T(i) * T(0.5)));
     }
 
-    // Compute FFT(a*x + b*y)
     std::vector<std::complex<T>> combined(N);
     for (std::size_t i = 0; i < N; ++i) {
         combined[i] = a * x[i] + b * y[i];
@@ -100,7 +93,6 @@ TEMPLATE_TEST_CASE("FFT linearity", "[fft][properties]", float, double) {
     std::vector<std::complex<T>> fft_combined(N);
     admiral::forward(admiral::span(combined), admiral::span(fft_combined));
 
-    // Compute a*FFT(x) + b*FFT(y)
     std::vector<std::complex<T>> fft_x(N), fft_y(N);
     admiral::forward(admiral::span(x), admiral::span(fft_x));
     admiral::forward(admiral::span(y), admiral::span(fft_y));
@@ -138,12 +130,9 @@ TEMPLATE_TEST_CASE("one-shot validation", "[fft][oneshot]", float, double) {
     std::vector<std::complex<T>> in(64, {T(1), T(0)}), out(64), short_out(32);
     const auto cin = admiral::span<const std::complex<T>>(in);
 
-    // A size mismatch throws instead of overrunning the short span. The throw is the
-    // same `admiral::size_error` every other span-count check on this API throws.
     REQUIRE_THROWS_AS(admiral::forward(cin, admiral::span(short_out)), admiral::size_error);
     REQUIRE_THROWS_AS(admiral::inverse(cin, admiral::span(short_out)), admiral::size_error);
 
-    // Empty spans are a legal no-op.
     std::vector<std::complex<T>> ein, eout;
     REQUIRE_NOTHROW(
         admiral::forward(admiral::span<const std::complex<T>>(ein), admiral::span(eout)));
@@ -154,8 +143,6 @@ TEMPLATE_TEST_CASE("one-shot validation", "[fft][oneshot]", float, double) {
 TEMPLATE_TEST_CASE("one-shot with nthreads transforms correctly", "[fft][oneshot][threads]",
                    float, double) {
     using T = TestType;
-    // A tone of bin 3 has the closed form X[3] = N, all else 0, in every route a
-    // thread count could elect.
     const std::size_t N = 1 << 16;
     std::vector<std::complex<T>> x(N), y(N);
     for (std::size_t j = 0; j < N; ++j) x[j] = unit_phasor<T>(turn_fraction(3, j, N));
@@ -181,22 +168,17 @@ TEMPLATE_TEST_CASE("N-D one-shot with nthreads transforms correctly",
     }
 
     std::vector<std::complex<T>> y = x;
-    admiral::forward(y.data(), shape, {3});   // 3 = a non-pow2 thread count
+    admiral::forward(y.data(), shape, {3});
     REQUIRE_THAT(double(std::abs(y[5 * shape[1] + 3])),
                  WithinAbsT(double(N), double(N) * fft_tol<T>()));
     admiral::inverse(y.data(), shape, {3});
     require_close(y, x, fft_tol<T>());
 }
 
-// `options::debug` only prints. A traced run must produce bitwise the same numbers as
-// a silent one. Both runs use the SAME buffer because peel and masking key on the data
-// pointer's alignment. Two distinct allocations of the same input may differ in the
-// last bit. 1024 sits outside the cost model's domain; 60 and 32x24 sit inside, so the
-// trace runs both arms.
 TEMPLATE_TEST_CASE("options::debug traces without changing the result",
                    "[fft][options][debug]", float, double) {
     using T = TestType;
-    constexpr unsigned kVerbose = 3;   // route, shape and cost model; see `admiral::options`
+    constexpr unsigned kVerbose = 3;
 
     auto ramp = [](std::size_t n) {
         std::vector<std::complex<T>> v(n);
@@ -222,7 +204,6 @@ TEMPLATE_TEST_CASE("options::debug traces without changing the result",
             admiral::plan<T>(sp, loud).forward(v.data(), v.data());
             REQUIRE(v == quiet);
 
-            // The out-of-place call is a separate funnel with a separate guard.
             std::vector<std::complex<T>> dst(n);
             admiral::plan<T>(sp).inverse(quiet.data(), dst.data());
             const auto quiet_oop = dst;
@@ -233,8 +214,8 @@ TEMPLATE_TEST_CASE("options::debug traces without changing the result",
 
     SECTION("real, r2c and c2r") {
         const std::array<std::size_t, 2> shape{16, 12};
-        const admiral::plan_r2c<T> quiet(shape);
-        const admiral::plan_r2c<T> loud(shape, {0, admiral::effort::estimate, kVerbose});
+        admiral::plan_r2c<T> quiet(shape);
+        admiral::plan_r2c<T> loud(shape, {0, admiral::effort::estimate, kVerbose});
         std::vector<T> in(quiet.real_size());
         for (std::size_t j = 0; j < in.size(); ++j) in[j] = T(j % 11) - T(5);
 
@@ -245,7 +226,7 @@ TEMPLATE_TEST_CASE("options::debug traces without changing the result",
         REQUIRE(spec == spec_quiet);
 
         std::vector<T> back(in.size());
-        quiet.inverse(spec.data(), back.data());   // c2r overwrites `spec`
+        quiet.inverse(spec.data(), back.data());
         const auto back_quiet = back;
         spec = spec_quiet;
         loud.inverse(spec.data(), back.data());

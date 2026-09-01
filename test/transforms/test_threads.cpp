@@ -2,44 +2,106 @@
 #include <catch2/catch_template_test_macros.hpp>
 #include "utils/reference.hpp"
 
-#include <admiral/admiral.hpp>   // `admiral::plan`, `admiral::plan_r2c` (`nthreads` ctor param)
-#include <admiral/detail/plan.hpp>         // `plan_impl::route_name` route pins
-#include <admiral/detail/thread_pool.hpp>   // `parallel_for`'s exception contract
+#include <admiral/admiral.hpp>
+#include <admiral/detail/plan.hpp>
+#include <admiral/detail/thread_pool.hpp>
 
 #include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <complex>
 #include <cstddef>
+#include <cstdlib>
 #include <limits>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
-// If `ADM_THREADS`=0, the pool is a serial inline stub, so every `nthreads>1`
-// expectation below is meaningless there. Guard the whole TU off. Catch2 discovery
-// on an empty file exits 4, and the presets register exit 4 as a skip.
+// MSVC spells both the attribute and the aligned allocator differently, and its blocks must go
+// back through `_aligned_free`.
+#if defined(_MSC_VER)
+#include <malloc.h>
+#define COUNTED_NOINLINE __declspec(noinline)
+#else
+#define COUNTED_NOINLINE [[gnu::noinline]]
+#endif
+
+// Global replacements count every allocation, libadmiral.so included. `noinline` keeps free()
+// out of the caller, where gcc's -Wmismatched-new-delete pairs it with the builtin operator new.
+namespace {
+std::atomic<long> g_alloc_count{0};
+
+COUNTED_NOINLINE void* counted_alloc(std::size_t n, std::size_t align) {
+    g_alloc_count.fetch_add(1, std::memory_order_relaxed);
+#if defined(_MSC_VER)
+    void* p = ::_aligned_malloc(n ? n : 1, align);
+    if (p == nullptr) throw std::bad_alloc{};
+#else
+    void* p = nullptr;
+    if (::posix_memalign(&p, align, n ? n : 1) != 0) throw std::bad_alloc{};
+#endif
+    return p;
+}
+COUNTED_NOINLINE void counted_free(void* p) noexcept {
+#if defined(_MSC_VER)
+    ::_aligned_free(p);
+#else
+    std::free(p);
+#endif
+}
+}  // namespace
+
+void* operator new(std::size_t n) { return counted_alloc(n, alignof(std::max_align_t)); }
+void* operator new[](std::size_t n) { return counted_alloc(n, alignof(std::max_align_t)); }
+void* operator new(std::size_t n, std::align_val_t a) {
+    return counted_alloc(n, static_cast<std::size_t>(a));
+}
+void* operator new[](std::size_t n, std::align_val_t a) {
+    return counted_alloc(n, static_cast<std::size_t>(a));
+}
+void operator delete(void* p) noexcept { counted_free(p); }
+void operator delete[](void* p) noexcept { counted_free(p); }
+void operator delete(void* p, std::size_t) noexcept { counted_free(p); }
+void operator delete[](void* p, std::size_t) noexcept { counted_free(p); }
+void operator delete(void* p, std::align_val_t) noexcept { counted_free(p); }
+void operator delete[](void* p, std::align_val_t) noexcept { counted_free(p); }
+void operator delete(void* p, std::size_t, std::align_val_t) noexcept { counted_free(p); }
+void operator delete[](void* p, std::size_t, std::align_val_t) noexcept { counted_free(p); }
+
+// Execute a plan<long double> at n <= SBO_MAX must not heap-allocate scratch;
+// at n > SBO_MAX the soa_scratch heap path must fire.
+// plan<long double> routes exclusively through scalar_nd_c2c<long double>, which
+// uses soa_scratch<std::complex<long double>, 1> in every execute path.
+TEST_CASE("soa_scratch: small-n execute uses zero heap allocations; large-n uses nonzero",
+          "[threads][alloc]") {
+    // Small: n=64 <= SBO_MAX=4096 — all scratch on stack.
+    {
+        INFO("small n=64");
+        admiral::plan<long double> p({64});
+        std::vector<std::complex<long double>> v(64, {1, 0});
+        p.forward(v.data());  // warmup: flushes any lazy init
+        const long before = g_alloc_count.load(std::memory_order_relaxed);
+        p.forward(v.data());
+        const long after = g_alloc_count.load(std::memory_order_relaxed);
+        REQUIRE(after == before);
+    }
+    // Large: n=8192 > SBO_MAX=4096 — soa_scratch falls back to heap.
+    {
+        INFO("large n=8192");
+        admiral::plan<long double> p({8192});
+        std::vector<std::complex<long double>> v(8192, {1, 0});
+        p.forward(v.data());  // warmup
+        const long before = g_alloc_count.load(std::memory_order_relaxed);
+        p.forward(v.data());
+        const long after = g_alloc_count.load(std::memory_order_relaxed);
+        REQUIRE(after > before);
+    }
+}
+
 #if ADM_THREADS
 
-// Multithreading correctness gate: `nthreads=1` (the tuned serial path) and
-// `nthreads=4` must agree to the FFT's own rounding floor. Threading changes the
-// ORDER in which a SIMD column/tile pass groups FMAs (chunk vs full sweep). Under
-// `-ffast-math` the regrouping perturbs the last bit. Serial and threaded are two
-// valid FFTs of the same data; the outputs differ by rounding, not by zero.
-//
-// Higham (Accuracy & Stability of Num. Algorithms, Thm 24.2): a Cooley-Tukey FFT
-// satisfies ||fl(y)-y||_2 / ||y||_2 <= c*u*log2(N), u = eps/2. Both paths obey the
-// bound, so ||threaded-serial||_2/||serial||_2 <= 2*c*u*log2(N). `forecast_tol()`
-// below is C*u*log2(N). C covers 2c plus the twiddle/butterfly constants and stays
-// ~1e5x tighter than any real race/chunk bug (O(1e-3)+).
-//
-// Every shape crosses the dispatch gate on the threaded path (`outer >= 2 &&
-// total >= 1<<15`). A 1D {N} has one line, so the batch loop cannot thread and the
-// axis sub-plan owns the pool. A small N then runs serial; a DRAM-bound N routes to
-// `four_step_large` and threads its own passes ({1<<20}). {64,512} and {16,8192}
-// thread the row and column-DIF passes. The outer prime axis of {67,512} exercises
-// the scalar-fallback column pass. The 3D shape threads a middle axis. r2c adds the
-// batched real tile loop.
+#include <thread>
 
 namespace {
 
@@ -51,25 +113,25 @@ std::string shape_str(const std::vector<std::size_t>& s) {
 
 constexpr std::size_t kNthreads = 4;
 
-// Analytical serial-vs-threaded agreement bound: C*u*log2(N) (see the file header).
 template<typename T>
 double forecast_tol(std::size_t N) {
     const double u = 0.5 * static_cast<double>(std::numeric_limits<T>::epsilon());
-    return 16.0 * u * std::log2(static_cast<double>(N));  // C=16 covers 2c + twiddles + margin
+    return 16.0 * u * std::log2(static_cast<double>(N));
 }
 
-} // namespace
+}
 
-TEMPLATE_TEST_CASE("c2c N-D nthreads=1 vs 4 agrees within the FFT rounding floor", "[threads]", float, double) {
+TEMPLATE_TEST_CASE("c2c N-D nthreads=1 vs 4 agrees within the FFT rounding floor",
+                   "[threads]", float, double) {
     using T = TestType;
     const std::vector<std::vector<std::size_t>> shapes = {
-        {4096},          // 1D: single line, below the DRAM route -> serial, must still match
-        {1 << 20},       // 1D f64 16 MB: `four_step_large` threads its own col/row passes
-        {1 << 21},       // 1D f64 32 MB: `four_step_large` defer split (n2 = 2*n1, m=2 panels)
-        {64, 512},       // 2D: threads the innermost row pass
-        {16, 8192},      // 2D: threads the row pass + the batched column-DIF pass
-        {67, 512},       // outer prime axis (>catalog) -> scalar-fallback column pass
-        {8, 8, 512},     // 3D: threads a middle-axis column pass
+        {4096},
+        {1 << 20},
+        {1 << 21},
+        {64, 512},
+        {16, 8192},
+        {67, 512},
+        {8, 8, 512},
     };
     for (const auto& shape : shapes) {
         INFO("shape=" << shape_str(shape) << " prec=" << (sizeof(T) == 4 ? "f32" : "f64"));
@@ -93,13 +155,14 @@ TEMPLATE_TEST_CASE("c2c N-D nthreads=1 vs 4 agrees within the FFT rounding floor
     }
 }
 
-TEMPLATE_TEST_CASE("r2c/c2r N-D nthreads=1 vs 4 agrees within the FFT rounding floor", "[threads]", float, double) {
+TEMPLATE_TEST_CASE("r2c/c2r N-D nthreads=1 vs 4 agrees within the FFT rounding floor",
+                   "[threads]", float, double) {
     using T = TestType;
     const std::vector<std::vector<std::size_t>> shapes = {
         {64, 512},
         {16, 8192},
         {8, 8, 512},
-        {512, 513},      // odd innermost real axis -> threads the `r2c_odd`/`c2r_odd` row loop
+        {512, 513},
     };
     for (const auto& shape : shapes) {
         INFO("shape=" << shape_str(shape) << " prec=" << (sizeof(T) == 4 ? "f32" : "f64"));
@@ -115,7 +178,6 @@ TEMPLATE_TEST_CASE("r2c/c2r N-D nthreads=1 vs 4 agrees within the FFT rounding f
         threaded.forward(rin.data(), cb.data());
         REQUIRE(relerrtwonorm(ca, cb) < tol);
 
-        // `c2r` consumes the complex input, so feed each plan a private copy.
         auto ca_in = ca, cb_in = cb;
         std::vector<T> ra(serial.real_size()), rb(serial.real_size());
         serial.inverse(ca_in.data(), ra.data());
@@ -124,10 +186,6 @@ TEMPLATE_TEST_CASE("r2c/c2r N-D nthreads=1 vs 4 agrees within the FFT rounding f
     }
 }
 
-// `nthreads` = 0 resolves to the allowed physical cores at the ctor boundary. The
-// auto path must not crash, and it must not change the result vs the serial path
-// (to the FFT rounding floor; see the file header). On a single-core host the
-// resolution is 1 (serial).
 TEMPLATE_TEST_CASE("nthreads=0 auto-select matches serial", "[threads]", float, double) {
     using T = TestType;
     const std::vector<std::size_t> shape = {16, 8192};
@@ -135,7 +193,7 @@ TEMPLATE_TEST_CASE("nthreads=0 auto-select matches serial", "[threads]", float, 
     const auto in = make_input<T>(16 * 8192, 0xA705u);
 
     admiral::plan<T> serial(sp);
-    admiral::plan<T> autop(sp, {0});   // 0 -> allowed physical cores
+    admiral::plan<T> autop(sp, {0});
 
     auto a = in, b = in;
     serial.forward(a.data());
@@ -143,18 +201,6 @@ TEMPLATE_TEST_CASE("nthreads=0 auto-select matches serial", "[threads]", float, 
     REQUIRE(relerrtwonorm(a, b) < forecast_tol<T>(16 * 8192));
 }
 
-// `parallel_for`'s documented contract: "First exception wins; rethrown after join."
-// No FFT body throws, so the contract is unreachable through the public plan API and
-// needs the pool directly. The path is live error handling, not dead code. Every
-// `four_step_large` and `real_fft` body constructs a `soa_scratch`, and past
-// `SBO_MAX` the scratch calls `::operator new[]` and can throw `bad_alloc` on a
-// WORKER thread. Uncaught there, the exception escapes the thread's callable and
-// terminates the process. n=64 over 4 threads gives chunk 16, so the throwing chunk
-// (`begin==0`) belongs to a worker and the caller runs the last chunk. The
-// chunk-to-thread assignment runs the capture-and-rethrow path, not a plain local
-// throw. The test also holds for
-// `ADM_THREADS=0`, where `parallel_for` runs the body inline and the exception
-// propagates directly.
 TEST_CASE("parallel_for propagates a body exception, then resets", "[threads]") {
     admiral::detail::thread_pool pool(4);
 
@@ -165,8 +211,6 @@ TEST_CASE("parallel_for propagates a body exception, then resets", "[threads]") 
     }), std::runtime_error);
     REQUIRE(ran.load() > 0);
 
-    // The captured exception must not leak into the next call; one failed transform
-    // would poison every later transform on the same plan.
     std::atomic<std::size_t> sum{0};
     REQUIRE_NOTHROW(pool.parallel_for(64, [&](std::size_t b, std::size_t e, std::size_t) {
         for (std::size_t i = b; i < e; ++i) sum += i;
@@ -176,8 +220,6 @@ TEST_CASE("parallel_for propagates a body exception, then resets", "[threads]") 
 
 TEST_CASE("parallel_for with fewer units than threads leaves workers idle", "[threads]") {
     admiral::detail::thread_pool pool(4);
-    // n=2 over 4 threads: two of the four chunks are empty and their bodies must
-    // not run (the empty-chunk arm keeps a 2-unit sweep correct).
     std::atomic<int> ran{0};
     std::atomic<std::size_t> sum{0};
     pool.parallel_for(2, [&](std::size_t b, std::size_t e, std::size_t) {
@@ -188,9 +230,6 @@ TEST_CASE("parallel_for with fewer units than threads leaves workers idle", "[th
     REQUIRE(sum.load() == 1);
 }
 
-// 810000 = 900^2 has `n2 % n1 == 0` but `900 % W != 0`. The serial gate refuses the
-// size and the threaded gate admits the size, so the pool runs the unfused sweeps.
-// The unfused sweeps are executable only in this threaded configuration.
 TEST_CASE("threaded unfused four_step_large agrees across nthreads (double)",
           "[threads][fourstep]") {
     constexpr std::size_t N = 810000;
@@ -207,8 +246,6 @@ TEST_CASE("threaded unfused four_step_large agrees across nthreads (double)",
     require_close(b, in, forecast_tol<double>(N));
 }
 
-// Out-of-place executes share the pool with the in-place path; 2M is a fused
-// defer split whose band transpose is the only OOP-specific piece.
 TEST_CASE("threaded out-of-place four_step_large matches serial (double)",
           "[threads][fourstep]") {
     constexpr std::size_t N = 2097152;
@@ -220,12 +257,6 @@ TEST_CASE("threaded out-of-place four_step_large matches serial (double)",
     require_close(o4, o1, forecast_tol<double>(N));
 }
 
-// The auto count is the wake-law argmin (fi/mt t0-modeler-r2.md, 2026-08-31):
-//   nt* = argmin over pow2 nt <= P of  W / min(nt, knee[cls]) + K * Dhat(nt, gap^),
-// W the serial work estimate, K the dispatches per execute, Dhat the probed
-// wake-cost grid. This case pins the law's named regimes against hand-computed
-// values; the machine-dependent rows come from the probed tables in
-// `wake_family_row`, so the same checks hold on any host.
 TEST_CASE("resolve_nthreads wake law: serial floor, knee, pocket, pow2, cap", "[threads]") {
     using admiral::detail::dhat_ns;
     using admiral::detail::has_single_bit;
@@ -242,16 +273,12 @@ TEST_CASE("resolve_nthreads wake law: serial floor, knee, pocket, pow2, cap", "[
     REQUIRE(C0 >= 1);
     const wake_family_row& fam = wake_family_for(P, C0);
 
-    // Serial floor: below 2^15 elements, or K == 0, there is never a pool.
     REQUIRE(resolve_nthreads(0, kAutoSerialElems - 1, 3, 1e9, 1) == 1);
     REQUIRE(resolve_nthreads(0, std::size_t{1} << 30, 0, 1e9, 1) == 1);
 
-    // An explicit count is still returned verbatim.
     REQUIRE(resolve_nthreads(3) == 3);
     REQUIRE(resolve_nthreads(3, kAutoSerialElems - 1, 0, 0, 0) == 3);
 
-    // Quantization and cap over the whole (size, K, class, work) box: pow2-or-1
-    // and never past the machine count.
     for (std::size_t lg = 15; lg < 34; ++lg)
         for (const std::size_t K : {std::size_t{1}, std::size_t{2}, std::size_t{3}, std::size_t{5}})
             for (const unsigned cls : {0u, 1u, 2u})
@@ -262,10 +289,6 @@ TEST_CASE("resolve_nthreads wake law: serial floor, knee, pocket, pow2, cap", "[
                     REQUIRE((nt == 1 || has_single_bit(nt)));
                 }
 
-    // Knee clamp: work that dwarfs every dhat entry buys the saturating width and
-    // no more. Below the knee each doubling halves the work; at and past it the
-    // work is flat and the dhat term only grows. 2^30 f64 elements (16 GB) is past
-    // every row's gateMB, so the deep tier is read.
     for (const unsigned cls : {0u, 1u, 2u}) {
         const std::size_t knee = fam.knee[cls][1];
         const std::size_t want = knee <= P ? knee : std::size_t{1}
@@ -273,13 +296,9 @@ TEST_CASE("resolve_nthreads wake law: serial floor, knee, pocket, pow2, cap", "[
         REQUIRE(resolve_nthreads(0, std::size_t{1} << 30, 1, 1e12, cls) == want);
     }
 
-    // Hand-computed eval: re-derive T(nt) from the probed table with the pocket
-    // rider and the two fixed-point gap iterations, then require the shipped
-    // argmin to match. Catches a mis-fed K/W/class, the loop bounds and the
-    // quantization; a wrong pocket or knee constant lands a different argmin.
     const auto law_eval = [&](std::size_t total, std::size_t K, double w_ns, unsigned cls) {
         const bool deep = double(total) * 16.0 > double(fam.gateMB[cls]) * 1e6;
-        const std::size_t knee = fam.knee[cls][deep];   // hand-mirrors the shipped gate
+        const std::size_t knee = fam.knee[cls][deep];
         std::size_t best = 1;
         double best_t = w_ns;
         for (std::size_t nt = 2; nt <= P; nt <<= 1) {
@@ -298,8 +317,6 @@ TEST_CASE("resolve_nthreads wake law: serial floor, knee, pocket, pow2, cap", "[
         }
         return best;
     };
-    // A pocket-positive cell (hot gap < 30 us at >= half a socket), a parked cell
-    // (work per dispatch in the ms range) and a near-serial cell.
     for (const auto& c : {std::size_t{5}, std::size_t{1}, std::size_t{2}})
         for (const unsigned cls : {0u, 1u, 2u})
             for (const double w : {1e5, 9e6, 3e9}) {
@@ -308,17 +325,6 @@ TEST_CASE("resolve_nthreads wake law: serial floor, knee, pocket, pow2, cap", "[
                         law_eval(std::size_t{1} << 24, c, w, cls));
             }
 
-    // Exact picks on the probed host classes (fi/mt t0-modeler-r3.md receipt table,
-    // t0/scoring-final-r3.txt), one per knee regime. W is priced the way the plans
-    // price it: fsl pays kFourStepOverhead over the large split, ND sums the
-    // per-axis line work, both at the shelves' core frequency. Hand-verified
-    // arithmetics (ns, two fixed-point gap iterations):
-    // * shallow regime, rome 2-D 2048^2 (64 MB <= 256 MB gate -> knee 16):
-    //   T(16) = 1.054e6 + 2*17.1e3 = 1.088e6 < T(32) = 1.054e6 + 2*31.0e3 = 1.116e6 -> 16.
-    // * deep regime, rome 1-D 2^22 (67.1 MB > 64 MB gate -> knee 32):
-    //   T(32) = 5.96e5 + 5*23.0e3 = 7.11e5 < T(16) = 1.19e6 + 5*13.0e3 = 1.26e6 -> 32.
-    // * gate-inert row, ice 1-D 2^21 (ice fsl layer is (32,32)):
-    //   T(16) = 5.28e5 + 5*211.5e3 = 1.585e6 < T(32) = 2.64e5 + 5*298.1e3 = 1.754e6 -> 16.
     const auto fsl_pick = [&](std::size_t lg) {
         const std::size_t n = std::size_t{1} << lg;
         const auto sp = admiral::detail::choose_large_split(n);
@@ -329,28 +335,306 @@ TEST_CASE("resolve_nthreads wake law: serial floor, knee, pocket, pow2, cap", "[
                        : admiral::detail::line_work_cyc<double>(n);
         return resolve_nthreads(0, n, 5, cyc / admiral::detail::core_cyc_per_ns(), 0);
     };
-    const auto sq2_pick = [&](std::size_t e) {   // 2-D: K = 2, cls = 1, summed line work
+    const auto sq2_pick = [&](std::size_t e) {
         const std::size_t n = std::size_t{1} << e;
         const double cyc = 2.0 * double(n) * admiral::detail::line_work_cyc<double>(n);
         return resolve_nthreads(0, n * n, 2, cyc / admiral::detail::core_cyc_per_ns(), 1);
     };
-    if (P == 128 && C0 == 64) {          // rome: 2^21 stays 16 (shallow), 2^22 moves to 32 (deep)
+    if (P == 128 && C0 == 64) {
         REQUIRE(fsl_pick(21) == 16);
         REQUIRE(fsl_pick(22) == 32);
-        REQUIRE(sq2_pick(11) == 16);     // 2048^2, the shallow regime above
-        REQUIRE(sq2_pick(13) == 32);     // 8192^2: accepted +6.5% loss (r3 sect. 4 item 3)
+        REQUIRE(sq2_pick(11) == 16);
+        REQUIRE(sq2_pick(13) == 32);
     }
-    if (P == 64 && C0 == 32) {           // icelake: 2^20 -> 8, 2^21 -> 16
+    if (P == 64 && C0 == 32) {
         REQUIRE(fsl_pick(20) == 8);
         REQUIRE(fsl_pick(21) == 16);
-        REQUIRE(sq2_pick(11) == 32);     // 2048^2 (deep tier, dhat-dominated)
-        REQUIRE(sq2_pick(12) == 64);     // 4096^2
+        REQUIRE(sq2_pick(11) == 32);
+        REQUIRE(sq2_pick(12) == 64);
     }
-    if (P == 96 && C0 == 48) {           // genoa: 2^20 -> 16, 2^21 -> 32
+    if (P == 96 && C0 == 48) {
         REQUIRE(fsl_pick(20) == 16);
         REQUIRE(fsl_pick(21) == 32);
-        REQUIRE(sq2_pick(10) == 32);     // 1024^2
-        REQUIRE(sq2_pick(13) == 64);     // 8192^2 (deep gate)
+        REQUIRE(sq2_pick(10) == 32);
+        REQUIRE(sq2_pick(13) == 64);
     }
 }
-#endif  // ADM_THREADS
+// ---------------------------------------------------------------------------
+// Concurrent-execute safety: two threads on ONE plan with separate buffers
+// must produce results identical to single-threaded execution.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Spin barrier so both threads enter the critical section simultaneously.
+struct spin_barrier {
+    explicit spin_barrier(int n) : cnt(n) {}
+    void arrive() { cnt.fetch_sub(1, std::memory_order_release); }
+    void wait()   { while (cnt.load(std::memory_order_acquire) != 0) {} }
+    std::atomic<int> cnt;
+};
+
+// Run body0 and body1 concurrently; both spin until the other is ready.
+template<typename B0, typename B1>
+void concurrent_pair(B0&& body0, B1&& body1) {
+    spin_barrier bar(2);
+    std::thread t0([&]{ bar.arrive(); bar.wait(); body0(); });
+    std::thread t1([&]{ bar.arrive(); bar.wait(); body1(); });
+    t0.join();
+    t1.join();
+}
+
+} // namespace
+
+TEMPLATE_TEST_CASE("concurrent execute on one plan: correctness at nthreads=1 and nthreads=4",
+                   "[threads][concurrent]", float, double) {
+    // ---- 1-D c2c (four_step_large at nt=4) ----
+    {
+        constexpr std::size_t N = 1u << 20;
+        const auto in0 = make_input<TestType>(N, 0xAAAAu);
+        const auto in1 = make_input<TestType>(N, 0xBBBBu);
+        const auto tol = forecast_tol<TestType>(N);
+        for (std::size_t nt : {std::size_t{1}, std::size_t{4}}) {
+            INFO("1-D c2c N=" << N << " nt=" << nt);
+            admiral::plan<TestType> p({N}, {nt});
+            auto ref0 = in0, ref1 = in1;
+            p.forward(ref0.data());
+            p.forward(ref1.data());
+            auto d0 = in0, d1 = in1;
+            concurrent_pair([&]{ p.forward(d0.data()); },
+                            [&]{ p.forward(d1.data()); });
+            REQUIRE(relerrtwonorm(d0, ref0) < tol);
+            REQUIRE(relerrtwonorm(d1, ref1) < tol);
+        }
+    }
+
+    // ---- N-D c2c ----
+    {
+        const std::vector<std::size_t> shape = {64, 512};
+        const std::size_t Ntot = 64 * 512;
+        const auto in0 = make_input<TestType>(Ntot, 0xCCCCu);
+        const auto in1 = make_input<TestType>(Ntot, 0xDDDDu);
+        const auto tol = forecast_tol<TestType>(Ntot);
+        for (std::size_t nt : {std::size_t{1}, std::size_t{4}}) {
+            INFO("N-D c2c {64,512} nt=" << nt);
+            admiral::plan<TestType> p(shape, {nt});
+            auto ref0 = in0, ref1 = in1;
+            p.forward(ref0.data());
+            p.forward(ref1.data());
+            auto d0 = in0, d1 = in1;
+            concurrent_pair([&]{ p.forward(d0.data()); },
+                            [&]{ p.forward(d1.data()); });
+            REQUIRE(relerrtwonorm(d0, ref0) < tol);
+            REQUIRE(relerrtwonorm(d1, ref1) < tol);
+        }
+    }
+
+    // ---- plan_r2c (multi-row to exercise tile_scratch_) ----
+    {
+        const std::vector<std::size_t> shape = {4, 1024};
+        const auto tol = forecast_tol<TestType>(4 * 1024);
+        for (std::size_t nt : {std::size_t{1}, std::size_t{4}}) {
+            INFO("plan_r2c {4,1024} nt=" << nt);
+            admiral::plan_r2c<TestType> p(shape, {nt});
+            const auto rin0 = make_real_input<TestType>(p.real_size(), 0xEEEEu);
+            const auto rin1 = make_real_input<TestType>(p.real_size(), 0xFFFFu);
+            std::vector<std::complex<TestType>> ref0(p.cplx_size()), ref1(p.cplx_size());
+            p.forward(rin0.data(), ref0.data());
+            p.forward(rin1.data(), ref1.data());
+            std::vector<std::complex<TestType>> c0(p.cplx_size()), c1(p.cplx_size());
+            concurrent_pair([&]{ p.forward(rin0.data(), c0.data()); },
+                            [&]{ p.forward(rin1.data(), c1.data()); });
+            REQUIRE(relerrtwonorm(c0, ref0) < tol);
+            REQUIRE(relerrtwonorm(c1, ref1) < tol);
+        }
+    }
+
+    // ---- plan_r2r (exercises v_ and spec_ buffers) ----
+    {
+        constexpr std::size_t N = 512;
+        constexpr std::size_t rows = 4;
+        const auto tol = forecast_tol<TestType>(N);
+        for (std::size_t nt : {std::size_t{1}, std::size_t{4}}) {
+            INFO("plan_r2r N=" << N << " rows=" << rows << " nt=" << nt);
+            admiral::plan_r2r<TestType> p(N, admiral::r2r_kind::dct2, rows, {nt});
+            const std::size_t sz = p.size();
+            const auto in0 = make_real_input<TestType>(sz, 0x1111u);
+            const auto in1 = make_real_input<TestType>(sz, 0x2222u);
+            std::vector<TestType> ref0(sz), ref1(sz), d0(sz), d1(sz);
+            p.forward(in0.data(), ref0.data());
+            p.forward(in1.data(), ref1.data());
+            concurrent_pair([&]{ p.forward(in0.data(), d0.data()); },
+                            [&]{ p.forward(in1.data(), d1.data()); });
+            REQUIRE(relerrtwonorm(d0, ref0) < tol);
+            REQUIRE(relerrtwonorm(d1, ref1) < tol);
+        }
+    }
+
+    // ---- axis_plan ----
+    {
+        const std::vector<std::size_t> shape = {16, 512};
+        const std::size_t Ntot = 16 * 512;
+        const auto tol = forecast_tol<TestType>(512);
+        for (std::size_t nt : {std::size_t{1}, std::size_t{4}}) {
+            INFO("axis_plan {16,512} axis=0 nt=" << nt);
+            admiral::axis_plan<TestType> p(shape, 0, true, {nt});
+            const auto in0 = make_input<TestType>(Ntot, 0x3333u);
+            const auto in1 = make_input<TestType>(Ntot, 0x4444u);
+            auto ref0 = in0, ref1 = in1;
+            p.execute(ref0.data(), {}, {});
+            p.execute(ref1.data(), {}, {});
+            auto d0 = in0, d1 = in1;
+            concurrent_pair([&]{ p.execute(d0.data(), {}, {}); },
+                            [&]{ p.execute(d1.data(), {}, {}); });
+            REQUIRE(relerrtwonorm(d0, ref0) < tol);
+            REQUIRE(relerrtwonorm(d1, ref1) < tol);
+        }
+    }
+
+    // ---- axis_plan, innermost axis: unit stride picks a different route ----
+    {
+        const std::vector<std::size_t> shape = {16, 512};
+        const std::size_t Ntot = 16 * 512;
+        const auto tol = forecast_tol<TestType>(512);
+        for (std::size_t nt : {std::size_t{1}, std::size_t{4}}) {
+            INFO("axis_plan {16,512} axis=1 nt=" << nt);
+            admiral::axis_plan<TestType> p(shape, 1, true, {nt});
+            const auto in0 = make_input<TestType>(Ntot, 0xA3A3u);
+            const auto in1 = make_input<TestType>(Ntot, 0xB4B4u);
+            auto ref0 = in0, ref1 = in1;
+            p.execute(ref0.data(), {}, {});
+            p.execute(ref1.data(), {}, {});
+            auto d0 = in0, d1 = in1;
+            concurrent_pair([&]{ p.execute(d0.data(), {}, {}); },
+                            [&]{ p.execute(d1.data(), {}, {}); });
+            REQUIRE(relerrtwonorm(d0, ref0) < tol);
+            REQUIRE(relerrtwonorm(d1, ref1) < tol);
+        }
+    }
+
+    // ---- strides_plan ----
+    {
+        constexpr std::size_t len = 512, nbatch = 4;
+        const std::size_t Ntot = len * nbatch;
+        const auto tol = forecast_tol<TestType>(len);
+        for (std::size_t nt : {std::size_t{1}, std::size_t{4}}) {
+            INFO("strides_plan len=" << len << " nbatch=" << nbatch << " nt=" << nt);
+            admiral::strides_plan<TestType> p(len, nbatch, 1, len, 1, len, {nt});
+            const auto in0 = make_input<TestType>(Ntot, 0x5555u);
+            const auto in1 = make_input<TestType>(Ntot, 0x6666u);
+            std::vector<std::complex<TestType>> ref0(Ntot), ref1(Ntot);
+            p.forward(in0.data(), ref0.data());
+            p.forward(in1.data(), ref1.data());
+            std::vector<std::complex<TestType>> d0(Ntot), d1(Ntot);
+            concurrent_pair([&]{ p.forward(in0.data(), d0.data()); },
+                            [&]{ p.forward(in1.data(), d1.data()); });
+            REQUIRE(relerrtwonorm(d0, ref0) < tol);
+            REQUIRE(relerrtwonorm(d1, ref1) < tol);
+        }
+    }
+
+    // ---- two distinct plans, constructed and executed concurrently ----
+    {
+        const std::vector<std::size_t> shape = {64, 512};
+        const std::size_t Ntot = 64 * 512;
+        const admiral::span<const std::size_t> sp(shape.data(), shape.size());
+        const auto in0 = make_input<TestType>(Ntot, 0xE1E1u);
+        const auto in1 = make_input<TestType>(Ntot, 0xF2F2u);
+        const auto tol = forecast_tol<TestType>(Ntot);
+        auto ref0 = in0, ref1 = in1;
+        {
+            admiral::plan<TestType> ref(sp, {std::size_t{4}});
+            ref.forward(ref0.data());
+            ref.forward(ref1.data());
+        }
+        auto d0 = in0, d1 = in1;
+        auto build_and_run = [&sp](std::vector<std::complex<TestType>>& d) {
+            admiral::plan<TestType> own(sp, {std::size_t{4}});
+            own.forward(d.data());
+        };
+        concurrent_pair([&]{ build_and_run(d0); }, [&]{ build_and_run(d1); });
+        REQUIRE(relerrtwonorm(d0, ref0) < tol);
+        REQUIRE(relerrtwonorm(d1, ref1) < tol);
+    }
+
+    // ---- strides_plan on the slab route: in_stride != 1, in_dist == 1, out_dist != 1 ----
+    {
+        for (std::size_t len : {std::size_t{64}, std::size_t{96}, std::size_t{256},
+                                std::size_t{512}}) {
+            for (std::size_t nbatch : {std::size_t{4}, std::size_t{8}}) {
+                const std::size_t Ntot = len * nbatch;
+                const auto tol = forecast_tol<TestType>(len);
+                for (std::size_t nt : {std::size_t{1}, std::size_t{4}}) {
+                    INFO("strides_plan slab len=" << len << " nbatch=" << nbatch
+                                                  << " nt=" << nt);
+                    admiral::strides_plan<TestType> p(len, nbatch, nbatch, 1, 1, len, {nt});
+                    const auto in0 = make_input<TestType>(Ntot, 0x7777u);
+                    const auto in1 = make_input<TestType>(Ntot, 0x8888u);
+                    std::vector<std::complex<TestType>> ref0(Ntot), ref1(Ntot);
+                    p.forward(in0.data(), ref0.data());
+                    p.forward(in1.data(), ref1.data());
+                    std::vector<std::complex<TestType>> d0(Ntot), d1(Ntot);
+                    concurrent_pair([&]{ p.forward(in0.data(), d0.data()); },
+                                    [&]{ p.forward(in1.data(), d1.data()); });
+                    REQUIRE(relerrtwonorm(d0, ref0) < tol);
+                    REQUIRE(relerrtwonorm(d1, ref1) < tol);
+                }
+            }
+        }
+    }
+
+    // ---- Bluestein and Rader routes ----
+    {
+        // Find a size that routes to bluestein at estimate effort.
+        std::size_t N_blue = 0;
+        for (std::size_t n = 40; n < 300 && N_blue == 0; ++n)
+            if (std::string(admiral::detail::plan_impl<TestType>(n, true).route_name()) ==
+                "bluestein")
+                N_blue = n;
+        REQUIRE(N_blue != 0);
+
+        // Find a size that routes to rader.
+        std::size_t N_rader = 0;
+        for (std::size_t n = 5; n < 200 && N_rader == 0; ++n)
+            if (std::string(admiral::detail::plan_impl<TestType>(n, true).route_name()) == "rader")
+                N_rader = n;
+        REQUIRE(N_rader != 0);
+
+        for (std::size_t N : {N_blue, N_rader}) {
+            const std::string rname = admiral::detail::plan_impl<TestType>(N, true).route_name();
+            const auto tol = forecast_tol<TestType>(N);
+            INFO("route=" << rname << " N=" << N);
+            for (std::size_t nt : {std::size_t{1}, std::size_t{4}}) {
+                INFO("  nt=" << nt);
+                admiral::plan<TestType> p({N}, {nt});
+                const auto in0 = make_input<TestType>(N, 0x7777u);
+                const auto in1 = make_input<TestType>(N, 0x8888u);
+                auto ref0 = in0, ref1 = in1;
+                p.forward(ref0.data());
+                p.forward(ref1.data());
+                auto d0 = in0, d1 = in1;
+                concurrent_pair([&]{ p.forward(d0.data()); },
+                                [&]{ p.forward(d1.data()); });
+                REQUIRE(relerrtwonorm(d0, ref0) < tol);
+                REQUIRE(relerrtwonorm(d1, ref1) < tol);
+            }
+        }
+    }
+
+    // ---- distinct plans are always independent (control) ----
+    {
+        constexpr std::size_t N = 65536;
+        const auto in = make_input<TestType>(N, 0x9999u);
+        const auto tol = forecast_tol<TestType>(N);
+        admiral::plan<TestType> p0({N}, {4}), p1({N}, {4});
+        auto d0 = in, d1 = in;
+        auto ref = in;
+        p0.forward(ref.data());
+        concurrent_pair([&]{ p0.forward(d0.data()); },
+                        [&]{ p1.forward(d1.data()); });
+        REQUIRE(relerrtwonorm(d0, ref) < tol);
+        REQUIRE(relerrtwonorm(d1, ref) < tol);
+    }
+}
+
+#endif

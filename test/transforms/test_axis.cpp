@@ -3,7 +3,7 @@
 
 #include "utils/reference.hpp"
 
-#include <admiral/admiral.hpp>   // `axis_plan`, `plan`
+#include <admiral/admiral.hpp>
 
 #include <array>
 #include <cmath>
@@ -15,13 +15,8 @@
 
 using admiral::span;
 
-// `axis_plan<T>` transforms one full axis of a row-major tensor, restricted to a box.
-// Oracle: the verified 1D `admiral::plan<T>` per line. Elements outside the box must
-// stay untouched.
-
 namespace {
 
-// Suffix-product strides: `stride[d]` is the product of the extents inner to `d`.
 std::vector<std::size_t> strides(const std::vector<std::size_t>& shape) {
     std::vector<std::size_t> s(shape.size());
     std::size_t acc = 1;
@@ -33,7 +28,6 @@ std::vector<std::size_t> strides(const std::vector<std::size_t>& shape) {
     return s;
 }
 
-// Recurse over every non-axis dim in `[lo,hi)`; invoke `f(base)` per line.
 template<typename F>
 void for_each_line(const std::vector<std::size_t>& shape, const std::vector<std::size_t>& st,
                    const std::vector<std::size_t>& lo, const std::vector<std::size_t>& hi,
@@ -57,11 +51,10 @@ void check(const std::vector<std::size_t>& shape, std::size_t axis,
     const auto orig = make_input<T>(total, 0xA11CE);
     auto data = orig;
 
-    const admiral::axis_plan<T> ap(span<const std::size_t>(shape), axis, forward);
+    admiral::axis_plan<T> ap(span<const std::size_t>(shape), axis, forward);
     ap.execute(data.data(), span<const std::size_t>(lo), span<const std::size_t>(hi));
 
-    // Reference: 1D `admiral::plan` per line, same direction and default scale.
-    const admiral::plan<T> ref(std::array<std::size_t, 1>{len});
+    admiral::plan<T> ref(std::array<std::size_t, 1>{len});
     std::vector<char> in_box(total, 0);
     for_each_line(shape, st, lo, hi, axis, 0, 0, [&](std::size_t base) {
         std::vector<std::complex<T>> line(len), got(len);
@@ -75,13 +68,10 @@ void check(const std::vector<std::size_t>& shape, std::size_t axis,
         }
         require_close(got, line, fft_tol<T>());
     });
-    // Elements outside the box stay byte-untouched.
     for (std::size_t i = 0; i < total; ++i)
         if (!in_box[i]) REQUIRE(data[i] == orig[i]);
 }
 
-// `execute_bands` must be indistinguishable from the two `execute()` calls
-// `execute_bands` replaces, packed path or not.
 template<typename T>
 void check_bands(const std::vector<std::size_t>& shape, std::size_t axis,
                  std::vector<std::size_t> lo, std::vector<std::size_t> hi, std::size_t lo2_last,
@@ -94,7 +84,7 @@ void check_bands(const std::vector<std::size_t>& shape, std::size_t axis,
     const auto orig = make_input<T>(total, 0xBA11D);
     auto packed = orig, split = orig;
 
-    const admiral::axis_plan<T> ap(span<const std::size_t>(shape), axis, forward);
+    admiral::axis_plan<T> ap(span<const std::size_t>(shape), axis, forward);
     ap.execute_bands(packed.data(), span<const std::size_t>(lo),
                      span<const std::size_t>(hi), lo2_last, hi2_last);
 
@@ -107,47 +97,32 @@ void check_bands(const std::vector<std::size_t>& shape, std::size_t axis,
     require_close(packed, split, fft_tol<T>());
 }
 
-}  // namespace
+}
 
 TEMPLATE_TEST_CASE("axis_plan matches per-line 1D plan", "[axis]", float, double) {
     using T = TestType;
-    // innermost axis (contiguous row path)
     check<T>({6, 8}, 1, {}, {}, true);
-    check<T>({6, 8}, 1, {2, 0}, {5, 8}, true);          // band the outer dim
-    // outer smooth axis (SIMD-DIF column path)
+    check<T>({6, 8}, 1, {2, 0}, {5, 8}, true);
     check<T>({8, 6}, 0, {}, {}, true);
-    check<T>({8, 6}, 0, {0, 1}, {8, 5}, false);         // band the inner dim
-    // 3-D: middle axis, both other dims banded
+    check<T>({8, 6}, 0, {0, 1}, {8, 5}, false);
     check<T>({4, 5, 12}, 1, {1, 0, 3}, {4, 5, 10}, true);
     check<T>({4, 5, 12}, 1, {1, 0, 3}, {4, 5, 10}, false);
-    // outer non-smooth axis (scalar gather path)
     check<T>({101, 4}, 0, {0, 1}, {101, 3}, true);
     check<T>({101, 4}, 0, {}, {}, false);
-    // 3-D innermost axis with every batch dim whole: the dense-run shortcut.
     check<T>({3, 4, 8}, 2, {}, {}, true);
-    check<T>({3, 4, 8}, 2, {1, 0, 0}, {3, 4, 8}, true);   // slowest dim banded, still dense
-    check<T>({3, 4, 8}, 2, {0, 1, 0}, {3, 3, 8}, true);   // inner dim banded, not dense
+    check<T>({3, 4, 8}, 2, {1, 0, 0}, {3, 4, 8}, true);
+    check<T>({3, 4, 8}, 2, {0, 1, 0}, {3, 3, 8}, true);
 }
 
 TEMPLATE_TEST_CASE("axis_plan execute_bands matches two execute calls", "[axis]", float, double) {
     using T = TestType;
-    // Packed path: len 512 is 5 radix-4/2 passes for float, so the pack gate opens.
-    // For double, len 512 is 2 passes and the two-run fallback runs. The two
-    // instantiations exercise both arms of the gate.
     check_bands<T>({512, 12}, 0, {0, 0}, {512, 3}, 9, 12, true);
     check_bands<T>({512, 12}, 0, {0, 0}, {512, 3}, 9, 12, false);
-    // 6+6: within one batch for float, wider than one for double.
     check_bands<T>({512, 14}, 0, {0, 0}, {512, 6}, 8, 14, true);
-    // 3-D with a banded outer dim, so the packed path walks several lines.
     check_bands<T>({4, 512, 10}, 1, {1, 0, 0}, {4, 512, 3}, 7, 10, true);
-    // Short axis: too few passes to pay for the gather, always two runs.
     check_bands<T>({16, 12}, 0, {0, 0}, {16, 3}, 9, 12, true);
-    // Non-smooth length: scalar gather path, packing declines.
     check_bands<T>({101, 10}, 0, {0, 0}, {101, 3}, 7, 10, true);
-    // `lo2 == hi2` is plain `execute()`.
     check_bands<T>({512, 12}, 0, {0, 0}, {512, 3}, 0, 0, true);
-    // Unequal widths on the scalar-gather path decline both packing and merging, so
-    // the two bands run as two separate strided passes.
     check_bands<T>({101, 12}, 0, {0, 0}, {101, 2}, 8, 12, true);
     check_bands<T>({101, 12}, 0, {0, 0}, {101, 2}, 8, 12, false);
 }
@@ -172,7 +147,7 @@ TEMPLATE_TEST_CASE("axis_plan forward/inverse round-trips on the box", "[axis]",
 
 TEMPLATE_TEST_CASE("axis_plan multithreaded matches serial", "[axis]", float, double) {
     using T = TestType;
-    const std::vector<std::size_t> shape{32, 64, 64};   // big enough to trip the MT gate
+    const std::vector<std::size_t> shape{32, 64, 64};
     const std::vector<std::size_t> lo{4, 0, 8}, hi{30, 64, 60};
     const std::size_t axis = 1;
     const std::size_t total = 32 * 64 * 64;
@@ -195,17 +170,13 @@ TEMPLATE_TEST_CASE("axis_plan rejects malformed shapes and boxes", "[axis]", flo
     };
     const std::vector<std::size_t> none{};
 
-    // --- construction
     const std::vector<std::size_t> empty_shape{};
     REQUIRE_THROWS_AS(axis_plan<T>(sp(empty_shape), 0, true), admiral::size_error);
-    REQUIRE_THROWS_AS(axis_plan<T>({6, 8}, 2, true), admiral::size_error);   // `axis == rank`
-    REQUIRE_THROWS_AS(axis_plan<T>({6, 0}, 0, true), admiral::size_error);   // zero extent
-    // The extent product overflows `size_t`, so the shape cannot describe a valid
-    // tensor. The ctor throws before allocating.
+    REQUIRE_THROWS_AS(axis_plan<T>({6, 8}, 2, true), admiral::size_error);
+    REQUIRE_THROWS_AS(axis_plan<T>({6, 0}, 0, true), admiral::size_error);
     REQUIRE_THROWS_AS(axis_plan<T>({std::numeric_limits<std::size_t>::max(), 2}, 0, true),
                       admiral::size_error);
 
-    // --- box validation, on a plan over {6, 8} transforming the innermost axis
     const std::vector<std::size_t> shape{6, 8};
     std::vector<std::complex<T>> data(48);
     axis_plan<T> ap(sp(shape), 1, true);
@@ -223,21 +194,19 @@ TEMPLATE_TEST_CASE("axis_plan rejects malformed shapes and boxes", "[axis]", flo
     REQUIRE_THROWS_AS(ap.execute(data.data(), sp(ok_lo), sp(part_hi)), admiral::size_error);
     REQUIRE_THROWS_AS(ap.execute(data.data(), sp(part_lo), sp(ok_hi)), admiral::size_error);
 
-    // --- second band. `ap` transforms the last dim, so `ap` can never carry one.
     REQUIRE_THROWS_AS(ap.execute_bands(data.data(), none, none, 0, 1), admiral::size_error);
 
-    // A plan on the outer axis can carry a band: the last dim is free.
     axis_plan<T> col(sp(shape), 0, true);
     const std::vector<std::size_t> b_lo{0, 0}, b_hi{6, 3};
     REQUIRE_THROWS_AS(col.execute_bands(data.data(), sp(b_lo), sp(b_hi), 5, 9),
-                      admiral::size_error);   // `hi2` past the extent
+                      admiral::size_error);
     REQUIRE_THROWS_AS(col.execute_bands(data.data(), sp(b_lo), sp(b_hi), 7, 5),
-                      admiral::size_error);   // inverted
+                      admiral::size_error);
     REQUIRE_THROWS_AS(col.execute_bands(data.data(), sp(b_lo), sp(b_hi), 2, 6),
-                      admiral::size_error);   // overlaps `[0,3)`
+                      admiral::size_error);
     const std::vector<std::size_t> mt_lo{3, 0}, mt_hi{3, 3};
     REQUIRE_THROWS_AS(col.execute_bands(data.data(), sp(mt_lo), sp(mt_hi), 5, 8),
-                      admiral::size_error);   // empty box cannot carry a band
+                      admiral::size_error);
 }
 
 TEMPLATE_TEST_CASE("axis_plan survives a move", "[axis]", float, double) {
@@ -267,7 +236,7 @@ TEMPLATE_TEST_CASE("axis_plan empty box is a no-op", "[axis]", float, double) {
     const auto orig = make_input<T>(48, 1);
     auto data = orig;
     admiral::axis_plan<T> ap(span<const std::size_t>(shape), 1, true);
-    const std::vector<std::size_t> lo{3, 0}, hi{3, 8};   // empty on dim 0
+    const std::vector<std::size_t> lo{3, 0}, hi{3, 8};
     ap.execute(data.data(), span<const std::size_t>(lo), span<const std::size_t>(hi));
     REQUIRE(data == orig);
 }
@@ -280,15 +249,12 @@ TEMPLATE_TEST_CASE("axis_plan on an extent-1 axis is a no-op", "[axis]", float, 
     admiral::axis_plan<T> p(span<const std::size_t>(shape), 1, true);
     const auto full = span<const std::size_t>{};
     p.execute(data.data(), full, full);
-    REQUIRE(data == orig);  // extent 1: nothing to transform, elements untouched
+    REQUIRE(data == orig);
 }
 
 TEMPLATE_TEST_CASE("axis_plan multithreaded on a single batch unit", "[axis]", float,
                    double) {
     using T = TestType;
-    // `units` == `prod(shape[d!=axis])` == 1 < 2, so the batch loop cannot thread and
-    // the real thread count reaches the line plan (the `axis_threads` false arm in
-    // `cpp_api.hpp`). Threaded and serial must still agree.
     const std::vector<std::size_t> shape{65536, 1};
     const auto orig = make_input<T>(65536, 0xB00C);
     auto ser = orig, par = orig;
@@ -309,7 +275,6 @@ TEMPLATE_TEST_CASE("axis_plan execute with an explicit fct", "[axis]", float, do
     const auto full = span<const std::size_t>{};
     p.execute(plain.data(), full, full);
     p.execute(scaled.data(), full, full, T(2));
-    // `fct` multiplies the output: compare against twice the unscaled result.
     std::vector<std::complex<T>> want(plain.size());
     for (std::size_t i = 0; i < plain.size(); ++i) want[i] = T(2) * plain[i];
     require_close(scaled, want, fft_tol<T>());

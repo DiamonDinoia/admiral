@@ -1,14 +1,6 @@
 #pragma once
 
-// Scalar backend for precisions the SIMD engine cannot represent (long
-// double: no ISA has 80-bit SIMD registers). One recursive mixed-radix DIF
-// covers radices {2,3,4,5,7,8}, running in place because every combine's read
-// set equals its write set. A length that no radix divides runs a direct
-// W-matrix pass at or below `kDirectMax`, a Bluestein chirp-z convolution
-// above. Every mutable buffer (gather scratch, Bluestein wrap, nd line
-// staging, leaf locals) slabs per `tid`. The radix butterflies are the
-// engine's own (`butterfly.hpp`) at `V = T`, so this backend carries no
-// second radix-math copy.
+// The V-generic butterflies of butterfly.hpp at V = T, for long double, which has no SIMD lanes.
 
 #include <algorithm>
 #include <cmath>
@@ -22,24 +14,18 @@
 
 #include <poet/poet.hpp>
 
-#include "butterfly.hpp"        // `sub_dft`: the engine's radix butterflies at `V = T`
-#include "cxx_compat.hpp"       // `span`, `detail::numbers`
-#include "math.hpp"             // `line_work_cyc` (wake-law work estimate)
-#include "real_recombine.hpp"  // `r2c_even_bin`, `c2r_even_bin`
-#include "thread_pool.hpp"      // `thread_pool`, `parallel_for`, `will_thread`
+#include "butterfly.hpp"
+#include "cxx_compat.hpp"
+#include "math.hpp"
+#include "real_recombine.hpp"
+#include "scratch.hpp"
+#include "thread_pool.hpp"
 
 namespace admiral {
 namespace detail {
 
-// Longest direct-DFT length. At or below `kDirectMax`, one accumulation over
-// a precomputed W matrix has a flatter error profile than a chirp-z chain.
-// The value also bounds the on-stack leaf buffer in `run_sub`.
 inline constexpr std::size_t kDirectMax = 37;
 
-// w_n^k: exp(-2 pi i k/n) forward, the conjugate backward. The trig runs in
-// `T`, not `double`: a `double` twiddle would cap the whole transform at
-// 2^-53. Quadrant reduction keeps the sine argument small and the quadrant
-// multiples exact.
 template<typename T>
 inline std::complex<T> scalar_twiddle(std::size_t k, std::size_t n, bool forward) {
     k %= n;
@@ -63,8 +49,6 @@ inline std::complex<T> maybe_conj(std::complex<T> w, bool conj) {
     return conj ? std::complex<T>(w.real(), -w.imag()) : w;
 }
 
-// 1-D c2c over one contiguous line, in place. Unscaled: `fct` (default 1)
-// multiplies every output element.
 template<typename T>
 class scalar_c2c {
 public:
@@ -73,14 +57,10 @@ public:
             build_direct(n_);
             return;
         }
-        // One level state per combine stage; the chain stops at length 1 or a
-        // residue `factor()` cannot split.
         for (std::size_t m = n_; m > 1;) {
             const std::size_t p = factor(m);
             if (p == 0) {
                 if (m <= kDirectMax) {
-                    // Residue inside a composite chain: a direct leaf beats
-                    // one Bluestein convolution per sub-block.
                     build_direct(m);
                 } else {
                     blue_ = std::make_unique<blue_state>(m, nthreads_);
@@ -95,10 +75,8 @@ public:
             levels_.push_back(std::move(ls));
             m /= p;
         }
-        if (levels_.empty()) return;   // pure Bluestein: no chain, no gather
+        if (levels_.empty()) return;
         build_perm();
-        // Gather target, one slab per `tid`, so `execute` allocates nothing.
-        scratch_.assign(nthreads_, std::vector<std::complex<T>>(n_));
     }
 
     [[nodiscard]] std::size_t size() const { return n_; }
@@ -116,13 +94,10 @@ public:
                 for (std::size_t k = 0; k < n_; ++k) x[k] *= fct;
             return;
         }
-        if (blue_ && levels_.empty()) {   // `bluestein` folds `fct` itself
+        if (blue_ && levels_.empty()) {
             bluestein<forward>(x, n_, fct, tid);
             return;
         }
-        // 1-D threading: the level-0 combine runs serially; the `p`
-        // sub-problems then fan out over the pool, disjoint in `x`. The `tid`
-        // slabs take the terminal leaves.
         if (will_thread(pool, levels_[0].p, n_)) {
             const level_state& lv0 = levels_[0];
             const std::size_t u0 = lv0.m / lv0.p;
@@ -134,11 +109,10 @@ public:
                         run_sub<forward>(x, s * u0, u0, 1, ctid);
                 });
         } else {
-            // `tid`, not 0: the terminal leaves index their slabs by `tid`.
             dft<forward>(x, 0, 0, tid);
         }
-        // Digit-reversal gather back to natural order, folding the scale.
-        std::complex<T>* sx = scratch_[tid].data();
+        soa_scratch<std::complex<T>, 1> sx_sc(n_);
+        std::complex<T>* sx = sx_sc.buf(0);
         for (std::size_t k = 0; k < n_; ++k) sx[k] = x[pos_of_[k]];
         if (fct != T(1))
             for (std::size_t k = 0; k < n_; ++k) x[k] = sx[k] * fct;
@@ -147,16 +121,12 @@ public:
     }
 
 private:
-    // Radix preference: eights first (halves the streaming levels of a
-    // radix-4 chain on even powers of two), then 3, 5, 7, 4, then a last 2.
     static std::size_t factor(std::size_t m) {
         for (const std::size_t p : {8u, 3u, 5u, 7u, 4u, 2u})
             if (m % p == 0) return p;
         return 0;
     }
 
-
-    // One terminal sub-block at the given level (same dispatch as `dft`'s tail).
     template<bool forward>
     void run_sub(std::complex<T>* x, std::size_t off, std::size_t u, std::size_t level,
                  std::size_t tid) const {
@@ -168,10 +138,6 @@ private:
             dft<forward>(x, off, level, tid);
     }
 
-    // w_n^{jk} for a direct O(n^2) DFT, forward sign. One table serves both
-    // exits (a whole length, or a chain residue). Only one exit arises per
-    // plan, because a residue is strictly shorter than the length that
-    // produced the residue.
     void build_direct(std::size_t n) {
         direct_n_ = n;
         direct_mat_.resize(n * n);
@@ -193,20 +159,9 @@ private:
         }
     }
 
-    // One DIF level at compile-time radix P. With u = m/P, q < u and s,i < P:
-    //   a_i               = x[off + q + i*u]
-    //   x[off + q + s*u]  = w_m^{q s} * sum_i a_i w_P^{i s}
-    // Read set equals write set per q, so the level runs in place.
-    //
-    // The butterflies are forward-only; the inverse rides the butterflies in
-    // the swapped domain. In the swapped domain swap(fwd(swap x)) == inv(x),
-    // and a twiddle multiply becomes a multiply by conj(w). The stage twiddle
-    // therefore carries no direction.
     template<bool forward, std::size_t P>
     void combine(std::complex<T>* x, std::size_t off, std::size_t level) const {
         constexpr bool sw = !forward;
-        // `level_state` is declared below, so take the state by index: a
-        // member function body sees the whole class; a parameter type does not.
         const auto& lv = levels_[level];
         const std::size_t u = lv.m / P;
         const std::complex<T>* tw = lv.tw.data();
@@ -219,7 +174,7 @@ private:
             }
             sub_dft<T, P>(ar, ai, [&](auto sc, T yr, T yi) {
                 constexpr std::size_t s = decltype(sc)::value;
-                if constexpr (s != 0) {   // `w_m^0 = 1`, so output 0 takes no twiddle
+                if constexpr (s != 0) {
                     const std::complex<T> w = tw[q * s];
                     const T r = yr * w.real() - yi * w.imag();
                     yi = yr * w.imag() + yi * w.real();
@@ -230,13 +185,8 @@ private:
         }
     }
 
-    // `poet::dispatch`'s compile-time radix set: one entry per butterfly in
-    // `butterfly.hpp`.
     using radix_set = std::integer_sequence<std::size_t, 2, 3, 4, 5, 7, 8>;
 
-    // `poet::dispatch` adapter: runtime radix to `combine`'s compile-time `P`.
-    // A struct, not a lambda: a C++17 lambda cannot declare a templated
-    // `operator()`.
     template<bool forward>
     struct combine_invoke_t {
         template<std::size_t P>
@@ -246,8 +196,6 @@ private:
         }
     };
 
-    // One level's combine, then the `P` sub-problems the combine leaves behind.
-    // `single_level`: stops after the combine (threaded level-0 fan-out).
     template<bool forward>
     void dft(std::complex<T>* x, std::size_t off, std::size_t level,
              std::size_t tid, bool single_level = false) const {
@@ -259,9 +207,6 @@ private:
         for (std::size_t s = 0; s < lv.p; ++s) run_sub<forward>(x, off + s * u, u, level + 1, tid);
     }
 
-    // After the recursion, position `j` holds X[natural(j)]: with base-p digits
-    // s_l of `j`, natural(j) = sum_l s_l * prod_{l'<l} p_l'. `pos_of_` is the
-    // inverse map.
     void build_perm() {
         pos_of_.resize(n_);
         for (std::size_t j = 0; j < n_; ++j) {
@@ -273,7 +218,6 @@ private:
                 natural += s * stride_k;
                 stride_k *= lv.p;
             }
-            // Leftover digits index inside the terminal block in natural order.
             natural += residual * stride_k;
             pos_of_[natural] = j;
         }
@@ -285,9 +229,6 @@ private:
             chirp.resize(n);
             for (std::size_t k = 0; k < n; ++k)
                 chirp[k] = scalar_twiddle<T>((k * k) % (2 * n), 2 * n, true);
-            // Convolution partner of a = x . chirp: b[k] = conj(chirp[k]) in
-            // wrap-around. The backward transform conjugates the chirp, so
-            // both tables precompute.
             std::vector<std::complex<T>> b(pad);
             for (std::size_t k = 0; k < n; ++k) {
                 b[k] = std::conj(chirp[k]);
@@ -298,12 +239,8 @@ private:
             for (std::size_t i = 0; i < pad; ++i) b[i] = maybe_conj<T>(b[i], true);
             bfft_inv = std::move(b);
             inner.template execute<true>(bfft_inv.data(), T(1), 0);
-            a_.assign(nthreads, std::vector<std::complex<T>>(pad));
         }
         static std::size_t pad_size(std::size_t n) {
-            // Smallest {2,3,5,7}-smooth length >= 2n-1, so the inner
-            // transform stays in the radix set. `n > kDirectMax` here, so the
-            // scan loop is cheap.
             std::size_t cand = 2 * n - 1;
             for (;; ++cand) {
                 std::size_t v = cand;
@@ -314,25 +251,23 @@ private:
         }
         std::size_t n, pad;
         scalar_c2c inner;
-        std::vector<std::complex<T>> chirp;     // w_n^{k^2/2} forward sign
-        std::vector<std::complex<T>> bfft;      // FFT_pad(conj-reversed chirp)
-        std::vector<std::complex<T>> bfft_inv;  // FFT_pad(reversed chirp)
-        mutable std::vector<std::vector<std::complex<T>>> a_;  // wrap buffer, one slab per `tid`
+        std::vector<std::complex<T>> chirp;
+        std::vector<std::complex<T>> bfft;
+        std::vector<std::complex<T>> bfft_inv;
     };
 
     template<bool forward>
     void bluestein(std::complex<T>* x, std::size_t m, T fct, std::size_t tid) const {
         const blue_state& B = *blue_;
         const std::size_t pad = B.pad;
-        std::complex<T>* a = B.a_[tid].data();
+        soa_scratch<std::complex<T>, 1> a_sc(pad);
+        std::complex<T>* a = a_sc.buf(0);
         std::fill_n(a, pad, std::complex<T>(0, 0));
         for (std::size_t k = 0; k < m; ++k) a[k] = x[k] * maybe_conj<T>(B.chirp[k], !forward);
-        // `inner` slabs scratch per `tid`, so the caller's `tid` must reach
-        // `inner`: two threads sharing one slab corrupt each other's transform.
         B.inner.template execute<true>(a, T(1), tid);
         const auto& bfft = forward ? B.bfft : B.bfft_inv;
         for (std::size_t i = 0; i < pad; ++i) a[i] *= bfft[i];
-        B.inner.template execute<false>(a, T(1), tid);  // unscaled inverse
+        B.inner.template execute<false>(a, T(1), tid);
         const T inv = fct / static_cast<T>(pad);
         for (std::size_t k = 0; k < m; ++k)
             x[k] = a[k] * maybe_conj<T>(B.chirp[k], !forward) * inv;
@@ -346,18 +281,11 @@ private:
     std::vector<level_state> levels_;
     std::vector<std::size_t> pos_of_;
     std::unique_ptr<blue_state> blue_;
-    std::size_t direct_n_ = 0;                 // direct-DFT length (0 = no direct leaf)
-    std::vector<std::complex<T>> direct_mat_;  // w_{direct_n_}^{jk}, forward sign
+    std::size_t direct_n_ = 0;
+    std::vector<std::complex<T>> direct_mat_;
     std::size_t nthreads_;
-    mutable std::vector<std::vector<std::complex<T>>> scratch_;  // gather target, per `tid`
 };
 
-
-// Public-plan states on the scalar engine (long double only): `plan`,
-// `plan_r2c` and the one-shots route here; nothing else does.
-
-// Transforms the first `n_axes` axes of a contiguous tensor (all, by default).
-// Strided lines stage through a reusable scratch line.
 template<typename T>
 class scalar_nd_c2c {
 public:
@@ -375,12 +303,10 @@ public:
             std::size_t e = 0;
             while (e < eng_.size() && eng_[e].size() != shape_[d]) ++e;
             if (e == eng_.size()) eng_.emplace_back(shape_[d], nthreads);
-            axis_engine_.push_back(e);   // an index: `eng_` iterators can reallocate
+            axis_engine_.push_back(e);
         }
-        // One staging buffer per `tid`, sized for the longest active line.
-        std::size_t line_cap = 1;
-        for (std::size_t d = 0; d < active_; ++d) line_cap = std::max(line_cap, shape_[d]);
-        line_.assign(nthreads, std::vector<std::complex<T>>(line_cap));
+        line_cap_ = 1;
+        for (std::size_t d = 0; d < active_; ++d) line_cap_ = std::max(line_cap_, shape_[d]);
     }
 
     [[nodiscard]] std::size_t size() const { return total_; }
@@ -390,19 +316,16 @@ public:
         for (std::size_t d = 0; d < active_; ++d) {
             const std::size_t len = shape_[d], st = stride_[d];
             const scalar_c2c<T>& eng = eng_[axis_engine_[d]];
-            // The scale rides the last axis's lines: every element of the
-            // tensor crosses exactly one such line.
             const T line_fct = (d == active_ - 1) ? fct : T(1);
             const std::size_t pre = total_ / (len * st);
-            const std::size_t nlines = pre * st;   // `st == 1`: one line per `p`
-            // Enough lines: fan out per line, engines stay serial. Too few:
-            // the engine splits its own first level.
+            const std::size_t nlines = pre * st;
             thread_pool* eng_pool =
                 will_thread(pool, nlines, total_) ? nullptr : pool;
             admiral::detail::parallel_for(
                 pool, nlines, total_,
                 [&](std::size_t begin, std::size_t end, std::size_t tid) {
-                    auto line = line_[tid].data();
+                    soa_scratch<std::complex<T>, 1> line_sc(line_cap_);
+                    auto line = line_sc.buf(0);
                     for (std::size_t i = begin; i < end; ++i) {
                         const std::size_t p = st == 1 ? i : i / st;
                         const std::size_t q = st == 1 ? 0 : i - p * st;
@@ -423,12 +346,10 @@ private:
     std::vector<std::size_t> shape_, stride_;
     std::vector<scalar_c2c<T>> eng_;
     std::vector<std::size_t> axis_engine_;
-    mutable std::vector<std::vector<std::complex<T>>> line_;  // strided staging, per tid
+    std::size_t line_cap_;
     std::size_t total_, active_;
 };
 
-// 1-D real transform, both directions, unscaled. Even N: half-size complex
-// DFT plus recombination. Odd N: full-size DFT plus spectrum completion.
 template<typename T>
 class scalar_r2c_1d {
 public:
@@ -436,14 +357,14 @@ public:
         : n_(n), nh_(n / 2 + 1), even_(n % 2 == 0), eng_(even_ ? n / 2 : n, nthreads) {
         tw_.resize(nh_);
         for (std::size_t k = 0; k < nh_; ++k) tw_[k] = scalar_twiddle<T>(k, n_, true);
-        buf_.assign(nthreads, std::vector<std::complex<T>>(even_ ? n_ / 2 : n_));
     }
 
     [[nodiscard]] std::size_t real_size() const { return n_; }
     [[nodiscard]] std::size_t cplx_size() const { return nh_; }
 
     void forward(const T* in, std::complex<T>* out, std::size_t tid) const {
-        auto buf = buf_[tid].data();
+        soa_scratch<std::complex<T>, 1> buf_sc(even_ ? n_ / 2 : n_);
+        auto buf = buf_sc.buf(0);
         if (!even_) {
             for (std::size_t i = 0; i < n_; ++i) buf[i] = {in[i], T(0)};
             eng_.template execute<true>(buf, T(1), tid);
@@ -457,15 +378,14 @@ public:
         for (std::size_t k = 0; k <= M; ++k) out[k] = r2c_even_bin(z, tw_[k], M, k);
     }
 
-    // `extra_scale == 1` leaves the transform unscaled; the scale folds into
-    // the unpack sweep.
     void inverse(std::complex<T>* spec, T* out, T extra_scale, std::size_t tid) const {
-        auto buf = buf_[tid].data();
+        soa_scratch<std::complex<T>, 1> buf_sc(even_ ? n_ / 2 : n_);
+        auto buf = buf_sc.buf(0);
         if (!even_) {
             for (std::size_t k = 0; k < nh_; ++k) buf[k] = spec[k];
             for (std::size_t k = nh_; k < n_; ++k) buf[k] = std::conj(spec[n_ - k]);
             eng_.template execute<false>(buf, T(1), tid);
-            const T inv_n = extra_scale / T(n_);   // the true IDFT_N scale folds here
+            const T inv_n = extra_scale / T(n_);
             for (std::size_t i = 0; i < n_; ++i) out[i] = buf[i].real() * inv_n;
             return;
         }
@@ -473,7 +393,7 @@ public:
         std::complex<T>* z = buf;
         for (std::size_t k = 0; k < M; ++k) z[k] = c2r_even_bin(spec, tw_[k], M, k);
         eng_.template execute<false>(z, T(1), tid);
-        const T inv_m = extra_scale / T(M);   // the true IDFT_M scale folds here
+        const T inv_m = extra_scale / T(M);
         for (std::size_t j = 0; j < M; ++j) {
             out[2 * j] = z[j].real() * inv_m;
             out[2 * j + 1] = z[j].imag() * inv_m;
@@ -484,12 +404,9 @@ private:
     std::size_t n_, nh_;
     bool even_;
     scalar_c2c<T> eng_;
-    std::vector<std::complex<T>> tw_;                     // W_N^k forward sign
-    mutable std::vector<std::vector<std::complex<T>>> buf_;  // pack buffer, per `tid`
+    std::vector<std::complex<T>> tw_;
 };
 
-// Auto count for the scalar backend: the wake law over the per-axis line loops,
-// the work priced on the f64 line table (the nearest narrower measured precision).
 template<typename T>
 [[nodiscard]] inline std::size_t scalar_resolve(span<const std::size_t> shape,
                                                 std::size_t nthreads) {
@@ -497,7 +414,7 @@ template<typename T>
     std::size_t total = 1, dispatches = 0;
     double work_cyc = 0.0;
     for (const std::size_t d : shape) {
-        if (d == 0) return 1;   // the state ctor reports the invalid shape itself
+        if (d == 0) return 1;
         total = sat_elems(total, d);
         if (d > 1) {
             ++dispatches;
@@ -508,8 +425,6 @@ template<typename T>
                             shape.size() >= 3 ? 2 : 1);
 }
 
-// `plan_state<long double>`. The interface mirrors `plan_state<T>`; effort
-// and debug settings have no counterpart here and are ignored.
 template<typename T>
 struct scalar_plan_state {
     scalar_plan_state(span<const std::size_t> shape, std::size_t nthreads)
@@ -523,7 +438,6 @@ private:
 
 public:
     [[nodiscard]] std::size_t size() const noexcept { return plan.size(); }
-    // `fct == nullptr` takes the direction's default: 1 forward, 1/N inverse.
     void run(bool is_forward, std::complex<T>* data, const T* fct) const {
         const T s = fct ? *fct : (is_forward ? T(1) : T(1) / static_cast<T>(plan.size()));
         if (is_forward) plan.template execute<true>(data, s, pool_.get());
@@ -536,7 +450,6 @@ public:
     }
 
 private:
-    // Transform every axis, and reject the empty shape the API cannot plan.
     static std::size_t axis_count(span<const std::size_t> shape) {
         if (shape.empty()) throw std::invalid_argument("Plan size must be greater than 0");
         return shape.size();
@@ -545,15 +458,14 @@ private:
     std::unique_ptr<thread_pool> pool_;
 };
 
-// Auto count for the scalar real states: the inner row loop plus the outer axes.
 template<typename T>
 [[nodiscard]] inline std::size_t scalar_real_resolve(span<const std::size_t> shape,
                                                      std::size_t nthreads) {
     if (nthreads != 0) return nthreads;
-    if (shape.empty() || shape.back() == 0) return 1;   // the state ctor reports it
+    if (shape.empty() || shape.back() == 0) return 1;
     std::size_t rows = 1;
     double work_cyc = 0.0;
-    std::size_t dispatches = 1;   // the r2c/c2r row loop
+    std::size_t dispatches = 1;
     for (std::size_t d = 0; d + 1 < shape.size(); ++d) {
         if (shape[d] == 0) return 1;
         rows = sat_elems(rows, shape[d]);
@@ -569,8 +481,6 @@ template<typename T>
                             work_cyc / core_cyc_per_ns(), shape.size() >= 3 ? 2 : 1);
 }
 
-// `real_state<long double>`: r2c/c2r on the last axis, then c2c over the
-// remaining axes of the half-spectrum, in `nd_real_plan`'s order.
 template<typename T>
 struct scalar_real_state {
     scalar_real_state(span<const std::size_t> shape, std::size_t nthreads)
@@ -602,14 +512,7 @@ public:
     }
 
     void inverse(std::complex<T>* spec, T* out, std::optional<T> fct) const {
-        // The unscaled r2c makes the inner c2r an exact inverse, so the API's
-        // 1/Ntot splits across both stages. The outer axes take `1/rows_`, and
-        // the inner sweep divides by the engine's own length (`n_` odd, `n_/2`
-        // even).
         outer_.template execute<false>(spec, T(1) / static_cast<T>(rows_), pool_.get());
-        // `fct` convention as in `nd_real_plan`: read against the 1/Ntot
-        // default, so the caller's `fct` lands as `fct * real_size()` folded
-        // into the per-row inner scale.
         const T s = fct ? *fct * static_cast<T>(real_size()) : T(1);
         admiral::detail::parallel_for(
             pool_.get(), rows_, real_size(),
@@ -625,14 +528,11 @@ private:
             throw std::invalid_argument("Plan size must be greater than 0");
         return shape.back();
     }
-    // Rows of the real tensor: every extent but the last one.
     static std::size_t outer_extent_product(span<const std::size_t> shape) {
         std::size_t rows = 1;
         for (std::size_t d = 0; d + 1 < shape.size(); ++d) rows *= shape[d];
         return rows;
     }
-    // The complex tensor the r2c stage writes: the real shape with the last
-    // axis halved.
     static std::vector<std::size_t> half_spectrum_shape(span<const std::size_t> shape,
                                                         std::size_t nh) {
         std::vector<std::size_t> out(shape.begin(), shape.end() - 1);
@@ -646,5 +546,5 @@ private:
     std::unique_ptr<thread_pool> pool_;
 };
 
-}  // namespace detail
-}  // namespace admiral
+}
+}

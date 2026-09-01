@@ -15,7 +15,7 @@ call site names what it sets and nothing else. The C API mirrors it as
 
 | field | default | what it does |
 |-------|---------|--------------|
-| `nthreads` | `0` | worker threads owned by the plan. `0` is auto: a size-aware law, serial for small transforms, stepping 8 / 16 / 32 / 64 threads at 2^15 / 2^17 / 2^22 / 2^26 elements, capped at the allowed physical cores. `1` forces serial, `n` forces `n` |
+| `nthreads` | `0` | worker threads owned by the plan. `0` is auto: serial below 2^15 elements, otherwise the power-of-two width that minimises modelled work plus per-dispatch wake cost, capped at the allowed physical cores. `1` forces serial, `n` forces `n` |
 | `eff` | `estimate` | how hard construction works to pick a route. `estimate` uses the fitted cost model, so it is fast and reproducible. `automatic` also times the model's top candidates; pick it when one plan serves many transforms. `measure` is the same race, kept for the FFTW flag mapping |
 | `debug` | `0` | stderr trace per execute: `0` silent, `1` what ran, `2` adds the shape, `3` adds the cost-model ranking |
 
@@ -23,6 +23,22 @@ call site names what it sets and nothing else. The C API mirrors it as
 machine and the load; both are inert under `-DADM_MEASURE=OFF`. The one-shot
 functions ignore `eff` and always route with `estimate`, since a discarded plan
 cannot repay a plan-time race.
+
+## Threads
+
+A plan owns its worker pool, sized by `options.nthreads`. Two threads may call
+`forward` or `inverse` on the same plan object. An execute holds no shared
+mutable state: every scratch buffer it needs is per call. A call that engages
+the pool takes it exclusively, so concurrent calls on one plan do not overlap
+their parallel regions, and a shared plan buys correctness rather than
+throughput. Give each thread its own plan to overlap transforms; distinct plan
+objects are independent. Below the threading threshold, and at `nthreads = 1`,
+no pool exists and concurrent calls run fully in parallel.
+
+`adm_plan_execute_*` carries the same guarantee. On the shim, `fftw_execute(p)`
+reuses the buffers `p` was planned with, so two concurrent calls write one
+output array: that race is in the caller's memory, not in the plan. Pass
+per-thread buffers to `fftw_execute_dft` instead.
 
 ## C
 
@@ -57,7 +73,7 @@ else names the argument that caused it.
 | `ADM_ERROR_NULL_POINTER` | a pointer argument was null |
 | `ADM_ERROR_INVALID_SIZE` | zero size/rank/extent, extent product overflow, span/plan size mismatch |
 | `ADM_ERROR_OUT_OF_MEMORY` | an allocation failed |
-| `ADM_ERROR_INVALID_PLAN` | null plan, float/double precision mismatch, or a replayed creation failure |
+| `ADM_ERROR_INVALID_PLAN` | null plan or float/double precision mismatch. A plan that failed construction replays its own status instead |
 | `ADM_ERROR_INVALID_OPTION` | an options field outside its enum |
 | `ADM_ERROR_INTERNAL` | fault not caused by the arguments; please report |
 
@@ -89,8 +105,8 @@ Covered: `fftw_plan_dft` and its 1d/2d/3d forms, `fftw_execute` and
 mirror. Not covered: real/r2r transforms, guru and split interfaces, wisdom,
 `fftw_plan_with_nthreads`. An uncovered call does not compile rather than
 degrade. `FFTW_ESTIMATE` maps to `estimate`; every other flag, `FFTW_MEASURE`
-included, maps to the plan-time race. Shim plans are single-threaded, so make
-one plan per executing thread.
+included, maps to the plan-time race. See Threads for what a shim plan shared
+across threads does and does not guarantee.
 
 A plan call fails with NULL, as in FFTW; NULL alone carries no reason. For the
 reason, plan the same shape through the C API: a failed `adm_plan_1d` writes a

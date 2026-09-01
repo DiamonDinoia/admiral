@@ -119,6 +119,19 @@ TEMPLATE_TEST_CASE("column codelet lens <= 64 match per-line plan, tails include
     REQUIRE(admiral::detail::make_nd_axis_state<T>(16, 17, true, false).col_codelet);
     REQUIRE(admiral::detail::make_nd_axis_state<T>(8, 17, true, false).col_codelet);
     REQUIRE(!admiral::detail::make_nd_axis_state<T>(96, 17, true, false).col_codelet);
+
+    // The len-64 arm is gated by per-core probed L3 (knob A/B 2026-08-31: ice
+    // 1.5 MiB fails, rome 4 MiB and genoa 5.3 MiB pass). Synthetic geometries —
+    // the build's L3 can't be faked in one process, so the predicate is driven
+    // directly — and the live gate must elect consistently with it.
+    using admiral::detail::e2_len_cap;
+    using admiral::detail::e2_len_cap_by_l3;
+    CHECK(e2_len_cap_by_l3((std::size_t{3} << 20) / 2) == 32);  // 1.5 MiB, ice-class
+    CHECK(e2_len_cap_by_l3(std::size_t{4} << 20) == 64);        // rome-class
+    CHECK(e2_len_cap_by_l3(std::size_t{5} << 20) == 64);        // genoa-class
+    CHECK(e2_len_cap_by_l3(0) == 32);
+    CHECK(admiral::detail::make_nd_axis_state<T>(64, 17, true, false).col_codelet ==
+          (e2_len_cap() == 64));
     for (const bool forward : {true, false})
         for (const std::size_t nbatch : {std::size_t{3}, std::size_t{7}, std::size_t{17}}) {
             for (const std::size_t len :

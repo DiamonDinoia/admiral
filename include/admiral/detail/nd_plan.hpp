@@ -20,12 +20,12 @@
 #include <vector>
 #include "cxx_compat.hpp"  // `ADM_UNLIKELY`, span, `detail::has_single_bit`
 
-#include <cstdlib>   // std::getenv (the ADM_E2_OFF campaign knob)
 #include <admiral/errors.hpp>  // `size_error`
 
 #include "simd.hpp"     // `batch<T>::size` (SIMD-lane block alignment)
 
 #include "dif_col_driver.hpp"  // `col_dif_execute_ws`, `col_dif_dispatch`, `nd_col_block`
+#include "cache.hpp"           // `cpu_cache` (the E2 per-core-L3 gate)
 #include "math.hpp"            // `is_codelet_supported`
 #include "plan.hpp"           // `plan_impl`
 #include "scratch.hpp"        // `soa_scratch`
@@ -73,12 +73,24 @@ struct nd_axis_state {
     return p;
 }
 
-// ADM_E2_OFF=1 (temporary, campaign-only): disables the E2 col-batched arm so node
-// A/Bs can attribute the ice ST 64^2 regression (+32%, standing at standings-3) to
-// E2-vs-route interactions. Removal target: iteration close, once ruled in or out.
-[[nodiscard]] inline bool col_codelet_enabled() {
-    const char* e = std::getenv("ADM_E2_OFF");
-    return e == nullptr || e[0] != '1';
+// E2 col-batch len cap by per-core probed L3 (knob A/B on the three hosts,
+// 2026-08-31; Measurer's knob tables fi/mt/out/knobab-*). len 64 pays on rome
+// (4 MiB/core; ties everything else) and genoa (5.3 MiB/core; +28% at 2^7 without
+// it), and loses on ice (1.5 MiB/core; -18..-20% at 64^2 both modes). Discriminator:
+// the col codelet carries no shareable scratch, so at len 64 the tile chain's
+// twiddle sets must fit each core's L3 slice. Probe reads, per-class sysfs views:
+// ice 48 MiB/32c -> 1.5, rome 16 MiB/4c -> 4, genoa 32 MiB/6c -> 5.3 MiB.
+inline constexpr std::size_t kE2Len64MinL3PerCoreBytes = std::size_t{2} << 20;
+
+[[nodiscard]] constexpr std::size_t e2_len_cap_by_l3(std::size_t l3_per_core_bytes) {
+    return l3_per_core_bytes >= kE2Len64MinL3PerCoreBytes ? std::size_t{64} : std::size_t{32};
+}
+
+// Host-side arm. Without a split count the cache layers can't be relativized; the
+// probe classes run the AMD hosts, so enable: an unknown arm keeps len 64.
+[[nodiscard]] inline std::size_t e2_len_cap() {
+    const cache_bytes& cc = cpu_cache();
+    return e2_len_cap_by_l3(cc.l3_cores != 0 ? cc.l3 / cc.l3_cores : cc.l3);
 }
 
 // Per-axis state: innermost takes the `plan_impl` row path, outer smooth axes the
@@ -100,13 +112,14 @@ template<typename T>
     }
     if (!innermost && is_codelet_supported(length)) {
         st.dif = true;
-        // 8..64 catalog, small inner: one batched column codelet call per tile
-        // replaces the dif chain's log(len) sweeps and SoA scratch (WS-1 E2). Lens
-        // <= 4 keep the chain's trivial butterflies, and past inner 64 the chain's
+        // 8..cap catalog, small inner: one batched column codelet call per tile
+        // replaces the dif chain's log(len) sweeps and SoA scratch (WS-1 E2). Len
+        // <= 4 keeps the chain's trivial butterflies; past inner 64 the chain's
         // per-tile slab reuse wins (len x inner A/B sweep, SP-class AVX-512,
-        // 2026-08-31).
-        st.col_codelet = length >= 8 && length <= kFourStepLeafMax &&
-                         is_codelet_catalog(length) && inner <= 64 && col_codelet_enabled();
+        // 2026-08-31); at len 64 the arm is per-core-L3 gated.
+        const std::size_t e2_cap = std::min(e2_len_cap(), kFourStepLeafMax);
+        st.col_codelet = length >= 8 && length <= e2_cap &&
+                         is_codelet_catalog(length) && inner <= 64;
         dif_factor_plan r4;
         const dif_factor_plan* ov = nullptr;
         // f32 only: on f64 the r16 passes spill, but the pass-count saving outweighs

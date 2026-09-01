@@ -156,12 +156,16 @@ enum class line_route : std::uint8_t {
     transposed,  // move the run to contiguous, 1D-plan each column, move back
 };
 
-// Columns per transposed sweep: as many as keep the contiguous buffer inside half of
-// L2, never more than the run.
+// Columns per transposed sweep: two cache lines (8 columns f64, 16 f32), never more
+// than the run. Past that the Zen gather/scatter move loops cliff (each strided line
+// stays open for 4 f64 touches and the open-line-stream tracking saturates); ice is
+// flat to grp 512 and pays nothing at 8. The cap is the ws2_transprobe grp-sweep
+// optimum (fi/ws2-profiler-r1.md r2, 2026-09-01); it is ducc's n_bunch operating
+// point class, so the substitute stays a ducc-class blocked copy.
 template<typename T>
-[[nodiscard]] inline std::size_t transpose_group(std::size_t len, std::size_t run_len) {
-    const std::size_t cap = (cpu_cache().l2 / 2) / (len * sizeof(std::complex<T>));
-    return std::clamp<std::size_t>(cap, 1, run_len);
+[[nodiscard]] inline std::size_t transpose_group([[maybe_unused]] std::size_t len,
+                                                 std::size_t run_len) {
+    return std::min<std::size_t>(run_len, 2 * kCacheLine / sizeof(std::complex<T>));
 }
 
 // The transposed form pays when register fill is low: the column chain vectorizes
@@ -175,6 +179,15 @@ template<typename T>
     // Availability first: without a column twiddle set the transposed form is the only
     // route (the non-smooth-length fallback; a necessity, not a preference).
     if (!st.dif) return line_route::transposed;
+    // Tile-collapse gate, ST only (WS-2 r2): with the col budget block under two SIMD
+    // batches the dif chain's strided boundary passes starve the memory system
+    // (IPC 0.61 at the standing cells), and the transposed arm's bulk copies win at
+    // the capped group. The gate disarms with nthreads > 1: threaded transposed arms
+    // blew up on Zen at grp ~12 (standings-2, genoa 2d 2^11 +101%); threaded
+    // transposed economics are a follow-up. Reads (st, len, inner, run_len, nthreads)
+    // only — no dst layout (the strides bit-identity contract).
+    if (nthreads <= 1 && col_budget_block<T>(len, 1) < 2 * xsimd::batch<T>::size)
+        return line_route::transposed;
     if (2 * run_len <= xsimd::batch<T>::size
         && len * inner * sizeof(std::complex<T>) > col_cache_budget(nthreads))
         return line_route::transposed;

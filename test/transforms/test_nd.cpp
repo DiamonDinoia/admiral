@@ -453,6 +453,23 @@ TEMPLATE_TEST_CASE("choose_line_route narrow-run criterion", "[nd][route]", floa
     // Without a column chain, `line_route::transposed` is the only route.
     st.dif = false;
     CHECK(choose_line_route<T>(st, len, 1, full, 1) == line_route::transposed);
+    st.dif = true;
+
+    // Tile-collapse gate, ST-only (WS-2 r2): with the col budget block under two SIMD
+    // batches the route flips. The boundary comes from the same helper the gate reads,
+    // so it holds on any cache geometry; the MT disarm is pinned too (standings-2:
+    // threaded transposed arms blew up on Zen).
+    constexpr std::size_t W = xsimd::batch<T>::size;
+    using admiral::detail::col_budget_block;
+    std::size_t len_coll = 2;
+    while (col_budget_block<T>(len_coll, 1) >= 2 * W) len_coll *= 2;
+    CAPTURE(len_coll);
+    // Collapsed, single-threaded: transposed. Just under the collapse: col stays.
+    CHECK(choose_line_route<T>(st, len_coll, 1, 2 * W, 1) == line_route::transposed);
+    if (len_coll > 2)
+        CHECK(choose_line_route<T>(st, len_coll / 2, 1, 2 * W, 1) == line_route::col_dif);
+    // Collapsed but threaded: the gate disarms and the pre-F1 elections stand.
+    CHECK(choose_line_route<T>(st, len_coll, 1, 2 * W, 2) == line_route::col_dif);
 }
 
 // `real_run_copy` is the band-pack helper of `nd_plan`. Its `full` branch (n >= W: one

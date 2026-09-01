@@ -157,17 +157,25 @@ enum class line_route : std::uint8_t {
 };
 
 // Columns per transposed sweep: as many as keep the contiguous buffer inside half of
-// L2, never more than the run.
+// L3, never more than the run, and never below two cache lines of columns. The buffer
+// is a gather/scatter scratch: it needs L3 residency, not L2 (ducc-validated), and a
+// group below two lines pays 2x DRAM service per column (fi/ws2-profiler-r1.md,
+// tile /6 verdict).
 template<typename T>
 [[nodiscard]] inline std::size_t transpose_group(std::size_t len, std::size_t run_len) {
-    const std::size_t cap = (cpu_cache().l2 / 2) / (len * sizeof(std::complex<T>));
-    return std::clamp<std::size_t>(cap, 1, run_len);
+    constexpr std::size_t kFloor = 2 * kCacheLine / sizeof(std::complex<T>);
+    const std::size_t cap = (cpu_cache().l3 / 2) / (len * sizeof(std::complex<T>));
+    return std::clamp<std::size_t>(std::max(cap, kFloor), 1, run_len);
 }
 
 // The transposed form pays when register fill is low: the column chain vectorizes
 // over columns, so a run below half a batch leaves lanes idle. A footprint term (slab
 // out of cache) reads the thread-scaled tile budget. Some threaded cells are known
 // losses, kept because a one-thread gate would forfeit the threaded wins.
+// Tile collapse (WS-2 F1): with the col budget block under two SIMD batches the dif
+// chain's strided boundary passes starve memory parallelism (IPC 0.61 measured on the
+// 2-D 2^11..2^13 cells; fi/ws2-profiler-r1.md), and the transposed form's bulk copies
+// keep 10+ misses in flight. The route reads (len, nthreads) only — never a layout.
 template<typename T>
 [[nodiscard]] inline line_route choose_line_route(const nd_axis_state<T>& st, std::size_t len,
                                                   std::size_t inner, std::size_t run_len,
@@ -175,6 +183,8 @@ template<typename T>
     // Availability first: without a column twiddle set the transposed form is the only
     // route (the non-smooth-length fallback; a necessity, not a preference).
     if (!st.dif) return line_route::transposed;
+    if (col_budget_block<T>(len, nthreads) < 2 * xsimd::batch<T>::size)
+        return line_route::transposed;
     if (2 * run_len <= xsimd::batch<T>::size
         && len * inner * sizeof(std::complex<T>) > col_cache_budget(nthreads))
         return line_route::transposed;

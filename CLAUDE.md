@@ -154,11 +154,15 @@ layout" case in `test_strides.cpp` then fails at len 64 nbatch 2 out (8192, 1), 
   already does it.
 - Seven usable presets over a shared `base`: `debug`, `asan`, `tsan`, `coverage`,
   `dev`, `release`, `relwithdebinfo`. Benchmark only `release`.
-- `scripts/validate.sh [isa|compilers|catalog|sanitize|valgrind]` is the one entry
-  point for "does it build clean and pass everywhere". Every arm asserts against
+- `scripts/validate.sh [isa|compilers|catalog|cxx17|sanitize|valgrind|tidy|cppcheck]` is
+  the one entry point for "does it build clean and pass everywhere". Every arm asserts against
   `compile_commands.json` that the flags it asked for actually arrived. CMake accepts
   an unknown `-D` name in silence, which is how a previous sweep ran four "sanitizer"
   builds carrying no `-fsanitize` at all.
+- `tidy` and `cppcheck` run their tool as a compiler launcher
+  (`ADM_ENABLE_CLANG_TIDY`, `ADM_ENABLE_CPPCHECK` in `cmake/StaticAnalysis.cmake`), so a
+  finding is a build failure over every library TU, not a hand-picked pair. Both are the
+  same wiring CI's `static-analysis` job uses.
 - `coverage` is clang source-based coverage (`-fprofile-instr-generate
   -fcoverage-mapping`, -O1; report with llvm-profdata/llvm-cov). Do not resurrect
   the gcov preset: gcc's --coverage build here is ASSEMBLER-bound (one TU took
@@ -209,10 +213,13 @@ Each engine is reached through a `forward` trampoline that turns one runtime boo
 `<Forward>` leaves; the scale factor is a runtime argument folded into the last pass,
 not a template axis. The trampoline is the *only* place its two leaves are named, so
 one `extern template` per precision keeps a whole engine tree out of every TU that
-merely routes to it (`src/inst_*.cpp`, one TU per engine per direction; the comment in
-`src/CMakeLists.txt` records which splits paid off). Do not mark such a
-trampoline always-inline. That pastes both arms, engine included, into every call
-site.
+merely routes to it (`src/inst_*.cpp`, one TU per engine per direction). Whether a split
+pays is per-TU and measured: `inst_col_*` and `inst_dif_*` split per direction with
+byte-identical leaf codegen, `inst_plan_*` does not because its two route trees share
+sub-instantiations, `inst_gt_*` is an engine split (Good-Thomas inside `inst_plan_*`
+exhausted gcc's per-TU inline budget), and `inst_dif_thunks_*` hosts the direction-free
+families once each. Do not mark such a trampoline always-inline. That pastes both arms,
+engine included, into every call site.
 
 ## Measuring
 

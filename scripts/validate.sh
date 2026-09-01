@@ -1,22 +1,7 @@
 #!/usr/bin/env bash
-# One entry point for "does admiral build clean and pass everywhere". Every arm is a
-# real configure + build + `ctest` and asserts against `compile_commands.json` that
-# its flags arrived. CMake accepts an unknown `-D` name in silence.
-
-# usage: scripts/validate.sh [arm] (repeatable; default: every arm)
-#   `isa`        x86-64 / -v2 / -v3 / -v4 at Release
-#   `compilers`  `$CXX_LIST` (default "g++ clang++") at x86-64-v3; the baseline is the `isa` arm
-#   `catalog`    a non-default codelet catalog (extra size 66 -> Rader's codelet inner)
-#   `cxx17`      the C++17 compatibility arm (`ADM_CXX_STANDARD=17`), tests on
-#   `sanitize`   address+undefined, then thread
-#   `valgrind`   memcheck over the test binaries, no AVX-512, no fast-math
-#   `tidy`       `clang-tidy` over the two non-template source files
-# env: `ADM_VALIDATE_JOBS` (16), `ADM_VALIDATE_OUT` (build/validate), `CXX_LIST`
 
 set -uo pipefail
 
-# A caller's `NINJA_STATUS` can carry a placeholder the local `ninja` rejects. The
-# abort is a fatal error that has nothing to do with the code.
 unset NINJA_STATUS
 
 src=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -25,16 +10,12 @@ jobs=${ADM_VALIDATE_JOBS:-16}
 read -ra cxx_list <<<"${CXX_LIST:-g++ clang++}"
 mkdir -p "$out"
 
-# gcc writes its intermediate `.s` to `TMPDIR`, and a sanitizer TU spills gigabytes;
-# default `TMPDIR` next to the build tree so a full `/tmp` cannot kill the run.
 export TMPDIR=${TMPDIR:-$out/tmp}
 mkdir -p "$TMPDIR"
 
 pass=0
 declare -a failed=()
 
-# Checks are "want:<pat>" / "not:<pat>" over the compile database. Both directions
-# matter: the `-march` holds only if nothing appended a second `-march` after it.
 check_flags() {
     local dir=$1 spec pat n rc=0
     shift
@@ -49,7 +30,6 @@ check_flags() {
     return $rc
 }
 
-# `run_arm` <name> <check-spec>+ -- <cmake args>+
 run_arm() {
     local name=$1 dir log; shift
     local -a checks=()
@@ -65,7 +45,6 @@ run_arm() {
         step build cmake --build "$dir" -j "$jobs" &&
         step ctest ctest --test-dir "$dir" -j "$jobs" --output-on-failure ||
         { failed+=("$name"); return; }
-    # Arms are ~1G of build tree each; keep a failed one for the post-mortem.
     rm -rf "$dir"
     echo "  OK"; ((pass++))
 }
@@ -90,13 +69,6 @@ arm_compilers() {
 }
 
 arm_sanitize() {
-    # One compiler per sanitizer and a pinned ISA, like CI. Peak compiler RSS tracks
-    # SIMD width, so an unpinned ISA multiplies the per-TU footprint. Hence the `-j`
-    # cap (`per_tu` = 3 GB).
-    # The arm excludes gcc ASan on purpose: the one combination that does not fit a
-    # small machine.
-    # The `local` is deliberate: `bash` scopes dynamically, so the local `jobs` shadows
-    # the global for `run_arm` as well.
     local cap=$jobs per_tu=3 avail
     avail=$(awk '/^MemAvailable:/{print int($2/1048576)}' /proc/meminfo 2>/dev/null)
     local jobs=$(( ${avail:-0} / per_tu ))
@@ -107,12 +79,7 @@ arm_sanitize() {
     for spec in address+undefined:clang++ thread:g++; do
         san=${spec%%:*} cxx=${spec#*:}
         command -v "$cxx" >/dev/null || { echo "=== san-$san: skipped, $cxx not on PATH"; continue; }
-        # `-O1`, not the Debug `-O0`. xsimd's immediate arguments must fold to
-        # constants; at `-O0` a single test target does not finish in reasonable time.
 
-        # clang 22 exceeds the default `constexpr` step budget on
-        # `make_rader_bhat<97, float, *>`; the flag is clang-only, so the g++ arm must
-        # not see the flag.
         local cxxflags=-O1
         [[ $cxx == clang++ ]] && cxxflags="-O1 -fconstexpr-steps=100000000"
         run_arm "san-${san//+/-}" "want:-fsanitize=${san/+/,}" "want:-O1" \
@@ -123,21 +90,12 @@ arm_sanitize() {
     done
 }
 
-# The C++17 compatibility arm. The flag assertion is the tripwire: a missed threading
-# of `ADM_CXX_STANDARD` would compile `-std=c++20` quietly. Each release checks
-# codegen parity with C++20, not this arm.
 arm_cxx17() {
     run_arm cxx17 "want:-std=c++17" "want:-march=x86-64-v3" "not:std=c++20" -- \
         -DCMAKE_BUILD_TYPE=Release -DADM_CXX_STANDARD=17 -DADM_TARGET_ARCH=x86-64-v3 \
         -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF
 }
 
-# Nothing else here builds a non-default catalog, and the four `ADM_CODELET_*` knobs
-# are user-facing. Size 66 makes p=67 the first Rader prime whose p-1 is a catalog
-# member. That is the only way `rader_inner_kind::codelet` is reachable;
-# `test_route_forced.cpp` SKIPs without such a size. The check reads the generated
-# TU, not a `-D` name: `cmake` accepts an unknown `-D` in silence.
-# `src/codelet_66.cpp` exists only once the catalog has grown.
 arm_catalog() {
     run_arm catalog "want:codelet_66" "want:-march=x86-64-v3" -- \
         -DCMAKE_BUILD_TYPE=Release -DADM_TARGET_ARCH=x86-64-v3 \
@@ -145,10 +103,6 @@ arm_catalog() {
         -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF
 }
 
-# Valgrind cannot decode AVX-512, so this arm must be `x86-64-v2`; a native build
-# would report `SIGILL`, not bugs. fast-math off so the numeric assertions mean what
-# the assertions say. Direct binary runs, not `ctest -T memcheck`: the exit status
-# stays attributable to `valgrind` rather than to `ctest`.
 arm_valgrind() {
     local dir=$out/valgrind log=$out/valgrind.log rc=0
     echo "=== valgrind"
@@ -162,14 +116,7 @@ arm_valgrind() {
             echo "  FAILED: configure or build (see $log)"; failed+=("valgrind"); return; }
     for bin in "$dir"/test/test_*; do
         [[ -x $bin && ! -d $bin ]] || continue
-        # `~[ulp]`: the tag's O(N^2) long-double reference becomes minutes of
-        # arithmetic `valgrind` has nothing to say about. `test_ulp` is `[ulp]` end to
-        # end, so the filter empties the binary and Catch2 exits 4, which reads as a
-        # `valgrind` error. Skip the binary.
         [[ $(basename "$bin") == test_ulp ]] && continue
-        # `valgrind` emulates x87 80-bit long double in 64-bit, dropping accuracy
-        # asserts; `test_long_double` is that tag end to end, so skip the binary as
-        # for `test_ulp`.
         [[ $(basename "$bin") == test_long_double ]] && continue
         echo "--- $(basename "$bin")" >>"$log"
         valgrind --error-exitcode=1 --errors-for-leak-kinds=definite \
@@ -178,40 +125,51 @@ arm_valgrind() {
     ((rc == 0)) && { echo "  OK"; ((pass++)); rm -rf "$dir"; } || failed+=("valgrind")
 }
 
-# `clang-tidy` over the two non-template source files, from a fresh `clang++`
-# configure (tests off, no `ctest`). Assertions: `compile_commands.json` names
-# `clang++`, and `.clang-tidy` has `HeaderFilterRegex`. Without `HeaderFilterRegex`,
-# every `xsimd`/`poet`/catch2 header fires and the gate is useless.
+# clang-tidy runs as a compiler launcher, so it sees every TU of the library, not a hand-picked
+# pair, and a finding fails the build. The same wiring runs in CI's static-analysis job.
 arm_tidy() {
-    local dir=$out/tidy log=$out/tidy.log rc=0
+    local dir=$out/tidy log=$out/tidy.log
     echo "=== tidy"
     if ! command -v clang-tidy >/dev/null; then
         echo "  skipped: clang-tidy not on PATH"; return
     fi
+    grep -q 'HeaderFilterRegex' "$src/.clang-tidy" ||
+        { echo "  MISSING: HeaderFilterRegex in .clang-tidy"; failed+=("tidy"); return; }
     rm -rf "$dir"; : >"$log"
     cmake -S "$src" -B "$dir" -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
         -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release \
         -DADM_TARGET_ARCH=x86-64-v3 -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=OFF \
+        -DADM_BUILD_EXAMPLES=OFF -DADM_ENABLE_CLANG_TIDY=ON \
         >>"$log" 2>&1 || { echo "  FAILED: configure (see $log)"; failed+=("tidy"); return; }
     check_flags "$dir" "want:clang++" "want:-march=x86-64-v3" || { failed+=("tidy"); return; }
     cmake --build "$dir" --target admiral -j "$jobs" >>"$log" 2>&1 ||
-        { echo "  FAILED: build (see $log)"; failed+=("tidy"); return; }
-    grep -q 'HeaderFilterRegex' "$src/.clang-tidy" ||
-        { echo "  MISSING: HeaderFilterRegex in .clang-tidy"; failed+=("tidy"); return; }
-    # Scope to the two non-template implementation files: the `inst_*.cpp`
-    # instantiation TUs are thin wrappers that would cost O(hours) on the same
-    # specialisations. `HeaderFilterRegex` '.*admiral.*' still checks every
-    # `admiral/` header the two files reach.
-    clang-tidy -p "$dir" --quiet \
-        "$src/src/c_api.cpp" "$src/src/fftw_compat.cpp" >>"$log" 2>&1 || rc=1
-    ((rc == 0)) && { echo "  OK"; ((pass++)); rm -rf "$dir"; } ||
-        { echo "  FAILED: clang-tidy (see $log)"; failed+=("tidy"); }
+        { echo "  FAILED: clang-tidy (see $log)"; failed+=("tidy"); return; }
+    "$src/scripts/static_analysis_control.sh" "$dir" >>"$log" 2>&1 &&
+        { echo "  OK"; ((pass++)); rm -rf "$dir"; } ||
+        { echo "  FAILED: positive control (see $log)"; failed+=("tidy"); }
 }
 
-# A quoted `"${@:-a b c}"` would expand the default as ONE word, and an unknown arm
-# would pass silently; both cases fail below.
+arm_cppcheck() {
+    local dir=$out/cppcheck log=$out/cppcheck.log
+    echo "=== cppcheck"
+    if ! command -v cppcheck >/dev/null; then
+        echo "  skipped: cppcheck not on PATH"; return
+    fi
+    rm -rf "$dir"; : >"$log"
+    cmake -S "$src" -B "$dir" -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+        -DCMAKE_CXX_COMPILER=g++ -DCMAKE_BUILD_TYPE=Release \
+        -DADM_TARGET_ARCH=x86-64-v3 -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=OFF \
+        -DADM_BUILD_EXAMPLES=OFF -DADM_ENABLE_CPPCHECK=ON \
+        >>"$log" 2>&1 || { echo "  FAILED: configure (see $log)"; failed+=("cppcheck"); return; }
+    cmake --build "$dir" --target admiral -j "$jobs" >>"$log" 2>&1 ||
+        { echo "  FAILED: cppcheck (see $log)"; failed+=("cppcheck"); return; }
+    "$src/scripts/static_analysis_control.sh" "$dir" >>"$log" 2>&1 &&
+        { echo "  OK"; ((pass++)); rm -rf "$dir"; } ||
+        { echo "  FAILED: positive control (see $log)"; failed+=("cppcheck"); }
+}
+
 arms=("$@")
-((${#arms[@]})) || arms=(isa compilers catalog cxx17 sanitize valgrind tidy)
+((${#arms[@]})) || arms=(isa compilers catalog cxx17 sanitize valgrind tidy cppcheck)
 for arm in "${arms[@]}"; do
     if [[ $(type -t "arm_$arm") != function ]]; then
         echo "=== $arm: no such arm"; failed+=("$arm-unknown"); continue

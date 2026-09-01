@@ -1,7 +1,3 @@
-// `strides_plan` transforms a batch of strided lines out of place, under FFTW's
-// `plan_many(rank = 1)` geometry. Source and destination carry independent (stride,
-// dist) pairs, so one call transforms every column of a row-major matrix and writes
-// the result column-major.
 #include <admiral/admiral.hpp>
 
 #include <cmath>
@@ -15,14 +11,11 @@ int main() {
     for (std::size_t i = 0; i < src.size(); ++i)
         src[i] = {std::sin(0.3 * double(i)), std::cos(0.7 * double(i) + 1.0)};
 
-    // A line is one column: its elements are `cols` apart, and consecutive columns
-    // are 1 apart. The destination packs each transformed column contiguously.
-    admiral::strides_plan<double> columns(/*len=*/rows, /*nbatch=*/cols,
-                                          /*in_stride=*/cols, /*in_dist=*/1,
-                                          /*out_stride=*/1, /*out_dist=*/rows);
+    admiral::strides_plan<double> columns(rows, cols,
+                                          cols, 1,
+                                          1, rows);
     columns.forward(src.data(), dst.data());
 
-    // Oracle: gather one column by hand and run a plain 1-D plan on it.
     admiral::plan<double> ref({rows});
     std::vector<std::complex<double>> line(rows);
     double err = 0;

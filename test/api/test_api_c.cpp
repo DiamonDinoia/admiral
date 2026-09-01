@@ -126,7 +126,7 @@ TEST_CASE("C API plan error handling", "[c_api][plan]") {
     SECTION("Zero size") {
         adm_plan plan = nullptr;
         REQUIRE(adm_plan_1d(&plan, 0, nullptr) == ADM_ERROR_INVALID_SIZE);
-        adm_plan_destroy(plan);   // a failed call still writes an owned error record
+        adm_plan_destroy(plan);
     }
 
     SECTION("Null plan in execute") {
@@ -172,13 +172,12 @@ TEST_CASE("C API plan reuse", "[c_api][plan]") {
     adm_plan_destroy(plan);
 }
 
-// Sizes over pow2, primes, composites, a prime power, and Bluestein primes.
 static const std::vector<size_t> kSweepSizes = {
-    4, 8, 16, 32, 64, 128, 256,        // power-of-2
-    3, 5, 7, 11, 13, 17, 31,           // small primes
-    6, 10, 12, 15, 24, 30, 100,        // composites
-    121,                               // 11^2 (non-7-smooth)
-    127, 251                           // Bluestein primes
+    4, 8, 16, 32, 64, 128, 256,
+    3, 5, 7, 11, 13, 17, 31,
+    6, 10, 12, 15, 24, 30, 100,
+    121,
+    127, 251
 };
 
 TEST_CASE("C API round-trip size sweep (double)", "[c_api][sweep]") {
@@ -215,10 +214,7 @@ TEST_CASE("C API round-trip size sweep (float)", "[c_api][sweep]") {
     }
 }
 
-// N-D C API.
-
 TEST_CASE("C API N-D round-trip identity (double)", "[c_api][nd]") {
-    // 2D and 3D shapes over the catalog / 7-smooth / fallback column routes.
     const std::vector<std::vector<size_t>> shapes = {
         {8, 8}, {16, 32}, {12, 15}, {17, 19}, {31, 9}, {4, 5, 6}, {8, 8, 8}};
     for (const auto& shape : shapes) {
@@ -257,9 +253,6 @@ TEST_CASE("C API N-D round-trip identity (float)", "[c_api][nd]") {
     }
 }
 
-// A rank-1 axis is the identity along that axis, so shapes {1, N} and {N, 1} must
-// reproduce the 1D transform of size N. This case verifies the contract through the
-// C API alone.
 TEST_CASE("C API N-D shape {1,N}/{N,1} matches 1D (double)", "[c_api][nd]") {
     for (size_t N : {8u, 16u, 13u, 31u}) {
         CAPTURE(N);
@@ -302,7 +295,6 @@ TEST_CASE("C API N-D reusable plan matches one-shot (double)", "[c_api][nd][plan
     REQUIRE(adm_forward_nd(via_oneshot.data(), shape.data(), shape.size(), nullptr) == ADM_SUCCESS);
     require_close_c(via_plan.data(), via_oneshot.data(), Ntot, fft_tol<double>());
 
-    // Round-trip through the same reusable plan returns the original.
     REQUIRE(adm_plan_execute_inverse(plan, via_plan.data()) == ADM_SUCCESS);
     require_close_c(via_plan.data(), base.data(), Ntot, fft_tol<double>());
 
@@ -311,7 +303,7 @@ TEST_CASE("C API N-D reusable plan matches one-shot (double)", "[c_api][nd][plan
 
 TEST_CASE("C API N-D rejects invalid arguments", "[c_api][nd]") {
     const size_t shape[2] = {8, 8};
-    const size_t bad_shape[2] = {8, 0};  // zero extent
+    const size_t bad_shape[2] = {8, 0};
     std::vector<adm_complex> data(64);
 
     REQUIRE(adm_forward_nd(nullptr, shape, 2, nullptr) == ADM_ERROR_NULL_POINTER);
@@ -322,7 +314,7 @@ TEST_CASE("C API N-D rejects invalid arguments", "[c_api][nd]") {
     adm_plan plan = nullptr;
     REQUIRE(adm_plan_nd(nullptr, shape, 2, nullptr) == ADM_ERROR_NULL_POINTER);
     REQUIRE(adm_plan_nd(&plan, bad_shape, 2, nullptr) == ADM_ERROR_INVALID_SIZE);
-    adm_plan_destroy(plan);   // each failed call overwrote the previous record
+    adm_plan_destroy(plan);
     REQUIRE(adm_plan_nd(&plan, shape, 0, nullptr) == ADM_ERROR_INVALID_SIZE);
     adm_plan_destroy(plan);
 }
@@ -355,9 +347,6 @@ TEST_CASE("C API N-D reusable plan matches one-shot (float)", "[c_api][nd][plan]
 }
 
 TEST_CASE("C API threaded plans (double)", "[c_api][plan][threads]") {
-    // 1<<16 f64 (1 MiB of complex) crosses the threaded `four_step_large` line.
-    // All three plans here take the default nullptr options (`nthreads` = 0, auto);
-    // an auto-threaded plan runs on its per-plan pool. The three results must agree.
     const size_t N = 1 << 16;
     std::vector<adm_complex> in(N);
     for (size_t i = 0; i < N; ++i) {
@@ -376,7 +365,6 @@ TEST_CASE("C API threaded plans (double)", "[c_api][plan][threads]") {
     std::vector<adm_complex> c = in;
     REQUIRE(adm_plan_execute_forward(pa, c.data()) == ADM_SUCCESS);
     require_close_c(c.data(), a.data(), N, fft_tol<double>(8));
-    // Threaded N-D: the N-D runtime owns one pool per plan.
     adm_plan pn = nullptr;
     const size_t shape[2] = {64, 512};
     REQUIRE(adm_plan_nd(&pn, shape, 2, nullptr) == ADM_SUCCESS);

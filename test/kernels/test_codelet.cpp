@@ -1,6 +1,3 @@
-// Correctness tests for the generic metaprogrammed codelet `kernel<N, T, Forward>`. Each
-// case checks one instantiation against a direct O(N^2) reference DFT, the ground truth
-// the generic Cooley-Tukey recursion must reproduce.
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -15,25 +12,15 @@
 
 using namespace admiral::detail;
 
-// --- Cofactor-SIMD gate: an even cofactor is eligible from one batch tile up, no cap ---
-// The assertions are written in tiles, not in literal `M`, because the batch width follows
-// the ISA. `Wc` names `cofactor_batch_width<T, R>()`. `Wc`+2 and 3*`Wc` are both even and
-// at least one tile wide, so both are eligible. `Wc`-2 is even but narrower than a tile,
-// and no other clause admits `Wc`-2.
 static_assert(cofactor_simd_profitable<double, 4>(cofactor_batch_width<double, 4>() + 2));
 static_assert(cofactor_simd_profitable<double, 4>(3 * cofactor_batch_width<double, 4>()));
 static_assert(!cofactor_simd_profitable<double, 4>(cofactor_batch_width<double, 4>() - 2));
 static_assert(cofactor_simd_profitable<float, 8>(cofactor_batch_width<float, 8>() + 2));
 static_assert(cofactor_simd_profitable<float, 8>(3 * cofactor_batch_width<float, 8>()));
 static_assert(!cofactor_simd_profitable<float, 8>(cofactor_batch_width<float, 8>() - 2));
-// The six above all take the `Wc` == `R` exit, so the six never reach the width gate.
-// `R` = 3 gives `Wc` > `R` for both precisions, which routes an `even_m` cofactor through
-// a masked load. The ISA picks the live masked-load arm, so tie the assertion to `Wc`, not
-// to a literal. A 16-byte `Wc` is cheap and admits any even `M`; a 32-byte `Wc` must first
-// clear `R*M >= kMaskedLoad256MinWork`.
 constexpr bool kMasked256F64 = cofactor_batch_width<double, 3>() * sizeof(double) > 16;
-static_assert(kMasked256F64 == !cofactor_simd_profitable<double, 3>(8));  // 3*8 < 27
-static_assert(cofactor_simd_profitable<double, 3>(10));  // 3*10 >= 27, the smallest even `M`
+static_assert(kMasked256F64 == !cofactor_simd_profitable<double, 3>(8));
+static_assert(cofactor_simd_profitable<double, 3>(10));
 static_assert(cofactor_simd_profitable<float, 3>(cofactor_batch_width<float, 3>()));
 
 namespace {
@@ -64,7 +51,7 @@ void check_size() {
     check_one<N, false, float>();
 }
 
-} // namespace
+}
 
 TEST_CASE("codelet kernel<N> matches reference DFT", "[codelet]") {
     check_size<1>();
@@ -85,7 +72,7 @@ TEST_CASE("codelet kernel<N> matches reference DFT", "[codelet]") {
     check_size<32>();
     check_size<36>();
     check_size<48>();
-    check_size<52>();  // cofactor-SIMD batched path (4 x flat radix-13) for `double`
+    check_size<52>();
     check_size<60>();
     check_size<64>();
     check_size<120>();
@@ -97,49 +84,37 @@ TEST_CASE("codelet kernel<N> small primes (direct DFT path)", "[codelet]") {
     check_size<13>();
 }
 
-// A non-pow2 leaf takes `dif_butterfly_terminal` instead of a cofactor combine, and the
-// `check_size` cases above only cover that branch while the bound admits the size. Assert
-// the bound, so widening or narrowing the bound cannot drop the coverage in silence. A
-// pow2 leaf uses the whole register file and every other leaf the usable part, so the two
-// split at 32.
 TEST_CASE("a small non-pow2 codelet takes the flat leaf", "[codelet]") {
     if constexpr (poet::vector_register_count() == 32) {
-        CHECK(kernel_batched<11, double, true>::flat_leaf);        // 22 <= 24 usable
-        CHECK_FALSE(kernel_batched<13, double, true>::flat_leaf);  // 26 > 24
-        CHECK(kernel_batched<16, double, true>::flat_leaf);        // pow2: 32 <= 32
+        CHECK(kernel_batched<11, double, true>::flat_leaf);
+        CHECK_FALSE(kernel_batched<13, double, true>::flat_leaf);
+        CHECK(kernel_batched<16, double, true>::flat_leaf);
     }
     CHECK_FALSE(kernel_batched<CODELET_CATALOG_MAX, double, true>::flat_leaf);
 }
 
-// The scalar leaf competes with the cofactor-SIMD path rather than with a combine, so
-// `M` > `r` is the decider. The `check_size` cases cover both outcomes but not which one
-// ran. Assert the bound, so a widening cannot silently take the size 10 away from the
-// cofactor path.
 TEST_CASE("the scalar flat leaf yields to a larger cofactor", "[codelet]") {
     if constexpr (poet::vector_register_count() == 32) {
-        CHECK(kernel<11, double, true>::flat_leaf);        // prime, `M` == 1
-        CHECK(kernel<12, double, true>::flat_leaf);        // 4x3: `M` <= `r`
-        CHECK_FALSE(kernel<10, double, true>::flat_leaf);  // 2x5: `M` > `r`, cofactor batches 5
+        CHECK(kernel<11, double, true>::flat_leaf);
+        CHECK(kernel<12, double, true>::flat_leaf);
+        CHECK_FALSE(kernel<10, double, true>::flat_leaf);
     }
-    CHECK_FALSE(kernel<16, double, true>::flat_leaf);  // pow2 above the 8 cap, every ISA
+    CHECK_FALSE(kernel<16, double, true>::flat_leaf);
     CHECK_FALSE(kernel<CODELET_CATALOG_MAX, double, true>::flat_leaf);
 }
 
 TEST_CASE("codelet kernel<N> prime composites (cofactor-SIMD batched path)", "[codelet]") {
-    check_size<26>();  // 2*13
-    check_size<34>();  // 2*17
-    check_size<38>();  // 2*19
-    check_size<39>();  // 3*13
-    check_size<46>();  // 2*23
-    check_size<51>();  // 3*17
-    check_size<57>();  // 3*19
-    check_size<58>();  // 2*29
-    check_size<62>();  // 2*31
+    check_size<26>();
+    check_size<34>();
+    check_size<38>();
+    check_size<39>();
+    check_size<46>();
+    check_size<51>();
+    check_size<57>();
+    check_size<58>();
+    check_size<62>();
 }
 
-// Batched four-step (`N` = `N1`*`N2`, both <= 64 catalog, both multiples of `W`): the
-// composition-of-kernels path for `N` > 64. Validate the index/twiddle math against the
-// O(N^2) reference DFT on planar buffers.
 template<unsigned N1, unsigned N2, typename T>
 void check_four_step() {
     constexpr unsigned N = N1 * N2;
@@ -174,8 +149,6 @@ void check_four_step() {
         require_close(got, ref, fft_tol<T>());
     }
 
-    // Reference-free roundtrip: forward then inverse must recover `x` (up to 1/N). No
-    // large-angle reference is involved, so the roundtrip is a tight check on the math.
     run(true);
     std::vector<T> f_re = out_re, f_im = out_im;
     for (std::size_t i = 0; i < N; ++i) { in_re[i] = f_re[i]; in_im[i] = f_im[i]; }
@@ -186,20 +159,15 @@ void check_four_step() {
 }
 
 TEST_CASE("batched four-step matches reference DFT (composition of kernels, N>64)", "[codelet][fourstep]") {
-    check_four_step<16, 16, double>();   // 256
-    check_four_step<32, 32, double>();   // 1024
-    check_four_step<64, 64, double>();   // 4096
-    check_four_step<32, 64, double>();   // 2048 (unequal factors)
-    check_four_step<16, 16, float>();    // 256
-    check_four_step<32, 32, float>();    // 1024
-    check_four_step<32, 64, float>();    // 2048
+    check_four_step<16, 16, double>();
+    check_four_step<32, 32, double>();
+    check_four_step<64, 64, double>();
+    check_four_step<32, 64, double>();
+    check_four_step<16, 16, float>();
+    check_four_step<32, 32, float>();
+    check_four_step<32, 64, float>();
 }
 
-// `kernel<N>::apply_sink`: the sink emits every output index exactly once (mixed scalar
-// `T` and sized-batch `V` chunks). `got` starts poisoned, so a skipped or double-emitted
-// index surfaces. Values check against `reference_dft` and `apply()`'s own output within
-// tolerance: the two paths reassociate in different orders under fast-math, so bitwise
-// equality is not a property of the interface.
 TEST_CASE("codelet kernel<N>::apply_sink matches apply and reference DFT", "[codelet]") {
     auto check = [](auto Nc, auto forward, auto tag) {
         constexpr unsigned N = decltype(Nc)::value;
@@ -241,15 +209,15 @@ TEST_CASE("codelet kernel<N>::apply_sink matches apply and reference DFT", "[cod
     };
     both(std::integral_constant<unsigned, 2>{});
     both(std::integral_constant<unsigned, 6>{});
-    both(std::integral_constant<unsigned, 12>{});  // cofactor tile-less (`M` = 3 < `Wc`)
-    both(std::integral_constant<unsigned, 13>{});  // Rader forward-through
-    both(std::integral_constant<unsigned, 15>{});  // odd composite recursion
-    both(std::integral_constant<unsigned, 16>{});  // cofactor single tile
-    both(std::integral_constant<unsigned, 20>{});  // cofactor tile + scalar residue
+    both(std::integral_constant<unsigned, 12>{});
+    both(std::integral_constant<unsigned, 13>{});
+    both(std::integral_constant<unsigned, 15>{});
+    both(std::integral_constant<unsigned, 16>{});
+    both(std::integral_constant<unsigned, 20>{});
     both(std::integral_constant<unsigned, 25>{});
-    both(std::integral_constant<unsigned, 39>{});  // cofactor via batched Rader
+    both(std::integral_constant<unsigned, 39>{});
     both(std::integral_constant<unsigned, 52>{});
-    both(std::integral_constant<unsigned, 64>{});  // cofactor multi-tile
+    both(std::integral_constant<unsigned, 64>{});
     both(std::integral_constant<unsigned, 128>{});
 }
 

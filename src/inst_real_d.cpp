@@ -1,4 +1,3 @@
-// See `inst_real_f.cpp`.
 #include "admiral/detail/r2r.hpp"
 #include "admiral/detail/real_fft.hpp"
 namespace admiral::detail {

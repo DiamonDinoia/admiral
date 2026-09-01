@@ -1,4 +1,3 @@
-// Real input: `plan_r2c` holds half the spectrum (FFTW's packed layout).
 #include <admiral/admiral.hpp>
 
 #include <cmath>
@@ -12,9 +11,9 @@ int main() {
     for (std::size_t i = 0; i < n; ++i) in[i] = std::sin(0.1 * double(i));
 
     admiral::plan_r2c<double> p(n);
-    std::vector<std::complex<double>> spec(p.cplx_size());   // n/2 + 1
+    std::vector<std::complex<double>> spec(p.cplx_size());
     p.forward(in, spec);
-    p.inverse(spec, in);                                     // divides by n
+    p.inverse(spec, in);
 
     double err = 0;
     for (std::size_t i = 0; i < n; ++i)
@@ -24,7 +23,6 @@ int main() {
         return 1;
     }
 
-    // N-D: shape is the real tensor; only its last axis halves.
     admiral::plan_r2c<double> p2({64, 64});
     std::printf("64x64 real -> %zu complex (%zux%zu expected)\n", p2.cplx_size(),
                 std::size_t{64}, std::size_t{33});

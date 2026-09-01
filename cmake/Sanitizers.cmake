@@ -1,7 +1,3 @@
-# `project_sanitizers`: the flags for `ADM_SANITIZER`, or no target at all when the
-# option is none. Callers guard on the target, not the option: one source of truth.
-# An unknown value must stop the configure rather than silently build without a
-# sanitizer.
 
 if(ADM_SANITIZER STREQUAL "none")
     return()

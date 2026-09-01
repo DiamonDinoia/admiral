@@ -1,4 +1,3 @@
-// One direction of the 1-D mixed-radix DIF engine. See `inst_col_f_fwd.cpp`.
 #include "admiral/detail/dif_driver.hpp"
 
 namespace admiral {
@@ -10,5 +9,5 @@ template void iterative_dif_execute_ws<float, true>(
 
 template void dif_build_tape<float, true>(dif_twiddle_set<float>&, std::size_t);
 
-} // namespace detail
-} // namespace admiral
+}
+}

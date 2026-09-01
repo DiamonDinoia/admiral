@@ -1,27 +1,17 @@
 #pragma once
 
-// Private implementation header, included only by per-N TUs and
-// `codelet_dispatch.cpp`. Defines `codelet_apply<N,T,Forward>`: deinterleave ->
-// `kernel<N>::apply` -> reinterleave. in == out is in-place; in != out reads in
-// (preserved) and writes out. Un-normalized (does NOT apply 1/N).
-// Routing guarantees N <= CODELET_CATALOG_MAX.
-
 #include <complex>
 #include <cstddef>
-#include "admiral/detail/cxx_compat.hpp"  // `detail::bit_width`
+#include "admiral/detail/cxx_compat.hpp"
 
 #include "admiral/detail/codelet.hpp"
-#include "admiral/detail/math.hpp"  // `scale_inplace`
+#include "admiral/detail/math.hpp"
 #include "admiral/detail/simd_swizzle.hpp"
-#include "admiral/detail/macros.hpp"  // `ADM_LAMBDA_ALWAYS_INLINE` (static_for lambdas)
+#include "admiral/detail/macros.hpp"
 
 namespace admiral {
 namespace detail {
 
-// Output sink for `kernel<N>::apply_sink`: interleaves the emitted (re,im)
-// pairs straight to AoS `out`, no SoA round-trip. The inverse's exit
-// conjugation rides the sign here (see the conj trick below). Chunks arrive
-// with `j` ascending, each output index exactly once.
 template<typename T, bool Forward>
 struct aos_sink {
     std::complex<T>* out;
@@ -35,9 +25,6 @@ struct aos_sink {
 
 template<unsigned N, typename T, bool Forward>
 void codelet_apply(const std::complex<T>* in, std::complex<T>* out) {
-    // Exact-sized stack buffer: 4 planar buffers of `N` elements each. `N` is a
-    // compile-time codelet size <= `CODELET_CATALOG_MAX`, so the array stays on
-    // the stack.
     alignas(xsimd::batch<T>::arch_type::alignment()) T buf[4 * N];
     T* xre = buf;
     T* xim = buf + N;
@@ -46,12 +33,7 @@ void codelet_apply(const std::complex<T>* in, std::complex<T>* out) {
 
     constexpr std::size_t W = xsimd::batch<T>::size;
 
-    // Below `N` = 64 the scalar boundary loops constant-fold/unroll better than
-    // the width-descent. Keep the simple loops there.
     if constexpr (N < 64) {
-        // Through the `T*` alias [complex.numbers.general], not
-        // `std::complex::real`/`std::complex::imag`: gcc 16 leaves those
-        // accessors out of line and calls one per element here.
         const T* s = reinterpret_cast<const T*>(in);
         for (std::size_t i = 0; i < N; ++i) {
             xre[i] = s[2 * i];
@@ -62,14 +44,6 @@ void codelet_apply(const std::complex<T>* in, std::complex<T>* out) {
         return;
     }
 
-    // De-interleave AoS -> SoA: native-width shuffles, then a sized-batch
-    // descent (W/2, W/4, down to 2) and at most one scalar residue per width
-    // gap.
-    //
-    // The scalar loops cannot run for today's catalog. 64 is a multiple of
-    // every `W`; 120's only residue (at `W` = 16, f32/AVX-512: 120 = 7*16 + 8)
-    // is even. The descent decomposes an even residue exactly. The loops stay
-    // to guard a catalog that gains an odd `N` >= 64.
     const T* src = reinterpret_cast<const T*>(in);
     std::size_t i = 0;
     for (; i + W <= N; i += W) {
@@ -96,26 +70,10 @@ void codelet_apply(const std::complex<T>* in, std::complex<T>* out) {
         xim[i] = in[i].imag();
     }
 
-    // Inverse via the conjugate identity inv(x) = conj(fwd(conj(x))), so the
-    // build instantiates only the forward kernel: half the heavy per-N catalog.
-    // Entry conj negates the imaginary lane; the exit conj rides `aos_sink`'s
-    // sign.
     if constexpr (!Forward) for (std::size_t k = 0; k < N; ++k) xim[k] = -xim[k];
     kernel<N, T, true>::apply_sink(xre, xim, 1, yre, yim, aos_sink<T, Forward>{out});
 }
 
-// Lanes-as-lines twin of `codelet_apply`: `nlines` in-place lines at uniform
-// stride, `W` lines per tile, one `xsimd::transpose` per W-wide column block in
-// and out. The `static_for` block loop keeps every block width (and its mask)
-// compile-time. Masked loads and prefix stores never touch the next line, so
-// tiles need no padding and the last full tile is not a special case.
-//
-// SCALED, unlike `codelet_apply`: `fct` folds into the output in place of a
-// second pass. Inverse rides the same conj trick, so the build compiles only
-// the forward `kernel_batched`.
-//
-// `N` in {2,4} keeps the per-line loop: a register-resident pow2 butterfly with
-// no twiddle table beats the tile's fixed 4*ceil(N/W) transposes there.
 template<unsigned N, typename T, bool Forward>
 void codelet_apply_many(std::complex<T>* data, std::size_t nlines, std::size_t stride, T fct) {
     using V = xsimd::batch<T>;
@@ -136,7 +94,7 @@ void codelet_apply_many(std::complex<T>* data, std::size_t nlines, std::size_t s
                 for (std::size_t l = 0; l < W; ++l)
                     aos_deinterleave_masked<(2 * cols > W), T>(
                         base + l * 2 * stride + 2 * j0, rb[l], ib[l], aos_ct_masks<cols, T>{});
-                xsimd::transpose(rb, rb + W);  // rb[j].lane(l) = Re x_{j0+j} of line l
+                xsimd::transpose(rb, rb + W);
                 xsimd::transpose(ib, ib + W);
                 poet::static_for<0, cols>([&](auto J) {
                     re[j0 + J] = rb[J];
@@ -151,22 +109,18 @@ void codelet_apply_many(std::complex<T>* data, std::size_t nlines, std::size_t s
                 constexpr std::size_t cols = (N - j0 < W) ? N - j0 : W;
                 V tr[W], ti[W];
                 poet::static_for<0, W>([&](auto J) {
-                    // Lanes past the block width land in columns the prefix store drops.
-                    constexpr std::size_t j = J;  // `J` is signed; `cols` is not
+                    constexpr std::size_t j = J;
                     constexpr std::size_t k = (j < cols) ? j0 + j : 0;
                     tr[J] = yr[k] * fr;
                     ti[J] = yi[k] * fi;
                 });
-                xsimd::transpose(tr, tr + W);  // tr[l].lane(j) = Re X_{j0+j} of line l
+                xsimd::transpose(tr, tr + W);
                 xsimd::transpose(ti, ti + W);
                 for (std::size_t l = 0; l < W; ++l)
                     aos_interleave_prefix<cols, T>(base + l * 2 * stride + 2 * j0, tr[l], ti[l]);
             });
         }
     }
-    // Tail, and the whole run for `N` in {2,4} or `nlines` < `W`. If `fct` == 1
-    // (the forward default), skip the scale pass: at `N` == 4 an unconditional
-    // pass turns a win into a loss.
     const bool unit = (fct == T(1));
     for (; r < nlines; ++r) {
         std::complex<T>* p = data + r * stride;
@@ -175,10 +129,6 @@ void codelet_apply_many(std::complex<T>* data, std::size_t nlines, std::size_t s
     }
 }
 
-// Out-of-place twin of `codelet_apply_many`: the same W-line tiles, masked entry and
-// prefix-store exit, `in` and `out` at their own uniform strides. The per-line
-// arithmetic is the in-place twin's. Why a separate copy exists: the ND OOP row pass
-// (nd_plan.hpp execute_nd) and only it reads this pattern.
 template<unsigned N, typename T, bool Forward>
 void codelet_apply_many_oop(const std::complex<T>* in, std::complex<T>* out,
                             std::size_t nlines, std::size_t in_stride,
@@ -203,7 +153,7 @@ void codelet_apply_many_oop(const std::complex<T>* in, std::complex<T>* out,
                     aos_deinterleave_masked<(2 * cols > W), T>(
                         ibase + l * 2 * in_stride + 2 * j0, rb[l], ib[l],
                         aos_ct_masks<cols, T>{});
-                xsimd::transpose(rb, rb + W);  // rb[j].lane(l) = Re x_{j0+j} of line l
+                xsimd::transpose(rb, rb + W);
                 xsimd::transpose(ib, ib + W);
                 poet::static_for<0, cols>([&](auto J) {
                     re[j0 + J] = rb[J];
@@ -218,13 +168,12 @@ void codelet_apply_many_oop(const std::complex<T>* in, std::complex<T>* out,
                 constexpr std::size_t cols = (N - j0 < W) ? N - j0 : W;
                 V tr[W], ti[W];
                 poet::static_for<0, W>([&](auto J) {
-                    // Lanes past the block width land in columns the prefix store drops.
-                    constexpr std::size_t j = J;  // `J` is signed; `cols` is not
+                    constexpr std::size_t j = J;
                     constexpr std::size_t k = (j < cols) ? j0 + j : 0;
                     tr[J] = yr[k] * fr;
                     ti[J] = yi[k] * fi;
                 });
-                xsimd::transpose(tr, tr + W);  // tr[l].lane(j) = Re X_{j0+j} of line l
+                xsimd::transpose(tr, tr + W);
                 xsimd::transpose(ti, ti + W);
                 for (std::size_t l = 0; l < W; ++l)
                     aos_interleave_prefix<cols, T>(obase + l * 2 * out_stride + 2 * j0,
@@ -232,8 +181,6 @@ void codelet_apply_many_oop(const std::complex<T>* in, std::complex<T>* out,
             });
         }
     }
-    // Tail, and the whole run for `N` in {2,4} or `nlines` < `W` (same rule as the
-    // in-place twin).
     const bool unit = (fct == T(1));
     for (; r < nlines; ++r) {
         codelet_apply<N, T, Forward>(in + r * in_stride, out + r * out_stride);
@@ -241,15 +188,6 @@ void codelet_apply_many_oop(const std::complex<T>* in, std::complex<T>* out,
     }
 }
 
-// One-call column codelet for the ND/strided col axes of length N <= 64: lanes = W
-// consecutive columns (contiguous at a fixed element), element strides `in_inner` /
-// `out_inner`. `kernel_batched<N>` runs the W size-N DFTs whole (register-flat for
-// N <= 16 f64, cofactor at 32/64), so the axis costs one sweep and no SoA scratch —
-// the col_dif chain's log(N) passes die at these lengths. AoS unzip on load, zip
-// scaled on store; each lane's value is its own full transform, so results are
-// per-lane bit-identical across tilings, chunkings and alignment classes. The tail
-// tile (bc < W columns) stages through scalars: dead lanes read 0 and never store.
-// in == out is safe: every load lands before the first store of the same tile.
 template<unsigned N, typename T, bool Forward>
 void col_codelet_apply(const std::complex<T>* in, std::size_t in_inner,
                        std::complex<T>* out, std::size_t out_inner, std::size_t ncols,
@@ -258,9 +196,6 @@ void col_codelet_apply(const std::complex<T>* in, std::size_t in_inner,
     constexpr std::size_t W = V::size;
     const V sc(scale);
     std::size_t c = 0;
-    // `apply`, not `apply_sink`: no-sink apply shares one batched-kernel tree across
-    // every caller and both directions; an apply-sink per lambda reinstantiates the
-    // combine tree per tile class (measured 7x on the codelet TUs).
     for (; c + W <= ncols; c += W) {
         V xre[N], xim[N], yre[N], yim[N];
         poet::static_for<0, N>([&](auto P) ADM_LAMBDA_ALWAYS_INLINE {
@@ -298,7 +233,7 @@ void col_codelet_apply(const std::complex<T>* in, std::size_t in_inner,
     }
 }
 
-} // namespace detail
-} // namespace admiral
+}
+}
 
 #include "admiral/detail/undef_macros.hpp"

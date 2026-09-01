@@ -1,11 +1,3 @@
-# Optional regeneration of `include/admiral/detail/base_cost_model.hpp`: coefficients
-# only, pooled over every swept build; `effort::automatic` recovers a mispriced size
-# at plan time. OFF by default; turn on to fold a new compiler, version or target
-# into the pool. The fitter is C++20 stdlib-only (`tools/fit_cost_model.cpp`), no
-# Python.
-#   cmake -B b -DADM_FIT_COST_MODEL=ON
-#   cmake --build b --target admiral_cost_sweep   # measure THIS build
-#   cmake --build b --target admiral_cost_model   # refit from all receipts
 
 option(ADM_FIT_COST_MODEL
        "Expose targets that re-measure and refit the routing cost model" OFF)
@@ -18,14 +10,10 @@ set(ADM_COST_MODEL_DATA "${CMAKE_CURRENT_SOURCE_DIR}/bench-results" CACHE PATH
     "Directory of BASECOST receipts to fit the routing cost model from")
 file(MAKE_DIRECTORY "${ADM_COST_MODEL_DATA}")
 
-# The default overwrites the shipped header in-tree; point elsewhere to dry-run a refit.
 set(ADM_COST_MODEL_OUT
     "${CMAKE_CURRENT_SOURCE_DIR}/include/admiral/detail/base_cost_model.hpp"
     CACHE FILEPATH "Header the admiral_cost_model target (re)generates")
 
-# The receipt name only has to be unique; the receipt contents self-describe via
-# `BASECOST-ENV` (compiler, version, width, register count). Flags hash in, and the
-# uarch too. Two builds sharing flags but not silicon must not share a receipt.
 get_target_property(_adm_opts admiral_optimization_flags INTERFACE_COMPILE_OPTIONS)
 set(_adm_flags)
 foreach(_o IN LISTS _adm_opts)
@@ -34,7 +22,6 @@ foreach(_o IN LISTS _adm_opts)
   endif()
 endforeach()
 if(NOT CMAKE_CROSSCOMPILING)
-  # `try_run` takes (<runResult> <compileResult>): here run-exit = 0, compiled = TRUE.
   try_run(_adm_ua_exit _adm_ua_compiled ${CMAKE_CURRENT_BINARY_DIR}/uarch_probe
     SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/cmake/probe_uarch.cpp
     CMAKE_FLAGS
@@ -69,8 +56,6 @@ else()
     VERBATIM)
 endif()
 
-# `tools/fit_cost_model.cpp` is stdlib-only and reads the measured codelet-cost table
-# in `math.hpp`, so the fitter cannot silently drift from what the engine runs.
 add_executable(admiral_fit_cost_model tools/fit_cost_model.cpp)
 target_include_directories(admiral_fit_cost_model PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/include ${ADM_GENERATED_INCLUDE_DIR})

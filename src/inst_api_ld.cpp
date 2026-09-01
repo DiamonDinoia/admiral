@@ -1,5 +1,3 @@
-// The long double half of the exported C++ ABI: definitions live in
-// `cpp_api.hpp`; the scalar engine is in `include/admiral/detail/scalar_fft.hpp`.
 
 #include "cpp_api.hpp"
 
@@ -27,4 +25,4 @@ template void inverse<long double>(std::complex<long double>*, long double*,
                                    span<const std::size_t>, const options&,
                                    std::optional<long double>);
 
-}  // namespace admiral
+}

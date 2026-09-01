@@ -1,13 +1,4 @@
-# Runnable examples. Each is registered as a ctest test, so every snippet the
-# docs show is compiled and executed; a snippet that drifts from the API breaks
-# the build instead of lying to the reader.
-#
-# The C++ examples link the C++ target and compile as C++20. The C examples
-# compile as plain C and link the C and FFTW shims, doubling as the C-only
-# consumer check. In-tree target names match the installed admiral:: ones, so
-# the sources read like consumer code.
 
-# example -> library it links.
 set(ADM_EXAMPLES
     quickstart          admiral
     real_transforms     admiral
@@ -29,14 +20,7 @@ foreach(i RANGE 0 ${ADM_LAST} 2)
     else()
         add_executable(example_${name} ${name}.cpp)
     endif()
-    # Consumer code: no project_warnings. The C examples additionally link libm
-    # only for their own sin/fabs, not because the shims need it.
     target_link_libraries(example_${name} PRIVATE admiral::${surface})
-    # A sanitized INSTRUMENTED libadmiral.so keeps its runtime out, so an
-    # unsanitized example link fails (asan) or — worse for tsan — links but has
-    # the runtime deep in the link map, where glibc 2.39 never populates the
-    # TLS slot and the first instrumented worker call SEGVs. Half-sanitized
-    # examples are fine to run: the runtime comes on the exe's own link line.
     if(TARGET project_sanitizers)
         target_link_libraries(example_${name} PRIVATE project_sanitizers)
     endif()

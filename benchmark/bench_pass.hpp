@@ -1,12 +1,9 @@
 #pragma once
 
-// The --pass single-pass microbench. Instantiating `dif_pass` / `dif_pass_last` over
-// the whole radix set dominates a benchmarks-ON build, so the definition lives here
-// and each precision gets its own TU (bench_pass_{f,d}.cpp).
 #include "bench_harness.hpp"
 
-#include <admiral/detail/dif_passes.hpp>  // dif_pass, dif_pass_last
-#include <admiral/detail/twiddles.hpp>    // dif_radix_set
+#include <admiral/detail/dif_passes.hpp>
+#include <admiral/detail/twiddles.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -20,18 +17,14 @@
 
 namespace bench {
 
-// C++17 lambdas cannot take template parameters, so the three dispatch helpers are
-// namespace-scope structs. Calls invoke `operator()<IPv>()` either way.
 template<typename T>
 struct bench_mid {
     const T* ccre; const T* ccim; T* chre; T* chim;
     std::size_t l1, ido; const T* twre; const T* twim;
     template<std::size_t IPv>
     void operator()() const {
-        // A middle SoA pass carries no direction. The inverse rides the same code in
-        // swapped domain (butterfly.hpp). Only the boundary passes still take `Forward`.
         admiral::detail::dif_pass<T, IPv>(ccre, ccim, chre, chim, l1, ido, twre, twim,
-                                          1, 1);  // contiguous SoA: unit element strides
+                                          1, 1);
     }
 };
 
@@ -60,7 +53,7 @@ template<typename T>
 void pass_microbench(unsigned IP, std::size_t ido, std::size_t l1, bool last,
                      int reps, long inner, long perf_iters) {
     constexpr std::size_t W = xsimd::batch<T>::size;
-    const std::size_t span = static_cast<std::size_t>(IP) * ido * l1;  // complex elems
+    const std::size_t span = static_cast<std::size_t>(IP) * ido * l1;
     std::vector<T> ccre(span), ccim(span), chre(span), chim(span);
     std::vector<std::complex<T>> out(span);
     const std::size_t tsz = std::max<std::size_t>(1, (IP - 1) * ido);
@@ -76,8 +69,6 @@ void pass_microbench(unsigned IP, std::size_t ido, std::size_t l1, bool last,
                            l1, ido, twre.data(), twim.data()};
     const bench_lst<T> lst{ccre.data(), ccim.data(), out.data(), l1, twre.data(), twim.data()};
     auto call = [&]() {
-        // The engine's own radix set and dispatch: --pass measures what ships. An
-        // unsupported radix is a command-line error to report, not an exception.
         const bool matched = poet::dispatch(
             bench_call<T>{&mid, &lst, last},
             poet::dispatch_param<admiral::detail::dif_radix_set>{IP});
@@ -88,11 +79,9 @@ void pass_microbench(unsigned IP, std::size_t ido, std::size_t l1, bool last,
         sink += last ? out[span / 2].real() : chre[span / 2];
     };
     if (perf_iters > 0) {
-        // The warmup faults the buffers in and settles the frequency before perf
-        // attaches; the measured loop below is what an external perf stat counts.
         constexpr long kWarmReps = 200;
         for (long i = 0; i < kWarmReps; ++i) call();
-        for (long i = 0; i < perf_iters; ++i) call();        // measured by external perf
+        for (long i = 0; i < perf_iters; ++i) call();
         return;
     }
     const NbStat st = nb_measure("pass", reps, inner, call);
@@ -105,4 +94,4 @@ void pass_microbench(unsigned IP, std::size_t ido, std::size_t l1, bool last,
                 st.cyc, st.cyc / static_cast<double>(span), st.us);
 }
 
-}  // namespace bench
+}

@@ -1,4 +1,3 @@
-// The README Quick start, runnable. The program returns nonzero if the round trip fails.
 #include <admiral/admiral.hpp>
 
 #include <cmath>
@@ -14,13 +13,13 @@ int main() {
     const auto input = x;
 
     admiral::plan<double> p(x.size());
-    p.forward(x);                  // in place
-    p.inverse(x);                  // divides by 1024
+    p.forward(x);
+    p.inverse(x);
 
-    admiral::plan<double> p2d({64, 64});              // N-D; r2c/DCT too, see header
+    admiral::plan<double> p2d({64, 64});
     admiral::plan<double> p8(1 << 20, {.nthreads = 8});
 
-    admiral::forward<double>(x, x);   // one-shot, no plan
+    admiral::forward<double>(x, x);
     admiral::inverse<double>(x, x);
 
     double err = 0;

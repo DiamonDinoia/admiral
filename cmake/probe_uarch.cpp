@@ -1,7 +1,3 @@
-// Configure-time probe: print the uarch the current flags select (`build_uarch`).
-// `CostModel.cmake` mixes the probe output into the sweep receipt name, so two
-// machines whose flags-hash collides (same compiler + -march=native on different
-// silicon) do not overwrite each other's receipts in a shared data dir.
 #include <cstdio>
 
 #include <admiral/detail/build_id.hpp>

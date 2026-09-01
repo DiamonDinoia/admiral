@@ -1,7 +1,6 @@
-// The float half of the exported ABI; see `cpp_api.hpp` for the definitions.
 
 #include "cpp_api.hpp"
-#include "admiral/detail/cxx_compat.hpp"  // `span`
+#include "admiral/detail/cxx_compat.hpp"
 
 namespace admiral {
 
@@ -26,4 +25,4 @@ template void forward<float>(const float*, std::complex<float>*, span<const std:
 template void inverse<float>(std::complex<float>*, float*, span<const std::size_t>,
                              const options&, std::optional<float>);
 
-}  // namespace admiral
+}

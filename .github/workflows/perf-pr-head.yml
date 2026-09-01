@@ -1,14 +1,5 @@
 name: perf-PR head
 
-# Untrusted half of the PR perf pipeline (executes PR-controlled CMake and
-# binaries), so it is strictly `contents: read` on a `pull_request` trigger, with
-# no secrets and no write token. The trusted companion perf-PR-comment.yml posts
-# the result via `workflow_run`. Structure mirrors finufft's
-# perftest-pr-head.yml, with two project-specific changes: the timing protocol
-# is the interleaved rotating-window min (runner timing is drift-heavy, a
-# plain A/B inverts on shared runners), and both binaries are built through the
-# BASE's benchmark+scripts trees, so only library code varies between arms.
-
 on:
   pull_request:
     types: [opened, synchronize, reopened]

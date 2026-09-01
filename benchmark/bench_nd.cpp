@@ -1,9 +1,3 @@
-// N-D and r2c paired compares against ducc0 (and FFTW when built).
-//
-// Split out of bench_fft.cpp for compile time. The TU instantiates the
-// `nd_plan` -> `col_dif_dispatch` chain for c2c and r2c at both precisions.
-// Explicitly instantiated at the bottom; bench_harness.hpp declares the
-// instantiations extern so the rest of the benchmark sees declarations only.
 
 #include <admiral/admiral.hpp>
 
@@ -32,13 +26,6 @@ std::string shape_to_string(const std::vector<std::size_t>& shape) {
     return s;
 }
 
-// N-D ducc0 c2c over all axes (row-major, axes={0..rank-1}). The tensor is
-// contiguous, last axis fastest, the layout the library's N-D plan transforms.
-// fct=1 (forward) / 1/Ntot (inverse) matches the library's scaling.
-//
-// The caller owns `out`: a per-rep allocation plus first-touch of the output must
-// not land in ducc0's time while the library arm writes into a hoisted buffer.
-// `in` == `out` runs ducc0 in place, as the library's round-trip inverse does.
 template<typename T>
 void ducc0_c2c_nd(const std::complex<T>* in, std::complex<T>* out,
                   const std::vector<std::size_t>& shape, bool forward, size_t nthreads = 1) {
@@ -53,9 +40,6 @@ void ducc0_c2c_nd(const std::complex<T>* in, std::complex<T>* out,
     detail_fft::c2c(in_view, out_view, axes, forward, forward ? T(1) : T(1) / T(Ntot), nthreads);
 }
 
-// N-D ducc0 r2c / c2r over all axes: real tensor <-> half-spectrum complex tensor
-// (innermost extent n/2+1), the layout the library's r2c produces. r2c is unscaled;
-// c2r carries the 1/Ntot inverse scale.
 template<typename T>
 void ducc0_r2c_nd(const T* in, std::complex<T>* out, const std::vector<std::size_t>& shape,
                   size_t nthreads = 1) {
@@ -68,7 +52,7 @@ void ducc0_r2c_nd(const T* in, std::complex<T>* out, const std::vector<std::size
     for (std::size_t i = 0; i < axes.size(); ++i) axes[i] = i;
     auto in_view  = detail_mav::cfmav<T>(in, rsh);
     auto out_view = detail_mav::vfmav<std::complex<T>>(out, csh);
-    detail_fft::r2c(in_view, out_view, axes, /*forward=*/true, T(1), nthreads);
+    detail_fft::r2c(in_view, out_view, axes, true, T(1), nthreads);
 }
 
 template<typename T>
@@ -85,15 +69,13 @@ void ducc0_c2r_nd(const std::complex<T>* in, T* out, const std::vector<std::size
     for (std::size_t i = 0; i < axes.size(); ++i) axes[i] = i;
     auto in_view  = detail_mav::cfmav<std::complex<T>>(in, csh);
     auto out_view = detail_mav::vfmav<T>(out, rsh);
-    detail_fft::c2r(in_view, out_view, axes, /*forward=*/false, T(1) / T(Nreal), nthreads);
+    detail_fft::c2r(in_view, out_view, axes, false, T(1) / T(Nreal), nthreads);
 }
 
-}  // namespace
+}
 
 namespace bench {
 
-// Identity-control floor: below `kIdentControlTol`, an arm-vs-itself ratio is
-// allocation-position spread, not a real difference.
 constexpr double kIdentControlTol = 0.03;
 
 template<typename T>
@@ -109,27 +91,21 @@ bool compare_nd(const std::vector<std::size_t>& shape, int reps, long inner, int
     std::vector<std::complex<T>> buf(Ntot);
 
     volatile T sink = T(0);
-    // Out-of-place, matching ducc0's call below (reads `data`, writes a separate
-    // output). The library's OOP execute folds input preservation into the row pass.
     const NbStat fft_fwd = nb_measure("fftnd_fwd", reps, inner, [&]() {
         p.forward(data.data(), buf.data());
         sink += buf[Ntot / 2].real();
     });
     const NbStat fft_rt = nb_measure("fftnd_rt", reps, inner, [&]() {
-        p.forward(data.data(), buf.data());  // OOP fwd (data preserved)
-        p.inverse(buf.data());               // inv in place on buf
+        p.forward(data.data(), buf.data());
+        p.inverse(buf.data());
         sink += buf[Ntot / 2].real();
     });
-    // Identity control: a second plan and buffer at a different allocation position,
-    // timed the same way as the first. A ratio other than ~1 is harness spread, and
-    // every ratio below is that spread wide.
     admiral::plan<T> p2(admiral::span<const std::size_t>(shape.data(), shape.size()), {nt});
     std::vector<std::complex<T>> buf2(Ntot);
     const NbStat ident_fwd = nb_measure("identnd_fwd", reps, inner, [&]() {
         p2.forward(data.data(), buf2.data());
         sink += buf2[Ntot / 2].real();
     });
-    // Same buffer discipline as the library arm: one hoisted output, in-place inverse.
     std::vector<std::complex<T>> dbuf(Ntot);
     const NbStat ducc_fwd = nb_measure("duccnd_fwd", reps, inner, [&]() {
         ducc0_c2c_nd<T>(data.data(), dbuf.data(), shape, true, nt);
@@ -148,8 +124,6 @@ bool compare_nd(const std::vector<std::size_t>& shape, int reps, long inner, int
 #endif
     (void)sink;
 
-    // If `nthreads` > 1, force wall-clock: the per-process cycle counter sees only
-    // the calling thread and undercounts the workers.
     const bool use_cyc = nthreads == 1
                       && fft_fwd.cyc > 0.0 && ducc_fwd.cyc > 0.0
                       && fft_rt.cyc > 0.0 && ducc_rt.cyc > 0.0;
@@ -188,7 +162,6 @@ bool compare_nd(const std::vector<std::size_t>& shape, int reps, long inner, int
               << (!ident_ok ? "  <== IDENTITY CONTROL REJECTED: harness untrustworthy" : "")
               << (lose ? "  <== LOSE (vs ducc0)" : "")
               << "\n";
-    // A rejected control invalidates every ratio on the line, the LOSE verdict included.
     return ident_ok && !(unstable || lose);
 }
 
@@ -209,7 +182,6 @@ bool compare_nd_r2c(const std::vector<std::size_t>& shape, int reps, long inner,
     std::vector<std::complex<T>> cbuf(Nc);
     std::vector<T> rbuf(Nreal);
 
-    // Accuracy: the library's r2c vs ducc0 r2c (half-spectrum), and round-trip identity.
     p.forward(real_in.data(), cbuf.data());
     std::vector<std::complex<T>> ref_c(Nc);
     ducc0_r2c_nd<T>(real_in.data(), ref_c.data(), shape);
@@ -241,8 +213,6 @@ bool compare_nd_r2c(const std::vector<std::size_t>& shape, int reps, long inner,
         p.inverse(rt_c.data(), rbuf.data());
         sink += rbuf[Nreal / 2];
     });
-    // Identity control: a second plan and buffer at a different allocation position,
-    // timed the same way as the first, so its ratio bounds the harness spread.
     admiral::plan_r2c<T> p2(admiral::span<const std::size_t>(shape.data(), shape.size()),
                             {nt});
     std::vector<std::complex<T>> cbuf2(Nc);
@@ -250,7 +220,6 @@ bool compare_nd_r2c(const std::vector<std::size_t>& shape, int reps, long inner,
         p2.forward(real_in.data(), cbuf2.data());
         sink += cbuf2[Nc / 2].real();
     });
-    // Hoisted, like the library arm's cbuf/rbuf.
     std::vector<std::complex<T>> dc(Nc);
     std::vector<T> dr(Nreal);
     const NbStat ducc_fwd = nb_measure("ducc_r2c_fwd", reps, inner, [&]() {
@@ -270,8 +239,6 @@ bool compare_nd_r2c(const std::vector<std::size_t>& shape, int reps, long inner,
 #endif
     (void)sink;
 
-    // If `nthreads` > 1, force wall-clock: the per-process cycle counter sees only
-    // the calling thread and undercounts the workers.
     const bool use_cyc = nthreads == 1
                       && fft_fwd.cyc > 0.0 && ducc_fwd.cyc > 0.0
                       && fft_rt.cyc > 0.0 && ducc_rt.cyc > 0.0;
@@ -311,7 +278,6 @@ bool compare_nd_r2c(const std::vector<std::size_t>& shape, int reps, long inner,
               << (!ident_ok ? "  <== IDENTITY CONTROL REJECTED: harness untrustworthy" : "")
               << (lose ? "  <== LOSE (vs ducc0)" : "")
               << "\n";
-    // A rejected control invalidates every ratio on the line, the LOSE verdict included.
     return ident_ok && !(unstable || lose);
 }
 
@@ -333,8 +299,6 @@ bool compare_nd_robust(const std::vector<std::size_t>& shape, int rounds, int re
         auto plan = std::make_shared<admiral::plan<T>>(sp, admiral::options{nt});
         auto buf  = std::make_shared<std::vector<std::complex<T>>>(Ntot);
         ab_engine e;
-        // Out-of-place forward (`data` -> `buf`): preserves the input like ducc0's
-        // c2c does, and folds the copy into the cache-hot innermost pass.
         e.fwd = [&, plan, buf]() {
             plan->forward(data.data(), buf->data());
             sink += (*buf)[Ntot / 2].real();
@@ -469,4 +433,4 @@ template bool compare_nd_robust<double>(const std::vector<std::size_t>&, int, in
 template bool compare_nd_r2c_robust<float>(const std::vector<std::size_t>&, int, int, long, int);
 template bool compare_nd_r2c_robust<double>(const std::vector<std::size_t>&, int, int, long, int);
 
-}  // namespace bench
+}

@@ -1,11 +1,5 @@
 name: perf-master
 
-# Every master push runs an FFTW-relative snapshot plus an A-vs-A sanity leg that
-# exposes runner drift. Builds pin x86-64-v3 (runners come without AVX-512
-# guarantees), so this is a TREND series for regression alarms, not the
-# tuned-native numbers the README quotes. Artifacts accumulate history; nothing
-# gates.
-
 on:
   push:
     branches: [master]
@@ -22,8 +16,6 @@ jobs:
             -DADM_TARGET_ARCH=x86-64-v3 -DADM_BUILD_TESTS=OFF -DCMAKE_CXX_COMPILER=g++-14 -DADM_BENCH_FFTW=ON
           cmake --build build -j "$(nproc)"
       - name: admiral vs FFTW_MEASURE (interleaved, in-process)
-        # --fftw-ab runs its own reference DFT per size (O(N^2)), so the grid
-        # stops at 16384. Rounds rotate arms; ratio = admiral / fftw.
         run: |
           build/benchmark/admiral_benchmark --fftw-ab \
             --sizes=64,128,1024,4096,8192,1260,16384 --prec=f64 \

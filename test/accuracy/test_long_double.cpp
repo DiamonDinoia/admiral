@@ -1,12 +1,9 @@
-// The long double backend (`detail/scalar_fft.hpp`): `plan` and `plan_r2c` against
-// `reference_dft` and round-trips, over smooth, prime and Bluestein sizes. Bounds
-// stay within `fft_tol<long double>`; the reference rounds at long double precision.
 #include <catch2/catch_test_macros.hpp>
 
 #include "utils/reference.hpp"
 
 #include <admiral/admiral.hpp>
-#include <admiral/detail/scalar_fft.hpp>  // `scalar_twiddle`
+#include <admiral/detail/scalar_fft.hpp>
 
 #include <cmath>
 #include <complex>
@@ -19,8 +16,6 @@ namespace {
 using lt_t = long double;
 using lc_t = std::complex<lt_t>;
 
-// `relerrtwonorm` accumulates in double, whose ~2e-16 floor sits far above the long
-// double engine's few-ld-ulp error. Accumulate in long double here.
 template<typename V>
 long double relerr_ld(const std::vector<V>& ref, const std::vector<V>& got) {
     REQUIRE(ref.size() == got.size());
@@ -40,9 +35,6 @@ long double relerr_ld(const std::vector<V>& ref, const std::vector<V>& got) {
 template<typename V>
 void require_close_lt(const std::vector<V>& ref, const std::vector<V>& got) {
     const long double err = relerr_ld(ref, got);
-    // Report the error in eps units too, because long double width is host-dependent:
-    // x87 double-extended (64-bit mantissa) on x86-64 Linux, binary128 (113-bit) on
-    // aarch64, 53-bit plain double on arm64 macOS and MSVC.
     INFO("relative L2 error " << static_cast<double>(err) << " = "
                               << static_cast<double>(err / std::numeric_limits<lt_t>::epsilon())
                               << " eps");
@@ -58,8 +50,6 @@ std::vector<lc_t> random_c(std::size_t n) {
     return x;
 }
 
-// Sizes: 7-smooth, primes inside the direct-DFT band, primes and prime-power
-// residues beyond it (Bluestein), and one large composite.
 constexpr std::size_t sizes[] = {1, 2, 4, 8, 16, 27, 32, 64, 255, 1024,
                                  3, 11, 13, 17, 31, 37, 101, 821, 4093, 3939};
 
@@ -69,9 +59,8 @@ TEST_CASE("long double 1-D c2c matches reference_dft", "[longdouble]") {
         admiral::plan<lt_t> p(n);
         auto fwd = x;
         p.forward(fwd.data());
-        // `reference_dft` is O(N^2); the big sizes get round-trip-only checks.
         if (n <= 1024) {
-            const auto ref = reference_dft<lt_t, lt_t>(x, /*forward=*/true);
+            const auto ref = reference_dft<lt_t, lt_t>(x, true);
             require_close_lt(ref, fwd);
         }
         auto rt = x;
@@ -94,9 +83,6 @@ TEST_CASE("long double N-D c2c round-trips", "[longdouble]") {
     }
 }
 
-// A round trip alone cannot separate r2c from c2r: a sign flip or a permuted
-// half-spectrum that both directions share cancels. Check the spectrum itself
-// against the reference DFT of the real input, then round-trip.
 TEST_CASE("long double r2c/c2r round-trip", "[longdouble]") {
     for (const std::size_t n : {1ul, 2ul, 5ul, 8ul, 31ul, 64ul, 1023ul, 4093ul}) {
         std::vector<lt_t> x(n);
@@ -106,10 +92,10 @@ TEST_CASE("long double r2c/c2r round-trip", "[longdouble]") {
         std::vector<lc_t> spec(rp.cplx_size());
         rp.forward(x.data(), spec.data());
 
-        if (n <= 1024) {   // `reference_dft` is O(N^2)
+        if (n <= 1024) {
             std::vector<lc_t> xc(n);
             for (std::size_t i = 0; i < n; ++i) xc[i] = {x[i], lt_t(0)};
-            const auto full = reference_dft<lt_t, lt_t>(xc, /*forward=*/true);
+            const auto full = reference_dft<lt_t, lt_t>(xc, true);
             const auto nc = static_cast<std::ptrdiff_t>(rp.cplx_size());
             const std::vector<lc_t> half(full.begin(), full.begin() + nc);
             require_close_lt(half, spec);
@@ -137,11 +123,6 @@ TEST_CASE("long double r2c N-D round-trip", "[longdouble]") {
     require_close_lt(x, back);
 }
 
-// Threading must not move the answer. The backend slabs scratch per thread id; a
-// slab that misses one call site is a silent data race. Every shape is wide enough
-// to fan out. 4093 is prime and above the direct-DFT cap, so its lines take the
-// Bluestein path, which owns a second engine and a second slab array. {65536} has one
-// line at or above `kThreadMinElems`, so the engine splits its own first level.
 TEST_CASE("long double plans thread without sharing scratch", "[longdouble][threads]") {
     const std::vector<std::vector<std::size_t>> shapes = {
         {64, 4093}, {32, 3939}, {8, 8, 821}, {65536}};
@@ -153,7 +134,7 @@ TEST_CASE("long double plans thread without sharing scratch", "[longdouble][thre
 
         const auto x = random_c(total);
         admiral::plan<lt_t> serial(sp);
-        admiral::plan<lt_t> threaded(sp, {/*nthreads=*/4});
+        admiral::plan<lt_t> threaded(sp, {4});
         auto a = x, b = x;
         serial.forward(a.data());
         threaded.forward(b.data());
@@ -163,7 +144,7 @@ TEST_CASE("long double plans thread without sharing scratch", "[longdouble][thre
         require_close_lt(a, b);
 
         admiral::plan_r2c<lt_t> rserial(sp);
-        admiral::plan_r2c<lt_t> rthreaded(sp, {/*nthreads=*/4});
+        admiral::plan_r2c<lt_t> rthreaded(sp, {4});
         std::vector<lt_t> r(rserial.real_size());
         std::uniform_real_distribution<lt_t> unif(-1, 1);
         for (auto& v : r) v = unif(rng);
@@ -172,7 +153,6 @@ TEST_CASE("long double plans thread without sharing scratch", "[longdouble][thre
         rthreaded.forward(r.data(), cb.data());
         require_close_lt(ca, cb);
 
-        // c2r consumes its spectrum, so give each plan its own copy.
         std::vector<lt_t> ra(rserial.real_size()), rb(rserial.real_size());
         auto ca_copy = ca, cb_copy = cb;
         rserial.inverse(ca_copy.data(), ra.data());
@@ -182,10 +162,6 @@ TEST_CASE("long double plans thread without sharing scratch", "[longdouble][thre
     }
 }
 
-// cos and sin of a reduced argument by Taylor series. |t| <= pi/2 converges in
-// under 30 terms, so the series is its own reference at any width: no wider carrier
-// exists on a binary128 host. The phase case below is the suite's only twiddle-PHASE
-// check: modulus cannot see a rotation, and the whole transform inherits the error.
 void series_cos_sin(lt_t t, lt_t& c, lt_t& s) {
     const lt_t t2 = t * t;
     lt_t ct = 1, cs = 1, st = t, sn = t;
@@ -206,7 +182,6 @@ TEST_CASE("long double: scalar_twiddle phase matches an independent series", "[l
     std::size_t worst_k = 0, worst_n = 0;
     for (const std::size_t n : {31u, 101u, 821u, 1024u, 3939u, 4093u, 8192u}) {
         for (std::size_t k = 0; k < n; ++k) {
-            // `scalar_twiddle`'s own reduction, so the series sees the same argument.
             const std::size_t k4 = 4 * k, q = k4 / n;
             const lt_t rem = static_cast<lt_t>(k4 % n) / static_cast<lt_t>(4 * n);
             lt_t c, s;
@@ -215,7 +190,6 @@ TEST_CASE("long double: scalar_twiddle phase matches an independent series", "[l
                               : q == 1 ? lc_t(-s, c)
                               : q == 2 ? lc_t(-c, -s)
                                        : lc_t(s, -c);
-            // Backward is the unconjugated exp(+2 pi i k/n), which is what the series gives.
             const lc_t got = scalar_twiddle<lt_t>(k, n, false);
             const lt_t e = std::abs(std::conj(want) * got - lc_t(1, 0)) / eps;
             if (e > worst) {
@@ -243,11 +217,11 @@ TEST_CASE("long double: scalar_twiddle folds the quadrants exactly", "[longdoubl
             CAPTURE(k);
             const lc_t w = scalar_twiddle<lt_t>(k, n, true);
             REQUIRE(std::abs(std::norm(w) - 1.0L) <= 4 * eps);
-            const lc_t wb = scalar_twiddle<lt_t>(k, n, false);   // backward conjugates
+            const lc_t wb = scalar_twiddle<lt_t>(k, n, false);
             REQUIRE(wb.real() == w.real());
             REQUIRE(wb.imag() == -w.imag());
         }
     }
 }
 
-}  // namespace
+}

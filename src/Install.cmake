@@ -1,10 +1,3 @@
-# `find_package(admiral)` -> `admiral::admiral{,_static}`, `admiral::admiral_c{,_static}`,
-#                            `admiral::fftw{,_static}`
-# Shared and static per interface, all six self-contained machine code for
-# `std::complex<float>` and `std::complex<double>`. The `OBJECT` libraries and
-# `admiral_internal` are compile-time devices and are not installed.
-# Only the public headers go in: the three interfaces plus `cxx_compat.hpp`, the C++17
-# fallback used by `admiral.hpp`. No `xsimd`, no `poet`, no other `admiral/detail`.
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)

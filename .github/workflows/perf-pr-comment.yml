@@ -1,9 +1,5 @@
 name: perf-PR comment
 
-# The trusted half reads the artifact produced by perf-pr-head.yml and refreshes
-# one PR comment. Runs from the default branch with a write token; it never
-# checks out or executes anything from the PR.
-
 on:
   workflow_run:
     workflows: [perf-PR head]

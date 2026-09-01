@@ -1,46 +1,29 @@
 #pragma once
 
-// Cache geometry, probed once from the OS. These values size cache tiles and
-// residency decisions only; SIMD width is compile-time via `-march`.
-
 #include <cstddef>
 #if defined(__APPLE__)
 #include <cstdint>
 #endif
 
 #if defined(__linux__)
-#include <unistd.h>            // sysconf(_SC_LEVEL*_CACHE_SIZE)
-#include <cstdio>              // fscanf (L3 shared_cpu_list)
+#include <unistd.h>
+#include <cstdio>
 #elif defined(__APPLE__)
-#include <sys/sysctl.h>        // sysctlbyname("hw.l*cachesize")
+#include <sys/sysctl.h>
 #endif
 
 namespace admiral {
 namespace detail {
 
-// Coherence-line bytes on every ISA targeted; the library's one documented
-// non-arch constant. Not `hardware_destructive_interference_size` (absent under
-// clang), not arch `alignment()` (a register width would share one line).
 inline constexpr std::size_t kCacheLine = 64;
 
-// L1d tile bytes: the in-place pass's phase-A store / phase-B reload block
-// limit, and the bound the routing model prices that pass against. Fixed
-// rather than the probed L1 because the pass's tiling assumes `kIpTileBytes`.
 inline constexpr std::size_t kIpTileBytes = 32u * 1024u;
 
-// L1d tile bytes for the fused multi-pass bodies. Each fused body divides the
-// tile by the body's live plane count, so the sum stays in one tile. A fused
-// body tiles planes, not blocks, so `kFusedTileBytes` is independent of
-// `kIpTileBytes`.
 inline constexpr std::size_t kFusedTileBytes = 16u * 1024u;
 
-// Cache sizes (bytes), probed once (function-local static); `sysconf` on
-// Linux, `sysctl` on macOS/BSD, the fallbacks when the OS reports nothing.
 inline constexpr std::size_t kFallbackL2Bytes = std::size_t{2} << 20;
 inline constexpr std::size_t kFallbackL3Bytes = std::size_t{45} << 20;
 
-// `l3_cores` counts the CPUs sharing the L3 that `l3` measures: a per-worker
-// footprint divides by that count, not by a machine-wide `nthreads`. 0 = unknown.
 struct cache_bytes { std::size_t l2, l3, l3_cores; };
 [[nodiscard]] inline const cache_bytes& cpu_cache() {
     static const cache_bytes c = [] {
@@ -49,7 +32,7 @@ struct cache_bytes { std::size_t l2, l3, l3_cores; };
         const auto pos = [](long v, std::size_t fb) { return v > 0 ? std::size_t(v) : fb; };
         d.l2  = pos(::sysconf(_SC_LEVEL2_CACHE_SIZE),  d.l2);
         d.l3  = pos(::sysconf(_SC_LEVEL3_CACHE_SIZE),  d.l3);
-        d.l3_cores = [] {  // e.g. "0-3" or "0-3,8-11"; 0 means "unread -> unknown"
+        d.l3_cores = [] {
             if (std::FILE* f = std::fopen("/sys/devices/system/cpu/cpu0/cache/index3/"
                                           "shared_cpu_list", "re")) {
                 std::size_t n = 0; unsigned a, b; char sep = 0;
@@ -75,5 +58,5 @@ struct cache_bytes { std::size_t l2, l3, l3_cores; };
     return c;
 }
 
-}  // namespace detail
-}  // namespace admiral
+}
+}

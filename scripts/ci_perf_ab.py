@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Interleaved A/B wall-clock compare of two admiral_benchmark binaries.
 
 Runner timing drifts, so each cell runs back-to-back inside one window, round order
@@ -14,7 +13,7 @@ buffer copy compresses ratios toward 1 at large N. Both binaries must offer
 import argparse, json, re, subprocess, sys
 import math
 
-GRID_CI = [  # the cells this project's diffs touch
+GRID_CI = [
     (64, "f64", 400000), (64, "f32", 400000),
     (1024, "f64", 100000), (1024, "f32", 100000),
     (8192, "f64", 20000), (65536, "f64", 3000),
@@ -29,13 +28,11 @@ GRID_FULL = GRID_CI + [
     (4194304, "f64", 15), (8388608, "f64", 15),
 ]
 
-
 def run_cell(binary, n, prec, iters):
     out = subprocess.run(
         [binary, f"--size={n}", f"--iters={iters}", f"--prec={prec}"],
         check=True, capture_output=True, text=True).stdout
     return float(re.search(r"per_call_us=([\d.]+)", out).group(1))
-
 
 def main():
     ap = argparse.ArgumentParser()
@@ -62,14 +59,12 @@ def main():
         results[f"{n},{p}"] = {"A": a, "B": b, "ratio": a / b, "spreadA": sa, "spreadB": sb}
         rows.append(f"{n:>9} {p:>4} {a:>10.3f} {b:>10.3f} {a/b:>7.3f} {sa:>6.1f} {sb:>6.1f}")
     print("\n".join(rows))
-    # Geometric mean of the per-cell ratios, the one-number verdict.
     geo = math.exp(sum(math.log(v["ratio"]) for v in results.values()) / len(results))
     print(f"geomean A/B = {geo:.4f} over {len(results)} cells")
     if args.json:
         with open(args.json, "w") as f:
             json.dump({"geomean": geo, "cells": results}, f, indent=1)
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

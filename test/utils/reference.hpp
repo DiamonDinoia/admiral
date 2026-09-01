@@ -1,13 +1,5 @@
 #pragma once
 
-// What a test compares against, and how close is close enough. One definition
-// for the whole suite; per-file copies drift.
-
-// A `-ffast-math` oracle is no more exact than what it judges, so test TUs must
-// not inherit the flag (`admiral_fast_math_flags` is PRIVATE). The compile-time
-// check is the only place a linkage regression is visible. `__FINITE_MATH_ONLY__`
-// alone does not define `__FAST_MATH__`, but still lets the compiler assume no
-// NaN/Inf in the reference accumulation.
 #ifdef __FAST_MATH__
 #error "test TUs must not be compiled with -ffast-math (see admiral_fast_math_flags)"
 #endif
@@ -17,7 +9,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include "admiral/detail/cxx_compat.hpp"  // `admiral::detail::remove_cvref_t`
+#include "admiral/detail/cxx_compat.hpp"
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <cmath>
@@ -30,57 +22,34 @@
 #include <type_traits>
 #include <vector>
 
-// Element count of a shape, over any range of extents: what the shared error budget
-// takes as Ntot for a separable N-D transform.
 template <typename Shape>
 std::size_t shape_product(const Shape& shape) {
     return std::reduce(std::begin(shape), std::end(shape), std::size_t{1}, std::multiplies<>{});
 }
 
-// Normwise relative L2 distance ||a-b||_2 / ||a||_2, with `a` the reference. The
-// norm is L2 rather than per-element, so a near-zero spectral bin cannot inflate the
-// ratio. Elements may be real or complex; the accumulators are double so a 2^20-point
-// float vector does not lose the error it reports.
 template <typename A, typename B>
 double relerrtwonorm(const A& a, const B& b) {
     static_assert(std::is_convertible_v<decltype(std::norm(a[0] - b[0])), double>,
                   "relerrtwonorm: element types must subtract to something normable");
-    // A reference may carry a WIDER element type than the result the reference judges,
-    // and the subtraction then promotes `b[m]`. clang reports the implicit promotion
-    // under `-Wdouble-promotion` and the suite builds with `-Werror`, so widen `b[m]`
-    // explicitly.
     using Ref = admiral::detail::remove_cvref_t<decltype(a[0])>;
     double err = 0.0, nrm = 0.0;
     for (std::size_t m = 0; m < std::size(a); ++m) {
         nrm += static_cast<double>(std::norm(a[m]));
         err += static_cast<double>(std::norm(a[m] - static_cast<Ref>(b[m])));
     }
-    // An all-zero reference has no scale to be relative to; `err`/`nrm` would be NaN,
-    // and `NaN <= tol` fails with a message that says nothing. Fall back to the
-    // absolute norm.
     return nrm > 0.0 ? std::sqrt(err / nrm) : std::sqrt(err);
 }
 
-// Relative-L2 budget: a flat multiple of eps, no N term. The scaled DFT is
-// unitary (kappa_2 == 1), so a small multiple of eps suffices. An N-dependent
-// bound like sqrt(N)*log2(N) can never fail at large N and is the trap to avoid.
-// `scale` compensates tests that compound several transforms.
 template<typename T>
 constexpr double fft_tol(double scale = 1.0) {
     return 32.0 * scale * static_cast<double>(std::numeric_limits<T>::epsilon());
 }
 
-// Catch2's `WithinAbs` takes `double`. Passing `float` arguments promotes the
-// arguments implicitly, which `-Wdouble-promotion` flags at every call site; convert
-// once here.
 template <typename A, typename B>
 auto WithinAbsT(const A target, const B margin) {
     return Catch::Matchers::WithinAbs(static_cast<double>(target), static_cast<double>(margin));
 }
 
-// The suite's one array comparison. The comparison reports the measured error rather
-// than "false" alone. A bare predicate inside a `REQUIRE` says nothing about how far
-// off the result is.
 template <typename A, typename B>
 void require_close(const A& got, const B& ref, double tol) {
     REQUIRE(std::size(got) == std::size(ref));
@@ -89,10 +58,6 @@ void require_close(const A& got, const B& ref, double tol) {
     REQUIRE(err <= tol);
 }
 
-// The same check over the C API's structs, which have no `operator-`. Cast the
-// pointers rather than re-derive the comparison. `adm_complex` is layout-compatible
-// with `std::complex` by documented contract (`admiral.h`), so the cast is also the
-// conversion a C caller performs.
 template <typename C>
 void require_close_c(const C* got, const C* ref, std::size_t size, double tol) {
     using T = decltype(C::real);
@@ -100,9 +65,6 @@ void require_close_c(const C* got, const C* ref, std::size_t size, double tol) {
                   admiral::span(reinterpret_cast<const std::complex<T>*>(ref), size), tol);
 }
 
-// Neumaier-compensated energy sum: `long double` is `double` on Apple Silicon, so a
-// wider accumulator alone does not clear the transform's own error. Terms are
-// `std::norm`, hence non-negative; Neumaier's magnitude test reduces to `s >= t`.
 template <typename V>
 long double energy(const V& v) {
     long double s = 0, c = 0;
@@ -115,8 +77,6 @@ long double energy(const V& v) {
     return s + c;
 }
 
-// Parseval for the unnormalized forward: ||X||^2 == Ntot * ||x||^2. Energies are
-// squares, so an amplitude relative error e shows up here as ~2e, hence the scale.
 template<typename T, typename Xv, typename Xo>
 void require_parseval(const Xv& x, const Xo& X, std::size_t ntot, double scale = 4.0) {
     const double want = static_cast<double>(energy(x) * static_cast<long double>(ntot));
@@ -125,15 +85,10 @@ void require_parseval(const Xv& x, const Xo& X, std::size_t ntot, double scale =
     REQUIRE_THAT(got, Catch::Matchers::WithinRel(want, fft_tol<T>(scale)));
 }
 
-// Fraction of a turn of a DFT tone, K*n/N reduced exactly by integer mod first.
-// Forming K*n/N in `T` instead loses the low bits of a large angle. At N=2^20 the
-// loss is a 4e-10 relative error in the "generated input", which then reads as a
-// library failure. K*n <= N^2, so `size_t` covers every N a test builds.
 constexpr long double turn_fraction(std::size_t K, std::size_t n, std::size_t N) {
     return static_cast<long double>((K * n) % N) / static_cast<long double>(N);
 }
 
-// exp(+2*pi*i*turns), rounded to `T` once at the end. `turns` may exceed 1.
 template<typename T>
 std::complex<T> unit_phasor(long double turns) {
     const long double a =
@@ -141,10 +96,6 @@ std::complex<T> unit_phasor(long double turns) {
     return {static_cast<T>(std::cos(a)), static_cast<T>(std::sin(a))};
 }
 
-// Direct O(N^2) DFT reference with `long double` accumulation. Forward uses
-// exp(-2*pi*i*k*n/N) (this library's sign convention), unnormalized. The N-entry
-// root table turns the inner loop into lookups, not N^2 libm calls. `Out` widens
-// the reference where the judged result arrives in a narrower type.
 template<typename T, typename Out = T>
 std::vector<std::complex<Out>> reference_dft(const std::vector<std::complex<T>>& x, bool forward) {
     const std::size_t N = x.size();
@@ -173,7 +124,6 @@ std::vector<std::complex<T>> make_signal(std::size_t N) {
     return v;
 }
 
-// Deterministic but non-trivial input.
 template<typename T>
 std::vector<std::complex<T>> make_input(std::size_t N) {
     std::vector<std::complex<T>> x(N);
@@ -183,7 +133,6 @@ std::vector<std::complex<T>> make_input(std::size_t N) {
     return x;
 }
 
-// Deterministic pseudo-random input; `seed` keeps a failure reproducible.
 template<typename T>
 std::vector<std::complex<T>> make_input(std::size_t n, unsigned seed) {
     std::mt19937 gen(seed);

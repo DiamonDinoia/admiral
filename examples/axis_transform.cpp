@@ -1,5 +1,3 @@
-// `axis_plan` transforms ONE axis of a tensor, possibly a rectangular sub-box.
-// Chaining both axes equals the full 2-D transform.
 #include <admiral/admiral.hpp>
 
 #include <cmath>
@@ -16,7 +14,7 @@ int main() {
 
     admiral::axis_plan<double> ax0({rows, cols}, 0, true);
     admiral::axis_plan<double> ax1({rows, cols}, 1, true);
-    ax0.execute(a.data(), {}, {});       // empty box = full extent
+    ax0.execute(a.data(), {}, {});
     ax1.execute(a.data(), {}, {});
 
     admiral::plan<double> full({rows, cols});

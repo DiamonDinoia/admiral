@@ -1,24 +1,8 @@
 #pragma once
 
-// ----------------------------------------------------------------------------
-// C++17 compatibility layer, one direction per C++20 feature:
-//   `ADM_CONSTEVAL`     consteval, else constexpr. Every call site is a constant
-//                       context, so the fallback cannot drift into runtime codegen.
-//   `ADM_UNLIKELY`      [[unlikely]], empty where rejected (clang pre-C++20; cold paths).
-//   `ADM_IS_CONSTANT_EVALUATED` / `ADM_UNREACHABLE`: the std form, else the builtin.
-//   `admiral::span`     `std::span` by alias, else a dynamic-extent polyfill.
-//   `detail::bit_*`, `detail::numbers`, `type_identity_t`, `remove_cvref_t`, `cmp_less`,
-//   `make_unique_for_overwrite`, `const_find`: the std form where available, else a
-//   constexpr equivalent.
-//   `is_precision_v`    the element types the C++ API compiles for;
-//   `is_simd_precision_v`  the two with SIMD kernels.
-// Unlike `macros.hpp` nothing undefs these; the `ADM_`/`admiral::` prefixes avoid
-// collisions.
-// ----------------------------------------------------------------------------
-
 #include <array>
 #include <cstddef>
-#include <cstdlib>   // `std::abort`, the `ADM_UNREACHABLE` fallback
+#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <type_traits>
@@ -46,14 +30,12 @@
 #  define ADM_IS_CONSTANT_EVALUATED() (false)
 #endif
 
-// clang rejects the attribute pre-C++20 under `-Werror`; gcc accepts it as an extension.
 #if ADM_CXX20 || (defined(__GNUC__) && !defined(__clang__))
 #  define ADM_UNLIKELY [[unlikely]]
 #else
 #  define ADM_UNLIKELY
 #endif
 
-// A statement, not an expression, in both arms.
 #if defined(__cpp_lib_unreachable) && __cpp_lib_unreachable >= 202202L
 #  define ADM_UNREACHABLE() std::unreachable()
 #elif defined(__GNUC__) || defined(__clang__)
@@ -62,8 +44,6 @@
 #  define ADM_UNREACHABLE() std::abort()
 #endif
 
-// The gates below read each header's own macro; libc++ does not leak the macros
-// transitively.
 #if __has_include(<span>)
 #  include <span>
 #endif
@@ -82,8 +62,6 @@ using std::span;
 #else
 inline constexpr std::size_t dynamic_extent = std::numeric_limits<std::size_t>::max();
 
-// Dynamic-extent `span` subset; the tree uses no static extents. `is_span` is a class
-// template because variable templates cannot be partially specialized before C++20.
 template <class T, std::size_t Extent>
 class span;
 template <class C>
@@ -130,8 +108,6 @@ public:
     constexpr span(const std::array<U, N>& a) noexcept : p_(a.data()), n_(N) {}
     template <class C, enable_container_t<C, T> = 0>
     constexpr span(C& c) noexcept : p_(c.data()), n_(c.size()) {}
-    // The `data()` type must convert to `T*`, so only a `span` of const elements binds a
-    // temporary, matching the `std::span` range constructor.
     template <class C, class D = decltype(std::declval<const C&>().data()),
               std::enable_if_t<!is_span<std::decay_t<C>>::value && !std::is_array<C>::value &&
                                    std::is_convertible_v<D, T*>,
@@ -227,16 +203,13 @@ has_single_bit(U x) noexcept {
 #if defined(__cpp_lib_math_constants) && __cpp_lib_math_constants >= 201907L
 namespace numbers = std::numbers;
 #else
-// The `std::numbers` digit strings ride a `long double` carrier. A decimal literal
-// rounds to the same float/double parsed directly or converted, so the doubles match
-// the library's.
 namespace numbers {
 namespace impl {
 inline constexpr long double pi_ld = 3.141592653589793238462643383279502884L;
 inline constexpr long double sqrt2_ld = 1.414213562373095048801688724209698079L;
 inline constexpr long double ln2_ld = 0.693147180559945309417232121458176568L;
 inline constexpr long double log2e_ld = 1.442695040888963407359924681001892137L;
-}  // namespace impl
+}
 inline constexpr double pi = static_cast<double>(impl::pi_ld);
 inline constexpr double ln2 = static_cast<double>(impl::ln2_ld);
 inline constexpr double log2e = static_cast<double>(impl::log2e_ld);
@@ -244,13 +217,12 @@ template <class T>
 inline constexpr T pi_v = static_cast<T>(impl::pi_ld);
 template <class T>
 inline constexpr T sqrt2_v = static_cast<T>(impl::sqrt2_ld);
-}  // namespace numbers
+}
 #endif
 
 #if defined(__cpp_lib_type_identity) && __cpp_lib_type_identity >= 201806L
 using std::type_identity_t;
 #else
-// The struct indirection makes the result a non-deduced context, which every call site needs.
 template <class T>
 struct type_identity {
     using type = T;
@@ -270,7 +242,6 @@ using remove_cvref_t = std::remove_cv_t<std::remove_reference_t<T>>;
     __cpp_lib_smart_ptr_for_overwrite >= 202002L
 using std::make_unique_for_overwrite;
 #else
-// Only the unbounded-array form, the one the library calls.
 template <class T>
 [[nodiscard]] std::unique_ptr<T> make_unique_for_overwrite(std::size_t n) {
     static_assert(std::is_array_v<T> && std::extent_v<T> == 0, "admiral: T must be U[]");
@@ -292,20 +263,17 @@ template <class A, class B>
 }
 #endif
 
-// `long double` reaches the scalar backend; `float` and `double` reach the SIMD engine.
 template <class T>
 inline constexpr bool is_simd_precision_v =
     std::is_same_v<T, float> || std::is_same_v<T, double>;
 template <class T>
 inline constexpr bool is_precision_v = is_simd_precision_v<T> || std::is_same_v<T, long double>;
 
-// `std::find` is constexpr only from C++20; the cost-model helpers scan in constant
-// evaluation.
 template <class It, class V>
 [[nodiscard]] constexpr It const_find(It first, It last, const V& v) {
     while (first != last && !(*first == v)) ++first;
     return first;
 }
 
-}  // namespace detail
-}  // namespace admiral
+}
+}

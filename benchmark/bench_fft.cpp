@@ -18,24 +18,18 @@
 #include <utility>
 #include <ducc0/fft/fft.h>
 #include <nanobench.h>
-// The benchmark measures engine internals (routes, passes, twiddle tables) that
-// admiral.hpp does not expose.
-#include <admiral/detail/four_step.hpp>     // choose_four_step_split, gate_four_step_cost
-#include <admiral/detail/math.hpp>          // codelet_dispatch, is_codelet_catalog
-#include <admiral/detail/plan.hpp>          // plan_impl
-#include <admiral/detail/twiddles.hpp>      // build_dif_factor_plan, dif_wide_radices
+#include <admiral/detail/four_step.hpp>
+#include <admiral/detail/math.hpp>
+#include <admiral/detail/plan.hpp>
+#include <admiral/detail/twiddles.hpp>
 
 #include "bench_harness.hpp"
 
-// Everything here has internal linkage; only `main()` is external. The shared
-// timing and A/B harness lives in bench_harness.hpp (namespace bench).
 using namespace bench;
 using admiral::span;
 
 namespace {
 
-// Wrapper for ducc0 FFT that isolates the ducc0 API details. Templated on precision so
-// float and double race against the same ducc0 `c2c` entry point.
 template<typename T>
 std::vector<std::complex<T>> ducc0_forward_fft(const std::vector<std::complex<T>>& input,
                                                size_t nthreads = 1) {
@@ -48,7 +42,6 @@ std::vector<std::complex<T>> ducc0_forward_fft(const std::vector<std::complex<T>
     auto in_view = detail_mav::cfmav<std::complex<T>>(input.data(), shape);
     auto out_view = detail_mav::vfmav<std::complex<T>>(output.data(), shape);
 
-    // forward=true, fct=1.0
     detail_fft::c2c(in_view, out_view, {0}, true, T(1), nthreads);
 
     return output;
@@ -66,19 +59,11 @@ std::vector<std::complex<T>> ducc0_inverse_fft(const std::vector<std::complex<T>
     auto in_view = detail_mav::cfmav<std::complex<T>>(input.data(), shape);
     auto out_view = detail_mav::vfmav<std::complex<T>>(output.data(), shape);
 
-    // forward=false, fct=1/N for proper inverse scaling
     detail_fft::c2c(in_view, out_view, {0}, false, T(1) / T(N), nthreads);
 
     return output;
 }
 
-// Accuracy gate: every timed plan must reproduce a reference DFT to within tolerance.
-// A plan that dispatches to nothing would otherwise time as impossibly fast.
-
-// Naive O(N^2) reference DFT in double precision: ground truth for f32 and f64.
-// Forward, unnormalized: X[k] = sum_n x[n] e^{-2*pi*i*k*n/N}. The angle uses the
-// exact integer turn fraction ((k*n) mod N)/N, so the reference stays accurate at
-// the largest swept sizes.
 template<typename T>
 std::vector<std::complex<double>>
 reference_forward_dft(const std::vector<std::complex<T>>& in) {
@@ -98,12 +83,8 @@ reference_forward_dft(const std::vector<std::complex<T>>& in) {
     return out;
 }
 
-// Largest N the O(N^2) reference is usable at. Above `kNaiveRefMaxN`, verifiers
-// gate on a round-trip check instead.
 constexpr std::size_t kNaiveRefMaxN = 65536;
 
-// Relative L2 error ||got - ref||_2 / ||ref||_2: a correct transform sits near
-// machine eps; one that did not run has O(1) error.
 template<typename T>
 double l2_rel_error(const std::vector<std::complex<T>>& got,
                     const std::vector<std::complex<double>>& ref) {
@@ -120,7 +101,7 @@ double l2_rel_error(const std::vector<std::complex<T>>& got,
 struct BenchmarkResult {
     size_t size;
     std::string type;
-    std::string prec;   // "f32" or "f64"
+    std::string prec;
     double fft_fwd_ms;
     double fft_rt_ms;
     double ducc0_fwd_ms;
@@ -144,19 +125,15 @@ struct BenchmarkResult {
 
 std::vector<BenchmarkResult> all_results;
 
-// nanobench-backed timer: MEDIAN wall-clock ms per call. nanobench auto-tunes
-// epoch length, warms up, and reports the median (insensitive to scheduler noise).
 template<typename Func>
 double time_execution(const char* name, Func&& func) {
     ankerl::nanobench::Bench b;
-    b.output(nullptr);   // suppress nanobench's own table; main prints the report
+    b.output(nullptr);
     b.warmup(10);
     b.run(name, std::forward<Func>(func));
-    // `Measure::elapsed` is seconds per op; convert to milliseconds.
     return b.results().back().median(ankerl::nanobench::Result::Measure::elapsed) * 1e3;
 }
 
-// Comma-separated sizes; an item may be a closed range "lo-hi".
 std::vector<std::size_t> parse_size_list(const std::string& s) {
     std::vector<std::size_t> sizes;
     size_t pos = 0;
@@ -179,8 +156,6 @@ std::vector<std::size_t> parse_size_list(const std::string& s) {
     return sizes;
 }
 
-// Parse "RxC,RxCxD,.." into a list of N-D shapes (each a vector of extents) for
-// the N-D compare mode. Any rank; "16x256" is 2D, "64x64x64" is 3D, etc.
 std::vector<std::vector<std::size_t>> parse_nd_shape_list(const std::string& s) {
     std::vector<std::vector<std::size_t>> shapes;
     size_t pos = 0;
@@ -238,7 +213,6 @@ std::string join_radices(const std::vector<unsigned>& radices) {
 void enumerate_dif_radix_sequences_impl(std::size_t remaining,
                                         std::vector<unsigned>& current,
                                         std::vector<std::vector<unsigned>>& out) {
-    // 16/32 only where the engine dispatch admits them (32-reg ISAs).
     static constexpr unsigned kRadices[] = {2, 3, 4, 5, 7, 8, 11, 16, 32};
     static constexpr std::size_t kNumRadices =
         admiral::detail::dif_wide_radices ? 9u : 7u;
@@ -267,7 +241,7 @@ admiral::detail::plan_impl<T> make_factor_sweep_plan(std::size_t n,
                                                  bool is_forward,
                                                  const std::vector<unsigned>& radices) {
     const auto plan = make_dif_factor_plan(radices);
-    return admiral::detail::plan_impl<T>(n, is_forward, /*nthreads=*/1, &plan);
+    return admiral::detail::plan_impl<T>(n, is_forward, 1, &plan);
 }
 
 template<typename T>
@@ -280,8 +254,6 @@ void factor_sweep_size(std::size_t N, const std::vector<unsigned>& radices, int 
     auto inv_plan = make_factor_sweep_plan<T>(N, false, radices);
     std::vector<std::complex<T>> buf(N);
 
-    // Accuracy gate: a decomposition that fails to reproduce the reference DFT is
-    // reported as FAIL and never timed.
     std::copy(data.begin(), data.end(), buf.begin());
     fwd_plan.execute(span(buf));
     const double l2err = l2_rel_error<T>(buf, reference_forward_dft<T>(data));
@@ -317,8 +289,6 @@ void factor_sweep_size(std::size_t N, const std::vector<unsigned>& radices, int 
     });
     (void)sink;
 
-    // Ratio from CPU cycles when counters exist, else wall clock. A wall-clock
-    // factor ranking does not transfer to cycles, the win/lose metric.
     const bool use_cyc = fft_fwd.cyc > 0.0 && ducc_fwd.cyc > 0.0
                       && fft_rt.cyc > 0.0 && ducc_rt.cyc > 0.0;
     const double fwd_ratio = use_cyc ? fft_fwd.cyc / ducc_fwd.cyc : fft_fwd.us / ducc_fwd.us;
@@ -364,14 +334,9 @@ void benchmark_size(size_t N, const std::string& type) {
         data[i] = std::complex<T>(std::sin(T(i) * T(0.1)), std::cos(T(i) * T(0.1)));
     }
 
-    // Build the plans once, which generates the twiddles at plan time. ducc0 caches
-    // its plans, so plan reuse is the fair comparison. The timed loop measures
-    // `execute()` only.
     admiral::plan<T> fwd_plan(N);
     admiral::plan<T> inv_plan(N);
 
-    // Benchmark fft forward (copy-in to match ducc0's out-of-place call, then
-    // in-place execute on the plan-owned dispatch).
     std::vector<std::complex<T>> fft_output(N);
     double fft_fwd_time = time_execution("fft_fwd", [&]() {
         std::copy(data.begin(), data.end(), fft_output.begin());
@@ -379,7 +344,6 @@ void benchmark_size(size_t N, const std::string& type) {
         ankerl::nanobench::doNotOptimizeAway(fft_output.data());
     });
 
-    // Benchmark fft round-trip (forward then inverse, in place).
     std::vector<std::complex<T>> fft_temp1(N);
     double fft_rt_time = time_execution("fft_rt", [&]() {
         std::copy(data.begin(), data.end(), fft_temp1.begin());
@@ -470,8 +434,6 @@ void print_performance_report() {
     std::cout << "                         PERFORMANCE REPORT                            \n";
     std::cout << "=======================================================================\n\n";
 
-    // Per-precision breakdown: float and double are reported separately so a
-    // regression in one precision is never masked by the other's average.
     for (const char* prec : {"f64", "f32"}) {
         std::vector<const BenchmarkResult*> rs;
         for (const auto& r : all_results) if (r.prec == prec) rs.push_back(&r);
@@ -520,7 +482,6 @@ void print_performance_report() {
         }
         std::cout << "\n";
 
-        // Biggest ducc0 advantages for this precision (ratio > 1.0 means ducc0 faster)
         std::vector<BenchmarkResult> ducc0_wins;
         for (const auto* r : rs) if (r->fwd_ratio() > 1.0) ducc0_wins.push_back(*r);
         if (!ducc0_wins.empty()) {
@@ -549,8 +510,6 @@ void print_performance_report() {
     std::cout << "  - Composite: Performance depends on factorization\n";
 }
 
-// Single-size profiling mode (--size=N [--iters=M]): runs only the plan's forward
-// `execute()` in a tight loop, so a profiler attributes ~all cycles to `execute()`.
 template<typename T>
 int profile_single_size(std::size_t N, long iters) {
     std::vector<std::complex<T>> data(N);
@@ -566,7 +525,6 @@ int profile_single_size(std::size_t N, long iters) {
     }
     auto t1 = std::chrono::high_resolution_clock::now();
     const double total_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    // Touch the result so the optimizer keeps the loop.
     volatile double sink = static_cast<double>(buf[N / 2].real() + buf[N / 2].imag());
     (void)sink;
     std::cout << "size=" << N << " prec=" << ((sizeof(T) == 4) ? "f32" : "f64")
@@ -577,35 +535,22 @@ int profile_single_size(std::size_t N, long iters) {
     return 0;
 }
 
-// Theoretical peak flops/cycle for type T at this build's SIMD width: two FMA
-// units, each `xsimd::batch<T>::size` lanes wide, 2 flops per FMA.
 template<typename T>
 constexpr double peak_flops_per_cycle() {
     return 2.0 * static_cast<double>(xsimd::batch<T>::size) * 2.0;
 }
 
-// FFTW/ducc convention: a complex FFT of size N costs ~5*N*log2(N) flops. The count
-// feeds only throughput reporting (GFLOPS, %peak), never the win/lose ratio.
 inline double fft_flops(std::size_t N) {
     return 5.0 * static_cast<double>(N) * std::log2(static_cast<double>(N));
 }
 
-// Paired nanobench compare mode. Per size, build both plans once; plan reuse is fair
-// against ducc0's cached c2c. Then time the library's `execute()` and ducc0's c2c,
-// forward and round-trip. ratio = fft_time / ducc0_time; <1.0 wins.
 template<typename T>
 bool compare_min_of_n(std::size_t N, int reps, long inner,
                       const std::vector<unsigned>* factor_override = nullptr,
                       double tol = default_accuracy_tol<T>(), int nthreads = 1,
                       int adm_nthreads = 1,
                       admiral::effort adm_eff = admiral::effort::estimate) {
-    // The library's 1D transform stays serial: large N is DRAM-bound, small N is
-    // barrier-dominated. `nthreads` threads only the ducc0/FFTW references, and ducc0
-    // disables 1-D threading, so a 1D --nthreads>1 row mainly exposes FFTW.
     const std::size_t nt = static_cast<std::size_t>(nthreads);
-    // --adm-nthreads also threads the library plan (0 = `resolve_nthreads` auto).
-    // Threading is plan-owned: only `four_step_large` runs in parallel; below its
-    // byte gate or without a valid split the plan is the serial one.
     const std::size_t adm_nt =
         admiral::detail::resolve_nthreads(static_cast<std::size_t>(adm_nthreads));
     std::vector<std::complex<T>> data(N);
@@ -615,16 +560,12 @@ bool compare_min_of_n(std::size_t N, int reps, long inner,
     const std::optional<admiral::detail::dif_factor_plan> override_plan =
         factor_override ? std::optional<admiral::detail::dif_factor_plan>(make_dif_factor_plan(*factor_override))
                         : std::nullopt;
-    admiral::detail::plan_impl<T> fwd_plan(N, true, /*nthreads=*/adm_nt, override_plan ? &*override_plan : nullptr, adm_eff);
-    admiral::detail::plan_impl<T> inv_plan(N, false, /*nthreads=*/adm_nt, override_plan ? &*override_plan : nullptr, adm_eff);
+    admiral::detail::plan_impl<T> fwd_plan(N, true, adm_nt, override_plan ? &*override_plan : nullptr, adm_eff);
+    admiral::detail::plan_impl<T> inv_plan(N, false, adm_nt, override_plan ? &*override_plan : nullptr, adm_eff);
     std::vector<std::complex<T>> buf(N);
 
-    // Accuracy gate first. The gate drops a plan that did not compute the transform
-    // and never times it, so a bogus fast ratio never reports as a win.
     std::copy(data.begin(), data.end(), buf.begin());
     fwd_plan.execute(span(buf));
-    // Above `kNaiveRefMaxN` the O(N^2) reference is too slow; large sizes gate on
-    // round-trip error, and FFTW below cross-checks against the gated forward.
     double l2err;
     if (N <= kNaiveRefMaxN) {
         l2err = l2_rel_error<T>(buf, reference_forward_dft<T>(data));
@@ -672,8 +613,6 @@ bool compare_min_of_n(std::size_t N, int reps, long inner,
         sink += inv[N / 2].real();
     });
 #ifdef ADM_BENCH_FFTW
-    // Optional FFTW reference, accuracy-gated like the other arms. The gate reports a
-    // mis-scaled result and skips its timing.
     fftw_c2c<T> fftw(N, nthreads);
     const double fftw_l2 = (N <= kNaiveRefMaxN)
         ? l2_rel_error<T>(fftw.forward(data), reference_forward_dft<T>(data))
@@ -687,24 +626,17 @@ bool compare_min_of_n(std::size_t N, int reps, long inner,
 #endif
     (void)sink;
 
-    // Ratio from CPU cycles when available (frequency- and contention-invariant),
-    // else wall-clock; `metric` labels which. Threaded runs force wall-clock: the
-    // per-process cycle counter sees only the calling thread.
     const bool use_cyc = nthreads == 1 && adm_nt == 1
                       && fft_fwd.cyc > 0.0 && ducc_fwd.cyc > 0.0
                       && fft_rt.cyc > 0.0 && ducc_rt.cyc > 0.0;
     const double fwd_ratio = use_cyc ? fft_fwd.cyc / ducc_fwd.cyc : fft_fwd.us / ducc_fwd.us;
     const double rt_ratio = use_cyc ? fft_rt.cyc / ducc_rt.cyc : fft_rt.us / ducc_rt.us;
     const char* metric = use_cyc ? "cyc" : "wall";
-    // Worst `err` across the four readings; above `kStableMdape` the ratio is suspect.
     const double max_err =
         std::max(std::max(fft_fwd.err, fft_rt.err), std::max(ducc_fwd.err, ducc_rt.err));
     const bool unstable = max_err > bench::kStableMdape;
     const bool lose = !(fwd_ratio < 1.0 && rt_ratio < 1.0);
 
-    // Forward-transform throughput, for the library and ducc0:
-    //   GFLOPS  = flops / (us * 1e3)        wall-clock, familiar units
-    //   flops/cycle (+ %peak)               frequency-invariant (`use_cyc` only)
     const double flops = fft_flops(N);
     const double fft_gflops = flops / (fft_fwd.us * 1e3);
     const double ducc_gflops = flops / (ducc_fwd.us * 1e3);
@@ -741,9 +673,6 @@ bool compare_min_of_n(std::size_t N, int reps, long inner,
               << "\n";
 #ifdef ADM_BENCH_FFTW
     if (fftw_ok) {
-        // Honor `use_cyc` rather than counter availability alone. When threaded, the
-        // library's counter sees only the caller while FFTW's caller runs all threads,
-        // so a cyc ratio would mislabel the MT comparison.
         const bool ucf = use_cyc && fft_fwd.cyc > 0.0 && fftw_fwd.cyc > 0.0
                        && fft_rt.cyc > 0.0 && fftw_rt.cyc > 0.0;
         const double fwd_r = ucf ? fft_fwd.cyc / fftw_fwd.cyc : fft_fwd.us / fftw_fwd.us;
@@ -765,10 +694,6 @@ bool compare_min_of_n(std::size_t N, int reps, long inner,
     return !(unstable || lose);
 }
 
-// In-process interleaved A/B of two DIF factorizations. Time both plans in one
-// process, interleaved round-by-round; cross-process ratios drift. The plan override
-// forces both onto `iterative_dif`, so the ratio is the pure factorization effect.
-// ducc0 is timed each round as a stable anchor.
 template<typename T>
 bool compare_factors_ab(std::size_t N,
                         const std::vector<unsigned>& fa,
@@ -782,10 +707,6 @@ bool compare_factors_ab(std::size_t N,
     std::vector<std::complex<T>> buf(N);
     volatile T sink = T(0);
 
-    // One measurement phase: build the first/second plans in that heap order, warm
-    // them, then time `rounds` of first-vs-second with position alternated. The
-    // first-allocated plan carries a layout advantage warm-up cannot remove; the
-    // caller cancels it by running two phases with roles swapped.
     struct phase { std::vector<double> fs, rt, fd, sd; bool any_wall; };
     auto run_phase = [&](const std::vector<unsigned>& ff,
                          const std::vector<unsigned>& fs_) -> phase {
@@ -805,7 +726,7 @@ bool compare_factors_ab(std::size_t N,
                 pf2.execute(span(buf)); pi.execute(span(buf)); sink += buf[N / 2].real();
             });
         };
-        for (int w = 0; w < 3; ++w) {   // pre-fault + warm caches for both
+        for (int w = 0; w < 3; ++w) {
             std::copy(data.begin(), data.end(), buf.begin()); f_fwd.execute(span(buf)); f_inv.execute(span(buf));
             std::copy(data.begin(), data.end(), buf.begin()); s_fwd.execute(span(buf)); s_inv.execute(span(buf));
             sink += buf[0].real();
@@ -829,8 +750,6 @@ bool compare_factors_ab(std::size_t N,
         return p;
     };
 
-    // Accuracy gate both plans (build once, transform, compare to the reference DFT)
-    // before spending time on the two timing phases.
     {
         const auto pa = make_dif_factor_plan(fa);
         const auto pb = make_dif_factor_plan(fb);
@@ -846,28 +765,20 @@ bool compare_factors_ab(std::size_t N,
         }
     }
 
-    const phase ab = run_phase(fa, fb);   // A allocated first
-    const phase ba = run_phase(fb, fa);   // B allocated first
+    const phase ab = run_phase(fa, fb);
+    const phase ba = run_phase(fb, fa);
     (void)sink;
 
-    // sqrt(M_ab / M_ba) cancels the per-object allocated-first advantage gamma
-    // exactly: M_ab = (tA*gamma)/tB, M_ba = (tB*gamma)/tA, so M_ab/M_ba = (tA/tB)^2.
     const double mab_f = geomean_of(ab.fs), mba_f = geomean_of(ba.fs);
     const double mab_r = geomean_of(ab.rt), mba_r = geomean_of(ba.rt);
     const double mfwd = std::sqrt(mab_f / mba_f);
     const double mrt  = std::sqrt(mab_r / mba_r);
-    // Spread: round-to-round noise (MAD) plus the residual disagreement between the
-    // two phases after gamma cancellation. Folds into the floor a result must clear.
     const double spread = std::max(mad_of(ab.fs), mad_of(ba.fs))
                         + 0.5 * std::abs(mab_f * mba_f - 1.0);
     const bool any_wall = ab.any_wall || ba.any_wall;
-    // A/ducc, B/ducc: A is "first" in ab and "second" in ba, so a geomean over both roles
-    // averages out gamma for the anchor too.
     const double a_ducc = std::sqrt(geomean_of(ab.fd) * geomean_of(ba.sd));
     const double b_ducc = std::sqrt(geomean_of(ab.sd) * geomean_of(ba.fd));
 
-    // "Faster" here means the corrected edge clears the spread (2*MAD-ish) on BOTH
-    // fwd and rt. A sub-spread delta is noise, not a result.
     const bool robust_a = (mfwd < 1.0 - 2.0 * spread) && (mrt < 1.0);
     const bool robust_b = (mfwd > 1.0 + 2.0 * spread) && (mrt > 1.0);
     const char* verdict = robust_a ? "A faster (robust)"
@@ -888,8 +799,6 @@ bool compare_factors_ab(std::size_t N,
     return true;
 }
 
-// Correctness-only sweep for CI: builds the default plan for N (production
-// routing), transforms, checks against the reference DFT. No timing.
 template<typename T>
 bool verify_size(std::size_t N, double tol) {
     std::vector<std::complex<T>> data(N);
@@ -909,9 +818,6 @@ bool verify_size(std::size_t N, double tol) {
     return ok;
 }
 
-// Per-codelet throughput microbench: times `codelet_dispatch<T>` in isolation for
-// every catalog size 2..64, accuracy-gated before timing. CSV: the raw cyc/call
-// is what `codelet_cost_cyc_f{32,64}[]` store; the per-N columns normalize across N.
 template<typename T>
 void codelet_sweep(int reps, long inner, bool with_ducc) {
     const char* prec = (sizeof(T) == 4) ? "f32" : "f64";
@@ -945,7 +851,7 @@ void codelet_sweep(int reps, long inner, bool with_ducc) {
         }
         (void)sink;
         const bool uc = cs.cyc > 0.0;
-        const double metric = uc ? cs.cyc : cs.us;       // cyc when counters present
+        const double metric = uc ? cs.cyc : cs.us;
         const double lgn = std::log2(double(N));
         const double ratio = (with_ducc && uc && dc.cyc > 0.0) ? cs.cyc / dc.cyc
                             : (with_ducc && dc.us > 0.0) ? cs.us / dc.us : 0.0;
@@ -964,9 +870,6 @@ void codelet_sweep(int reps, long inner, bool with_ducc) {
     }
 }
 
-// Four-step split sweep: for each N, times the real `four_step_execute` over every
-// valid split (n1,n2) <=64 catalog, accuracy-gated. CSV size,prec,n1,n2,cyc,us,err,def;
-// def=1 marks the split `choose_four_step_split` picks. Feeds `codelet_cost_cyc_f{32,64}`.
 template<typename T>
 void fs_split_sweep(const std::vector<std::size_t>& sizes, int reps) {
     namespace d = admiral::detail;
@@ -988,7 +891,7 @@ void fs_split_sweep(const std::vector<std::size_t>& sizes, int reps) {
             std::vector<std::complex<T>> out(N), G(N);
             d::four_step_execute<T, true>(data.data(), out.data(), n1, n2, tw.data(), G.data());
             const double l2 = l2_rel_error<T>(out, ref);
-            if (!(l2 <= tol)) continue;   // never time an inaccurate split
+            if (!(l2 <= tol)) continue;
             volatile T sink = T(0);
             const NbStat s = nb_measure("fs", reps, 0, [&]() {
                 d::four_step_execute<T, true>(data.data(), out.data(), n1, n2, tw.data(), G.data());
@@ -1005,10 +908,6 @@ void fs_split_sweep(const std::vector<std::size_t>& sizes, int reps) {
     }
 }
 
-// Optimal-decomposition report: per N, the planner's route versus the model-optimal
-// route and split, plus all candidate model costs. The analytic candidates are
-// T-independent; the elected route and `meas` vary by precision. Flags every N where
-// the two differ. CSV.
 template<typename T>
 void decomp_report(const std::vector<std::size_t>& sizes) {
     namespace d = admiral::detail;
@@ -1019,9 +918,6 @@ void decomp_report(const std::vector<std::size_t>& sizes) {
         const char* route = plan.route_name();
         const d::four_step_split used = plan.four_step_split_used();
 
-        // Candidate model costs. A large FINITE sentinel marks an infeasible route
-        // (not `std::infinity`: the codebase builds with -ffinite-math-only, where
-        // `isinf()` always returns false and inf comparisons are UB).
         constexpr double INF = 1e30;
         const d::four_step_split fs = d::choose_four_step_split(N);
         const double fs_cost = fs.valid() ? d::gate_four_step_cost(fs.n1, fs.n2) : INF;
@@ -1033,16 +929,12 @@ void decomp_report(const std::vector<std::size_t>& sizes) {
         const bool prime = d::ct_is_prime(static_cast<unsigned>(N));
         const double rader_cost = (prime && d::rader_supported(N)) ? d::rader_model_cost(N) : INF;
 
-        // Model-optimal route = argmin over feasible candidate costs.
         struct C { double c; const char* name; } cands[] = {
             {cod_cost, "codelet"}, {dif_cost, "iterative_dif"},
             {fs_cost, "four_step"}, {rader_cost, "rader"}, {blue_cost, "bluestein"}};
         const C* best = &cands[0];
         for (const C& c : cands) if (c.c < best->c) best = &c;
 
-        // Inside the cost model's domain (2..512) the planner routes from it, so
-        // its winner is optimal; the analytic candidates above do not model
-        // `good_thomas` and are unreliable here.
         const d::base_cost_entry meas = d::base_cost_for<T>(N);
         const bool table_routed = meas.cyc >= 0.f;
         const char* opt_route = best->name;
@@ -1060,7 +952,7 @@ void decomp_report(const std::vector<std::size_t>& sizes) {
             meas_cyc = static_cast<double>(meas.cyc);
         }
 
-        char split[48] = "-";  // "%zux%zu" is up to 41 chars + NUL
+        char split[48] = "-";
         if (std::string(route).rfind("four_step", 0) == 0 && used.valid())
             std::snprintf(split, sizeof split, "%zux%zu", used.n1, used.n2);
         char opt[48] = "-";
@@ -1068,7 +960,6 @@ void decomp_report(const std::vector<std::size_t>& sizes) {
             std::snprintf(opt, sizeof opt, "%zux%zu", fs.n1, fs.n2);
 
         const bool mismatch = std::string(opt_route) != route
-            // `four_step` vs `four_step_batched` are the same family, not a mismatch.
             && !(std::string(opt_route) == "four_step"
                  && std::string(route) == "four_step_batched");
         auto fc = [](double v) {
@@ -1084,11 +975,6 @@ void decomp_report(const std::vector<std::size_t>& sizes) {
     }
 }
 
-// --route-ab-dif: default route vs forced `iterative_dif`, interleaved A/B.
-// Engine A: `plan_impl<T>(N, fwd/inv)`, the planner's route.
-// Engine B: `plan_impl<T>(N, fwd/inv, 1, &dif_plan)`, forced `iterative_dif` via
-// `build_dif_factor_plan<T>(N)` or an explicit --factors= chain.
-// Output prefix: RABDIF; `nameA` names A's actual route. Ratio <1 means default faster.
 template<typename T>
 void route_ab_dif_one(std::size_t N,
                       const std::vector<unsigned>& factors_override,
@@ -1099,15 +985,11 @@ void route_ab_dif_one(std::size_t N,
     for (std::size_t i = 0; i < N; ++i)
         data[i] = std::complex<T>(std::sin(T(i) * T(0.1)), std::cos(T(i) * T(0.1)));
 
-    // Build the DIF plan for engine B: the library's DP chain by default, or the
-    // user-supplied --factors= chain.
     const admiral::detail::dif_factor_plan dif_plan =
         factors_override.empty()
             ? admiral::detail::build_dif_factor_plan<T>(N)
             : make_dif_factor_plan(factors_override);
 
-    // Determine which route the default planner picks (diagnostic only; the
-    // probe plan is a throwaway and is NOT timed).
     const char* def_route = [&]() -> const char* {
         admiral::detail::plan_impl<T> probe(N, true);
         return probe.route_name();
@@ -1116,7 +998,6 @@ void route_ab_dif_one(std::size_t N,
     const std::string shape_str = std::to_string(N);
     volatile T sink = T(0);
 
-    // Engine A: default plan (route selected by the planner).
     auto makeDefault = [&data, &sink, N]() {
         auto fwd = std::make_shared<admiral::detail::plan_impl<T>>(N, true);
         auto inv = std::make_shared<admiral::detail::plan_impl<T>>(N, false);
@@ -1136,7 +1017,6 @@ void route_ab_dif_one(std::size_t N,
         return e;
     };
 
-    // Engine B: forced `iterative_dif` (non-null `dif_plan` override).
     auto makeDif = [&data, &sink, N, &dif_plan]() {
         auto fwd = std::make_shared<admiral::detail::plan_impl<T>>(N, true,  1, &dif_plan);
         auto inv = std::make_shared<admiral::detail::plan_impl<T>>(N, false, 1, &dif_plan);
@@ -1156,27 +1036,18 @@ void route_ab_dif_one(std::size_t N,
         return e;
     };
 
-    // `nameA` encodes the planner's route choice for traceability in the output.
     const std::string nameA = std::string("def[") + def_route + "]";
     engine_ab_core("RABDIF", shape_str, prec, nameA.c_str(), "dif",
                    makeDefault, makeDif, rounds, reps, inner);
     (void)sink;
 }
 
-// --base-cost: per-(N, T) absolute cycle cost of every eligible kernel form
-// (codelet, iterative_dif, good_thomas, four_step, four_step_batched, rader,
-// bluestein), measured in paired-interleaved rounds, min over rounds per form.
-// Verify each forced plan against `reference_forward_dft` before timing; failures
-// print BASECOST-VERIFY-FAIL.
-// Output per form: BASECOST size= <N> prec=<p> form=<f> cyc= <c> ns= <n> err= <e>
 template<typename T>
 void base_cost_size(std::size_t N, int rounds, int reps, long inner) {
     namespace d = admiral::detail;
     using plan_t = d::plan_impl<T>;
     using rk     = typename plan_t::route_kind;
     const char* prec  = (sizeof(T) == 4) ? "f32" : "f64";
-    // Tighter than `default_accuracy_tol` for f64 to catch a wrong-form dispatch that
-    // still lands close to the right answer; f32 has no headroom to tighten.
     constexpr double kFormDispatchTolF64 = 1e-10;
     const double tol = (sizeof(T) == 4) ? default_accuracy_tol<T>() : kFormDispatchTolF64;
 
@@ -1184,11 +1055,8 @@ void base_cost_size(std::size_t N, int rounds, int reps, long inner) {
     for (std::size_t i = 0; i < N; ++i)
         data[i] = std::complex<T>(std::sin(T(i) * T(0.1)), std::cos(T(i) * T(0.1)));
 
-    // Reference: exact DFT (O(N^2), fine for small N).
     const auto ref = reference_forward_dft<T>(data);
 
-    // Eligible forms for this (N, T) pair. `route_available` is the force-route
-    // ctor's own gate, so ask it rather than re-deriving each form's condition.
     struct Form { const char* name; rk kind; };
     static constexpr Form kForms[] = {
         {"codelet", rk::codelet},         {"iterative_dif", rk::iterative_dif},
@@ -1199,7 +1067,6 @@ void base_cost_size(std::size_t N, int rounds, int reps, long inner) {
     for (const Form& f : kForms)
         if (plan_t::route_available(f.kind, N)) forms.push_back(f);
 
-    // Build and verify each form; keep only those that pass.
     struct FormState {
         const char*                              name;
         std::shared_ptr<plan_t>                  plan;
@@ -1225,7 +1092,6 @@ void base_cost_size(std::size_t N, int rounds, int reps, long inner) {
     const std::size_t K = states.size();
     volatile T sink = T(0);
 
-    // Warmup all forms.
     for (auto& s : states) {
         for (int w = 0; w < 3; ++w) {
             std::copy(data.begin(), data.end(), s.buf->begin());
@@ -1234,18 +1100,11 @@ void base_cost_size(std::size_t N, int rounds, int reps, long inner) {
         }
     }
 
-    // min across rounds. `max()` (not `infinity()`) as the "no measurement yet"
-    // sentinel: fast-math (-ffinite-math-only) makes `infinity()`/`isinf` UB and
-    // clang -Werror rejects them.
     std::vector<double> best_cyc(K, std::numeric_limits<double>::max());
     std::vector<double> best_us (K, std::numeric_limits<double>::max());
-    // MdAPE (fractional) of the round that produced `best_cyc`. The generator uses
-    // the MdAPE as the per-measurement noise band so a route only flips when the win
-    // exceeds the noise (1.0 = 100% = untrusted until a real reading lands).
     std::vector<double> best_err(K, 1.0);
 
     for (int r = 0; r < rounds; ++r) {
-        // Rotate the start index each round to interleave allocation/cache order.
         for (std::size_t ki = 0; ki < K; ++ki) {
             const std::size_t idx = (ki + static_cast<std::size_t>(r)) % K;
             auto& s = states[idx];
@@ -1275,20 +1134,12 @@ void base_cost_size(std::size_t N, int rounds, int reps, long inner) {
     (void)sink;
 }
 
-// In-chain radix-ordering sweep: chain ranking is a cross-pass effect the
-// isolated-pass fit (--pass) cannot see. Every chain's plan stays live in one
-// process and the measurement order rotates per round. A duplicate of chain 0,
-// built last, measures gamma = dup/first: the steady-state allocation-position
-// penalty, which floors every chain ratio of this run.
 template<typename T>
 void chain_sweep(std::size_t N, int rounds, int reps, long inner, std::size_t max_chains) {
     using plan_t = admiral::detail::plan_impl<T>;
     namespace d      = admiral::detail;
     const char* prec = sizeof(T) == 8 ? "f64" : "f32";
 
-    // Ordered radix sequences whose product is N, filtered to runnable shapes. The
-    // pool includes the merged and generic-prime radices `enumerate_dif_radix_sequences`
-    // omits, so the pool can express what the DP elects.
     std::vector<unsigned> pool(d::dif_candidate_radices.begin(), d::dif_candidate_radices.end());
     pool.insert(pool.end(), d::dif_generic_radices.begin(), d::dif_generic_radices.end());
     std::vector<std::vector<unsigned>> chains;
@@ -1309,9 +1160,6 @@ void chain_sweep(std::size_t N, int rounds, int reps, long inner, std::size_t ma
         std::cout << "CHAINSWEEP size= " << N << " prec=" << prec << " <== no runnable chain\n";
         return;
     }
-    // Keep an evenly spaced subset, not a prefix (a prefix is all-radix-2 heads),
-    // and force in the model's whole candidate list. A sweep blind to the elected
-    // chain cannot score the model that elected it.
     const std::size_t found = chains.size();
     if (found > max_chains) {
         std::vector<std::vector<unsigned>> keep;
@@ -1328,12 +1176,6 @@ void chain_sweep(std::size_t N, int rounds, int reps, long inner, std::size_t ma
         chains.swap(keep);
     }
 
-    // rounds=0: dump the model's cost ranking of every runnable chain, with no
-    // timing and no accuracy filter; join against timed cyc before using. Each line
-    // also carries the design columns of `dif_surface`'s nine coefficients, summed
-    // over the chain, so refitting the model on measurement is a least-squares solve
-    // on these columns. res is the part no column explains (generic/merged radices,
-    // `order_eps`); for in-table radices res comes out ~0, which is the self-check.
     if (rounds == 0) {
         for (const auto& c : chains) {
             const auto            fp = make_dif_factor_plan(c);
@@ -1343,9 +1185,6 @@ void chain_sweep(std::size_t N, int rounds, int reps, long inner, std::size_t ma
             for (const unsigned r : c) {
                 const std::size_t ido = n / r;
                 if (ido > 1 && ido < xsimd::batch<T>::size) ++veto;
-                // The columns exist only where the surface does. An ISA key without
-                // fitted coefficients prices passes from the measured tape instead, with
-                // nothing linear to refit, so emit just the veto count and model cost.
                 if constexpr (d::dif_surface_is_analytic<T>) {
                     const std::size_t idx = d::dif_cost_index(r);
                     const double      B =
@@ -1386,7 +1225,6 @@ void chain_sweep(std::size_t N, int rounds, int reps, long inner, std::size_t ma
     const auto   ref = reference_forward_dft<T>(data);
     const double tol = default_accuracy_tol<T>();
 
-    // chains + one duplicate of chain 0 (the gamma probe) built last.
     struct Arm {
         const std::vector<unsigned>*                  chain;
         std::unique_ptr<plan_t>                       plan;
@@ -1409,7 +1247,7 @@ void chain_sweep(std::size_t N, int rounds, int reps, long inner, std::size_t ma
         std::cout << "CHAINSWEEP size= " << N << " prec=" << prec << " <== all chains inaccurate\n";
         return;
     }
-    add(*arms.front().chain);   // gamma probe, allocated last
+    add(*arms.front().chain);
     const std::size_t dup = arms.size() - 1;
 
     volatile T sink = T(0);
@@ -1437,8 +1275,6 @@ void chain_sweep(std::size_t N, int rounds, int reps, long inner, std::size_t ma
               << " timed=" << arms.size() - 1 << " kept=" << chains.size()
               << " runnable=" << found << " enumerated=" << enumerated << " gamma=" << std::fixed
               << std::setprecision(3) << gamma << std::defaultfloat << "\n";
-    // model= is what the DP charges for the chain. The useful question is how deep a
-    // candidate list has to be before the list holds the winner.
     for (std::size_t i = 0; i < dup; ++i)
         std::cout << "CHAIN size= " << N << " prec=" << prec
                   << " chain=" << join_radices(*arms[i].chain) << " cyc= " << std::fixed
@@ -1450,10 +1286,6 @@ void chain_sweep(std::size_t N, int rounds, int reps, long inner, std::size_t ma
                   << std::defaultfloat << "\n";
 }
 
-// Structural-model dump: every route's MODELED cost, for offline scoring. The
-// stdlib-only fitter cannot reach the engine's model, so `model_dump` prints the
-// model from the engine itself, one line per (N, prec, form), to join against
-// BASECOST receipts. No timing, no plan execution: pure model evaluation.
 template<typename T>
 void model_dump(std::size_t lo, std::size_t hi) {
     using plan_t = admiral::detail::plan_impl<T>;
@@ -1467,8 +1299,6 @@ void model_dump(std::size_t lo, std::size_t hi) {
         };
         if (N <= d::kFourStepLeafMax && d::is_codelet_catalog(N))
             emit("codelet", d::gate_leaf_cyc(N));
-        // The chain the engine would run, priced pass by pass: the term
-        // `estimated_plan_cost` cannot express for non-11-smooth N.
         if (plan_t::route_available(plan_t::route_kind::iterative_dif, N)) {
             emit("iterative_dif", d::dif_chain_cost<T>(N, d::dif_elected_chain<T>(N)));
         }
@@ -1480,14 +1310,9 @@ void model_dump(std::size_t lo, std::size_t hi) {
     }
 }
 
-}  // anonymous namespace
+}
 
 int main(int argc, char** argv) {
-    // Correctness-only verification sweep (CI gate):
-    //   --verify [--prec=f32|f64|both] [--sizes=a,b,c] [--tol=eps]
-    // Checks the default plan for each size against a reference DFT; nonzero exit
-    // if any size fails. Default sizes: the 2..64 catalog, large-N decomposition
-    // sizes, and assorted primes/composites.
     {
         bool verify = false;
         std::string v_prec = "both";
@@ -1502,7 +1327,7 @@ int main(int argc, char** argv) {
         }
         if (verify) {
             if (sizes.empty()) {
-                for (std::size_t n = 2; n <= 64; ++n) sizes.push_back(n);  // full catalog
+                for (std::size_t n = 2; n <= 64; ++n) sizes.push_back(n);
                 for (std::size_t n : {128u, 256u, 512u, 1024u, 2048u, 4096u, 8192u,
                                       96u, 120u, 192u, 210u, 360u, 720u, 1000u, 2520u,
                                       67u, 121u, 127u, 251u, 13u, 17u, 19u, 23u, 29u, 31u})
@@ -1521,16 +1346,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    // N-D compare gate:
-    //   --compare-nd [--prec=f32|f64|both] [--reps=N] [--inner=M] [--nthreads=N]
-    //                [--shapes=RxC,RxCxD,..] [--r2c] [--robust] [--rounds=R]
-    //                [--fail-on-lose]
-    //   --compare-2d is an alias (same handler, any rank in --shapes).
-    // --nthreads threads the library plan and the references; N>1 forces the
-    // wall-clock metric (cycle counting is per-thread). --robust alternates arm
-    // order per round and gates on an identity control.
-    // Default shapes: pow2 squares/cubes, 7-smooth, inner-vs-outer rectangles, a 4D
-    // smoke shape. Ratios vs ducc0 and, with -DADM_BENCH_FFTW, vs FFTW.
     {
         bool compare_nd_mode = false;
         bool fail_on_lose = false;
@@ -1557,14 +1372,12 @@ int main(int argc, char** argv) {
         }
         if (compare_nd_mode) {
             if (shapes.empty())
-                shapes = {{256, 256}, {512, 512}, {1024, 1024},   // pow2 squares
-                          {64, 64, 64}, {128, 128, 128},          // pow2 cubes
-                          {60, 60}, {120, 120},                   // 7-smooth
-                          {16, 256}, {256, 16}, {1024, 64},       // inner-vs-outer
-                          {8, 8, 8, 8}};                          // 4D smoke
+                shapes = {{256, 256}, {512, 512}, {1024, 1024},
+                          {64, 64, 64}, {128, 128, 128},
+                          {60, 60}, {120, 120},
+                          {16, 256}, {256, 16}, {1024, 64},
+                          {8, 8, 8, 8}};
             bool ok = true;
-            // A T>1 verdict requires --robust: it rotates arm order and runs the
-            // identity control, which validates the threaded measurement itself.
             auto run = [&](auto tag) {
                 using T = decltype(tag);
                 for (const auto& shape : shapes)
@@ -1580,16 +1393,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Compare gate:
-    //   --compare [--prec=f32|f64|both] [--reps=N] [--inner=M] [--nthreads=N]
-    //             [--adm-nthreads=T] [--adm-effort=auto|measure] [--sizes=a,b,c]
-    //             [--factors=r-r-r] [--tol=eps] [--fail-on-lose]
-    // --nthreads>1 threads only the ducc0/FFTW references and forces wall-clock.
-    // --adm-nthreads also threads the library plan (0 = auto) and moves execution
-    // only on the `four_step_large` route (see `compare_min_of_n`).
-    // --adm-effort=auto|measure plans the library side with the plan-time race.
-    // Default size list = full sweep union. Every plan is accuracy-gated before
-    // timing; --tol overrides the per-precision default.
     {
         bool compare = false;
         bool fail_on_lose = false;
@@ -1599,7 +1402,7 @@ int main(int argc, char** argv) {
         int adm_nthreads = 1;
         admiral::effort adm_eff = admiral::effort::estimate;
         long inner = 0;
-        double tol_override = -1.0;   // <0 => per-precision default
+        double tol_override = -1.0;
         std::vector<std::size_t> sizes;
         std::vector<unsigned> factor_override;
         for (int i = 1; i < argc; ++i) {
@@ -1612,7 +1415,6 @@ int main(int argc, char** argv) {
             else if (arg.rfind("--adm-nthreads=", 0) == 0) adm_nthreads = std::stoi(arg.substr(15));
             else if (arg.rfind("--adm-effort=", 0) == 0) {
                 const std::string v = arg.substr(13);
-                // A typo must throw, not silently fall back to estimate.
                 adm_eff = v == "measure"                          ? admiral::effort::measure
                           : (v == "auto" || v == "automatic")     ? admiral::effort::automatic
                           : v == "estimate"                       ? admiral::effort::estimate
@@ -1639,8 +1441,6 @@ int main(int argc, char** argv) {
                 using T = decltype(tag);
                 const double tol = tol_override < 0.0 ? default_accuracy_tol<T>() : tol_override;
                 for (std::size_t N : sizes)
-                    // inner=0 => nanobench auto-tunes epoch length (~1ms floor). Runs
-                    // stay short, and the reported `err` flags any unstable reading.
                     ok = compare_min_of_n<T>(N, reps, inner,
                                              factor_override.empty() ? nullptr : &factor_override,
                                              tol, nthreads, adm_nthreads, adm_eff) && ok;
@@ -1651,12 +1451,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    // In-process interleaved A/B of two DIF factorizations:
-    //   --factors-ab=Ra-Rb-..:Sa-Sb-.. [--prec=..] [--reps=N] [--rounds=K]
-    //                                [--inner=M] [--tol=eps]
-    // Both factorizations must multiply to the same N. Reports the cycle-true A/B
-    // ratio (A=first list), geomean over K rounds, with the round-to-round spread so
-    // a sub-noise delta reads as a tie.
     {
         std::string ab_arg;
         std::string cmp_prec = "both";
@@ -1701,12 +1495,6 @@ int main(int argc, char** argv) {
     }
 
 #ifdef ADM_BENCH_FFTW
-    // Interleaved fft<->FFTW A/B:
-    //   --fftw-ab --sizes=a,b,c [--prec=..] [--reps=N] [--rounds=K] [--inner=M]
-    //            [--tol=eps]
-    // Alternate the fft/FFTW order round-by-round: single-shot compare runs carry
-    // measurement-order frequency bias. Report = median ratio over rounds + spread.
-    // FFTW plans with MEASURE; ADM_BENCH_FFTW_ESTIMATE=1 selects the heuristic plan.
     {
         bool fftw_ab = false;
         std::string cmp_prec = "both";
@@ -1741,8 +1529,6 @@ int main(int argc, char** argv) {
                         std::cout << "FFTWAB size=" << N << " VOID (fftw alignment mismatch)\n";
                         continue;
                     }
-                    // Above `kNaiveRefMaxN` each arm checks against its own inverse;
-                    // comparing the two forwards would also accept a shared error.
                     double l2, fl2;
                     if (N <= kNaiveRefMaxN) {
                         const auto ref = reference_forward_dft<T>(data);
@@ -1764,10 +1550,6 @@ int main(int argc, char** argv) {
                         continue;
                     }
                     volatile T sink = T(0);
-                    // Both forward arms are copy-free and out-of-place. `forward()`
-                    // stages through fftw's `in_` and `execute(span(buf))` stages
-                    // through a restore, so a staged arm bills an N-complex copy to
-                    // one side of the ratio.
                     auto t_fft_fwd = [&]() { return nb_measure("fab_f", reps, inner, [&]() {
                         fwd.execute(data.data(), buf.data()); sink += buf[N / 2].real(); }); };
                     auto t_fft_rt = [&]() { return nb_measure("fab_r", reps, inner, [&]() {
@@ -1778,7 +1560,7 @@ int main(int argc, char** argv) {
                         sink += fftw.forward_into(data)[N / 2].real(); }); };
                     auto t_ftw_rt = [&]() { return nb_measure("fab_wr", reps, inner, [&]() {
                         sink += fftw.roundtrip(data)[N / 2].real(); }); };
-                    for (int w = 0; w < 3; ++w) {   // warm both paths
+                    for (int w = 0; w < 3; ++w) {
                         std::copy(data.begin(), data.end(), buf.begin());
                         fwd.execute(span(buf)); inv.execute(span(buf));
                         sink += fftw.roundtrip(data)[N / 2].real();
@@ -1818,12 +1600,6 @@ int main(int argc, char** argv) {
     }
 #endif
 
-    // Cost-model diagnostic (never writes a table):
-    //   --cost-audit=N[:Sa-Sb-..] [--prec=..] [--reps=N] [--rounds=K] [--inner=M]
-    //                             [--tol=eps]
-    // Prints the DP pick `build_dif_factor_plan<T>(N)`. A candidate ordering after ':'
-    // also runs the role-swapped cycle-true A/B (DP-pick vs candidate), to refine
-    // the formula, not to emit an override. Reuses `compare_factors_ab`.
     {
         std::string ca_arg;
         std::string cmp_prec = "both";
@@ -1868,7 +1644,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Structural-model cost dump for offline scoring: --model-dump=lo-hi [--prec=..]
     {
         std::string range, md_prec = "both";
         for (int i = 1; i < argc; ++i) {
@@ -1887,11 +1662,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    // In-chain radix-ordering sweep:
-    //   --chain-sweep=N[,N2,..] [--prec=..] [--rounds=K] [--reps=N] [--inner=M]
-    //                           [--max-chains=M]
-    // Times every runnable radix chain per N, interleaved in one process: what a
-    // pass costs GIVEN its neighbours. --rounds=0 dumps model costs, no timing.
     {
         std::vector<std::size_t> sizes;
         std::string              cs_prec = "both";
@@ -1916,9 +1686,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Single-pass microbench:
-    //   --pass=IP,ido,l1 [--prec=f32|f64] [--last] [--reps=N] [--inner=M] [--perf-iters=K]
-    // Times `dif_pass<T,IP>` (or `dif_pass_last<T,true,IP>` with --last/ido==1) directly.
     {
         std::string pass_arg;
         std::string pp = "f64";
@@ -1935,7 +1702,7 @@ int main(int argc, char** argv) {
             else if (arg.rfind("--perf-iters=", 0) == 0) perf_iters = std::stol(arg.substr(13));
         }
         if (!pass_arg.empty()) {
-            const auto f = parse_radix_list(pass_arg);   // reuse the '-'/',' splitter
+            const auto f = parse_radix_list(pass_arg);
             if (f.size() != 3) {
                 std::cerr << "--pass needs IP,ido,l1 (3 comma/dash-separated values)\n";
                 return 1;
@@ -1953,9 +1720,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Per-codelet throughput microbench:
-    //   --codelet-sweep [--prec=f32|f64|both] [--reps=N] [--inner=M] [--no-ducc]
-    // Prints the CSV header; cyc feeds `codelet_cost_cyc_f{32,64}`.
     {
         bool csweep = false;
         std::string cs_prec = "both";
@@ -1978,8 +1742,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Four-step split sweep:
-    //   --fs-split-sweep [--prec=..] [--reps=N] [--sizes=..]
     {
         bool ssweep = false;
         std::string sp = "both";
@@ -2002,8 +1764,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Optimal-decomposition report: MISMATCH flags optimal != route.
-    //   --decomp-report [--prec=f32|f64|both] [--sizes=a,b,c | --range=lo-hi]
     {
         bool report = false;
         std::string rp_prec = "both";
@@ -2032,10 +1792,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Benchmark-only DIF factor order sweep:
-    //   --factor-sweep --sizes=a,b,c [--prec=f32|f64|both] [--reps=N] [--factors=r-r-r]
-    // Emits CSV to stdout. The factor override stays inside `make_factor_sweep_plan`
-    // so the public API and --compare path see none of it.
     {
         bool factor_sweep = false;
         std::string sweep_prec = "both";
@@ -2079,9 +1835,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Per-size base-kernel cost measurement (see `base_cost_size`):
-    //   --base-cost=<comma-separated sizes> [--prec=f32|f64|both] [--out=F]
-    //               [--rounds=K (default 6)] [--reps=N] [--inner=M]
     {
         std::string bc_arg;
         std::string bc_prec = "both";
@@ -2100,8 +1853,6 @@ int main(int argc, char** argv) {
         }
         if (!bc_arg.empty()) {
             const auto sizes = parse_size_list(bc_arg);
-            // --out redirects the receipt to a file so the sweep can be driven
-            // from a build system, which has no shell to redirect with.
             std::ofstream bc_file;
             std::streambuf* bc_saved = nullptr;
             if (!bc_out.empty()) {
@@ -2115,8 +1866,6 @@ int main(int argc, char** argv) {
             auto run = [&](auto tag) {
                 using T = decltype(tag);
                 namespace d = admiral::detail;
-                // Self-describing receipt: the fitter keys receipts by these fields
-                // and must not infer any of them from a filename.
                 std::cout << "BASECOST-ENV arch=" << d::build_arch
                           << " compiler=" << d::build_compiler
                           << " major=" << d::build_compiler_major
@@ -2134,9 +1883,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Default route vs forced `iterative_dif`, interleaved A/B (see `route_ab_dif_one`):
-    //   --route-ab-dif=<N> [--prec=f32|f64|both] [--rounds=K] [--reps=N]
-    //                      [--inner=M] [--factors=r1-r2-..]
     {
         std::size_t rab_dif_N = 0;
         std::string cmp_prec = "both";
@@ -2161,7 +1907,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Single-size profiling mode: --size=N [--iters=M] [--prec=f32|f64].
     {
         std::size_t prof_size = 0;
         long prof_iters = 0;
@@ -2174,10 +1919,8 @@ int main(int argc, char** argv) {
         }
         if (prof_size > 0) {
             if (prof_iters <= 0) {
-                // Iterations per size band, so total work is roughly constant
-                // across bands (one ladder, so two profiled sizes compare directly).
-                constexpr long kProfItersTiny = 5000000L;   // N <= 64
-                constexpr long kProfItersSmall = 500000L;   // N <= 1024
+                constexpr long kProfItersTiny = 5000000L;
+                constexpr long kProfItersSmall = 500000L;
                 constexpr long kProfItersLarge = 100000L;
                 prof_iters = prof_size <= 64 ? kProfItersTiny
                            : prof_size <= 1024 ? kProfItersSmall
@@ -2192,8 +1935,6 @@ int main(int argc, char** argv) {
     std::cout << "FFT Benchmark: fft vs ducc0 Comparison\n";
     std::cout << "=====================================================================================\n";
 
-    // Run the full sweep once per precision, so float is measured as widely as
-    // double.
     auto run_sweep = [](auto tag) {
         using T = decltype(tag);
         const char* prec_name = (sizeof(T) == 4) ? "float" : "double";
@@ -2216,12 +1957,10 @@ int main(int argc, char** argv) {
         for (size_t N : {6u, 10u, 12u, 15u, 20u, 24u, 30u, 100u})
             benchmark_size<T>(N, "composite");
 
-        // Larger 7-smooth mixed-radix sizes (iterative DIF pass-chain).
         std::cout << "\nMixed-radix (7-smooth) sizes:\n";
         for (size_t N : {36u, 48u, 60u, 90u, 120u, 210u, 360u, 720u, 1000u, 2520u})
             benchmark_size<T>(N, "7-smooth");
 
-        // Bluestein sizes: N > 64, non-pow2 and non-7-smooth (chirp-z over a padded pow2).
         std::cout << "\nBluestein (large prime / non-7-smooth) sizes:\n";
         for (size_t N : {67u, 121u, 127u, 251u})
             benchmark_size<T>(N, "bluestein");

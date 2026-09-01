@@ -1,10 +1,5 @@
 #pragma once
 
-// ============================================================================
-// Small integer / size-class utilities shared across the FFT detail headers.
-// Pure, header-only, no SIMD or twiddle dependencies.
-// ============================================================================
-
 #include <array>
 #include <cmath>
 #include <complex>
@@ -12,17 +7,12 @@
 #include <type_traits>
 #include <utility>
 
-// CMake-generated `codelet` catalog sizes (shared with the per-N TUs; see
-// `src/CodeletCatalog.cmake`).
 #include <admiral/detail/codelet_max.hpp>
-#include "cxx_compat.hpp"  // `ADM_IS_CONSTANT_EVALUATED`, `detail::bit_ceil`,
-                          // `detail::countr_zero`, detail::numbers
+#include "cxx_compat.hpp"
 
 namespace admiral {
 namespace detail {
 
-// True iff N >= 1 and every prime factor of N <= 11 (11-smooth).
-// iterative DIF and `codelet` paths handle these without Bluestein.
 [[nodiscard]] constexpr bool is_codelet_supported(std::size_t N) {
     if (N == 0) return false;
     for (unsigned p : {2u, 3u, 5u, 7u, 11u}) {
@@ -31,13 +21,11 @@ namespace detail {
     return N == 1;
 }
 
-// The one scale loop shared by every route's inverse normalization.
 template<typename T>
 void scale_inplace(std::complex<T>* p, std::size_t n, T s) noexcept {
     for (std::size_t i = 0; i < n; ++i) p[i] *= s;
 }
 
-// True iff N is in the compiled straight-line `codelet` catalog.
 [[nodiscard]] constexpr bool is_codelet_catalog(std::size_t N) {
     for (const std::size_t n : CODELET_CATALOG_SIZES) {
         if (N == n) return true;
@@ -50,14 +38,10 @@ template<std::size_t... N>
     return ((v == N) || ...);
 }
 
-// Largest four-step leaf: the contiguous spill-free catalog range ends at 64, and
-// extras above it (e.g. 120) are deliberately not leaves. Also bounds the
-// `codelet_cost_cyc` index and `four_step_execute`'s leaf buffer.
 inline constexpr std::size_t kFourStepLeafMax = 64;
 
-// Measured forward `codelet_dispatch` cycles per precision, indexed by leaf size (0/1 and
-// non-catalog entries unused). Regenerate: `admiral_benchmark` --`codelet`-sweep --prec=both
-// --no-ducc, and take per-entry medians across sweeps (one sweep moves an entry too much).
+// Measured cycles for one codelet call at length n, indexed by n. Absolute, not relative weights:
+// codelet-versus-iterative_dif turns on their magnitude, so never import another host's numbers.
 inline constexpr std::array<double, kFourStepLeafMax + 1> codelet_cost_cyc_f64 = {
     0, 0, 11.3, 13.6, 14.8, 52.9, 20.9, 63.0, 37.7, 101.4, 57.9, 114.2, 118.7, 134.6, 71.7,
     141.1, 40.4, 210.4, 114.3, 327.3, 87.5, 193.3, 127.3, 387.9, 173.8, 197.8, 149.5, 219.7,
@@ -72,10 +56,8 @@ inline constexpr std::array<double, kFourStepLeafMax + 1> codelet_cost_cyc_f32 =
     514.8, 361.3, 808.5, 176.5, 230.1, 1104.2, 2294.3, 133.0, 280.2, 397.2, 301.9, 172.2, 685.0,
     186.9, 241.7, 216.4, 479.2, 785.9, 1744.2, 214.1, 682.4, 1272.3, 276.1, 137.5};
 
-// FROZEN calibration reference the compile-time gates above the model's domain
-// (`four_step_beats_bluestein`, `rader_beats_bluestein`) were fitted against. Only
-// relative scale decides a route, so refreshing this table de-calibrates the gates.
-// Refit every gate before touching this table.
+// Frozen leaf cycles the compile-time N > 512 gates were fitted against. Refreshing it
+// de-calibrates that band; it is deliberately not the live table above.
 inline constexpr std::array<double, kFourStepLeafMax + 1> gate_leaf_cyc_ref = {
     0, 0, 13.8, 45.0, 24.4, 62.9, 114.8, 74.7, 92.4, 103.8, 102.0, 102.6, 130.7,
     272.6, 133.1, 136.0, 119.1, 294.6, 193.1, 436.2, 168.0, 177.0, 185.1, 437.1,
@@ -84,16 +66,14 @@ inline constexpr std::array<double, kFourStepLeafMax + 1> gate_leaf_cyc_ref = {
     663.5, 1526.7, 402.8, 398.0, 384.4, 522.2, 431.0, 997.7, 575.4, 491.3, 505.7,
     691.6, 726.3, 1584.7, 500.8, 1124.1, 807.4, 574.8, 457.2};
 
+// Leaf cycles for the gates: the frozen table where it has an entry, else n as a placeholder.
 [[nodiscard]] constexpr double gate_leaf_cyc(std::size_t n) {
     return n <= kFourStepLeafMax && gate_leaf_cyc_ref[n] > 0.0 ? gate_leaf_cyc_ref[n]
                                                                : double(n);
 }
 
-// Catalog extras above the dense range, as (n, f64, f32) rows on the dense tables'
-// scale. A missing row is not a small error: the double(n) fallback under-prices the
-// leaf, and the model elects the `codelet` at every N reading that entry.
+// {n, f64 cycles, f32 cycles} for the catalog lengths past kFourStepLeafMax.
 inline constexpr std::array<std::array<double, 3>, 6> codelet_cost_cyc_extra = {{
-    //  n      f64      f32
     {  65.0,  452.5,  355.6},
     {  85.0,  487.4,  549.7},
     { 100.0,  409.4,  333.6},
@@ -102,8 +82,8 @@ inline constexpr std::array<std::array<double, 3>, 6> codelet_cost_cyc_extra = {
     { 360.0, 1173.9,  872.0},
 }};
 
-// Measured cycles for a catalog leaf, 0 for a size the catalog does not carry.
 template<typename T>
+// Measured cycles for the codelet at n, or 0 when n is not in the catalog.
 [[nodiscard]] constexpr double catalog_leaf_cyc(std::size_t n) {
     const auto& tab = sizeof(T) == 4 ? codelet_cost_cyc_f32 : codelet_cost_cyc_f64;
     if (n <= kFourStepLeafMax) return tab[n];
@@ -112,29 +92,23 @@ template<typename T>
     return 0.0;
 }
 
-// Measured leaf cost, double(n) as fallback for a size no table covers. Every price
-// goes through here: the model scores `four_step` at every n, and `balanced_split` hands
-// it {1, n} for a prime, so a direct table index would run past the end for n > 64.
 template<typename T>
+// catalog_leaf_cyc with n itself as the fallback price for a non-catalog length.
 [[nodiscard]] constexpr double leaf_cost_cyc(std::size_t n) {
     const double cyc = catalog_leaf_cyc<T>(n);
     return cyc > 0.0 ? cyc : double(n);
 }
 
-// Per-element-per-octave butterfly cost in cycles, from the measured leaf-64 price
-// above: codelet_cost_cyc_<T>[64]/(64 elems * 6 octaves). Provenance: the leaf-sweep
-// protocol of the tables, not a fit.
 template<typename T>
+// Cycles per element per octave of log2 n, read off the length-64 codelet.
 [[nodiscard]] constexpr double stream_octave_cyc() {
     return (sizeof(T) == 4 ? codelet_cost_cyc_f32 : codelet_cost_cyc_f64)[kFourStepLeafMax] /
            (double(kFourStepLeafMax) * 6.0);
 }
 
-// Serial-work estimate for one length-n line, in cycles: the measured leaf price on
-// the dense catalog, else n*log2(n) octaves at the stream rate. Input to the threading
-// law's work term (fi/mt t0-modeler-r2.md: +-30 % of W moves no scored pick), not a
-// route price.
 template<typename T>
+// Cycles for one transform of length n: the measured leaf below the catalog top, else
+// n log2(n) at the octave rate. This is the W the auto-thread law minimises.
 [[nodiscard]] inline double line_work_cyc(std::size_t n) {
     if (n <= 1) return 0.0;
     if (n <= kFourStepLeafMax) {
@@ -143,20 +117,12 @@ template<typename T>
     return double(n) * std::log2(double(n)) * stream_octave_cyc<T>();
 }
 
-// Every dense-range leaf is priced in all three tables and every caller gates on
-// `is_codelet_catalog` first, so the fallback never fires there.
-
-// The assert covers the dense range only: the extras are build-configurable
-// (validate.sh's catalog arm adds 66, the sanitize preset clears them), so they
-// cannot join the assert in either direction. An unpriced extra falls back to double(n).
 static_assert([] {
     for (std::size_t n = 2; n <= kFourStepLeafMax; ++n)
         if (is_codelet_catalog(n) &&
             !(codelet_cost_cyc_f64[n] > 0.0 && codelet_cost_cyc_f32[n] > 0.0 &&
               gate_leaf_cyc_ref[n] > 0.0))
             return false;
-    // The extras: strictly ascending, above the dense range, both prices positive.
-    // Catches the reorder or duplicate a linear scan would answer with the first row.
     double prev = double(kFourStepLeafMax);
     for (const auto& e : codelet_cost_cyc_extra) {
         if (!(e[0] > prev && e[1] > 0.0 && e[2] > 0.0)) return false;
@@ -165,28 +131,22 @@ static_assert([] {
     return true;
 }());
 
-// Scalar gather/twist overhead a four-step split pays on top of its leaves.
 inline constexpr double kFourStepOverhead = 1.13;
 
-// Modeled cost: n1 size-n2 codelets + n2 size-n1 codelets. <T> is the cost model's
-// price; `gate_` uses the frozen reference the compile-time gates were fitted against.
 template<typename T>
+// Cycles for four_step at N = n1*n2: n1 leaves of length n2 plus n2 of length n1, times the
+// transpose and twist overhead.
 [[nodiscard]] inline constexpr double four_step_cost(std::size_t n1, std::size_t n2) {
     return kFourStepOverhead *
            (double(n1) * leaf_cost_cyc<T>(n2) + double(n2) * leaf_cost_cyc<T>(n1));
 }
 
+// four_step_cost against the frozen gate table instead of the live leaf tables.
 [[nodiscard]] inline constexpr double gate_four_step_cost(std::size_t n1, std::size_t n2) {
     return kFourStepOverhead * (double(n1) * gate_leaf_cyc(n2) + double(n2) * gate_leaf_cyc(n1));
 }
 
-// The structural quantities the cost model featurises N with. The generated header and
-// tools/`fit_cost_model.cpp` must agree, so both share these definitions. W and the
-// register count are runtime arguments, not <T>: the fitter pools many (precision, W,
-// regs) targets in one process.
-
-// Largest prime factor and prime-factor count. The cofactor left after the small primes
-// need not be prime (289 = 17^2), so the loop finishes the job. n <= 1 gives {1, 0}.
+// {largest prime factor of n, count of prime factors with multiplicity}.
 [[nodiscard]] constexpr std::array<std::size_t, 2> lpf_nfac(std::size_t n) {
     std::size_t m = n, lpf = 1, nfac = 0;
     for (std::size_t d = 2; d * d <= m; ++d)
@@ -195,40 +155,26 @@ template<typename T>
     return {lpf, nfac};
 }
 
-// n = n1*n2 with n1 the largest divisor <= sqrt(n): the `four_step` split. A prime gives
-// {1, n}, which the cost model still has to score.
+// The factor pair n1*n2 == n with n1 <= n2 and n1 as large as it can be.
 [[nodiscard]] constexpr std::array<std::size_t, 2> balanced_split(std::size_t n) {
     std::size_t n1 = 1;
     for (std::size_t a = 1; a * a <= n; ++a) if (n % a == 0) n1 = a;
     return {n1, n / n1};
 }
 
-// Admissible iterative-DIF radices: the first seven are the narrow (16-reg) set, wide
-// ISAs add the last four, one array with a prefix each. Namespace scope: a constexpr
-// local cannot be static before C++23, and without static storage gcc re-materializes
-// the table per call instead of indexing one .rodata copy.
 inline constexpr std::size_t kChainRadices[11] = {2, 3, 4, 5, 7, 8, 11, 9, 15, 16, 32};
 
-// Cheapest sum of ceil(m/W) over admissible radix chains: iterative-DIF lane-work,
-// purely structural. 0.0 means no chain reaches n, which callers read as such (n > 1
-// with zero work is not a transform).
-//
-// DP over the divisors of n, relaxed FORWARD with one cursor per radix: for a fixed
-// radix the product d*r ascends in d, so the walk needs no division and no search.
-// Not bounded by `BASE_MODEL_NMAX` (the `bluestein` feature passes the convolution pad):
-// a product past the divisor list is not relaxed but degrades to a larger `estimate`.
+// Vector-lane work of the cheapest DIF radix chain for n: a shortest path over n's divisors,
+// each pass priced ceil(divisor/w) lanes. regs >= 32 unlocks radices 9, 15, 16 and 32.
 [[nodiscard]] constexpr double chain_work(std::size_t n, std::size_t w, std::size_t regs) {
     if (n <= 1) return 0.0;
     const std::size_t n_radices = regs >= 32 ? 11u : 7u;
     const auto vec = [w](std::size_t m) { return double((m + w - 1) / w); };
-    // Only radices dividing n can divide any divisor of n: filter once, not per divisor.
     std::array<std::size_t, 11> rad{};
-    std::array<std::size_t, 11> cur{};   // rad[k]'s monotone cursor into dv
+    std::array<std::size_t, 11> cur{};
     std::size_t nr = 0;
     for (std::size_t k = 0; k < n_radices; ++k)
         if (n % kChainRadices[k] == 0) rad[nr++] = kChainRadices[k];
-    // Divisors ascending without a sort: the small half comes out ascending, and its
-    // cofactors come out descending, so reading them back gives the large half ascending.
     std::array<std::size_t, 64> dv{};
     std::array<std::size_t, 32> hi{};
     std::size_t nd = 0, nh = 0;
@@ -238,8 +184,6 @@ inline constexpr std::size_t kChainRadices[11] = {2, 3, 4, 5, 7, 8, 11, 9, 15, 1
         if (d != n / d) hi[nh++] = n / d;
     }
     while (nh > 0 && nd < dv.size()) dv[nd++] = hi[--nh];
-    // -1 is "no chain reaches this divisor", and it propagates: a source left at -1 never
-    // relaxes anything, so a partial chain is not a chain.
     std::array<double, 64> work{};
     for (std::size_t i = 1; i < nd; ++i) work[i] = -1.0;
     for (std::size_t j = 0; j < nd; ++j) {
@@ -257,14 +201,10 @@ inline constexpr std::size_t kChainRadices[11] = {2, 3, 4, 5, 7, 8, 11, 9, 15, 1
     return work[nd - 1] < 0.0 ? 0.0 : work[nd - 1];
 }
 
-// Past these exponents a 3/7-heavy pad loses to the larger `bit_ceil` it undercuts,
-// because the engine's 3/7-heavy inner DIF chains are weak.
 inline constexpr unsigned kPadMaxV3 = 4;
 inline constexpr unsigned kPadMaxV7 = 2;
 
-// Bluestein convolution length: the first {2,3,5,7}-smooth m >= 2n-1 within the
-// kPadMax caps, else `bit_ceil`. Lives here because it is a price, not an engine: the
-// gate, the cost model and the fitter all featurise the pad the transform will run.
+// Smallest 7-smooth pad >= 2n-1 within the 3^4 and 7^2 caps, else the power of two above it.
 [[nodiscard]] constexpr std::size_t bluestein_choose_pad(std::size_t n) {
     const std::size_t need = 2 * n - 1;
     const std::size_t ceil2 = detail::bit_ceil(need);
@@ -280,31 +220,21 @@ inline constexpr unsigned kPadMaxV7 = 2;
     return ceil2;
 }
 
-// Bluestein: 3 `pow2` FFTs of the pad, fitted per pad*log2(pad).
 inline constexpr double kBluesteinCostPerPadLog = 1.53;
 
-// Prices the `bit_ceil` phantom, not the smoothed pad `bluestein_choose_pad` runs: the
-// four-step and Rader gate ratios were fitted against THIS form and move with it.
-// plan.hpp's dif-vs-blue gate and the 2..512 fitted model price the real pad.
+// Cycles for Bluestein at N, priced pad*log2(pad) on the POWER-OF-TWO pad. base_cost_model's
+// bluestein form prices the smooth pad from bluestein_choose_pad instead.
 [[nodiscard]] constexpr double bluestein_model_cost(std::size_t N) {
     const std::size_t pad = detail::bit_ceil(2 * N - 1);
     return kBluesteinCostPerPadLog * double(pad) * double(detail::countr_zero(pad));
 }
 
-// ----------------------------------------------------------------------------
-// constexpr log2/exp for the cost model's constant evaluation: <cmath> is not
-// constexpr before C++26. Cost-model arithmetic only; twiddles use `ct_sincos_turn`.
-// ----------------------------------------------------------------------------
 [[nodiscard]] constexpr double ct_log2(double x) {
-    if (!(x > 0.0)) return 0.0;  // features never take log of 0; stay total
-    // The series exists for constant evaluation only; at runtime plan code takes
-    // std::log2.
+    if (!(x > 0.0)) return 0.0;
     if (!ADM_IS_CONSTANT_EVALUATED()) return std::log2(x);
     int e = 0;
     while (x >= 2.0) { x *= 0.5; ++e; }
     while (x < 1.0) { x *= 2.0; --e; }
-    // ln(x) = 2*atanh(t), t = (x-1)/(x+1); |t| <= 1/3 on [1,2) so t^2 <= 1/9
-    // and t^33/33 < 1e-17, converged well past double for any x.
     const double t = (x - 1.0) / (x + 1.0);
     const double t2 = t * t;
     double term = t, sum = t;
@@ -317,12 +247,12 @@ inline constexpr double kBluesteinCostPerPadLog = 1.53;
 
 [[nodiscard]] constexpr double ct_exp(double x) {
     constexpr double ln2 = detail::numbers::ln2;
-    if (x > 700.0) return 1e308;   // cost scores only; saturate instead of inf
+    if (x > 700.0) return 1e308;
     if (x < -700.0) return 0.0;
     if (!ADM_IS_CONSTANT_EVALUATED()) return std::exp(x);
     const double kf = x / ln2;
     const auto k = static_cast<long long>(kf >= 0.0 ? kf + 0.5 : kf - 0.5);
-    const double r = x - double(k) * ln2;  // |r| <= ln2/2
+    const double r = x - double(k) * ln2;
     double term = 1.0, sum = 1.0;
     for (int i = 1; i <= 16; ++i) {
         term *= r / double(i);
@@ -333,16 +263,6 @@ inline constexpr double kBluesteinCostPerPadLog = 1.53;
     return sum * p;
 }
 
-// ============================================================================
-// `Codelet` catalog dispatch. Catalog sizes have twiddles baked into .rodata (prime
-// N = straight-line DFT). The heavy `kernel<N>` bodies are compiled ONCE into
-// `admiral_codelets`, one TU per N; consumers see only the `codelet_dispatch`
-// declaration + extern template, instantiating nothing heavy.
-// (Definitions: src/`codelet_apply.hpp`, `codelet_instance.cpp.in`, `codelet_dispatch.cpp.in`.)
-// ============================================================================
-
-// AoS DFT of a catalog size. in==out: in-place; in!=out: reads in, writes out.
-// UN-normalized: caller applies 1/N for inverse. Defined in `admiral_codelets`; declared-only here.
 template<typename T, bool Forward>
 void codelet_dispatch(const std::complex<T>* in, std::complex<T>* out, std::size_t N);
 
@@ -351,10 +271,6 @@ extern template void codelet_dispatch<float,  false>(const std::complex<float>*,
 extern template void codelet_dispatch<double, true >(const std::complex<double>*, std::complex<double>*, std::size_t);
 extern template void codelet_dispatch<double, false>(const std::complex<double>*, std::complex<double>*, std::size_t);
 
-// nlines in-place AoS DFTs of one catalog size at uniform stride. SIMD lanes carry
-// LINES rather than elements: the layout a single small-N `codelet` cannot fill.
-// SCALED, unlike `codelet_dispatch`: fct folds into the output interleave, saving the
-// run a second pass. Why a run prefers it: `plan_impl::execute_many`. How: `codelet_apply.hpp`.
 template<typename T, bool Forward>
 void codelet_dispatch_many(std::complex<T>* data, std::size_t nlines, std::size_t stride,
                            std::size_t N, T fct);
@@ -364,8 +280,6 @@ extern template void codelet_dispatch_many<float,  false>(std::complex<float>*, 
 extern template void codelet_dispatch_many<double, true >(std::complex<double>*, std::size_t, std::size_t, std::size_t, double);
 extern template void codelet_dispatch_many<double, false>(std::complex<double>*, std::size_t, std::size_t, std::size_t, double);
 
-// Out-of-place twin of `codelet_dispatch_many`: independent src/dst strides.
-// Reached by the N-D out-of-place row pass (`nd_plan.hpp`), not from dispatch_many.
 template<typename T, bool Forward>
 void codelet_dispatch_many_oop(const std::complex<T>* in, std::complex<T>* out,
                                std::size_t nlines, std::size_t in_stride,
@@ -376,9 +290,6 @@ extern template void codelet_dispatch_many_oop<float,  false>(const std::complex
 extern template void codelet_dispatch_many_oop<double, true >(const std::complex<double>*, std::complex<double>*, std::size_t, std::size_t, std::size_t, std::size_t, double);
 extern template void codelet_dispatch_many_oop<double, false>(const std::complex<double>*, std::complex<double>*, std::size_t, std::size_t, std::size_t, std::size_t, double);
 
-// One batched call for a col axis of catalog length N <= 64: lanes are consecutive
-// columns, element strides in_inner/out_inner. SCALED by `scale`. Replaces the
-// col_dif chain there (no SoA scratch, one sweep). How: `codelet_apply.hpp`.
 template<typename T>
 void col_codelet_dispatch(bool forward, const std::complex<T>* in, std::size_t in_inner,
                           std::complex<T>* out, std::size_t out_inner, std::size_t ncols,
@@ -387,6 +298,5 @@ void col_codelet_dispatch(bool forward, const std::complex<T>* in, std::size_t i
 extern template void col_codelet_dispatch<float>(bool, const std::complex<float>*,  std::size_t, std::complex<float>*,  std::size_t, std::size_t, std::size_t, float);
 extern template void col_codelet_dispatch<double>(bool, const std::complex<double>*, std::size_t, std::complex<double>*, std::size_t, std::size_t, std::size_t, double);
 
-} // namespace detail
-} // namespace admiral
-
+}
+}

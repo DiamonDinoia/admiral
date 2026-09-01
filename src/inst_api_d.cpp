@@ -1,7 +1,6 @@
-// The double half of the exported ABI; see `cpp_api.hpp` for the definitions.
 
 #include "cpp_api.hpp"
-#include "admiral/detail/cxx_compat.hpp"  // `span`
+#include "admiral/detail/cxx_compat.hpp"
 
 namespace admiral {
 
@@ -26,4 +25,4 @@ template void forward<double>(const double*, std::complex<double>*, span<const s
 template void inverse<double>(std::complex<double>*, double*, span<const std::size_t>,
                               const options&, std::optional<double>);
 
-}  // namespace admiral
+}

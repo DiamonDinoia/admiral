@@ -1,6 +1,3 @@
-// C API error paths: every `adm_status` string, and the argument validation on the
-// 1-D / N-D / plan / r2c-c2r entry points. The happy paths live in `test_api_c.cpp`;
-// a working caller never takes the branches covered here.
 
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -26,22 +23,16 @@ TEST_CASE("C API error strings cover every status", "[coverage][c_api]") {
     REQUIRE(std::string(adm_error_string(ADM_ERROR_OUT_OF_MEMORY)) == "Out of memory");
     REQUIRE(std::string(adm_error_string(ADM_ERROR_INVALID_PLAN)) == "Invalid plan");
     REQUIRE(std::string(adm_error_string(ADM_ERROR_INTERNAL)) == "Internal error");
-    // 3 is inside the `adm_status` value range (enumerators -6..0 => 4 signed bits
-    // => -8..7) but is not an enumerator. The call takes the default branch with
-    // defined behaviour.
     REQUIRE(std::string(adm_error_string(static_cast<adm_status>(3))) == "Unknown error");
 }
 
 TEST_CASE("C API plan handle carries the creation failure", "[coverage][c_api]") {
-    // A failed creation writes an error record the caller can query and must
-    // destroy, not a null handle.
     adm_plan p = nullptr;
     REQUIRE(adm_plan_1d(&p, 0, nullptr) == ADM_ERROR_INVALID_SIZE);
     REQUIRE(p != nullptr);
     REQUIRE(adm_plan_status(p) == ADM_ERROR_INVALID_SIZE);
     REQUIRE(std::string(adm_plan_error_message(p)).find("greater than 0") != std::string::npos);
     std::vector<adm_complex> buf(8);
-    // Executing the failed plan replays the creation error.
     REQUIRE(adm_plan_execute_forward(p, buf.data()) == ADM_ERROR_INVALID_SIZE);
     REQUIRE(adm_plan_size(p) == 0);
     adm_plan_destroy(p);
@@ -53,7 +44,6 @@ TEST_CASE("C API plan handle carries the creation failure", "[coverage][c_api]")
     REQUIRE(std::string(adm_plan_error_message(good)).empty());
     adm_plan_destroy(good);
 
-    // For a null handle, `adm_plan_status` returns the pointer error.
     REQUIRE(adm_plan_status(nullptr) == ADM_ERROR_NULL_POINTER);
 }
 
@@ -70,7 +60,6 @@ TEST_CASE("C API transform argument validation", "[coverage][c_api]") {
     REQUIRE(adm_inverse(nullptr, 4, nullptr) == ADM_ERROR_NULL_POINTER);
     REQUIRE(adm_inverse(&d, 0, nullptr) == ADM_ERROR_INVALID_SIZE);
 
-    // A valid single-element float transform also exercises the success path.
     REQUIRE(admf_forward(&f, 1, nullptr) == ADM_SUCCESS);
 }
 
@@ -85,9 +74,6 @@ TEST_CASE("C API N-D and plan argument validation", "[coverage][c_api]") {
     REQUIRE(adm_forward_nd(buf.data(), bad.data(), 2, nullptr) == ADM_ERROR_INVALID_SIZE);
     REQUIRE(admf_inverse_nd(nullptr, shape.data(), 2, nullptr) == ADM_ERROR_NULL_POINTER);
 
-    // Plan constructors: a failure does not leave null. The constructor writes a
-    // queryable error record, and each call here destroys that record. The case
-    // "plan handle carries the creation failure" covers the query side.
     adm_plan p = nullptr;
     REQUIRE(admf_plan_1d(nullptr, 4, nullptr) == ADM_ERROR_NULL_POINTER);
     REQUIRE(admf_plan_1d(&p, 0, nullptr) == ADM_ERROR_INVALID_SIZE);
@@ -102,7 +88,6 @@ TEST_CASE("C API N-D and plan argument validation", "[coverage][c_api]") {
     REQUIRE(adm_plan_nd(&p, bad.data(), 2, nullptr) == ADM_ERROR_INVALID_SIZE);
     adm_plan_destroy(p);
 
-    // Execute with a null / null-data / wrong-type plan.
     admf_complex fdata{1, 0};
     adm_complex ddata{1, 0};
     REQUIRE(admf_plan_execute_forward(nullptr, &fdata) == ADM_ERROR_INVALID_PLAN);
@@ -110,9 +95,9 @@ TEST_CASE("C API N-D and plan argument validation", "[coverage][c_api]") {
 
     adm_plan dplan = nullptr;
     REQUIRE(adm_plan_1d(&dplan, 4, nullptr) == ADM_SUCCESS);
-    REQUIRE(admf_plan_execute_forward(dplan, &fdata) == ADM_ERROR_INVALID_PLAN);   // wrong type
-    REQUIRE(admf_plan_execute_inverse(dplan, &fdata) == ADM_ERROR_INVALID_PLAN);   // wrong type
-    REQUIRE(adm_plan_execute_forward(dplan, nullptr) == ADM_ERROR_NULL_POINTER);   // null data
+    REQUIRE(admf_plan_execute_forward(dplan, &fdata) == ADM_ERROR_INVALID_PLAN);
+    REQUIRE(admf_plan_execute_inverse(dplan, &fdata) == ADM_ERROR_INVALID_PLAN);
+    REQUIRE(adm_plan_execute_forward(dplan, nullptr) == ADM_ERROR_NULL_POINTER);
     REQUIRE(adm_plan_execute_inverse(dplan, nullptr) == ADM_ERROR_NULL_POINTER);
     adm_plan_destroy(dplan);
 
@@ -142,9 +127,8 @@ TEMPLATE_TEST_CASE("C API r2c/c2r round-trip and validation", "[coverage][c_api]
     }
     REQUIRE(s_fwd == ADM_SUCCESS);
     REQUIRE(s_inv == ADM_SUCCESS);
-    require_close(out, in, fft_tol<T>(2.0));  // r2c then c2r compounds
+    require_close(out, in, fft_tol<T>(2.0));
 
-    // Argument validation (null + degenerate shape).
     const std::array<size_t, 2> bad = {4, 0};
     if constexpr (std::is_same_v<T, float>) {
         REQUIRE(admf_r2c_nd(nullptr, spec.data(), shape.data(), 2, nullptr) == ADM_ERROR_NULL_POINTER);
@@ -162,9 +146,6 @@ TEMPLATE_TEST_CASE("C API r2c/c2r round-trip and validation", "[coverage][c_api]
     }
 }
 
-// `adm_options` is the C mirror of `admiral::options`: same three knobs, `nullptr` for
-// the defaults. The C layer must reject an `eff` outside the enum rather than cast the
-// value, because C cannot stop a caller from inventing one.
 TEST_CASE("adm_options reaches threads, effort and debug", "[c_api][options]") {
     constexpr size_t N = 240;
     std::vector<adm_complex> data(N);
@@ -189,11 +170,9 @@ TEST_CASE("adm_options reaches threads, effort and debug", "[c_api][options]") {
     REQUIRE(adm_plan_size(plan) == N);
     adm_plan_destroy(plan);
 
-    // 3 is the largest value the `adm_effort` range can hold and is not an enumerator.
-    // Every other unnamed value a cast produces has an unspecified result.
     const adm_options bad = {1, static_cast<adm_effort>(3), 0};
     REQUIRE(adm_forward(data.data(), N, &bad) == ADM_ERROR_INVALID_OPTION);
     REQUIRE(adm_plan_1d(&plan, N, &bad) == ADM_ERROR_INVALID_OPTION);
-    adm_plan_destroy(plan);   // even an options reject writes an error record
+    adm_plan_destroy(plan);
     REQUIRE(std::string(adm_error_string(ADM_ERROR_INVALID_OPTION)) != "Unknown error");
 }

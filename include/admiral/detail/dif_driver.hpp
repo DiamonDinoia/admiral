@@ -1,14 +1,6 @@
 #pragma once
 
-// ============================================================================
-// Iterative DIF (Gentleman-Sande) pass-chain driver: mixed-radix, iterative,
-// natural-order output. N = ip*l1*ido per pass; a in [0,ido) contiguous, vectorized
-// with a scalar tail. Pass recurrence: l1=1; per factor ip: ido = N/(l1*ip); run pass;
-// l1 *= ip. Twiddles per pass: tw[(j-1)*ido + a] = W_N^{j*l1*a}, j=0 trivial. Every
-// pass here has ido >= 2 (ido==1 goes to `dif_pass_last`). Scratch and twiddles are
-// externally owned; no hot-path allocation.
-// Ref: Gentleman & Sande, AFIPS Fall JCC 29 (1966) 563. DOI 10.1145/1464291.1464352
-// ============================================================================
+// Pass schedule for the DIF chain: picks the radix of each pass over dif_passes.hpp.
 
 #include <complex>
 #include <cstddef>
@@ -18,24 +10,18 @@
 
 #include <poet/poet.hpp>
 
+#include "codelet.hpp"
+#include "dif_passes.hpp"
+#include "math.hpp"
+#include "scratch.hpp"
+#include "simd_swizzle.hpp"
+#include "twiddles.hpp"
 
-#include "codelet.hpp"     // `kernel_batched` (lane-packed terminal)
-#include "dif_passes.hpp"  // `dif_pass[_first/_last/_fused]` + invokers
-#include "math.hpp"        // `codelet_dispatch` (terminal base kernel)
-#include "scratch.hpp"     // `soa_scratch` (`dif_execute_in_place` buffers)
-#include "simd_swizzle.hpp" // `aos_interleave` (terminal AoS stores)
-#include "twiddles.hpp"    // `dif_twiddle_set`, `build_dif_twiddle_set`
-
-#include "macros.hpp"      // `ADM_ALWAYS_INLINE` and `ADM_NOINLINE`; undef at EOF
+#include "macros.hpp"
 
 namespace admiral {
 namespace detail {
 
-// `dif_radix_set` defined in `twiddles.hpp`; see comment there.
-
-// Execute tape: the plan records the walk once as plain data; `execute()` is a flat loop.
-// Every thunk has the one signature `dif_step::fn_t`. Thunks resolve tables by pass index
-// into `rt.dtw`, never by stored pointer, so a copied `dif_twiddle_set` still transforms.
 template<typename T>
 struct dif_rt {
     const std::complex<T>* in;
@@ -44,7 +30,6 @@ struct dif_rt {
     const dif_twiddle_set<T>* dtw;
 };
 
-// Element-stride decode of an `es` bit: bit b set means stride 2, clear means 1.
 constexpr std::size_t es_stride(unsigned es, int bit) { return ((es >> bit) & 1u) + 1u; }
 
 template<typename T, bool Forward, std::size_t IP>
@@ -77,7 +62,6 @@ void dif_tape_step_ip(const T*, const T*, T* dr, T* di,
                             es, es);
 }
 
-
 template<typename T, std::size_t P1, std::size_t P2>
 void dif_tape_step_f2(const T* sr, const T* si, T* dr, T* di,
                       const dif_step<T>& s, const dif_rt<T>& rt) {
@@ -103,7 +87,6 @@ void dif_tape_step_last(const T* sr, const T* si, T*, T*,
                                   rt.scale, (s.es & 4u) ? rt.dtw->rowperm.data() : nullptr);
 }
 
-// Single-pass (N == ip, no terminal): re-interleave the SoA `cc0` back to AoS.
 template<typename T, bool Forward>
 void dif_tape_step_single(const T* sr, const T* si, T*, T*,
                           const dif_step<T>& s, const dif_rt<T>& rt) {
@@ -113,14 +96,6 @@ void dif_tape_step_single(const T* sr, const T* si, T*, T*,
     }
 }
 
-// One struct per precision so one extern template covers every direction-free step
-// family. Members are defined out of line deliberately: an explicit instantiation
-// declaration does not suppress implicit instantiation of in-class (inline) members.
-// Definitions: `src/inst_dif_thunks_{f,d}.cpp`.
-// Warning: moving a step family across TUs moves codegen, because gcc budgets inlining
-// per TU. Re-measure runtime after such a move.
-
-// `poet::dispatch` makers, one stateless functor per step family.
 template<typename T, bool Chiplet>
 struct dif_thunk_body_maker {
     using fn_t = typename dif_step<T>::fn_t;
@@ -161,7 +136,7 @@ struct dif_thunk {
     static auto chiplet(std::size_t ip) -> fn_t;
     static auto in_place(std::size_t ip) -> fn_t;
     static auto fused2(std::size_t p1, std::size_t p2) -> fn_t;
-    static auto fused3() -> fn_t;  // the one shape `fused3` is elected for, 4x4x4
+    static auto fused3() -> fn_t;
 };
 
 template<typename T>
@@ -197,9 +172,6 @@ auto dif_thunk<T>::fused3() -> fn_t {
 extern template struct dif_thunk<float>;
 extern template struct dif_thunk<double>;
 
-// Record the walk once per element-stride variant: `blk` elects `es2` as if
-// `soa_stride` >= N, `flat` uses stride 1. Step order and scalars match what the
-// executed loop recomputes per call.
 template<typename T, bool Forward>
 void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
     constexpr std::size_t W = xsimd::batch<T>::size;
@@ -211,7 +183,6 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
         std::vector<dif_step<T>>& tv = variant == 0 ? tp.blk : tp.flat;
         tv.reserve(n_passes + 1);
 
-        // The driver's `es2` pipeline, verbatim, for the `blk` variant.
         std::uint64_t es2 = 0;
         if (variant == 0) {
             std::uint64_t blk = 0;
@@ -222,12 +193,8 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
                 if (p + 1 < n_passes && dtw.sched[p] == dif_fuse::plain && idop % W == 0)
                     blk |= std::uint64_t{1} << p;
             }
-            // A buffer is blocked only if the pass that writes it and the pass that
-            // reads it both index it that way.
             for (std::size_t p = 0; p + 1 < n_passes; ++p)
                 if ((blk >> p & 1u) && (blk >> (p + 1) & 1u)) es2 |= std::uint64_t{1} << p;
-            // An in-place pass rewrites the buffer it read: one buffer, so one stride.
-            // Clearing both bits can expose a new mismatch one pass up, hence the fixpoint.
             for (bool changed = true; changed;) {
                 changed = false;
                 for (std::size_t p = 1; p < n_passes; ++p)
@@ -240,7 +207,6 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
         const auto es_bit = [&](std::size_t p) { return static_cast<unsigned>(es2 >> p & 1u); };
         const auto b8 = [](bool b) { return static_cast<std::uint8_t>(b); };
 
-        // --- First pass: AoS -> SoA (`cc0`) ---
         {
             dif_step<T> st{};
             st.dst = 0;
@@ -252,7 +218,6 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
             tv.push_back(st);
         }
 
-        // Single-pass (N == ip): re-interleave SoA `cc0` back to AoS.
         if (n_passes == 1) {
             dif_step<T> st{};
             st.fn = &dif_tape_step_single<T, Forward>;
@@ -261,7 +226,6 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
             continue;
         }
 
-        // --- Intermediate passes: SoA ping-pong (first pass wrote `cc0`) ---
         std::size_t l1 = dtw.radices[0];
         bool ping = false;
         for (std::size_t p = 1; p + 1 < n_passes; ++p) {
@@ -286,7 +250,7 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
                 continue;
             }
             if (dtw.ip_mask >> p & 1u) {
-                st.dst = st.src;  // one buffer: rewrite in place, no ping flip
+                st.dst = st.src;
                 st.dim = st.sim;
                 st.es = static_cast<std::uint8_t>(es_bit(p) << 1);
                 st.fn = dif_thunk<T>::in_place(ip);
@@ -297,7 +261,7 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
             if (dtw.sched[p] == dif_fuse::f3head) {
                 st.fn = dif_thunk<T>::fused3();
                 tv.push_back(st);
-                l1 *= 64u;  // P1 * P2 * P3 = 4 * 4 * 4
+                l1 *= 64u;
                 ping = !ping;
                 p += 2;
                 continue;
@@ -316,7 +280,6 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
             ping = !ping;
         }
 
-        // --- Last pass: SoA -> AoS (always reads a plain layout buffer) ---
         {
             const std::size_t p = n_passes - 1;
             dif_step<T> st{};
@@ -332,17 +295,6 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
     }
 }
 
-// Execute the DIF pass-chain: AoS in -> SoA ping-pong -> AoS out. If `in == out`, no
-// staging copy is needed: the first pass fully drains `in` before any AoS store. `cc0`
-// and `cc1` each hold >= N elements per plane; allocation-free. `scale_val` folds into
-// `dif_pass_last`'s stores (1 for un-normalized). Requires `n_passes` >= 2; a
-// single-factor N goes codelet.
-//
-// `soa_stride` >= N selects the W-blocked SoA tape (element stride 2 halves a radix-IP
-// pass's 2*IP store streams to IP). `soa_stride` >= N declares that each re/im pair is
-// one contiguous 2N span; only the allocation's owner can know that. The kernels never
-// apply the value as an address stride. Four independent vectors must stay on the flat
-// tape.
 template<typename T, bool Forward>
 void iterative_dif_execute_ws(const std::complex<T>* in, std::complex<T>* out,
                                std::size_t N,
@@ -364,8 +316,6 @@ void iterative_dif_execute_ws(const std::complex<T>* in, std::complex<T>* out,
     }
 }
 
-// Instantiation boundary is the `<Forward>` leaf, one TU per direction:
-// `src/inst_dif_{f,d}_{fwd,inv}.cpp`.
 extern template void iterative_dif_execute_ws<float, true>(
     const std::complex<float>*, std::complex<float>*, std::size_t, float*, float*, float*, float*,
     const dif_twiddle_set<float>&, float, std::size_t);
@@ -378,15 +328,11 @@ extern template void iterative_dif_execute_ws<double, true>(
 extern template void iterative_dif_execute_ws<double, false>(
     const std::complex<double>*, std::complex<double>*, std::size_t, double*, double*, double*,
     double*, const dif_twiddle_set<double>&, double, std::size_t);
-// The plan-time half of the boundary: every TU calls `dif_build_tape` (through
-// `build_dif_twiddle_set`) but only the inst TUs instantiate `dif_build_tape`.
 extern template void dif_build_tape<float, true>(dif_twiddle_set<float>&, std::size_t);
 extern template void dif_build_tape<float, false>(dif_twiddle_set<float>&, std::size_t);
 extern template void dif_build_tape<double, true>(dif_twiddle_set<double>&, std::size_t);
 extern template void dif_build_tape<double, false>(dif_twiddle_set<double>&, std::size_t);
 
-// `forward` -> `<Forward>` trampoline: both leaves are extern above, so the body is two
-// calls and pulls in no pass tree. Mirrors `col_dif_dispatch` in `dif_col_driver.hpp`.
 template<typename T>
 void dif_dispatch(bool forward, const std::complex<T>* in, std::complex<T>* out, std::size_t N,
                   T* cc0re, T* cc0im, T* cc1re, T* cc1im, const dif_twiddle_set<T>& dtw,
@@ -399,19 +345,9 @@ void dif_dispatch(bool forward, const std::complex<T>* in, std::complex<T>* out,
                                            soa_stride);
 }
 
-// out doubles as the second ping-pong pair, halving the scratch to one pair. Four
-// conditions, all necessary:
-//   parity: the last pass must read buffer 0; pure flip-count parity, not arrangeable.
-//   layout: each pair one contiguous 2N span; blocked passes address im as dr + W.
-//   alignment: a performance guard only (every access is unaligned-tolerant); a pair off
-//     the line boundary splits every W-block store across two lines.
-//   residency: the smaller resident set wins only while the 4-plane scratch fits L2; the
-//     aliased pair is stuck at stride N and loses `span_stride`'s anti-alias padding.
 template<typename T>
 [[nodiscard]] bool dif_out_aliasable(bool forward, const std::complex<T>* out, std::size_t N,
                                      const dif_twiddle_set<T>& tw) {
-    // Read the executed tape, not a variant that happens to match. Warning: the
-    // thresholds below come from one host's measurements; re-measure on another machine.
     const auto& tv = tw.tape[forward ? 0 : 1].blk;
     if (tv.size() < 2 || tv.front().dst != 0 || tv.back().src != 0) return false;
     if (4 * N * sizeof(T) > cpu_cache().l2) return false;
@@ -419,8 +355,6 @@ template<typename T>
            reinterpret_cast<std::uintptr_t>(out) % span_align<T> == 0;
 }
 
-// Allocate the SoA scratch and dispatch. Every route but `four_step_large` calls
-// `dif_execute_in_place`; `four_step_large` owns per-thread scratch.
 template<typename T>
 void dif_execute_in_place(bool forward, const std::complex<T>* in, std::complex<T>* out,
                           std::size_t N, const dif_twiddle_set<T>& tw, T scale = T(1)) {
@@ -436,8 +370,7 @@ void dif_execute_in_place(bool forward, const std::complex<T>* in, std::complex<
                     sc.stride());
 }
 
-} // namespace detail
-} // namespace admiral
-
+}
+}
 
 #include "undef_macros.hpp"

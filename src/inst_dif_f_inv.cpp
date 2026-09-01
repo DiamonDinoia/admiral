@@ -1,4 +1,3 @@
-// See `inst_dif_f_fwd.cpp`.
 #include "admiral/detail/dif_driver.hpp"
 
 namespace admiral {
@@ -10,5 +9,5 @@ template void iterative_dif_execute_ws<float, false>(
 
 template void dif_build_tape<float, false>(dif_twiddle_set<float>&, std::size_t);
 
-} // namespace detail
-} // namespace admiral
+}
+}

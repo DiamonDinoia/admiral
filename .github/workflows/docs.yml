@@ -1,8 +1,5 @@
 name: Docs
 
-# Builds the Doxygen + Sphinx site and publishes it to GitHub Pages.
-# One-time repo setting: Settings -> Pages -> Source: GitHub Actions.
-
 on:
   push:
     branches: [ master ]

@@ -25,7 +25,6 @@
 #include <cmath>
 #include <complex>
 #include <cstddef>
-#include <cstdlib>    // std::getenv (the WS-3 sweep switch)
 #include <mutex>
 #include <thread>
 #include <unordered_map>
@@ -467,18 +466,16 @@ template<typename T>
     return choose_fused_large_split<T>(N).valid();
 }
 
-// WS-3 sweep execution switch (env probe per execute; the cells are milliseconds, so
-// the read is free — and the tests flip it mid-process). DEFAULT OFF: on SPR the
-// restructure lost to the in-place engine at every 2^20..2^25 cell measured
-// (0.72-0.93x; the F-transpose falsifier conflated pattern with register-transpose
-// work — see the campaign logbook), and the landing gate is per-host A/B via
-// ADM_FSL_WS=1 until the standings hosts re-measure the sweeps. Rollback valve per
-// the profiler spec: delete the switch and the in-place engine when the sweep wins
-// or ties everywhere (no permanent dual engine).
-[[nodiscard]] inline bool fsl_ws_sweeps_enabled() {
-    const char* e = std::getenv("ADM_FSL_WS");
-    return e != nullptr && e[0] != '0';
-}
+// WS-3 sweep gate by design (knob A/B on the three hosts, 2026-08-31; Measurer's
+// knob tables fi/mt/out/knobab-*): threaded on AVX-512-class builds only — MT/ice
+// wins everywhere (-20.6..-52.5%), MT/genoa 5/6 wins (worst -3.5% tie), MT/rome
+// breaches the no-loss rule (+6.2% @ 2^20, +12.0% @ 2^23), ST everywhere loses up to
+// +49%; the discriminator that matches the data is exactly (threaded, AVX-512
+// class). The trait is compile-time (the bench trees build per-family
+// BENCH_ARCHs, so the class is honest at compile time). The in-place engine stays
+// reachable at (nthreads <= 1 || !avx512-class) for the A/Bs when the Measurer needs
+// the old arm: those plans run it.
+[[nodiscard]] inline constexpr bool fsl_ws_arch_class() { return XSIMD_WITH_AVX512F; }
 
 // WS-3 G1+G3 sweeps for the large-N route (fi/ws3-profiler-r1.md; falsifier probe on
 // SPR 2026-09-01: same-traffic contiguous copies in place of the strided transposes
@@ -641,7 +638,7 @@ struct four_step_large_plan {
     // re-entrant on the sweep. The env switch selects the sweeps.
     void execute(const std::complex<T>* in, std::complex<T>* out, T fct,
                  thread_pool* pool = nullptr) const {
-        if (fsl_ws_sweeps_enabled()) {
+        if (fsl_ws_arch_class() && pool != nullptr && pool->size() > 1) {
             execute_ws(in, out, fct, pool);
             return;
         }

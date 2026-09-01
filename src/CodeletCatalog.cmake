@@ -129,10 +129,20 @@ configure_file(
     @ONLY)
 
 # One TU per catalog N. The `foreach` below generates the dispatch TU's
-# extern-template block here, not from preprocessor macros.
+# extern-template block here, not from preprocessor macros. The column codelet
+# (ND col axis, len <= 64) covers only the dense range: `CODELET_COL_INST` is
+# empty for the extras.
 set(ADM_CODELET_GENERATED "")
 set(ADM_CODELET_EXTERN "")
 foreach(CODELET_N IN LISTS ADM_CODELET_SIZES)
+    set(CODELET_COL_INST "")
+    if(NOT CODELET_N GREATER 64)
+        set(CODELET_COL_INST
+            "template void col_codelet_apply<${CODELET_N}, float,  true >(const std::complex<float>*, std::size_t, std::complex<float>*, std::size_t, std::size_t, float);\n"
+            "template void col_codelet_apply<${CODELET_N}, float,  false>(const std::complex<float>*, std::size_t, std::complex<float>*, std::size_t, std::size_t, float);\n"
+            "template void col_codelet_apply<${CODELET_N}, double, true >(const std::complex<double>*, std::size_t, std::complex<double>*, std::size_t, std::size_t, double);\n"
+            "template void col_codelet_apply<${CODELET_N}, double, false>(const std::complex<double>*, std::size_t, std::complex<double>*, std::size_t, std::size_t, double);\n")
+    endif()
     configure_file(
         ${CMAKE_CURRENT_SOURCE_DIR}/codelet_instance.cpp.in
         ${CMAKE_CURRENT_BINARY_DIR}/codelet_${CODELET_N}.cpp
@@ -152,6 +162,13 @@ foreach(CODELET_N IN LISTS ADM_CODELET_SIZES)
             "extern template void codelet_apply_many_oop<${CODELET_N}, float,  false>(const std::complex<float>*,  std::complex<float>*,  std::size_t, std::size_t, std::size_t, float);\n"
             "extern template void codelet_apply_many_oop<${CODELET_N}, double, true >(const std::complex<double>*, std::complex<double>*, std::size_t, std::size_t, std::size_t, double);\n"
             "extern template void codelet_apply_many_oop<${CODELET_N}, double, false>(const std::complex<double>*, std::complex<double>*, std::size_t, std::size_t, std::size_t, double);\n")
+    if(NOT CODELET_N GREATER 64)
+        string(APPEND ADM_CODELET_EXTERN
+            "extern template void col_codelet_apply<${CODELET_N}, float,  true >(const std::complex<float>*, std::size_t, std::complex<float>*, std::size_t, std::size_t, float);\n"
+            "extern template void col_codelet_apply<${CODELET_N}, float,  false>(const std::complex<float>*, std::size_t, std::complex<float>*, std::size_t, std::size_t, float);\n"
+            "extern template void col_codelet_apply<${CODELET_N}, double, true >(const std::complex<double>*, std::size_t, std::complex<double>*, std::size_t, std::size_t, double);\n"
+            "extern template void col_codelet_apply<${CODELET_N}, double, false>(const std::complex<double>*, std::size_t, std::complex<double>*, std::size_t, std::size_t, double);\n")
+    endif()
 endforeach()
 
 configure_file(

@@ -376,6 +376,17 @@ extern template void codelet_dispatch_many_oop<float,  false>(const std::complex
 extern template void codelet_dispatch_many_oop<double, true >(const std::complex<double>*, std::complex<double>*, std::size_t, std::size_t, std::size_t, std::size_t, double);
 extern template void codelet_dispatch_many_oop<double, false>(const std::complex<double>*, std::complex<double>*, std::size_t, std::size_t, std::size_t, std::size_t, double);
 
+// One batched call for a col axis of catalog length N <= 64: lanes are consecutive
+// columns, element strides in_inner/out_inner. SCALED by `scale`. Replaces the
+// col_dif chain there (no SoA scratch, one sweep). How: `codelet_apply.hpp`.
+template<typename T>
+void col_codelet_dispatch(bool forward, const std::complex<T>* in, std::size_t in_inner,
+                          std::complex<T>* out, std::size_t out_inner, std::size_t ncols,
+                          std::size_t N, T scale);
+
+extern template void col_codelet_dispatch<float>(bool, const std::complex<float>*,  std::size_t, std::complex<float>*,  std::size_t, std::size_t, std::size_t, float);
+extern template void col_codelet_dispatch<double>(bool, const std::complex<double>*, std::size_t, std::complex<double>*, std::size_t, std::size_t, std::size_t, double);
+
 } // namespace detail
 } // namespace admiral
 

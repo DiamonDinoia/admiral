@@ -48,11 +48,14 @@ namespace detail {
 }
 
 // Per-axis state. Exactly one of {dtw, plan} is active: dtw for the batched SIMD DIF
-// column pass, plan for the innermost row or scalar fallback.
+// column pass, plan for the innermost row or scalar fallback. `col_codelet` marks a
+// dif-available length in the codelet catalog: the col route then runs the one-call
+// column codelet (len <= 64, no scratch) instead of the dif chain.
 template<typename T>
 struct nd_axis_state {
     std::size_t length = 0;
     bool dif = false;
+    bool col_codelet = false;
     dif_twiddle_set<T> dtw;             // active iff dif
     std::optional<plan_impl<T>> plan;   // active iff !dif (row pass or scalar fallback)
 };
@@ -88,6 +91,13 @@ template<typename T>
     }
     if (!innermost && is_codelet_supported(length)) {
         st.dif = true;
+        // 8..64 catalog, small inner: one batched column codelet call per tile
+        // replaces the dif chain's log(len) sweeps and SoA scratch (WS-1 E2). Lens
+        // <= 4 keep the chain's trivial butterflies, and past inner 64 the chain's
+        // per-tile slab reuse wins (len x inner A/B sweep, SP-class AVX-512,
+        // 2026-08-31).
+        st.col_codelet = length >= 8 && length <= kFourStepLeafMax &&
+                         is_codelet_catalog(length) && inner <= 64;
         dif_factor_plan r4;
         const dif_factor_plan* ov = nullptr;
         // f32 only: on f64 the r16 passes spill, but the pass-count saving outweighs
@@ -200,9 +210,19 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
         const std::size_t nunits = nruns * ntiles;
         const T scale = fct.value_or(forward ? T(1) : T(1) / static_cast<T>(len));
         parallel_for(pool, nunits, total_elems, [&](std::size_t b, std::size_t e, std::size_t) {
-            soa_scratch<T, 4> sc(len * Bt);
             std::size_t run = b / ntiles, tile = b % ntiles;
             auto* line = data + line_base(run);
+            if (st.col_codelet) {
+                for (std::size_t u = b; u < e; ++u) {
+                    const std::size_t c0 = tile * Bt;
+                    const std::size_t bc = std::min(Bt, run_len - c0);
+                    col_codelet_dispatch<T>(forward, line + c0, inner, line + c0, inner, bc,
+                                            len, scale);
+                    if (++tile == ntiles) { tile = 0; line = data + line_base(++run); }
+                }
+                return;
+            }
+            soa_scratch<T, 4> sc(len * Bt);
             for (std::size_t u = b; u < e; ++u) {
                 const std::size_t c0 = tile * Bt;
                 const std::size_t bc = std::min(Bt, run_len - c0);
@@ -271,10 +291,24 @@ apply_lines_strided_oop(const std::complex<T>* src, std::size_t src_line,
         const std::size_t nunits = nruns * ntiles;
         const T scale = fct.value_or(forward ? T(1) : T(1) / static_cast<T>(len));
         parallel_for(pool, nunits, total_elems, [&](std::size_t b, std::size_t e, std::size_t) {
-            soa_scratch<T, 4> sc(len * Bt);
             std::size_t run = b / ntiles, tile = b % ntiles;
             const std::complex<T>* sline = src + src_base(run);
             std::complex<T>* dline = dst + dst_base(run);
+            if (st.col_codelet) {
+                for (std::size_t u = b; u < e; ++u) {
+                    const std::size_t c0 = tile * Bt;
+                    const std::size_t bc = std::min(Bt, run_len - c0);
+                    col_codelet_dispatch<T>(forward, sline + c0, src_line, dline + c0,
+                                            dst_line, bc, len, scale);
+                    if (++tile == ntiles) {
+                        tile = 0;
+                        sline = src + src_base(++run);
+                        dline = dst + dst_base(run);
+                    }
+                }
+                return;
+            }
+            soa_scratch<T, 4> sc(len * Bt);
             for (std::size_t u = b; u < e; ++u) {
                 const std::size_t c0 = tile * Bt;
                 const std::size_t bc = std::min(Bt, run_len - c0);

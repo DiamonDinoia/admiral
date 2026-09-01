@@ -4,6 +4,7 @@
 #include "utils/reference.hpp"
 
 #include <admiral/admiral.hpp>   // `strides_plan`, `plan`
+#include <admiral/detail/nd_plan.hpp>   // `make_nd_axis_state` (the col-codelet route pin)
 
 #include <algorithm>
 #include <complex>
@@ -62,7 +63,8 @@ void check(std::size_t len, std::size_t nbatch, std::size_t in_stride, std::size
 
 // Both directions, over geometries that hit every route:
 //   rows       in_stride == out_stride == 1 (contiguous lines, any dist)
-//   col_dif    unit dist both sides, smooth len (SIMD column chain)
+//   col        unit dist both sides, smooth len (SIMD column engine: the one-call
+//              column codelet at <= 64, the dif chain above)
 //   transposed dist > 1, or non-codelet len (gather -> plan -> scatter)
 TEMPLATE_TEST_CASE("strides_plan matches per-line plan", "[transforms][strides]", float, double) {
     using T = TestType;
@@ -103,6 +105,31 @@ TEMPLATE_TEST_CASE("strides_plan matches per-line plan", "[transforms][strides]"
         check<T>(256, 3, 3, 1, 3, 1, forward);
         check<T>(256, 1, 1, 1, 1, 1, forward);
     }
+}
+
+// One-call column codelet (col axis len <= 64 catalog): the per-line oracle must match
+// across the sweep, exercising the full tiles, the scalar tail tile (nbatch not a
+// multiple of W, including below one register), and the dif-chain controls above 64.
+TEMPLATE_TEST_CASE("column codelet lens <= 64 match per-line plan, tails included",
+                   "[transforms][strides][numerics]", float, double) {
+    using T = TestType;
+    // Route pin: the col codelet arm must actually carry these lengths, or the sweep
+    // below exercises nothing. 16 is in the catalog of every build config (sanitizers
+    // cap it at 16); 96 is smooth but past 64, so it stays on the dif chain.
+    REQUIRE(admiral::detail::make_nd_axis_state<T>(16, 17, true, false).col_codelet);
+    REQUIRE(admiral::detail::make_nd_axis_state<T>(8, 17, true, false).col_codelet);
+    REQUIRE(!admiral::detail::make_nd_axis_state<T>(96, 17, true, false).col_codelet);
+    for (const bool forward : {true, false})
+        for (const std::size_t nbatch : {std::size_t{3}, std::size_t{7}, std::size_t{17}}) {
+            for (const std::size_t len :
+                 {std::size_t{2}, std::size_t{4}, std::size_t{8}, std::size_t{16},
+                  std::size_t{20}, std::size_t{32}, std::size_t{33}, std::size_t{60},
+                  std::size_t{64}})
+                check<T>(len, nbatch, nbatch, 1, nbatch, 1, forward);
+            // dif-chain controls: smooth, past the codelet arm.
+            check<T>(96, nbatch, nbatch, 1, nbatch, 1, forward);
+            check<T>(192, nbatch, nbatch, 1, nbatch, 1, forward);
+        }
 }
 
 TEMPLATE_TEST_CASE("strides_plan in place and scaled", "[transforms][strides]", float, double) {
@@ -315,8 +342,11 @@ TEMPLATE_TEST_CASE("strides_plan bits do not depend on the output layout",
 TEMPLATE_TEST_CASE("column engine is bit-identical across alignment classes",
                    "[transforms][strides][numerics]", float, double) {
     using T = TestType;
-    // 20 and 60 broke without the pin; 256 adds radix coverage.
-    for (const std::size_t len : {std::size_t{20}, std::size_t{60}, std::size_t{256}})
+    // 20 and 60 broke without the pin; they now run the col codelet (per-lane
+    // bit-stable across tiles by construction). 96, 192 and 256 keep the dif col
+    // chain covered, which is where the -ffp-contract pin lives.
+    for (const std::size_t len : {std::size_t{20}, std::size_t{60}, std::size_t{96},
+                                  std::size_t{192}, std::size_t{256}})
         for (const bool forward : {true, false})
             for (const bool axis : {true, false})
                 require_align_stable<T>(len, 16, forward, axis);

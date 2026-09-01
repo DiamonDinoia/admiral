@@ -23,5 +23,6 @@ template void codelet_apply_many_oop<@CODELET_N@, float,  false>(const std::comp
 template void codelet_apply_many_oop<@CODELET_N@, double, true >(const std::complex<double>*, std::complex<double>*, std::size_t, std::size_t, std::size_t, double);
 template void codelet_apply_many_oop<@CODELET_N@, double, false>(const std::complex<double>*, std::complex<double>*, std::size_t, std::size_t, std::size_t, double);
 
+@CODELET_COL_INST@
 } // namespace detail
 } // namespace admiral

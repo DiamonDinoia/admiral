@@ -13,6 +13,7 @@
 #include "admiral/detail/codelet.hpp"
 #include "admiral/detail/math.hpp"  // `scale_inplace`
 #include "admiral/detail/simd_swizzle.hpp"
+#include "admiral/detail/macros.hpp"  // `ADM_LAMBDA_ALWAYS_INLINE` (static_for lambdas)
 
 namespace admiral {
 namespace detail {
@@ -240,5 +241,64 @@ void codelet_apply_many_oop(const std::complex<T>* in, std::complex<T>* out,
     }
 }
 
+// One-call column codelet for the ND/strided col axes of length N <= 64: lanes = W
+// consecutive columns (contiguous at a fixed element), element strides `in_inner` /
+// `out_inner`. `kernel_batched<N>` runs the W size-N DFTs whole (register-flat for
+// N <= 16 f64, cofactor at 32/64), so the axis costs one sweep and no SoA scratch —
+// the col_dif chain's log(N) passes die at these lengths. AoS unzip on load, zip
+// scaled on store; each lane's value is its own full transform, so results are
+// per-lane bit-identical across tilings, chunkings and alignment classes. The tail
+// tile (bc < W columns) stages through scalars: dead lanes read 0 and never store.
+// in == out is safe: every load lands before the first store of the same tile.
+template<unsigned N, typename T, bool Forward>
+void col_codelet_apply(const std::complex<T>* in, std::size_t in_inner,
+                       std::complex<T>* out, std::size_t out_inner, std::size_t ncols,
+                       T scale) {
+    using V = xsimd::batch<T>;
+    constexpr std::size_t W = V::size;
+    const V sc(scale);
+    std::size_t c = 0;
+    // `apply`, not `apply_sink`: no-sink apply shares one batched-kernel tree across
+    // every caller and both directions; an apply-sink per lambda reinstantiates the
+    // combine tree per tile class (measured 7x on the codelet TUs).
+    for (; c + W <= ncols; c += W) {
+        V xre[N], xim[N], yre[N], yim[N];
+        poet::static_for<0, N>([&](auto P) ADM_LAMBDA_ALWAYS_INLINE {
+            aos_deinterleave(reinterpret_cast<const T*>(in + P * in_inner + c),
+                             xre[P], xim[P]);
+        });
+        kernel_batched<N, T, Forward>::apply(xre, xim, 1, yre, yim);
+        poet::static_for<0, N>([&](auto P) ADM_LAMBDA_ALWAYS_INLINE {
+            aos_interleave<T, V>(reinterpret_cast<T*>(out + P * out_inner + c),
+                                 yre[P] * sc, yim[P] * sc);
+        });
+    }
+    if (c < ncols) {
+        const std::size_t bc = ncols - c;
+        alignas(xsimd::batch<T>::arch_type::alignment()) T sre[W];
+        alignas(xsimd::batch<T>::arch_type::alignment()) T sim[W];
+        V xre[N], xim[N], yre[N], yim[N];
+        poet::static_for<0, N>([&](auto P) ADM_LAMBDA_ALWAYS_INLINE {
+            for (std::size_t l = 0; l < bc; ++l) {
+                sre[l] = in[P * in_inner + c + l].real();
+                sim[l] = in[P * in_inner + c + l].imag();
+            }
+            for (std::size_t l = bc; l < W; ++l) { sre[l] = T(0); sim[l] = T(0); }
+            xre[P] = V::load_aligned(sre);
+            xim[P] = V::load_aligned(sim);
+        });
+        kernel_batched<N, T, Forward>::apply(xre, xim, 1, yre, yim);
+        poet::static_for<0, N>([&](auto P) ADM_LAMBDA_ALWAYS_INLINE {
+            yre[P].store_aligned(sre);
+            yim[P].store_aligned(sim);
+            for (std::size_t l = 0; l < bc; ++l)
+                out[P * out_inner + c + l] =
+                    std::complex<T>(sre[l] * scale, sim[l] * scale);
+        });
+    }
+}
+
 } // namespace detail
 } // namespace admiral
+
+#include "admiral/detail/undef_macros.hpp"

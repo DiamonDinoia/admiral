@@ -92,6 +92,34 @@ template void codelet_dispatch_many_oop<float,  false>(const std::complex<float>
 template void codelet_dispatch_many_oop<double, true >(const std::complex<double>*, std::complex<double>*, std::size_t, std::size_t, std::size_t, std::size_t, double);
 template void codelet_dispatch_many_oop<double, false>(const std::complex<double>*, std::complex<double>*, std::size_t, std::size_t, std::size_t, std::size_t, double);
 
+// Column-codelet dispatch (ND col axis, len <= 64 in every shipped catalog). The dense
+// jump table already spans those lengths; no extras if-chain.
+template<typename T>
+struct col_codelet_invoke {
+    template<std::size_t N>
+    void operator()(bool forward, const std::complex<T>* in, std::size_t in_inner,
+                    std::complex<T>* out, std::size_t out_inner, std::size_t ncols,
+                    T scale) const {
+        // Users may raise ADM_CODELET_MAX_N past 64; the col route never asks for it
+        // (gated at kFourStepLeafMax), and instantiating there would burn compile time.
+        if constexpr (N <= 64) {
+            if (forward) col_codelet_apply<N, T, true >(in, in_inner, out, out_inner, ncols, scale);
+            else         col_codelet_apply<N, T, false>(in, in_inner, out, out_inner, ncols, scale);
+        }
+    }
+};
+
+template<typename T>
+void col_codelet_dispatch(bool forward, const std::complex<T>* in, std::size_t in_inner,
+                          std::complex<T>* out, std::size_t out_inner, std::size_t ncols,
+                          std::size_t N, T scale) {
+    poet::dispatch(col_codelet_invoke<T>{}, poet::dispatch_param<codelet_catalog_seq>{N},
+                   forward, in, in_inner, out, out_inner, ncols, scale);
+}
+
+template void col_codelet_dispatch<float >(bool, const std::complex<float>*,  std::size_t, std::complex<float>*,  std::size_t, std::size_t, std::size_t, float);
+template void col_codelet_dispatch<double>(bool, const std::complex<double>*, std::size_t, std::complex<double>*, std::size_t, std::size_t, std::size_t, double);
+
 template void codelet_dispatch<float,  true >(const std::complex<float>*,  std::complex<float>*,  std::size_t);
 template void codelet_dispatch<float,  false>(const std::complex<float>*,  std::complex<float>*,  std::size_t);
 template void codelet_dispatch<double, true >(const std::complex<double>*, std::complex<double>*, std::size_t);

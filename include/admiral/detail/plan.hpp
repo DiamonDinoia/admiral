@@ -206,24 +206,21 @@ private:
                        : measured_choice{select_route(size, nt), {}};
         };
         if (nthreads != 0) return {elect(nthreads), nthreads, dif_override};
+        // FLAP fix (fi/mt t0-modeler-r4.md §5): resolve first, race once at the law's
+        // count. The v2-era race-at-P only decided the fsl gate and priced wake on a
+        // pool per candidate at the wrong count; its admission line is a read, not a
+        // race.
         const std::size_t P = resolve_nthreads(0);
-        routed_plan rp{elect(P), P, dif_override};
-        if (rp.ch.route != route_kind::four_step_large) {
-            rp.nthreads = 1;
-            return rp;
-        }
-        rp.nthreads = resolve_nthreads(0, size, kLargeDispatches, large_work_ns(size), 0);
-        if (rp.nthreads == P) return rp;
-        // The admission lines move with the count: re-elect once at the resolved count
-        // and accept the outcome (a flip off four_step_large resolves serial).
-        measured_choice rerun = elect(rp.nthreads);
-        if (rerun.route != route_kind::four_step_large) {
-            rp.ch = rerun;
-            rp.nthreads = 1;
-            return rp;
-        }
-        rp.ch = rerun;
-        return rp;
+        measured_choice route_est{select_route(size, P), {}};
+        if (route_est.route != route_kind::four_step_large)
+            return {route_est, 1, dif_override};
+        const std::size_t nt = resolve_nthreads(0, size, kLargeDispatches, large_work_ns(size), 0);
+        // The admission lines move with the count, so the gate outcome at nt still
+        // wins: a flip off four_step_large resolves serial.
+        measured_choice ch = elect(nt);
+        if (ch.route != route_kind::four_step_large)
+            return {ch, 1, dif_override};
+        return {ch, nt, dif_override};
     }
 
     // Emplace route state into `m.st` (`m.route` already set). Shared by both ctors.
@@ -707,7 +704,11 @@ plan_impl<T>::measure_route(std::size_t size, bool is_forward, std::size_t nthre
 
     double best_ns = kMeasureInf;
     const auto time_plan = [&](plan_impl<T>& trial) {
-        trial.execute(in.data(), out.data());  // warm + first-touch
+        // Warmup protocol (fi/mt t0-modeler-r4.md §5): exactly two untimed executes
+        // per candidate — first-touch and the first dispatch's wake state converge to
+        // the sustained-loop state the race prices.
+        trial.execute(in.data(), out.data());
+        trial.execute(in.data(), out.data());
         // Executions per sample, sized from one warm execution so the sampled interval
         // clears the clock's resolution.
         const std::size_t inner = [&] {

@@ -507,3 +507,24 @@ TEMPLATE_TEST_CASE("plan with effort::measure at N=1 and N=2 stays exact", "[pla
     REQUIRE(w[0] == std::complex<T>(T(4), T(0)));
     REQUIRE(w[1] == std::complex<T>(T(-2), T(0)));
 }
+
+// Election determinism (fi/mt t0-modeler-r4.md: the FLAP fix): the same shape under
+// the same flags must elect the same route twice, in the same process, after the
+// resolve-first protocol removed construction-order inputs. The fsl-band size is the
+// cell class that used to race at two different thread counts; the small smooth
+// sizes race chains. Blanket: whatever route it elects, it elects twice.
+TEMPLATE_TEST_CASE("effort::measure elects twice the same route at one shape",
+                   "[plan][measure]", float, double) {
+    using T = TestType;
+    for (const admiral::effort eff : {admiral::effort::automatic, admiral::effort::measure}) {
+        CAPTURE(int(eff));
+        for (const std::size_t n : {std::size_t{250}, std::size_t{500}, std::size_t{3720}}) {
+            CAPTURE(n);
+            const std::string ra =
+                admiral::detail::plan_impl<T>(n, true, 0, nullptr, eff).route_name();
+            const std::string rb =
+                admiral::detail::plan_impl<T>(n, true, 0, nullptr, eff).route_name();
+            REQUIRE(ra == rb);
+        }
+    }
+}

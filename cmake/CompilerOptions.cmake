@@ -6,6 +6,11 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 add_library(admiral_optimization_flags INTERFACE)
+if(MSVC)
+    # A codelet TU instantiates a few hundred templates, each landing in its own COMDAT section,
+    # which overruns the 65279-section limit of the default object format.
+    target_compile_options(admiral_optimization_flags INTERFACE /bigobj)
+endif()
 
 add_library(admiral_fast_math_flags INTERFACE)
 if(ADM_USE_FAST_MATH)

@@ -1,15 +1,3 @@
-// fit_cost_model regenerates include/admiral/detail/base_cost_model.hpp from
-// measured sweeps. C++ standard library and one project leaf header (math.hpp)
-// only. No Python, no other dependency.
-//
-// One sparse linear model per form: every receipt in --data pools into the same
-// coefficients, so an unswept build routes off them too. Receipts are
-// self-describing (arch, compiler, major, W, regs, precision).
-//
-// Run:  cmake -B b -DADM_FIT_COST_MODEL=ON, targets admiral_cost_sweep /
-//       admiral_cost_model; or directly:
-//           fit_cost_model [--data DIR] [--alpha A] [--out F]
-// Input: base_cost_*.txt BASECOST receipts (see --data).
 
 #include <algorithm>
 #include <array>
@@ -29,14 +17,10 @@
 #include <utility>
 #include <vector>
 
-// The measured codelet cost table and the engine's own leaf/four-step cost, read from
-// the one place they are written down instead of copied here (see CostModel.cmake).
 #include <admiral/detail/math.hpp>
 
 namespace {
 
-// The structural features come from math.hpp too, so the emitted header scores a
-// plan with the same definitions these coefficients were fitted with.
 using admiral::detail::balanced_split;
 using admiral::detail::bluestein_choose_pad;
 using admiral::detail::chain_work;
@@ -44,8 +28,6 @@ using admiral::detail::four_step_cost;
 using admiral::detail::leaf_cost_cyc;
 using admiral::detail::lpf_nfac;
 
-// Receipts written before BASECOST-ENV existed carry no width/register/version
-// fields, and nothing there is inferable. New sweeps are self-describing.
 const std::map<std::string, std::tuple<std::string, std::string, int,
                                        std::map<std::string, std::pair<int, int>>>>
     LEGACY_ENV = {
@@ -57,13 +39,11 @@ const std::map<std::string, std::tuple<std::string, std::string, int,
         {"base_cost_clang_v2.txt", {"x86_64", "clang", 18, {{"f32", {4, 16}}, {"f64", {2, 16}}}}},
 };
 
-constexpr std::size_t NMIN = 2, NMAX = 512;  // measured domain this model reproduces
+constexpr std::size_t NMIN = 2, NMAX = 512;
 const std::array<const char*, 7> FORM_ORDER = {"codelet", "iterative_dif", "good_thomas",
                                                "four_step", "four_step_batched", "rader",
                                                "bluestein"};
 
-// Every form's feature vector is zero-padded to `NF`; the last three slots are
-// always log2(W), log(bytes) and the clang indicator. Widest vector: `four_step`'s ten.
 constexpr std::size_t NF = 13;
 
 double lg(double x) { return std::log2(std::max(x, 1e-12)); }
@@ -72,10 +52,6 @@ double waste(std::size_t n, std::size_t w) {
     return (vecs(n, w) * double(w) - double(n)) / double(w);
 }
 
-// One form's own features, in feature-table order. The count is the contract with
-// `form_body()`/`feature_names()`; `emit()` refuses to write a header that breaks it.
-// `szt` is `sizeof(T)`: the leaf tables are per-precision and W does not imply one,
-// since f64 W=8 and f32 W=8 are both real targets.
 std::vector<double> feat_own(const std::string& form, std::size_t n, std::size_t w,
                              std::size_t regs, std::size_t szt, bool& ok) {
     ok = true;
@@ -88,10 +64,6 @@ std::vector<double> feat_own(const std::string& form, std::size_t n, std::size_t
         return szt == 4 ? four_step_cost<float>(a, b) : four_step_cost<double>(a, b);
     };
     if (form == "codelet") {
-        // The measured table, not a polynomial in n. A prime leaf is `rader_apply<P>`
-        // over `kernel<P-1>`, several times costlier than a composite neighbour. No
-        // function of (n, `lpf`, `nfac`) expresses that, since lpf(n) == n for every
-        // prime, and the gap differs per precision, so the table is per-precision too.
         v = {lg(double(n)), lg(leaf(n)), vecs(n, w), waste(n, w),
              double(nfac), lg(double(lpf))};
     } else if (form == "iterative_dif") {
@@ -99,9 +71,6 @@ std::vector<double> feat_own(const std::string& form, std::size_t n, std::size_t
         v = {lg(double(n)), cw, cw * lg(double(n)), double(nfac),
              lg(double(lpf)), waste(lpf, w)};
     } else if (form == "four_step" || form == "four_step_batched" || form == "good_thomas") {
-        // `balanced_split` maximizes n1 <= sqrt(n), so its n2 is the SMALLEST any
-        // split achieves: whenever `four_step` is supported both factors are in the
-        // measured table, and `four_step_cost` is the engine's own leaf model.
         const auto [n1, n2] = balanced_split(n);
         v = {lg(double(n)),      vecs(n1, w) * double(n2) / double(n1),
              double(n2) * vecs(n1, w),    double(n1) * vecs(n2, w),
@@ -109,21 +78,15 @@ std::vector<double> feat_own(const std::string& form, std::size_t n, std::size_t
              waste(n1, w),       waste(n2, w),
              double(n) / double(w), lg(fs_cost(n1, n2))};
     } else if (form == "bluestein") {
-        // bluestein.hpp delegates to `bluestein_choose_pad`: {2,3,5,7}-smooth with
-        // v3<=4, v7<=2, else `bit_ceil`. Every one of those factors is an admissible
-        // radix, so `cw` is always a real chain here and needs no `no_chain` indicator
-        // (rader's L does).
         const std::size_t m = bluestein_choose_pad(n);
         const double cw = chain_work(m, w, regs);
         v = {lg(double(n)), lg(double(m)), double(m) / double(n), cw,
              cw * lg(double(m)), vecs(m, w), waste(m, w),
              double(lpf_nfac(m)[1])};
     } else if (form == "rader") {
-        // rader.hpp runs a length-(p-1) CYCLIC convolution, no chirp-z zero padding, so the
-        // discriminator is how well p-1 itself factors (282 = 2*3*47 vs 256).
         const std::size_t L = n > 2 ? n - 1 : 1;
         const double cw = chain_work(L, w, regs);
-        const auto [lpf_l, nfac_l] = lpf_nfac(L);  // {1, 0} at L==1, which is n==2
+        const auto [lpf_l, nfac_l] = lpf_nfac(L);
         v = {lg(double(n)), lg(double(L)), cw, cw * lg(double(L)), vecs(L, w),
              waste(L, w), double(nfac_l), lg(double(lpf_l)),
              cw == 0.0 && L > 1 ? 1.0 : 0.0};
@@ -144,8 +107,6 @@ std::array<double, NF> feat(const std::string& form, std::size_t n, std::size_t 
     return v;
 }
 
-// Receipts: key = (arch, compiler, major, W, regs, prec, uarch); value n ->
-// form -> cyc. uarch is "generic" for receipts predating the field.
 using Key = std::tuple<std::string, std::string, int, int, int, std::string,
                        std::string>;
 using Table = std::map<Key, std::map<std::size_t, std::map<std::string, double>>>;
@@ -156,8 +117,6 @@ using Table = std::map<Key, std::map<std::size_t, std::map<std::string, double>>
 }
 
 Table load(const std::string& data_dir) {
-    // Two BASECOST-ENV field orders exist on file: uarch last, and uarch between
-    // major and prec. Accept both; old receipts are never re-emitted.
     const std::regex env_re(R"(BASECOST-ENV arch=(\S+) compiler=(\S+) major=(\d+) )"
                             R"(prec=(\w+) w=(\d+) regs=(\d+)(?: uarch=(\S+))?)");
     const std::regex env_re_mid(R"(BASECOST-ENV arch=(\S+) compiler=(\S+) major=(\d+) )"
@@ -174,7 +133,7 @@ Table load(const std::string& data_dir) {
     if (files.empty()) die("no base_cost_*.txt receipts in " + data_dir);
     for (const auto& path : files) {
         const std::string fn = std::filesystem::path(path).filename().string();
-        std::map<std::string, Key> env;  // prec -> key
+        std::map<std::string, Key> env;
         if (const auto it = LEGACY_ENV.find(fn); it != LEGACY_ENV.end()) {
             const auto& [arch, cc, major, per_prec] = it->second;
             for (const auto& [p, wr] : per_prec)
@@ -207,8 +166,6 @@ Table load(const std::string& data_dir) {
     return T;
 }
 
-// Lasso on standardized features via cyclic coordinate descent, returned as
-// raw-space (w, b): objective (1/2n)||y - Xw - b||^2 + alpha*||w||_1.
 std::pair<std::vector<double>, double>
 fit_form(const std::vector<std::array<double, NF>>& X, const std::vector<double>& y,
          double alpha) {
@@ -252,7 +209,6 @@ fit_form(const std::vector<std::array<double, NF>>& X, const std::vector<double>
         }
         if (max_change < 1e-13) break;
     }
-    // z holds the standardized coefficients; w_i = z_i/s_i, b = b0 - sum z_i mu_i / s_i.
     std::vector<double> w(NF);
     double b = b0;
     for (std::size_t j = 0; j < NF; ++j) {
@@ -284,19 +240,16 @@ std::string build_name(const Key& k) {
     return buf;
 }
 
-// Shortest round-trip double literal, like python's repr(float).
 std::string cxxd(double v) {
     if (!std::isfinite(v)) die("fit produced a non-finite coefficient");
-    if (v == 0.0) v = 0.0;  // canonicalize -0.0 so refits stay diff-stable
+    if (v == 0.0) v = 0.0;
     char buf[32];
     const auto res = std::to_chars(buf, buf + sizeof buf, v);
     std::string s(buf, res.ptr);
-    if (s.find_first_of(".eE") == std::string::npos) s += ".0";  // stay a double literal
+    if (s.find_first_of(".eE") == std::string::npos) s += ".0";
     return s;
 }
 
-// C++ for each form's own features, in feature-table order. `env` is the
-// width/precision environment, n the transform length.
 struct FormBody {
     const char* pre[2];
     std::vector<const char*> exprs;
@@ -331,7 +284,7 @@ const FormBody& form_body(const std::string& form) {
     if (form == "iterative_dif") return iterative_dif;
     if (form == "bluestein") return bluestein;
     if (form == "rader") return rader;
-    return four_step;  // four_step, four_step_batched, good_thomas
+    return four_step;
 }
 
 const std::vector<const char*>& feature_names(const std::string& form) {
@@ -371,16 +324,21 @@ double mean(const std::vector<double>& v) {
     return v.empty() ? 0.0 : std::accumulate(v.begin(), v.end(), 0.0) / double(v.size());
 }
 
-// Per build: out-of-fold median, p90 and mean route regret, then in-sample max.
 using Summary = std::map<Key, std::tuple<double, double, double, double>>;
 
+const char* form_doc(const std::string& f) {
+    if (f == "codelet") return "// One straight-line kernel of length n, priced on the measured leaf table.\n";
+    if (f == "iterative_dif") return "// The DIF pass chain, priced on chain_work: the cheapest radix path over n's divisors.\n";
+    if (f == "good_thomas") return "// The prime factor split at balanced_split(n), priced on both sub-transform lengths.\n";
+    if (f == "four_step") return "// The N = n1*n2 four-step split, priced on the two leaf lengths and the transpose.\n";
+    if (f == "four_step_batched") return "// four_step with the column pass batched, priced on the same two leaf lengths.\n";
+    if (f == "rader") return "// Prime n as a length-(n-1) cyclic convolution, priced on the DIF chain over n-1.\n";
+    if (f == "bluestein") return "// Chirp convolution at the smooth pad from bluestein_choose_pad, priced on that pad.\n";
+    return "";
+}
+
 void emit(std::ostream& os, const std::vector<std::string>& present,
-          const std::map<std::string, Fitted>& coef, const Summary& summary,
-          std::size_t nz) {
-    // The emitted `features()` must compute exactly what `feat_own()` fitted. Checked,
-    // not assumed. Probed at a small prime and at one above the leaf table, where
-    // `balanced_split(509)` = {1, 509} and the rader/bluestein preludes must stay in
-    // range.
+          const std::map<std::string, Fitted>& coef) {
     for (const std::string f : FORM_ORDER) {
         for (const std::size_t probe : {std::size_t{13}, std::size_t{509}}) {
             bool ok = false;
@@ -393,10 +351,6 @@ void emit(std::ostream& os, const std::vector<std::string>& present,
             if (nown + 3 > NF) die("NF too small for form " + f);
         }
     }
-    // bluestein carries no `no_chain` indicator (rader does): its pad is
-    // {2,3,5,7}-smooth or a power of two, all admissible radices, so `chain_work` is
-    // never the sentinel. The narrow 7-radix set is checked since the wide one
-    // contains it; `chain_work` clamps "no chain" to 0.0, unreachable for a real pad.
     for (std::size_t n = NMIN; n <= NMAX; ++n) {
         const std::size_t pad = bluestein_choose_pad(n);
         if (chain_work(pad, 8, 16) == 0.0)
@@ -407,35 +361,6 @@ void emit(std::ostream& os, const std::vector<std::string>& present,
           "\n"
           "// GENERATED by tools/fit_cost_model.cpp. Do not edit by hand.\n"
           "// Regenerate: cmake -DADM_FIT_COST_MODEL=ON, target admiral_cost_model.\n"
-          "//\n"
-          "// Routing cost model: one sparse linear model per form over structural\n"
-          "// features of N, predicting log(cycles). The route is argmin over forms, and\n"
-          "// exp is monotonic, so ranking needs no exponentiation.\n"
-          "//\n"
-          "// Every build shares the coefficients. They describe the algorithm\n"
-          "// (radix content, lane waste, padding, footprint), so even a target this tool\n"
-          "// never swept routes on them, and nothing here is keyed to a machine. One\n"
-          "// slot is keyed to the COMPILER, which a machine key would not reach: gcc and\n"
-          "// clang price four_step against iterative_dif 1.25x apart on one host at one\n"
-          "// kernel vintage, and they move that pair in OPPOSITE directions at equal width.\n"
-          "// An unswept compiler takes the gcc branch. Every form takes its price from what\n"
-          "// the engine runs: the measured PER-PRECISION leaf table (math.hpp) for\n"
-          "// codelet-terminated forms, the elected pad for Bluestein. Where the coefficients\n"
-          "// still misprice a cell, a plan-time measurement (effort::automatic) recovers it.\n"
-          "// No table keyed to swept machines does.\n"
-          "//\n";
-    os << "// " << nz << " coefficients. Route regret vs the exhaustive " << NMIN << ".."
-       << NMAX << " sweep,\n"
-       << "// in-sample max | out-of-fold:\n";
-    for (const auto& [k, s] : summary) {
-        char buf[256];
-        std::snprintf(buf, sizeof buf,
-                      "max %4.1f%%  |  median %4.1f%% p90 %5.1f%% mean %5.1f%%",
-                      100 * std::get<3>(s), 100 * std::get<0>(s), 100 * std::get<1>(s),
-                      100 * std::get<2>(s));
-        os << "//   " << build_name(k) << ": " << buf << "\n";
-    }
-    os << "//\n"
           "\n"
           "#include <array>\n"
           "#include <cstddef>\n"
@@ -444,8 +369,9 @@ void emit(std::ostream& os, const std::vector<std::string>& present,
           "#include <type_traits>\n"
           "#include <utility>\n"
           "\n"
-          "#include <admiral/detail/build_id.hpp>\n"   // build_width, build_vector_regs, build_compiler
-          "#include <admiral/detail/math.hpp>\n"       // ct_log2, the measured leaf table
+          "#include <admiral/detail/build_id.hpp>\n"
+          "#include <admiral/detail/math.hpp>\n"
+          "#include \"cxx_compat.hpp\"\n"
           "\n"
           "namespace admiral::detail {\n"
           "\n"
@@ -453,7 +379,7 @@ void emit(std::ostream& os, const std::vector<std::string>& present,
           "                                      four_step, four_step_batched, rader, bluestein };\n"
           "\n"
           "struct base_cost_entry {\n"
-          "    float cyc;   // modelled cycles (< 0 outside the modelled domain)\n"
+          "    float cyc;\n"
           "    base_form form;\n"
           "};\n"
           "\n"
@@ -462,7 +388,7 @@ void emit(std::ostream& os, const std::vector<std::string>& present,
           "\n"
           "namespace base_model {\n"
           "\n"
-          "// Width/precision environment: the only target properties the features read.\n"
+          "// Build constants: Wi lanes per batch, bytes per complex element, vec and waste in lanes.\n"
           "template<typename T>\n"
           "struct env {\n"
           "    static constexpr std::size_t Wi = build_width<T>;\n"
@@ -472,21 +398,12 @@ void emit(std::ostream& os, const std::vector<std::string>& present,
           "    static constexpr double waste(std::size_t m) { return (vec(m) * W - double(m)) / W; }\n"
           "};\n"
           "\n"
-          "// lpf_nfac, balanced_split and chain_work are NOT defined here: they live in\n"
-          "// math.hpp, and tools/fit_cost_model.cpp fits the coefficients below by calling\n"
-          "// those same definitions. A copy in this file would be a copy the lasso can\n"
-          "// silently disagree with, which is how a partial-chain clamp once mispriced\n"
-          "// 1355 of 2047 lengths. Only the <T> binding of W and the register count is\n"
-          "// local, because the fitter pools targets and cannot bind either.\n"
           "template<typename T>\n"
           "[[nodiscard]] constexpr double chain_work(std::size_t n) {\n"
           "    return admiral::detail::chain_work(n, env<T>::Wi, build_vector_regs);\n"
           "}\n"
           "\n"
-          "// Every form also carries log2(W), log(bytes per element pair) and a clang\n"
-          "// indicator. The two compilers price four_step against iterative_dif 1.25x\n"
-          "// apart on one host at one kernel vintage, and that pair is the dominant route\n"
-          "// below 512; an unswept compiler takes the gcc branch.\n"
+          "// Appends the three features every form shares: log2(lanes), ln(bytes per element), clang flag.\n"
           "template<typename T, std::size_t K>\n"
           "[[nodiscard]] constexpr std::array<double, K + 3> with_tail(const std::array<double, K>& a) {\n"
           "    std::array<double, K + 3> f{};\n"
@@ -495,22 +412,14 @@ void emit(std::ostream& os, const std::vector<std::string>& present,
           "    f[K + 1] = ct_log2(env<T>::bytes) / ct_log2(2.7182818284590452354);\n"
           "    f[K + 2] = build_compiler == \"clang\" ? 1.0 : 0.0;\n"
           "    return f;\n"
-          "}\n"
-          "\n"
-          "// One class per form, each priced from ITS OWN sub-problem: bluestein and\n"
-          "// rader from the padded length M, four_step from its split, iterative_dif from\n"
-          "// its radix chain. The coefficient array is sized to that form's feature\n"
-          "// vector, so a mismatch is a compile error rather than a silent misread.\n";
+          "}\n";
     for (const auto& form : present) {
         const auto& [w, b] = coef.at(form);
         const FormBody& body = form_body(form);
         const std::size_t keep = body.exprs.size();
-        os << "\nstruct " << form << " {\n"
+        os << "\n" << form_doc(form) << "struct " << form << " {\n"
            << "    static constexpr base_form tag = base_form::" << form << ";\n"
-           << "    static constexpr double bias = " << cxxd(b) << ";\n"
-           << "    // ";
-        for (const char* nm : feature_names(form)) os << nm << ", ";
-        os << "log2(W), log(bytes), is_clang\n";
+           << "    static constexpr double bias = " << cxxd(b) << ";\n";
         os << "    static constexpr std::array<double, " << keep + 3 << "> w = {\n";
         std::string line = "       ";
         const auto push = [&](double v) {
@@ -541,11 +450,12 @@ void emit(std::ostream& os, const std::vector<std::string>& present,
     os << ">;\n"
           "inline constexpr std::size_t NFORM = std::tuple_size_v<forms>;\n"
           "\n"
+          "// Predicted ln(cycles) for form M at length n: bias + w . features.\n"
           "template<typename M, typename T>\n"
           "[[nodiscard]] constexpr double score(std::size_t n) {\n"
           "    const auto x = M::template features<T>(n);\n"
-          "    static_assert(std::tuple_size_v<std::remove_cvref_t<decltype(x)>> ==\n"
-          "                  std::tuple_size_v<std::remove_cvref_t<decltype(M::w)>>,\n"
+          "    static_assert(std::tuple_size_v<admiral::detail::remove_cvref_t<decltype(x)>> ==\n"
+          "                  std::tuple_size_v<admiral::detail::remove_cvref_t<decltype(M::w)>>,\n"
           "                  \"feature/coefficient count mismatch\");\n"
           "    double acc = M::bias;\n"
           "    for (std::size_t i = 0; i < x.size(); ++i) acc += M::w[i] * x[i];\n"
@@ -562,22 +472,15 @@ void emit(std::ostream& os, const std::vector<std::string>& present,
           "    return std::array<base_form, sizeof...(I)>{std::tuple_element_t<I, forms>::tag...};\n"
           "}\n"
           "\n"
-          "}  // namespace base_model\n"
+          "}\n"
           "\n"
-          "// Ranked routes for n, cheapest modelled first. The caller walks the ranking\n"
-          "// and takes the first buildable route, so an unavailable winner degrades to\n"
-          "// the model's next choice rather than falling out of the model entirely.\n"
           "struct base_model_ranking {\n"
           "    std::array<base_form, base_model::NFORM> form{};\n"
-          "    // form[k]'s score, in LOG cycles. Kept unexponentiated: only best_cyc is ever\n"
-          "    // needed in cycles, and one std::exp per form would cost the ranking more than\n"
-          "    // it sorts. dbg_cost tracing exponentiates on its own cold path.\n"
           "    std::array<float, base_model::NFORM> log_cyc{};\n"
           "    std::size_t count = 0;\n"
           "    float best_cyc = -1.f;\n"
           "};\n"
           "\n"
-          "// Form names for dbg_cost tracing.\n"
           "[[nodiscard]] constexpr const char* base_form_name(base_form f) noexcept {\n"
           "    switch (f) {\n"
           "    case base_form::codelet:           return \"codelet\";\n"
@@ -591,8 +494,7 @@ void emit(std::ostream& os, const std::vector<std::string>& present,
           "    return \"?\";\n"
           "}\n"
           "\n"
-          "// Scored with ct_log2/ct_exp's series rather than libm, so routing is bitwise\n"
-          "// identical across libm versions. Only the table below calls it.\n"
+          "// Every form scored at n, cheapest first. best_cyc is exp() of the winner, so it is in cycles.\n"
           "template<typename T>\n"
           "[[nodiscard]] constexpr base_model_ranking score_ranking(std::size_t n) {\n"
           "    using namespace base_model;\n"
@@ -603,7 +505,6 @@ void emit(std::ostream& os, const std::vector<std::string>& present,
           "    const auto z = score_all<T>(n, seq);\n"
           "    constexpr auto tag = tags(seq);\n"
           "\n"
-          "    // selection sort on log-cost: NFORM is small, and this must stay constexpr.\n"
           "    std::array<bool, NFORM> used{};\n"
           "    for (std::size_t k = 0; k < NFORM; ++k) {\n"
           "        std::size_t bi = NFORM;\n"
@@ -618,12 +519,7 @@ void emit(std::ostream& os, const std::vector<std::string>& present,
           "    return out;\n"
           "}\n"
           "\n"
-          "// Ranked routes for n, cheapest modelled first; count == 0 outside the domain.\n"
-          "//\n"
-          "// Filled on first use, not by the compiler: as a constexpr table this exceeded\n"
-          "// clang's default -fconstexpr-steps and cost seconds of constant evaluation in\n"
-          "// every TU that routes. Slots below NMIN stay value-initialised, so an\n"
-          "// out-of-domain n reads slot 0 and reports count == 0 without a second branch.\n"
+          "// score_ranking memoized for 2..512 in a function-local static table.\n"
           "template<typename T>\n"
           "[[nodiscard]] inline const base_model_ranking& base_route_ranking(std::size_t n) {\n"
           "    static const std::array<base_model_ranking, BASE_MODEL_NMAX + 1> table = [] {\n"
@@ -635,8 +531,7 @@ void emit(std::ostream& os, const std::vector<std::string>& present,
           "    return table[n <= BASE_MODEL_NMAX ? n : 0];\n"
           "}\n"
           "\n"
-          "// Best modelled route for n; cyc < 0 outside the modelled domain.\n"
-          "// Retained for --decomp-report; routing uses base_route_ranking.\n"
+          "// The cheapest form at n and its predicted cycles; cyc is -1 outside 2..512.\n"
           "template<typename T>\n"
           "[[nodiscard]] inline base_cost_entry base_cost_for(std::size_t n) noexcept {\n"
           "    const auto& r = base_route_ranking<T>(n);\n"
@@ -644,14 +539,12 @@ void emit(std::ostream& os, const std::vector<std::string>& present,
           "    return {r.best_cyc, r.form[0]};\n"
           "}\n"
           "\n"
-          "}  // namespace admiral::detail\n";
+          "}\n";
 }
 
 struct Args {
     std::string data = "bench-results";
     std::string out = "include/admiral/detail/base_cost_model.hpp";
-    // Fewest coefficients that still rank routes; tighter alphas add coefficients
-    // without moving regret.
     double alpha = 0.05;
 };
 
@@ -666,14 +559,10 @@ int run(const Args& args) {
     }
     std::cout << "loaded " << T.size() << " builds, " << nsizes << " sizes, " << nreceipts
               << " (n,form) receipts\n";
-    // Refuse to write a header fit from nothing: the default --out is the tracked
-    // routing table, so an unparseable sweep must fail rather than "succeed" empty.
     if (T.empty() || nreceipts < 40)
         die("not enough usable receipts (" + std::to_string(nreceipts) +
             ") in " + args.data + ", nothing written");
 
-    // pooled fit: one model per form, slopes shared across every variant and both
-    // compilers; only the `is_clang` slot is not shared.
     struct Pool {
         std::vector<std::array<double, NF>> X;
         std::vector<double> y;
@@ -702,8 +591,6 @@ int run(const Args& args) {
             const auto [w, b] = fit_form(p.X, p.y, args.alpha);
             return Fitted{w, b};
         }();
-        // 5-fold out-of-fold predictions over distinct n (deterministic rank%5
-        // assignment): the honest estimate for unswept sizes.
         std::vector<double> pred(p.y.size(), 0.0);
         std::vector<std::size_t> groups(p.g.begin(), p.g.end());
         std::sort(groups.begin(), groups.end());
@@ -741,9 +628,6 @@ int run(const Args& args) {
               << " compilers (the table it replaces was " << per_cc << " floats + "
               << per_cc << " enums, single-compiler)\n";
 
-    // Score the shipped predictor: in-sample and out-of-fold route regret against the
-    // measured optimum, per build. Reported, not corrected: `effort::automatic`
-    // measures at plan time what the coefficients cannot rank.
     std::map<std::string, std::size_t> idx;
     std::map<std::pair<Key, std::size_t>, std::map<std::string, double>> order, oof_order;
     for (const auto& [key, d] : T) {
@@ -803,13 +687,13 @@ int run(const Args& args) {
 
     std::ofstream fh(args.out);
     if (!fh) die("cannot open " + args.out + " for writing");
-    emit(fh, present, coef, summary, nz);
+    emit(fh, present, coef);
     fh.close();
     std::cout << "wrote " << args.out << " (" << nz << " coefficients, no per-build rows)\n";
     return 0;
 }
 
-}  // namespace
+}
 
 int main(int argc, char** argv) {
     Args args;

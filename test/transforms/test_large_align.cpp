@@ -295,3 +295,79 @@ TEMPLATE_TEST_CASE("four_step_transpose_inplace vs naive", "[large][fourstep]", 
         REQUIRE(m == want);
     }
 }
+
+// WS-3 sweep switch: OFF by default (the local restructure measured a loss on SPR),
+// env-selectable for the standings A/B.
+TEST_CASE("WS-3 sweep switch is env-gated, default off", "[large][fourstep]") {
+    using admiral::detail::fsl_ws_sweeps_enabled;
+    REQUIRE(unsetenv("ADM_FSL_WS") == 0);
+    CHECK(!fsl_ws_sweeps_enabled());
+    REQUIRE(setenv("ADM_FSL_WS", "1", 1) == 0);
+    CHECK(fsl_ws_sweeps_enabled());
+    REQUIRE(setenv("ADM_FSL_WS", "0", 1) == 0);
+    CHECK(!fsl_ws_sweeps_enabled());
+    REQUIRE(unsetenv("ADM_FSL_WS") == 0);
+}
+
+// WS-3 workspace sweeps vs the in-place engine: the arithmetic is the same per row
+// (same dif_dispatch calls, same twist order, same scale folds), but the pass bodies
+// inline in different contexts, so under -ffast-math the exact bits sit a few ulps
+// apart (the old engine itself changes bits across in/out alignment; the sweep's
+// staged arithmetic does NOT — checked below). The equality check is per-element
+// relative vs the same math, a movement correctness check, not a clone check.
+TEST_CASE("WS-3 workspace sweeps equal the in-place engine to rounding", "[large][fourstep]") {
+    for (const std::size_t N : {kRect2M, std::size_t{4194304}, kNonPow2, kAboveFuse}) {
+        CAPTURE(N);
+        CHECK(std::string(admiral::detail::plan_impl<double>(N, true).route_name())
+              == "four_step_large");
+        const auto in = make_input<double>(N, 0xF51u + unsigned(N));
+        const admiral::plan<double> p(N, {1, admiral::effort::estimate});
+        std::vector<std::complex<double>> old_out(N), new_out(N);
+        REQUIRE(setenv("ADM_FSL_WS", "0", 1) == 0);
+        p.forward(in.data(), old_out.data());
+        REQUIRE(setenv("ADM_FSL_WS", "1", 1) == 0);
+        p.forward(in.data(), new_out.data());
+        REQUIRE(unsetenv("ADM_FSL_WS") == 0);
+        for (std::size_t i = 0; i < N; ++i) {
+            const double den = std::max(1.0, std::abs(old_out[i]));
+            CAPTURE(i);
+            CHECK(std::abs(new_out[i] - old_out[i]) / den < 1e-9);
+        }
+    }
+}
+
+// Layout-independent bits within the sweep itself (the spec's gather/scatter bit-
+// neutrality): the same OOP result at output offset 0 and +1 element must agree
+// byte for byte. The dif-chain col tests own the analogous check for the ND engine.
+TEST_CASE("WS-3 sweep bits do not depend on output alignment", "[large][fourstep]") {
+    constexpr std::size_t N = std::size_t{1} << 21;
+    const auto in = make_input<double>(N, 0xA11);
+    const admiral::plan<double> p(N, {1, admiral::effort::estimate});
+    std::vector<std::complex<double>> buf(N + 16);
+    REQUIRE(setenv("ADM_FSL_WS", "1", 1) == 0);
+    p.forward(in.data(), buf.data());
+    std::vector<std::complex<double>> off(N + 16);
+    p.forward(in.data(), off.data() + 1);
+    REQUIRE(unsetenv("ADM_FSL_WS") == 0);
+    REQUIRE(std::memcmp(buf.data(), off.data() + 1, N * sizeof(std::complex<double>)) == 0);
+}
+
+// One big OOP impulse cell per arm (2^23): nonzero n0 pins the split-twist phases,
+// the OOP form exercises both sweeps' store sides.
+TEST_CASE("WS-3 impulse flatness at 2^23, both sweep arms", "[large][fourstep]") {
+    constexpr std::size_t N = std::size_t{1} << 23;
+    const std::size_t n0 = N / 5 + 13;
+    std::vector<std::complex<double>> in(N, {0.0, 0.0}), out(N);
+    in[n0] = {1.0, 0.0};
+    const admiral::plan<double> p(N, {1, admiral::effort::estimate});
+    std::vector<std::complex<double>> ref(N);
+    for (std::size_t k = 0; k < N; ++k)
+        ref[k] = std::conj(unit_phasor<double>(turn_fraction(n0, k, N)));
+    for (const char* onoff : {"0", "1"}) {
+        CAPTURE(onoff);
+        REQUIRE(setenv("ADM_FSL_WS", onoff, 1) == 0);
+        p.forward(in.data(), out.data());
+        REQUIRE(unsetenv("ADM_FSL_WS") == 0);
+        require_close(out, ref, fft_tol<double>());
+    }
+}

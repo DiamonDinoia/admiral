@@ -25,6 +25,10 @@
 #include <cmath>
 #include <complex>
 #include <cstddef>
+#include <cstdlib>    // std::getenv (the WS-3 sweep switch)
+#include <mutex>
+#include <thread>
+#include <unordered_map>
 #include <vector>
 #include "cxx_compat.hpp"  // `detail::bit_ceil`, `detail::countr_zero`, `detail::has_single_bit`
 
@@ -463,8 +467,125 @@ template<typename T>
     return choose_fused_large_split<T>(N).valid();
 }
 
-// Plan state: two leaf twiddle sets + split-twiddle tables.
-// No working buffer: `execute()` moves data between in and out only (re-entrant).
+// WS-3 sweep execution switch (env probe per execute; the cells are milliseconds, so
+// the read is free — and the tests flip it mid-process). DEFAULT OFF: on SPR the
+// restructure lost to the in-place engine at every 2^20..2^25 cell measured
+// (0.72-0.93x; the F-transpose falsifier conflated pattern with register-transpose
+// work — see the campaign logbook), and the landing gate is per-host A/B via
+// ADM_FSL_WS=1 until the standings hosts re-measure the sweeps. Rollback valve per
+// the profiler spec: delete the switch and the in-place engine when the sweep wins
+// or ties everywhere (no permanent dual engine).
+[[nodiscard]] inline bool fsl_ws_sweeps_enabled() {
+    const char* e = std::getenv("ADM_FSL_WS");
+    return e != nullptr && e[0] != '0';
+}
+
+// WS-3 G1+G3 sweeps for the large-N route (fi/ws3-profiler-r1.md; falsifier probe on
+// SPR 2026-09-01: same-traffic contiguous copies in place of the strided transposes
+// dropped the 2^24 f64 ST cell by 40%, and twist-off moved it by -3% only).
+// Two contiguous-workspace sweeps replace the three in-place strided transposes;
+// the data stays in the [n1][n2] view everywhere (as after today's P1+P2):
+// ws[j*n2 + i] holds the twist-scaled size-n2 DFT of input column j, and
+//   S1 = P1 gather through register WxW tiles + row DFT + split twist + contiguous ws store
+//   S2 = ws column-tile gather + size-n1 row DFT (scale folded) + register-tile bursts
+// Per row the DFT call, twist order and scale folds are the in-place engine's; the
+// arithmetic per element is the same up to inline-context contraction under
+// -ffast-math, and the sweep's own bits are invariant across in/out alignment (its
+// arithmetic never sees a layout; the pre-WS-3 engine's bits do move with alignment).
+
+// S1: per band of W rows (j0..j0+W): gather in's rows through register WxW tiles into
+// W staged rows, run the n2 row DFT + split twist per staged row, store contiguously.
+template<typename T>
+void fsl_ws_s1(const std::complex<T>* in, std::complex<T>* ws, std::size_t n1,
+               std::size_t n2, bool is_forward, const dif_twiddle_set<T>& dtw, T p2_scale,
+               const std::complex<T>* hitab, const std::complex<T>* lotab,
+               std::size_t twist_M, std::size_t twist_logM, thread_pool* pool) {
+    using batch = xsimd::batch<T>;
+    constexpr std::size_t W = batch::size;
+    const std::size_t N = n1 * n2;
+    const std::size_t n1v = n1 & ~(W - 1);
+    const std::size_t n2v = n2 & ~(W - 1);
+    // One unit per W-row band, plus the scalar tail band.
+    const std::size_t nbands = n1v / W + (n1v < n1 ? 1 : 0);
+    parallel_for(pool, nbands, N, [&](std::size_t b0, std::size_t b1, std::size_t) {
+        soa_scratch<T, 4> rsc(n2);
+        const auto stage = make_aligned_buffer<std::complex<T>>(W * n2);
+        for (std::size_t b = b0; b < b1; ++b) {
+            const std::size_t j0 = b * W;
+            if (j0 >= n1v) {
+                // Row tail: band of < W rows, scalar gather (same per-row ops).
+                for (std::size_t j = n1v; j < n1; ++j) {
+                    for (std::size_t i = 0; i < n2; ++i) stage[i] = in[i * n1 + j];
+                    four_step_row_dft_twist<T>(stage.get(), n2, j, is_forward, dtw, p2_scale,
+                                               rsc, hitab, lotab, twist_M, twist_logM);
+                    std::copy_n(stage.get(), n2, ws + j * n2);
+                }
+                continue;
+            }
+            for (std::size_t i0 = 0; i0 < n2v; i0 += W)
+                // in rows i0..+W x cols j0..+W -> stage rows 0..W, cols i0..+W.
+                four_step_tile_transpose<T>(in + i0 * n1 + j0, n1, stage.get() + i0, n2);
+            for (std::size_t i = n2v; i < n2; ++i)   // column tail, scalar
+                for (std::size_t k = 0; k < W; ++k) stage[k * n2 + i] = in[i * n1 + j0 + k];
+            for (std::size_t k = 0; k < W; ++k) {
+                four_step_row_dft_twist<T>(stage.get() + k * n2, n2, j0 + k, is_forward, dtw,
+                                           p2_scale, rsc, hitab, lotab, twist_M, twist_logM);
+                std::copy_n(stage.get() + k * n2, n2, ws + (j0 + k) * n2);
+            }
+        }
+    });
+}
+
+// S2: per band of W ws columns k2 (b0..b0+W): gather ws columns through register WxW
+// tiles into W staged rows, size-n1 DFT each (row scale folded), then burst the
+// results into out by register tiles: out[(j1+r)*n2 + (b0+c)] = X[(j1+r)*n2 + b0+c].
+template<typename T>
+void fsl_ws_s2(const std::complex<T>* ws, std::complex<T>* out, std::size_t n1,
+               std::size_t n2, bool is_forward, const dif_twiddle_set<T>& dtw, T row_scale,
+               thread_pool* pool) {
+    using batch = xsimd::batch<T>;
+    constexpr std::size_t W = batch::size;
+    const std::size_t N = n1 * n2;
+    const std::size_t n1v = n1 & ~(W - 1);
+    const std::size_t n2v = n2 & ~(W - 1);
+    const std::size_t nbands = n2v / W + (n2v < n2 ? 1 : 0);
+    parallel_for(pool, nbands, N, [&](std::size_t b0, std::size_t b1, std::size_t) {
+        soa_scratch<T, 4> rsc(n1);
+        const auto stage = make_aligned_buffer<std::complex<T>>(W * n1);
+        for (std::size_t b = b0; b < b1; ++b) {
+            const std::size_t kb0 = b * W;
+            if (kb0 >= n2v) {
+                // Column-band tail: scalar gather/store, same per-row ops.
+                for (std::size_t k2 = n2v; k2 < n2; ++k2) {
+                    for (std::size_t j = 0; j < n1; ++j) stage[j] = ws[j * n2 + k2];
+                    dif_dispatch<T>(is_forward, stage.get(), stage.get(), n1, rsc.buf(0),
+                                    rsc.buf(1), rsc.buf(2), rsc.buf(3), dtw, row_scale,
+                                    rsc.stride());
+                    for (std::size_t j = 0; j < n1; ++j) out[j * n2 + k2] = stage[j];
+                }
+                continue;
+            }
+            for (std::size_t j0 = 0; j0 < n1v; j0 += W)
+                // ws rows j0..+W x cols kb0..+W -> stage rows 0..W (the band), cols j0..+W.
+                four_step_tile_transpose<T>(ws + j0 * n2 + kb0, n2, stage.get() + j0, n1);
+            for (std::size_t j = n1v; j < n1; ++j)   // row tail within the band, scalar
+                for (std::size_t c = 0; c < W; ++c) stage[c * n1 + j] = ws[j * n2 + kb0 + c];
+            for (std::size_t c = 0; c < W; ++c)
+                dif_dispatch<T>(is_forward, stage.get() + c * n1, stage.get() + c * n1, n1,
+                                rsc.buf(0), rsc.buf(1), rsc.buf(2), rsc.buf(3), dtw,
+                                row_scale, rsc.stride());
+            for (std::size_t j1 = 0; j1 < n1v; j1 += W)
+                // stage band rows x cols j1..+W -> out rows j1..+W x cols kb0..+W.
+                four_step_tile_transpose<T>(stage.get() + j1, n1, out + j1 * n2 + kb0, n2);
+            for (std::size_t j = n1v; j < n1; ++j)   // out row tail, scalar
+                for (std::size_t c = 0; c < W; ++c) out[j * n2 + kb0 + c] = stage[c * n1 + j];
+        }
+    });
+}
+
+// Plan state: two leaf twiddle sets + split-twiddle tables. The WS-3 sweep keeps one
+// contiguous workspace block per executing thread (sleef's `xn` scheme: the plan is
+// const + re-entrant, the scratch is not); the in-place engine carries no buffer.
 template<typename T>
 struct four_step_large_plan {
     std::size_t n1 = 0, n2 = 0;
@@ -476,6 +597,14 @@ struct four_step_large_plan {
     std::vector<std::complex<T>> lotab;        // W_N^{j},   j in [0,M)
     std::vector<std::complex<T>> hitab;        // W_N^{h*M}, h in [0, (N-1)>>logM]
     std::size_t twist_M = 1, twist_logM = 0;
+    // WS-3 sweep workspace, one N-element block per executing thread, lazily allocated
+    // on first use and freed with the plan. The plan itself moves (it sits in the
+    // route variant), so the map lives in a small holder the plan points to.
+    struct fsl_ws_state {
+        std::mutex mu;
+        std::unordered_map<std::thread::id, aligned_buffer<std::complex<T>>> slots;
+    };
+    mutable std::shared_ptr<fsl_ws_state> ws_state_;
 
     four_step_large_plan(std::size_t N, bool fwd) : is_forward(fwd) {
         // Fused-legal split first (the public gates admit only shapes that have
@@ -506,11 +635,16 @@ struct four_step_large_plan {
     }
 
     // Result written to out (in == out allowed), scaled by fct. Default scale
-    // (forward 1, inverse 1/N): P2 folds 1/n2, P4 folds 1/n1; a custom fct goes
-    // entirely into P4's row pass (P2 unscaled). pool == nullptr runs inline; no
-    // plan-owned buffer exists, so `execute()` is re-entrant.
+    // (forward 1, inverse 1/N): S1 folds 1/n2, S2 folds 1/n1; a custom fct goes
+    // entirely into S2's row pass (S1 unscaled) — the same fold sites as the pre-WS-3
+    // engine. pool == nullptr runs inline; the workspace map keeps `execute()`
+    // re-entrant on the sweep. The env switch selects the sweeps.
     void execute(const std::complex<T>* in, std::complex<T>* out, T fct,
                  thread_pool* pool = nullptr) const {
+        if (fsl_ws_sweeps_enabled()) {
+            execute_ws(in, out, fct, pool);
+            return;
+        }
         const std::size_t N = n1 * n2;
         const bool default_scale = (fct == (is_forward ? T(1) : T(1) / static_cast<T>(N)));
         constexpr std::size_t Wv = xsimd::batch<T>::size;
@@ -592,6 +726,31 @@ struct four_step_large_plan {
                 four_step_transpose_inplace<T>(out, n2, n1, pool);
             }
         }
+    }
+
+    // The calling thread's N-element sweep workspace (sleef's `xn` scheme: lazily
+    // allocated, cached on the plan keyed by thread id, freed with the plan).
+    std::complex<T>* fsl_ws_buf() const {
+        if (!ws_state_) ws_state_ = std::make_shared<fsl_ws_state>();
+        const std::thread::id id = std::this_thread::get_id();
+        std::lock_guard<std::mutex> lk(ws_state_->mu);
+        auto& slot = ws_state_->slots[id];
+        if (!slot) slot = make_aligned_buffer<std::complex<T>>(n1 * n2);
+        return slot.get();
+    }
+
+    // The WS-3 pair. `in == out` is safe: every element of `in` is read by S1 before
+    // S2 writes the first element of `out`.
+    void execute_ws(const std::complex<T>* in, std::complex<T>* out, T fct,
+                    thread_pool* pool = nullptr) const {
+        const std::size_t N = n1 * n2;
+        const bool default_scale = (fct == (is_forward ? T(1) : T(1) / static_cast<T>(N)));
+        const T p2_scale = (!is_forward && default_scale) ? T(1) / static_cast<T>(n2) : T(1);
+        const T row_scale = default_scale ? (is_forward ? T(1) : T(1) / static_cast<T>(n1)) : fct;
+        std::complex<T>* const ws = fsl_ws_buf();
+        fsl_ws_s1<T>(in, ws, n1, n2, is_forward, dtw_n2, p2_scale, hitab.data(),
+                     lotab.data(), twist_M, twist_logM, pool);
+        fsl_ws_s2<T>(ws, out, n1, n2, is_forward, dtw_n1, row_scale, pool);
     }
 };
 

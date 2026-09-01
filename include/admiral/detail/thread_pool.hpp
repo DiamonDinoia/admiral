@@ -183,8 +183,7 @@ inline constexpr std::size_t kAutoSerialElems = std::size_t{1} << 15;
             n += 64;
             ns = std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now() - t0).count();
         } while (ns < 1000000);
-        volatile std::uint64_t sink = x;   // the chain must not fold away
-        (void)sink;
+        [[maybe_unused]] volatile std::uint64_t sink = x;   // volatile init IS the observable store
         return static_cast<double>(3 * n) / static_cast<double>(ns);
     }();
     return cyc_per_ns;
@@ -291,18 +290,12 @@ struct wake_family_row {
     if (nt <= 1) return 0.0;
     if (nt > nts[11]) nt = nts[11];
     gap_ns = std::min(std::max(gap_ns, 0.0), gaps[5]);
-    std::size_t hi = 1;
-    while (hi < 11 && nts[hi] < nt) ++hi;   // first index with nts[hi] >= nt
-    double row[6];
-    if (nts[hi] == nt) {
-        for (std::size_t j = 0; j < 6; ++j) row[j] = fam.dhat[hi][j];
-    } else {
-        const std::size_t lo = hi - 1;
-        const double t =
-            static_cast<double>(nt - nts[lo]) / static_cast<double>(nts[hi] - nts[lo]);
-        for (std::size_t j = 0; j < 6; ++j)
-            row[j] = (1.0 - t) * fam.dhat[lo][j] + t * fam.dhat[hi][j];
-    }
+    // The law only ever calls with pow2 nt, and every pow2 up to 128 is a grid row:
+    // interpolate nothing, just find the row. (The clamp above covers nt > 128.)
+    std::size_t row_i = 0;
+    while (row_i < 11 && nts[row_i] < nt) ++row_i;
+    if (nts[row_i] != nt && row_i > 0) --row_i;   // off-grid: nearest row below
+    const double* row = fam.dhat[row_i];
     for (std::size_t i = 0; i + 1 < 6; ++i) {
         if (gap_ns <= gaps[i + 1]) {
             const double t = (gap_ns - gaps[i]) / (gaps[i + 1] - gaps[i]);
@@ -355,17 +348,6 @@ struct wake_family_row {
         }
     }
     return best;
-}
-
-// Route-blind compat form: one batched-lines dispatch, generic serial-work estimate
-// = total * log2(total) * 1.669 cycles with u = codelet_cost_cyc_f64[64]/(64*6)
-// (math.hpp, measured leaf price) at the probed clock. Route-aware plans call the
-// (dispatch_k, work_ns, cls) form instead.
-[[nodiscard]] inline std::size_t resolve_nthreads(std::size_t n, std::size_t total) {
-    if (n != 0) return n;
-    const double w_ns = static_cast<double>(total) * std::log2(static_cast<double>(total | 1)) *
-                        1.669 / core_cyc_per_ns();
-    return resolve_nthreads(n, total, 1, w_ns, 1);
 }
 
 // `kSpinIters` * pause latency must cover a typical inter-dispatch gap yet park quickly
@@ -490,7 +472,6 @@ private:
 #else   // !ADM_THREADS: serial build, no worker pool.
 
 [[nodiscard]] inline std::size_t resolve_nthreads(std::size_t) noexcept { return 1; }
-[[nodiscard]] inline std::size_t resolve_nthreads(std::size_t, std::size_t) noexcept { return 1; }
 [[nodiscard]] inline std::size_t resolve_nthreads(std::size_t, std::size_t, std::size_t, double,
                                                   unsigned) noexcept { return 1; }
 [[nodiscard]] inline double core_cyc_per_ns() noexcept { return 1.0; }

@@ -248,7 +248,6 @@ TEST_CASE("resolve_nthreads wake law: serial floor, knee, pocket, pow2, cap", "[
 
     // An explicit count is still returned verbatim.
     REQUIRE(resolve_nthreads(3) == 3);
-    REQUIRE(resolve_nthreads(3, 1) == 3);
     REQUIRE(resolve_nthreads(3, kAutoSerialElems - 1, 0, 0, 0) == 3);
 
     // Quantization and cap over the whole (size, K, class, work) box: pow2-or-1

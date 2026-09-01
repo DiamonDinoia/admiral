@@ -86,11 +86,13 @@ inline constexpr std::size_t kE2Len64MinL3PerCoreBytes = std::size_t{2} << 20;
     return l3_per_core_bytes >= kE2Len64MinL3PerCoreBytes ? std::size_t{64} : std::size_t{32};
 }
 
-// Host-side arm. Without a split count the cache layers can't be relativized; the
-// probe classes run the AMD hosts, so enable: an unknown arm keeps len 64.
+// Host-side arm. No probed split (l3_cores == 0 or zero L3): cap at len 32, the
+// conservative side — the only host measured to lose len-64 was the 1.5-MiB-per-core
+// class, and the unprobed host is more likely to read like it than like AMD.
 [[nodiscard]] inline std::size_t e2_len_cap() {
     const cache_bytes& cc = cpu_cache();
-    return e2_len_cap_by_l3(cc.l3_cores != 0 ? cc.l3 / cc.l3_cores : cc.l3);
+    if (cc.l3_cores == 0 || cc.l3 == 0) return 32;
+    return e2_len_cap_by_l3(cc.l3 / cc.l3_cores);
 }
 
 // Per-axis state: innermost takes the `plan_impl` row path, outer smooth axes the

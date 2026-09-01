@@ -120,7 +120,10 @@ enum class r2r_kind { dct2, dct3, dst2, dst3 };
 ///   `estimate`   cost-model pick only. Fast and bitwise reproducible. Default.
 ///   `automatic`  also times the model's top candidates and keeps the fastest.
 ///                Worth the timing when one plan serves many transforms. The
-///                elected plan depends on the machine.
+///                elected plan depends on the machine. Outside the large-N
+///                four-step band, `automatic` resolves the thread count without
+///                any candidate race (the r3 wake law, resolve-first; the race
+///                exists only on the large route).
 ///   `measure`    same as `automatic`, kept for the FFTW flag mapping. One
 ///                search budget, so `PATIENT`/`EXHAUSTIVE` add nothing.
 /// With `-DADM_MEASURE=OFF` the measuring efforts are accepted and inert.

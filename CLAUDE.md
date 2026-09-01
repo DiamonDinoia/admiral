@@ -70,8 +70,9 @@ below 2^15 elements or at K == 0. K = 5 (1-D four_step_large) / rank (N-D batch 
 log2 n octave stream beyond) at the measured core frequency (`core_cyc_per_ns`: a
 3-cycle IMUL latency chain, NOT rdtsc — the invariant TSC ticks at base clock and
 miscalibrates W by the boost ratio; the chain is a once-per-process ~1 ms probe, cached
-in a static, which is the tree's one rung-2 measurement exception to the
-formula-only policy, made because the base/boost ratio it must price is not). Dhat is the 12x6 wake-probe grid per host class
+in a static, and it is the tree's one rung-2 measurement exception to the
+formula-only policy — the boost/base ratio differs per host and cannot be
+probed by lookup, so the calibration must be live). Dhat is the 12x6 wake-probe grid per host class
 keyed by (C0=soc cores, P): icelake 2x32, rome 2x64, genoa 2x48; unknown hosts take
 the rome row. Re-fit on a new host class: probe once (`mt_scaling --mode=probe`), add
 a row; the pow2 quantization stays load-bearing (off-divisor counts load-imbalance the

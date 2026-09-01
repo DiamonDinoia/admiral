@@ -466,7 +466,7 @@ template<typename T>
     return choose_fused_large_split<T>(N).valid();
 }
 
-// WS-3 sweep gate by design (knob A/B on the three hosts, 2026-08-31; Measurer's knob
+// WS-3 sweep gate by design (knob A/B on the three hosts, 2026-09-01; Measurer's knob
 // tables fi/mt/out/knobab-*): threaded-only — the sweep carries one workspace block
 // per executing thread (N*16 B * nthreads), pays an extra workspace store per element,
 // and streams the input twice, so on one thread it pays and wins nothing (ST losses to
@@ -474,6 +474,13 @@ template<typename T>
 // the worst cell a -3.5% tie, and rome's measured keyed-loss cells hold green when
 // folded with the r3-route repair (2^20: 0.193 * 1.062 = 0.205; 2^23: 0.560 * 1.120 =
 // 0.627, both under knot). Serial plans run the in-place engine; no ISA read anywhere.
+// FIXME(ws3-presence): the sweep engine's mere presence costs the ice ST 1-D 2^9-class
+// serial cells +19.9% (846 -> 1014 ns; sw3-6a-classed bisect 7671e76 -> 031bc85,
+// 2026-09-01, node jobs 6971534/6971535, min-of-3, within-arm spread <= 3.5%). Those
+// cells never execute the sweeps; the price is the sweeps' instantiation/link-layout
+// shape in the engine TUs, not mechanism. The fix class is instantiation narrowing or
+// registration shape (split the sweeps into their own TU boundary / drop the template
+// weight per instantiable path), NEVER a gate or an ISA read.
 [[nodiscard]] inline constexpr bool fsl_ws_engaged(const thread_pool* pool) {
     return pool != nullptr && pool->size() > 1;
 }

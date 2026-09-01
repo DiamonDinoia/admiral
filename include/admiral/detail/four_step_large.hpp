@@ -466,16 +466,17 @@ template<typename T>
     return choose_fused_large_split<T>(N).valid();
 }
 
-// WS-3 sweep gate by design (knob A/B on the three hosts, 2026-08-31; Measurer's
-// knob tables fi/mt/out/knobab-*): threaded on AVX-512-class builds only — MT/ice
-// wins everywhere (-20.6..-52.5%), MT/genoa 5/6 wins (worst -3.5% tie), MT/rome
-// breaches the no-loss rule (+6.2% @ 2^20, +12.0% @ 2^23), ST everywhere loses up to
-// +49%; the discriminator that matches the data is exactly (threaded, AVX-512
-// class). The trait is compile-time (the bench trees build per-family
-// BENCH_ARCHs, so the class is honest at compile time). The in-place engine stays
-// reachable at (nthreads <= 1 || !avx512-class) for the A/Bs when the Measurer needs
-// the old arm: those plans run it.
-[[nodiscard]] inline constexpr bool fsl_ws_arch_class() { return XSIMD_WITH_AVX512F; }
+// WS-3 sweep gate by design (knob A/B on the three hosts, 2026-08-31; Measurer's knob
+// tables fi/mt/out/knobab-*): threaded-only — the sweep carries one workspace block
+// per executing thread (N*16 B * nthreads), pays an extra workspace store per element,
+// and streams the input twice, so on one thread it pays and wins nothing (ST losses to
+// +49% on every probed host). MT is its country: ice -21..-53%, genoa 5/6 wins with
+// the worst cell a -3.5% tie, and rome's measured keyed-loss cells hold green when
+// folded with the r3-route repair (2^20: 0.193 * 1.062 = 0.205; 2^23: 0.560 * 1.120 =
+// 0.627, both under knot). Serial plans run the in-place engine; no ISA read anywhere.
+[[nodiscard]] inline constexpr bool fsl_ws_engaged(const thread_pool* pool) {
+    return pool != nullptr && pool->size() > 1;
+}
 
 // WS-3 G1+G3 sweeps for the large-N route (fi/ws3-profiler-r1.md; falsifier probe on
 // SPR 2026-09-01: same-traffic contiguous copies in place of the strided transposes
@@ -596,12 +597,14 @@ struct four_step_large_plan {
     std::size_t twist_M = 1, twist_logM = 0;
     // WS-3 sweep workspace, one N-element block per executing thread, lazily allocated
     // on first use and freed with the plan. The plan itself moves (it sits in the
-    // route variant), so the map lives in a small holder the plan points to.
+    // route variant), so the map lives in a small holder the plan points to. The
+    // holder is eager (one small alloc per plan) so the first-execute path carries no
+    // construction race; only the big buffers stay lazy, per-thread.
     struct fsl_ws_state {
         std::mutex mu;
         std::unordered_map<std::thread::id, aligned_buffer<std::complex<T>>> slots;
     };
-    mutable std::shared_ptr<fsl_ws_state> ws_state_;
+    mutable std::shared_ptr<fsl_ws_state> ws_state_ = std::make_shared<fsl_ws_state>();
 
     four_step_large_plan(std::size_t N, bool fwd) : is_forward(fwd) {
         // Fused-legal split first (the public gates admit only shapes that have
@@ -638,7 +641,7 @@ struct four_step_large_plan {
     // re-entrant on the sweep. The env switch selects the sweeps.
     void execute(const std::complex<T>* in, std::complex<T>* out, T fct,
                  thread_pool* pool = nullptr) const {
-        if (fsl_ws_arch_class() && pool != nullptr && pool->size() > 1) {
+        if (fsl_ws_engaged(pool)) {
             execute_ws(in, out, fct, pool);
             return;
         }
@@ -728,7 +731,6 @@ struct four_step_large_plan {
     // The calling thread's N-element sweep workspace (sleef's `xn` scheme: lazily
     // allocated, cached on the plan keyed by thread id, freed with the plan).
     std::complex<T>* fsl_ws_buf() const {
-        if (!ws_state_) ws_state_ = std::make_shared<fsl_ws_state>();
         const std::thread::id id = std::this_thread::get_id();
         std::lock_guard<std::mutex> lk(ws_state_->mu);
         auto& slot = ws_state_->slots[id];

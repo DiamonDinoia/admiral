@@ -296,31 +296,31 @@ TEMPLATE_TEST_CASE("four_step_transpose_inplace vs naive", "[large][fourstep]", 
     }
 }
 
-// WS-3 sweep gate by design (knob A/B 2026-08-31): the sweeps engage where threaded
-// AND AVX-512-class. The trait is compile-time, so the test pins the build's class;
-// which arm covers a cell follows the preset's ISA on every host.
-TEST_CASE("WS-3 sweep gate: threaded AND AVX-512-class by build", "[large][fourstep]") {
-    CHECK(admiral::detail::fsl_ws_arch_class() == bool(XSIMD_WITH_AVX512F));
-}
 
-// Layout-independent bits within the sweep itself (the spec's gather/scatter bit-
-// neutrality): the same OOP result at output offset 0 and +1 element must agree
-// byte for byte. Driven directly through the engine with a pool, so the sweep arm
-// is engaged whenever the build is AVX-512-class; on other classes the sweep is off
-// by design and the pin has nothing to observe.
-TEST_CASE("WS-3 sweep bits do not depend on output alignment", "[large][fourstep]") {
+// The sweep's bits are layout-invariant by construction: its arithmetic never sees a
+// layout (gather/scatter moves data whole through the ws rows). This case IS the gate
+// pin: driven with a pool the engine must answer the same bits at two output offsets,
+// and driven serially it must run the in-place engine (whose bits are allowed to move
+// with layout, per the engine's note). Both sides of `fsl_ws_engaged` are asserted.
+TEST_CASE("WS-3 sweep-bits invariant pins the pool gate", "[large][fourstep]") {
+    using admiral::detail::fsl_ws_engaged;
+    admiral::detail::thread_pool pool(4);
+    REQUIRE(fsl_ws_engaged(&pool));
+    REQUIRE(!fsl_ws_engaged(nullptr));
     constexpr std::size_t N = std::size_t{1} << 21;
-    if (!admiral::detail::fsl_ws_arch_class()) {
-        SUCCEED("WS-3 sweep arm off on this build class, nothing to assert");
-        return;
-    }
     const auto in = make_input<double>(N, 0xA11);
     admiral::detail::four_step_large_plan<double> fsp(N, /*is_forward=*/true);
-    admiral::detail::thread_pool pool(4);
     std::vector<std::complex<double>> buf(N + 16), off(N + 16);
     fsp.execute(in.data(), buf.data(), 1.0, &pool);
     fsp.execute(in.data(), off.data() + 1, 1.0, &pool);
     REQUIRE(std::memcmp(buf.data(), off.data() + 1, N * sizeof(std::complex<double>)) == 0);
+    // The serial arm of the same plan must be the in-place engine; its sweep output
+    // agrees with the sweep arm's bits at rounding (the old engine's bits move with
+    // alignment — measured — so no bitwise claim crosses arms).
+    std::vector<std::complex<double>> st0(N + 16);
+    fsp.execute(in.data(), st0.data(), 1.0, nullptr);
+    for (std::size_t i = 0; i < N; ++i)
+        REQUIRE(std::abs(st0[i] - buf[i]) <= 1e-9 * std::max(1.0, std::abs(buf[i])));
 }
 
 // One big OOP impulse cell at 2^23, serial and auto: a nonzero n0 pins the

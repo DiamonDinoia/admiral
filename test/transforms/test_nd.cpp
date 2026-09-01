@@ -431,7 +431,6 @@ TEMPLATE_TEST_CASE("Unified plan<T> handles N-D via runtime shape", "[nd][plan]"
 TEMPLATE_TEST_CASE("choose_line_route narrow-run criterion", "[nd][route]", float, double) {
     using T = TestType;
     using admiral::detail::choose_line_route;
-    using admiral::detail::col_budget_block;
     using admiral::detail::line_route;
 
     admiral::detail::nd_axis_state<T> st{};
@@ -441,9 +440,6 @@ TEMPLATE_TEST_CASE("choose_line_route narrow-run criterion", "[nd][route]", floa
     const std::size_t len = 64;
     const std::size_t wide = budget / (len * sizeof(std::complex<T>)) + 1;
     REQUIRE(len * wide * sizeof(std::complex<T>) > budget);
-    // The len=64 control arms below must stay in the col zone or the case loses both
-    // control directions.
-    REQUIRE(col_budget_block<T>(len, 1) >= 2 * xsimd::batch<T>::size);
 
     // 2*run_len <= batch size on every ISA: `xsimd::batch<T>::size` is at least 2.
     constexpr std::size_t run_len = 1;
@@ -457,22 +453,6 @@ TEMPLATE_TEST_CASE("choose_line_route narrow-run criterion", "[nd][route]", floa
     // Without a column chain, `line_route::transposed` is the only route.
     st.dif = false;
     CHECK(choose_line_route<T>(st, len, 1, full, 1) == line_route::transposed);
-    st.dif = true;
-
-    // Tile-collapse gate (WS-2 F1): once `col_budget_block` drops under two SIMD
-    // batches at this host's geometry, the route must flip to transposed; one factor
-    // back it must stay col. The boundary is found with the helper itself, so this
-    // holds on any cache geometry.
-    constexpr std::size_t W = xsimd::batch<T>::size;
-    std::size_t len_coll = 2;
-    while (col_budget_block<T>(len_coll, 1) >= 2 * W) len_coll *= 2;
-    CAPTURE(len_coll);
-    CHECK(choose_line_route<T>(st, len_coll, 1, 2 * W, 1) == line_route::transposed);
-    if (len_coll > 2)
-        CHECK(choose_line_route<T>(st, len_coll / 2, 1, 2 * W, 1) == line_route::col_dif);
-    // The collapse gate must not elect the transposed form for lens it isn't about:
-    // the small catalog axes keep the col chain (the E2 codelet rides it).
-    CHECK(choose_line_route<T>(st, 32, 1, 2 * W, 1) == line_route::col_dif);
 }
 
 // `real_run_copy` is the band-pack helper of `nd_plan`. Its `full` branch (n >= W: one

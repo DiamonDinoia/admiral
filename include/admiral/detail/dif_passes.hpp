@@ -28,8 +28,10 @@ ADM_ALWAYS_INLINE void small_ido_piece(CC ccre, CC ccim, CH chre, CH chim,
                                        std::size_t obase, std::size_t kstride,
                                        const T* twre, const T* twim) {
     using V = sized_piece_t<T, PW>;
-    constexpr auto ld = load_piece<T, PW>;
-    constexpr auto st = store_piece<T, PW>;
+    // Static, because MSVC does not find a block-scope `constexpr auto` holding a function
+    // pointer from inside a lambda body: `error C3861: 'ld': identifier not found`.
+    static constexpr auto ld = load_piece<T, PW>;
+    static constexpr auto st = store_piece<T, PW>;
     V tr[IP], ti_arr[IP];
     poet::static_for<IP>([&](auto J) {
         const std::size_t off = a + ido * (J + IP * b);

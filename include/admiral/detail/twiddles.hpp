@@ -658,13 +658,16 @@ template<typename T>
         std::sort(rs.begin(), rs.begin() + static_cast<std::ptrdiff_t>(c));
         return std::pair{rs, c};
     };
-    const auto offer = [beam, &before, &sorted_chain](std::size_t n, span<entry> r,
-                                                      const entry e) {
+    // Named, because MSVC reports `entry{}` inside a lambda as C2512 for a local class whose
+    // members carry default initializers.
+    const entry empty{};
+    const auto offer = [beam, &before, &sorted_chain, &empty](std::size_t n, span<entry> r,
+                                                              const entry e) {
         for (std::size_t m = 0; beam > 1 && m < beam && r[m].cost < kUnreachable; ++m) {
             if (r[m].key != e.key || sorted_chain(n, r[m]) != sorted_chain(n, e)) continue;
             if (!before(e, r[m])) return;
             for (std::size_t j = m + 1; j < beam; ++j) r[j - 1] = r[j];
-            r[beam - 1] = entry{};
+            r[beam - 1] = empty;
             break;
         }
         std::size_t k = beam;

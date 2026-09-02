@@ -13,6 +13,13 @@ add_library(admiral_engine OBJECT
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set(_adm_col_numerics -ffp-contract=on -fno-associative-math)
+    # Overriding -ffast-math here is the whole point of the pin, and clang 20 started reporting it
+    # under a name earlier releases do not know (-Woverriding-t-option), so the suppression is
+    # version-gated rather than passed blind.
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
+       AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 20)
+        list(APPEND _adm_col_numerics -Wno-overriding-option)
+    endif()
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
     set(_adm_col_numerics /fp:precise)
 elseif(ADM_USE_FAST_MATH)

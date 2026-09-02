@@ -614,19 +614,23 @@ template<typename T>
     return d;
 }
 
+// Namespace scope, not function scope: MSVC 14.51 treats a function-local class carrying
+// default member initializers as having no default constructor, so a `std::vector` of it sized
+// by count fails inside `std::construct_at` (C2672) and a plain `dif_chain_entry{}` inside a
+// lambda fails as C2512. Neither reproduces on a class declared here.
+constexpr double kDifUnreachable = 1e300;
+struct dif_chain_entry {
+    double cost = kDifUnreachable;
+    std::size_t radix = 0;
+    std::size_t next = 0;
+    std::size_t key = 0;
+};
+
 template<typename T>
 [[nodiscard]] inline dif_chain_list dif_chain_candidates(std::size_t N,
                                                          std::size_t want = kDifCandidates) {
     const std::size_t beam = want <= 1 ? 1 : kDifBeam;
     if (N >= kDifFuseMinN<T> && (N & (N - 1u)) == 0u) return enumerate_pow2_dif_chains<T>(N, want);
-
-    constexpr double kUnreachable = 1e300;
-    struct entry {
-        double cost = kUnreachable;
-        std::size_t radix = 0;
-        std::size_t next = 0;
-        std::size_t key = 0;
-    };
 
     const auto rmix = [](std::size_t r) {
         std::size_t x = r * 0x9E3779B97F4A7C15ull;
@@ -641,13 +645,15 @@ template<typename T>
         return static_cast<std::size_t>(at - first);
     };
 
-    std::vector<entry> dp(divisors.size() * beam);
-    const auto row = [&dp, beam](std::size_t i) { return span<entry>(&dp[i * beam], beam); };
+    std::vector<dif_chain_entry> dp(divisors.size() * beam);
+    const auto row = [&dp, beam](std::size_t i) {
+        return span<dif_chain_entry>(&dp[i * beam], beam);
+    };
 
-    const auto before = [](const entry& a, const entry& b) {
+    const auto before = [](const dif_chain_entry& a, const dif_chain_entry& b) {
         return a.cost < b.cost || (a.cost == b.cost && a.radix > b.radix);
     };
-    const auto sorted_chain = [&row, &state](std::size_t n, entry e) {
+    const auto sorted_chain = [&row, &state](std::size_t n, dif_chain_entry e) {
         std::array<std::size_t, dif_factor_plan::max_passes> rs{};
         std::size_t c = 0;
         while (n > 1 && c < rs.size()) {
@@ -658,16 +664,13 @@ template<typename T>
         std::sort(rs.begin(), rs.begin() + static_cast<std::ptrdiff_t>(c));
         return std::pair{rs, c};
     };
-    // Named, because MSVC reports `entry{}` inside a lambda as C2512 for a local class whose
-    // members carry default initializers.
-    const entry empty{};
-    const auto offer = [beam, &before, &sorted_chain, &empty](std::size_t n, span<entry> r,
-                                                              const entry e) {
-        for (std::size_t m = 0; beam > 1 && m < beam && r[m].cost < kUnreachable; ++m) {
+    const auto offer = [beam, &before, &sorted_chain](std::size_t n, span<dif_chain_entry> r,
+                                                      const dif_chain_entry e) {
+        for (std::size_t m = 0; beam > 1 && m < beam && r[m].cost < kDifUnreachable; ++m) {
             if (r[m].key != e.key || sorted_chain(n, r[m]) != sorted_chain(n, e)) continue;
             if (!before(e, r[m])) return;
             for (std::size_t j = m + 1; j < beam; ++j) r[j - 1] = r[j];
-            r[beam - 1] = empty;
+            r[beam - 1] = {};
             break;
         }
         std::size_t k = beam;
@@ -691,8 +694,8 @@ template<typename T>
         const auto expand = [&](const std::size_t radix, const double stage) {
             const std::size_t rest = n / radix;
             if (rest == 1) return offer(n, row(i), {stage, radix, 0, rmix(radix)});
-            const span<const entry> sub = row(state(rest));
-            for (std::size_t j = 0; j < beam && sub[j].cost < kUnreachable; ++j) {
+            const span<const dif_chain_entry> sub = row(state(rest));
+            for (std::size_t j = 0; j < beam && sub[j].cost < kDifUnreachable; ++j) {
                 if (stage + sub[j].cost > row(i)[beam - 1].cost) break;
                 offer(n, row(i), {stage + sub[j].cost, radix, j, sub[j].key + rmix(radix)});
             }
@@ -708,8 +711,8 @@ template<typename T>
     const auto rebuild = [&](std::size_t k) {
         dif_factor_plan p;
         for (std::size_t n = N, idx = k; n > 1;) {
-            const entry e = row(state(n))[idx];
-            if (e.cost >= kUnreachable || e.radix == 0 || n % e.radix != 0)
+            const dif_chain_entry e = row(state(n))[idx];
+            if (e.cost >= kDifUnreachable || e.radix == 0 || n % e.radix != 0)
                 return dif_factor_plan{};
             p.push(e.radix);
             n /= e.radix;

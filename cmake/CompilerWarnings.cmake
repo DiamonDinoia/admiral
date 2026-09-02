@@ -31,6 +31,10 @@ function(set_project_warnings target_name)
         # C4127: a template whose parameter reaches a plain `if` condition. The kernels are written
         # against widths and radices, so the constant conditions are the point.
         /wd4127
+        # C4324: a struct padded because a member carries `alignas`. `thread_pool` aligns its
+        # dispatch state to `kCacheLine` precisely so the padding lands there; the warning
+        # reports the intent.
+        /wd4324
         # C4702: MSVC issues it from the optimizer, so a generic function reads as dead code
         # wherever one caller pins a runtime parameter. Every call in `src/codelet_apply.hpp`
         # passes xstride 1, which makes `kernel_batched::apply_impl`'s scalar tail unreachable in

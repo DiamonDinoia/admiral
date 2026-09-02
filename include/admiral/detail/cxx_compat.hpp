@@ -16,7 +16,12 @@
 
 #define ADM_CXX20 (ADM_CPLUSPLUS >= 202002L)
 
-#if defined(__cpp_consteval) && __cpp_consteval >= 201811L
+// gcc 13 rejects a consteval function reached from a static data member initializer of a class
+// template as "used before its definition" even when the definition precedes it lexically
+// (codelet.hpp's `flat_leaf` calling `cofactor_simd_profitable`). gcc 14 accepts it. Every call
+// site is already a constant expression, so constexpr evaluates identically there.
+#if defined(__cpp_consteval) && __cpp_consteval >= 201811L \
+    && !(defined(__GNUC__) && !defined(__clang__) && __GNUC__ < 14)
 #  define ADM_CONSTEVAL consteval
 #else
 #  define ADM_CONSTEVAL constexpr

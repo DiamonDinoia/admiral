@@ -1,7 +1,9 @@
-// Global operator new/delete replacements live in their own binary. They are process-wide, and
-// valgrind redirects the same symbols to its own allocator, so under memcheck the counter misses
-// every allocation made inside libadmiral.so and the block families mismatch on free. The valgrind
-// job skips this binary; every other configuration runs it.
+// Global operator new/delete replacements live in their own binary. On ELF they cover the whole
+// process through symbol interposition; on PE they cover this module only, which is what the
+// allocator pairing below is about. Valgrind redirects the same symbols to its own allocator, so
+// under memcheck the counter misses every allocation made inside libadmiral.so and the block
+// families mismatch on free. The valgrind job skips this binary; every other configuration runs
+// it.
 #include <catch2/catch_test_macros.hpp>
 
 #include <admiral/admiral.hpp>
@@ -14,8 +16,8 @@
 #include <stdexcept>
 #include <vector>
 
-// MSVC spells both the attribute and the aligned allocator differently, and its blocks must go
-// back through `_aligned_free`.
+// MSVC spells the noinline attribute differently, and an over-aligned block there must go back
+// through `_aligned_free`.
 #if defined(_MSC_VER)
 #include <malloc.h>
 #define COUNTED_NOINLINE __declspec(noinline)
@@ -23,23 +25,37 @@
 #define COUNTED_NOINLINE [[gnu::noinline]]
 #endif
 
-// Global replacements count every allocation, libadmiral.so included. `noinline` keeps free()
-// out of the caller, where gcc's -Wmismatched-new-delete pairs it with the builtin operator new.
+// Global replacements count every allocation, libadmiral included. `noinline` keeps free() out of
+// the caller, where gcc's -Wmismatched-new-delete pairs it with the builtin operator new.
+//
+// The unaligned and over-aligned families allocate through DIFFERENT allocators and must free
+// through the matching one. A replacement here is per-module on Windows, not process-wide: the
+// CRT DLL allocates with plain `malloc` through its own operator new, and inlined code in this
+// binary frees that block through the replacement below. Routing an unaligned block to
+// `_aligned_free` therefore crashes the process, which is what the MSVC cells segfaulted on.
 namespace {
 std::atomic<long> g_alloc_count{0};
 
-COUNTED_NOINLINE void* counted_alloc(std::size_t n, std::size_t align) {
+COUNTED_NOINLINE void* counted_alloc(std::size_t n) {
+    g_alloc_count.fetch_add(1, std::memory_order_relaxed);
+    void* p = std::malloc(n ? n : 1);
+    if (p == nullptr) throw std::bad_alloc{};
+    return p;
+}
+COUNTED_NOINLINE void counted_free(void* p) noexcept { std::free(p); }
+
+COUNTED_NOINLINE void* counted_alloc_aligned(std::size_t n, std::size_t align) {
     g_alloc_count.fetch_add(1, std::memory_order_relaxed);
 #if defined(_MSC_VER)
     void* p = ::_aligned_malloc(n ? n : 1, align);
-    if (p == nullptr) throw std::bad_alloc{};
 #else
     void* p = nullptr;
-    if (::posix_memalign(&p, align, n ? n : 1) != 0) throw std::bad_alloc{};
+    if (::posix_memalign(&p, align, n ? n : 1) != 0) p = nullptr;
 #endif
+    if (p == nullptr) throw std::bad_alloc{};
     return p;
 }
-COUNTED_NOINLINE void counted_free(void* p) noexcept {
+COUNTED_NOINLINE void counted_free_aligned(void* p) noexcept {
 #if defined(_MSC_VER)
     ::_aligned_free(p);
 #else
@@ -48,22 +64,24 @@ COUNTED_NOINLINE void counted_free(void* p) noexcept {
 }
 }  // namespace
 
-void* operator new(std::size_t n) { return counted_alloc(n, alignof(std::max_align_t)); }
-void* operator new[](std::size_t n) { return counted_alloc(n, alignof(std::max_align_t)); }
+void* operator new(std::size_t n) { return counted_alloc(n); }
+void* operator new[](std::size_t n) { return counted_alloc(n); }
 void* operator new(std::size_t n, std::align_val_t a) {
-    return counted_alloc(n, static_cast<std::size_t>(a));
+    return counted_alloc_aligned(n, static_cast<std::size_t>(a));
 }
 void* operator new[](std::size_t n, std::align_val_t a) {
-    return counted_alloc(n, static_cast<std::size_t>(a));
+    return counted_alloc_aligned(n, static_cast<std::size_t>(a));
 }
 void operator delete(void* p) noexcept { counted_free(p); }
 void operator delete[](void* p) noexcept { counted_free(p); }
 void operator delete(void* p, std::size_t) noexcept { counted_free(p); }
 void operator delete[](void* p, std::size_t) noexcept { counted_free(p); }
-void operator delete(void* p, std::align_val_t) noexcept { counted_free(p); }
-void operator delete[](void* p, std::align_val_t) noexcept { counted_free(p); }
-void operator delete(void* p, std::size_t, std::align_val_t) noexcept { counted_free(p); }
-void operator delete[](void* p, std::size_t, std::align_val_t) noexcept { counted_free(p); }
+void operator delete(void* p, std::align_val_t) noexcept { counted_free_aligned(p); }
+void operator delete[](void* p, std::align_val_t) noexcept { counted_free_aligned(p); }
+void operator delete(void* p, std::size_t, std::align_val_t) noexcept { counted_free_aligned(p); }
+void operator delete[](void* p, std::size_t, std::align_val_t) noexcept {
+    counted_free_aligned(p);
+}
 
 // Execute a plan<long double> at n <= SBO_MAX must not heap-allocate scratch;
 // at n > SBO_MAX the soa_scratch heap path must fire.

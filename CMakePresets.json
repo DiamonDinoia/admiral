@@ -32,7 +32,7 @@
         "ADM_BUILD_BENCHMARKS": "OFF",
         "CMAKE_CXX_COMPILER": "clang++",
         "ADM_TARGET_ARCH": "none",
-        "CMAKE_CXX_FLAGS": "-O1 -fconstexpr-steps=100000000"
+        "CMAKE_CXX_FLAGS": "-O1"
       }
     },
     {

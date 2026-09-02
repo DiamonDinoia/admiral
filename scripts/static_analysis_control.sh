@@ -32,6 +32,20 @@ run() {  # run <tool-kind> <cmd> <file>
     esac
 } >/dev/null 2>&1 </dev/null
 
+# A check listed in .clang-tidy but absent from `--list-checks` is a check that is not running.
+# That is not hypothetical: `Checks: >` folds the whole list into ONE line, `#` then runs to the
+# end of that line, and the entry after each comment block gets glued to the comment text into a
+# junk glob. Nine checks were silently off that way. The YAML-list form is what makes the comments
+# real comments, and this loop is what proves it stayed that way.
+check_roster() {  # check_roster <clang-tidy-binary>
+    local tidy=$1 miss=0 want have
+    have=$("$tidy" --config-file="$src/.clang-tidy" --list-checks 2>/dev/null | tail -n +2 | tr -d ' ')
+    while read -r want; do
+        grep -qxF "$want" <<<"$have" || { echo "control: .clang-tidy lists $want but clang-tidy does not run it"; miss=1; }
+    done < <(sed -n "s/^  - '\([a-z][a-z0-9.*-]*\)'.*/\1/p" "$src/.clang-tidy")
+    return $miss
+}
+
 rc=0
 while read -r cmd; do
     [[ -n $cmd ]] || continue
@@ -41,6 +55,9 @@ while read -r cmd; do
     *cppcheck*)   kind=cppcheck ;;
     *)            echo "control: unknown analyser $bin"; rc=1; continue ;;
     esac
+    if [[ $kind == clang-tidy ]]; then
+        check_roster "$bin" || rc=1
+    fi
     run "$kind" "$cmd" "$good"
     if (($? != 0)); then
         echo "control: $kind reports on a CLEAN file; its verdict on the library is meaningless"

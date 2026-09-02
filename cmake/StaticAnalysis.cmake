@@ -8,7 +8,11 @@ if(ADM_ENABLE_CLANG_TIDY)
   find_program(ADM_CLANG_TIDY NAMES clang-tidy REQUIRED)
   # Checks and WarningsAsErrors come from .clang-tidy; HeaderFilterRegex there keeps the
   # diagnostics on admiral headers and off xsimd/poet/catch2.
-  set(CMAKE_CXX_CLANG_TIDY "${ADM_CLANG_TIDY}" "--quiet")
+  # `--config-file` is not optional: the generated codelet sources live in the BUILD tree, and
+  # clang-tidy's upward search from there can miss the repo's .clang-tidy entirely, which silently
+  # analyses them with the default (near-empty) check set.
+  set(CMAKE_CXX_CLANG_TIDY "${ADM_CLANG_TIDY}" "--quiet"
+      "--config-file=${PROJECT_SOURCE_DIR}/.clang-tidy")
   message(STATUS "clang-tidy: ${ADM_CLANG_TIDY}")
 endif()
 

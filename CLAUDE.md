@@ -163,6 +163,14 @@ layout" case in `test_strides.cpp` then fails at len 64 nbatch 2 out (8192, 1), 
   (`ADM_ENABLE_CLANG_TIDY`, `ADM_ENABLE_CPPCHECK` in `cmake/StaticAnalysis.cmake`), so a
   finding is a build failure over every library TU, not a hand-picked pair. Both are the
   same wiring CI's `static-analysis` job uses.
+- Two ways a clean clang-tidy run lies, both already closed, both silent:
+  `.clang-tidy` writes `Checks` as a YAML **sequence**, never `Checks: >`. A folded scalar
+  collapses to one line, so a `#` rationale becomes glob text and swallows the entry after it;
+  nine checks were off that way. And the launcher passes `--config-file` explicitly, because the
+  generated codelet TUs live in the BUILD tree, from which the upward search can miss the repo
+  config entirely and fall back to the near-empty default set. `scripts/static_analysis_control.sh`
+  is the check on both: every name listed in `.clang-tidy` must appear in `--list-checks`, and
+  each analyser must be silent on a clean file and report on `test/static_analysis/control.cpp`.
 - `coverage` is clang source-based coverage (`-fprofile-instr-generate
   -fcoverage-mapping`, -O1; report with llvm-profdata/llvm-cov). Do not resurrect
   the gcov preset: gcc's --coverage build here is ASSEMBLER-bound (one TU took

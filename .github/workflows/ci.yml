@@ -5,8 +5,10 @@ on:
   # actions all move under it.
   schedule:
     - cron: '0 5 * * 1'
-  # Every branch: a push has to be checked before a PR exists.
+  # Every branch: a push has to be checked before a PR exists. A probe/** branch is a
+  # measurement, not a candidate, and one MSVC cell costs 95 minutes.
   push:
+    branches-ignore: ['probe/**']
   pull_request:
   workflow_dispatch:
 
@@ -76,6 +78,12 @@ jobs:
           grep -qF -- '=${{ matrix.arch }}' build/compile_commands.json
           ! grep -qF -- '=native' build/compile_commands.json
           grep -qF -- '-std=c++${{ matrix.std || 20 }}' build/compile_commands.json
+          # A Debug cell debugs at -Og. -O0 pays the same template instantiation cost and then
+          # runs the tests several times slower.
+          if [ '${{ matrix.build_type || 'Release' }}' = Debug ]; then
+            grep -qF -- '-Og' build/compile_commands.json
+            ! grep -qF -- '-O0' build/compile_commands.json
+          fi
       - run: cmake --build build
       - run: ctest --test-dir build --output-on-failure --no-tests=error
       # The only cell that links a consumer against the DLL, which is what proves the headers
@@ -217,6 +225,8 @@ jobs:
         run: |
           grep -qF -- '-fsanitize=' build/${{ matrix.preset }}/compile_commands.json
           grep -qF -- '-O1' build/${{ matrix.preset }}/compile_commands.json
+          # The preset pins the level, so the Debug arm's -Og must not reach a sanitized TU.
+          ! grep -qF -- '-Og' build/${{ matrix.preset }}/compile_commands.json
           grep -qF -- '=x86-64-v2' build/${{ matrix.preset }}/compile_commands.json
           ! grep -qF -- '=native' build/${{ matrix.preset }}/compile_commands.json
       - run: cmake --build --preset ${{ matrix.preset }} -- -j 4

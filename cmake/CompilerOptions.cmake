@@ -85,6 +85,15 @@ endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        # -O0 buys nothing here: a Debug cell spends its wall clock inside the tests, and every
+        # kernel is a template the front end has to instantiate either way. -Og keeps the frame
+        # pointers, the variable locations and the line table that a debugger needs.
+        # A level spelled in CMAKE_CXX_FLAGS stays authoritative, because target options land
+        # after it on the command line and the sanitizer arms pin -O1 there.
+        string(REGEX MATCH "(^| )-O" _adm_flags_opt_level "${CMAKE_CXX_FLAGS}")
+        if(NOT _adm_flags_opt_level)
+            target_compile_options(admiral_optimization_flags INTERFACE -Og)
+        endif()
         target_compile_options(admiral_optimization_flags INTERFACE
             -g3
             -fno-omit-frame-pointer

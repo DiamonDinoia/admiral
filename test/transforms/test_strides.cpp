@@ -94,7 +94,7 @@ TEMPLATE_TEST_CASE("column codelet lens <= 64 match per-line plan, tails include
     CHECK(e2_len_cap_by_l3(std::size_t{5} << 20) == 64);
     CHECK(e2_len_cap_by_l3(0) == 32);
     CHECK(admiral::detail::make_nd_axis_state<T>(64, 17, true, false).col_codelet ==
-          (e2_len_cap() == 64));
+          (e2_len_cap() == 64 && admiral::detail::is_codelet_catalog(64)));
     for (const bool forward : {true, false})
         for (const std::size_t nbatch : {std::size_t{3}, std::size_t{7}, std::size_t{17}}) {
             for (const std::size_t len :

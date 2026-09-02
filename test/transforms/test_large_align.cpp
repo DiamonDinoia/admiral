@@ -229,7 +229,9 @@ TEMPLATE_TEST_CASE("four_step_transpose_inplace vs naive", "[large][fourstep]", 
 TEST_CASE("WS-3 sweep-bits invariant pins the pool gate", "[large][fourstep]") {
     using admiral::detail::fsl_ws_engaged;
     admiral::detail::thread_pool pool(4);
-    REQUIRE(fsl_ws_engaged(&pool));
+    // ADM_THREADS == 0 leaves a serial no-op pool whose size() is 1, so the gate reads false and
+    // the sweep below runs serially; the bit-identity it checks holds either way.
+    REQUIRE(fsl_ws_engaged(&pool) == (ADM_THREADS != 0));
     REQUIRE(!fsl_ws_engaged(nullptr));
     constexpr std::size_t N = std::size_t{1} << 21;
     const auto in = make_input<double>(N, 0xA11);

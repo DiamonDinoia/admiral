@@ -26,7 +26,10 @@ template<typename F = double>
     const F tiny = std::numeric_limits<F>::epsilon() / F(2);
     F cterm = 1, csum = 1;
     F sterm = x, ssum = x;
-    for (F k = 1;; ++k) {
+    // The term index counts in integers, so `2k-1` and `2k+1` are exact by construction and the
+    // loop cannot drift; 15 iterations covers binary128, the widest `F` any target carries.
+    for (unsigned i = 1;; ++i) {
+        const F k = static_cast<F>(i);
         cterm *= -x2 / ((2 * k - 1) * (2 * k));
         csum += cterm;
         sterm *= -x2 / ((2 * k) * (2 * k + 1));

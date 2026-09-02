@@ -385,9 +385,11 @@ private:
                   m.total, m.pool ? " threaded" : " serial");
         if (level < dbg_shape) return;
         dbg_print_seq("  shape", m.shape);
-        for (std::size_t d = 0; d < m.shape.size(); ++d)
+        for (std::size_t d = 0; d < m.shape.size(); ++d) {
+            const nd_axis_state<T>& ax = m.axes[d];
             dbg_print("  axis ", d, " len=", m.shape[d], " ",
-                      m.axes[d].dif ? "col_dif" : m.axes[d].plan->route_name());
+                      ax.plan ? ax.plan->route_name() : "col_dif");
+        }
     }
 
     struct scale_plan {
@@ -457,11 +459,13 @@ template<typename T>
 void nd_runtime_plan<T>::execute(std::complex<T>* data, const exec_options<T>& opts) const {
     const std::size_t ndim = m.shape.size();
     if (ndim == 1) {
-        const scale_plan sp = make_scale_plan(opts.fct);
-        m.axes[0].plan->execute(span<std::complex<T>>(data, m.total),
-                                {sp.custom ? std::optional<T>(sp.fct) : std::nullopt,
-                                 opts.debug});
-        return;
+        const nd_axis_state<T>& ax0 = m.axes[0];
+        if (ax0.plan) {
+            const scale_plan sp = make_scale_plan(opts.fct);
+            ax0.plan->execute(span<std::complex<T>>(data, m.total),
+                              {sp.custom ? std::optional<T>(sp.fct) : std::nullopt, opts.debug});
+            return;
+        }
     }
     execute_nd(data, opts);
 }
@@ -492,11 +496,13 @@ void nd_runtime_plan<T>::execute(const std::complex<T>* src, std::complex<T>* ds
         return;
     }
     if (m.shape.size() == 1) {
-        const scale_plan sp = make_scale_plan(opts.fct);
-        m.axes[0].plan->execute(src, dst,
-                                {sp.custom ? std::optional<T>(sp.fct) : std::nullopt,
-                                 opts.debug});
-        return;
+        const nd_axis_state<T>& ax0 = m.axes[0];
+        if (ax0.plan) {
+            const scale_plan sp = make_scale_plan(opts.fct);
+            ax0.plan->execute(src, dst,
+                              {sp.custom ? std::optional<T>(sp.fct) : std::nullopt, opts.debug});
+            return;
+        }
     }
     execute_nd(src, dst, opts);
 }

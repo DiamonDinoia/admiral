@@ -351,6 +351,8 @@ private:
         std::size_t Nh;
         std::size_t rows;
         std::size_t total_c;
+        // Engaged for the whole lifetime: the ctor emplaces it or throws. Each `rp->` below
+        // carries a NOLINT, because a per-function analysis cannot see across a constructor.
         std::optional<real_adm_plan<T>> rp;
         std::vector<nd_axis_state<T>> fwd_axes, inv_axes;
         std::unique_ptr<thread_pool> pool;
@@ -362,9 +364,11 @@ private:
                   cplx_size(), m.pool ? " threaded" : " serial");
         if (level < dbg_shape) return;
         dbg_print_seq("  shape", m.shape);
-        for (std::size_t d = 0; d + 1 < m.shape.size(); ++d)
+        for (std::size_t d = 0; d + 1 < m.shape.size(); ++d) {
+            const nd_axis_state<T>& ax = axes[d];
             dbg_print("  axis ", d, " len=", m.shape[d], " ",
-                      axes[d].dif ? "col_dif" : axes[d].plan->route_name());
+                      ax.plan ? ax.plan->route_name() : "col_dif");
+        }
     }
 };
 
@@ -414,6 +418,7 @@ nd_real_plan<T>::nd_real_plan(span<const std::size_t> shape, std::size_t nthread
 template<typename T>
 void nd_real_plan<T>::forward(const T* in, std::complex<T>* out, const exec_options<T>& opts) const {
     if (opts.debug >= dbg_route) ADM_UNLIKELY trace(opts.debug, "fwd", m.fwd_axes);
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
     m.rp->r2c(in, out, m.rows, m.pool.get());
     run_outer(out, m.fwd_axes, true, m.pool.get());
     if (opts.fct && *opts.fct != T(1))
@@ -424,6 +429,7 @@ template<typename T>
 void nd_real_plan<T>::inverse(std::complex<T>* spec, T* out, const exec_options<T>& opts) const {
     if (opts.debug >= dbg_route) ADM_UNLIKELY trace(opts.debug, "inv", m.inv_axes);
     run_outer(spec, m.inv_axes, false, m.pool.get());
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
     m.rp->c2r(spec, out, m.rows, m.pool.get());
     if (opts.fct) {
         const std::size_t Nr = real_size();

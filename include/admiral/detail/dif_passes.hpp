@@ -120,7 +120,7 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
     constexpr std::size_t W = batch::size;
     const std::size_t idi = ido * esi, idz = ido * eso;
 
-    if constexpr (!InPlace) {
+    if constexpr (!InPlace && W > 4) {
         if (ido >= 4 && ido < W) {
             dif_pass_small_ido<T, IP>(ccre, ccim, chre, chim, l1, ido, twre, twim);
             return;

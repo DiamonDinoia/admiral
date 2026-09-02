@@ -1628,7 +1628,9 @@ int main(int argc, char** argv) {
             auto run = [&](auto tag) {
                 using T = decltype(tag);
                 const auto p = admiral::detail::build_dif_factor_plan<T>(N);
-                std::vector<unsigned> dp(p.radices.begin(), p.radices.begin() + p.count);
+                std::vector<unsigned> dp(p.radices.begin(),
+                                         p.radices.begin()
+                                             + static_cast<std::ptrdiff_t>(p.count));
                 std::cout << (sizeof(T) == 8 ? "f64" : "f32") << " N=" << N
                           << " closed-form-DP=" << fmt(dp);
                 if (!cand.empty()) std::cout << " candidate=" << fmt(cand);

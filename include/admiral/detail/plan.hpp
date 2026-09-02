@@ -560,12 +560,15 @@ plan_impl<T>::measure_route(std::size_t size, bool is_forward, std::size_t nthre
         dif_factor_plan perm = pick.dif_chain;
         for (std::size_t s = 1; s < perm.count && have_budget(); ++s) {
             std::rotate(perm.radices.begin(), perm.radices.begin() + 1,
-                        perm.radices.begin() + perm.count);
+                        perm.radices.begin() + static_cast<std::ptrdiff_t>(perm.count));
             race(perm);
         }
-        std::sort(perm.radices.begin(), perm.radices.begin() + perm.count);
+        std::sort(perm.radices.begin(),
+                  perm.radices.begin() + static_cast<std::ptrdiff_t>(perm.count));
         while (have_budget() &&
-               std::next_permutation(perm.radices.begin(), perm.radices.begin() + perm.count))
+               std::next_permutation(
+                   perm.radices.begin(),
+                   perm.radices.begin() + static_cast<std::ptrdiff_t>(perm.count)))
             race(perm);
     }
     return pick;

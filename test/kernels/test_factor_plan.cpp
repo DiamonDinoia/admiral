@@ -156,17 +156,23 @@ TEMPLATE_TEST_CASE("dif candidate list: legal, distinct, and the election lands 
                 }
             for (std::size_t j = 0; j < k; ++j)
                 REQUIRE_FALSE((c[j].count == c[k].count &&
-                               std::equal(c[j].radices.begin(), c[j].radices.begin() + c[j].count,
+                               std::equal(c[j].radices.begin(),
+                                          c[j].radices.begin()
+                                              + static_cast<std::ptrdiff_t>(c[j].count),
                                           c[k].radices.begin())));
         }
         const auto dp = build_dif_factor_plan<TestType>(N);
         REQUIRE(dp.count == c[0].count);
-        REQUIRE(std::equal(dp.radices.begin(), dp.radices.begin() + dp.count, c[0].radices.begin()));
+        REQUIRE(std::equal(dp.radices.begin(),
+                       dp.radices.begin() + static_cast<std::ptrdiff_t>(dp.count),
+                       c[0].radices.begin()));
         const auto el = dif_elected_chain<TestType>(N);
         bool member = false;
         for (std::size_t k = 0; k < c.count; ++k)
             member = member || (el.count == c[k].count &&
-                                std::equal(el.radices.begin(), el.radices.begin() + el.count,
+                                std::equal(el.radices.begin(),
+                                           el.radices.begin()
+                                               + static_cast<std::ptrdiff_t>(el.count),
                                            c[k].radices.begin()));
         REQUIRE(member);
         bool any_ok = false;

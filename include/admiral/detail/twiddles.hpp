@@ -490,8 +490,8 @@ inline constexpr std::size_t kDifBeam = kDifCandidates;
                                                const dif_factor_plan& b) {
     if (a.count != b.count) return false;
     auto x = a.radices, y = b.radices;
-    std::sort(x.begin(), x.begin() + a.count);
-    std::sort(y.begin(), y.begin() + b.count);
+    std::sort(x.begin(), x.begin() + static_cast<std::ptrdiff_t>(a.count));
+    std::sort(y.begin(), y.begin() + static_cast<std::ptrdiff_t>(b.count));
     return x == y;
 }
 
@@ -655,7 +655,7 @@ template<typename T>
             n /= e.radix;
             if (n > 1) e = row(state(n))[e.next];
         }
-        std::sort(rs.begin(), rs.begin() + c);
+        std::sort(rs.begin(), rs.begin() + static_cast<std::ptrdiff_t>(c));
         return std::pair{rs, c};
     };
     const auto offer = [beam, &before, &sorted_chain](std::size_t n, span<entry> r,

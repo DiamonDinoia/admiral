@@ -78,6 +78,15 @@ jobs:
           grep -qF -- '-std=c++${{ matrix.std || 20 }}' build/compile_commands.json
       - run: cmake --build build
       - run: ctest --test-dir build --output-on-failure --no-tests=error
+      # The only cell that links a consumer against the DLL, which is what proves the headers
+      # say dllimport outside the build.
+      - name: Install and consume
+        run: |
+          cmake --install build --prefix "$PWD/prefix"
+          cmake -S test/package -B build-pkg -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$PWD/prefix"
+          cmake --build build-pkg
+          ctest --test-dir build-pkg --output-on-failure --no-tests=error
       - name: Upload logs
         if: failure()
         uses: actions/upload-artifact@v7
@@ -278,7 +287,12 @@ jobs:
         env: {LLVM_PROFILE_FILE: "${{ github.workspace }}/build/coverage/profraw/%m.profraw"}
       - name: Report
         run: |
-          profs=$(find build/coverage -name '*.profraw')
+          # Only the ctest step's own directory. catch_discover_tests runs every instrumented
+          # binary at build time with no LLVM_PROFILE_FILE set, so they all append to one
+          # build/coverage/test/default.profraw concurrently and corrupt it; llvm-profdata then
+          # reads "unrecognized instrumentation profile encoding format" and merges nothing.
+          profs=$(find build/coverage/profraw -name '*.profraw')
+          [ -n "$profs" ]
           llvm-profdata-18 merge -sparse $profs -o cov.profdata
           objs=$(find build/coverage/test -maxdepth 1 -type f -name 'test_*' ! -name '*.*')
           args=$(for o in $objs; do printf -- '-object %s ' "$o"; done)

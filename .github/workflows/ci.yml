@@ -1,6 +1,10 @@
 name: CI
 
 on:
+  # Weekly, because a green tree can still rot: runner images, apt packages and the pinned
+  # actions all move under it.
+  schedule:
+    - cron: '0 5 * * 1'
   # Every branch: a push has to be checked before a PR exists.
   push:
   pull_request:
@@ -110,6 +114,8 @@ jobs:
           ninja: true
           vcvarsall: true
           cache-tools: true
+      # cl.exe has no per-level arch switch, so CompilerOptions.cmake collapses every x86 target
+      # to /arch:AVX2 and says so. Only the clang-cl cell honours the requested level.
       - name: Configure
         run: >
           cmake -S . -B build
@@ -229,6 +235,7 @@ jobs:
           cmake --build build
       - name: Memcheck
         run: |
+          ran=0
           for t in build/test/test_*; do
             [ -x "$t" ] || continue
             [ "$(basename "$t")" = test_ulp ] && continue
@@ -239,7 +246,11 @@ jobs:
             echo "--- $t"
             valgrind --error-exitcode=1 --leak-check=full \
               --errors-for-leak-kinds=definite "$t" '~[longdouble]'
+            ran=$((ran + 1))
           done
+          # An unmatched glob walks zero binaries and reports success.
+          echo "memcheck ran $ran binaries"
+          [ "$ran" -ge 15 ]
 
   coverage:
     runs-on: ubuntu-24.04
@@ -301,11 +312,17 @@ jobs:
             -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=OFF \
             -DCMAKE_INSTALL_PREFIX=$PWD/prefix
           cmake --build build --target install
-      - name: Consume it
+      - name: Consume the prefix through find_package
         run: |
           cmake -S test/package -B build-pkg -G Ninja -DCMAKE_PREFIX_PATH=$PWD/prefix
           cmake --build build-pkg
           ctest --test-dir build-pkg --output-on-failure --no-tests=error
+      - name: Consume the source tree through FetchContent
+        run: |
+          cmake -S test/package -B build-fc -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DADM_PACKAGE_TEST_FETCH=$PWD -DADM_TARGET_ARCH=x86-64-v2
+          cmake --build build-fc
+          ctest --test-dir build-fc --output-on-failure --no-tests=error
 
   v4-sde:
     runs-on: ubuntu-24.04
@@ -336,6 +353,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build
+      - uses: hendrikmuhs/ccache-action@v1
+        with: {key: catalog}
       - run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_COMPILER=g++-14 -DADM_TARGET_ARCH=x86-64-v2 -DADM_CODELET_EXTRA_SIZES=66
@@ -347,6 +366,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build
+      - uses: hendrikmuhs/ccache-action@v1
+        with: {key: nothreads}
       - run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_COMPILER=g++-14 -DADM_TARGET_ARCH=x86-64-v2 -DADM_ENABLE_THREADS=OFF
@@ -358,6 +379,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build
+      - uses: hendrikmuhs/ccache-action@v1
+        with: {key: bench-verify}
       - run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_COMPILER=g++-14 -DADM_TARGET_ARCH=x86-64-v2 -DADM_BUILD_TESTS=OFF

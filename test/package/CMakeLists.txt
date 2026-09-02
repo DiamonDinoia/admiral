@@ -1,7 +1,16 @@
 cmake_minimum_required(VERSION 3.25)
 project(admiral_package_test C CXX)
 
-find_package(admiral REQUIRED)
+# Two consumption paths, one set of sources. ADM_PACKAGE_TEST_FETCH points at a source tree and
+# selects the FetchContent path; unset, the project consumes an installed prefix through
+# find_package. Both must produce the same admiral::* targets.
+if(ADM_PACKAGE_TEST_FETCH)
+    include(FetchContent)
+    FetchContent_Declare(admiral SOURCE_DIR ${ADM_PACKAGE_TEST_FETCH})
+    FetchContent_MakeAvailable(admiral)
+else()
+    find_package(admiral REQUIRED)
+endif()
 enable_testing()
 
 find_library(ADM_LIBM m)

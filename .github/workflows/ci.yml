@@ -83,7 +83,9 @@ jobs:
           if-no-files-found: ignore
 
   # MSVC has no `-march` and no POSIX allocator, so it exercises the portability arms nothing else
-  # reaches. Multi-config generator, hence `--config` on every step.
+  # reaches. Ninja under vcvarsall, the same single-config shape as the Linux cells: `-A x64`
+  # belongs to the Visual Studio generator, and setup-cpp's vcvarsall makes NMake the default,
+  # which rejects a platform specification outright.
   windows:
     strategy:
       fail-fast: false
@@ -91,23 +93,31 @@ jobs:
         include:
           - {os: windows-2022, toolchain: msvc}
           - {os: windows-2025, toolchain: msvc}
+          - {os: windows-2025, toolchain: llvm-20}
     name: ${{ matrix.toolchain }} ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    env:
+      CMAKE_GENERATOR: Ninja
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
       - uses: aminya/setup-cpp@v1
         with:
           compiler: ${{ matrix.toolchain }}
           cmake: true
+          ninja: true
           vcvarsall: true
           cache-tools: true
       - name: Configure
         run: >
-          cmake -S . -B build -A x64
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
           -DADM_TARGET_ARCH=x86-64-v3
           -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF
-      - run: cmake --build build --config Release
-      - run: ctest --test-dir build -C Release --output-on-failure --no-tests=error
+      - run: cmake --build build
+      - run: ctest --test-dir build --output-on-failure --no-tests=error
       - name: Upload logs
         if: failure()
         uses: actions/upload-artifact@v7

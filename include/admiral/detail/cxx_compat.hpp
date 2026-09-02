@@ -27,6 +27,18 @@
 #  define ADM_CONSTEVAL constexpr
 #endif
 
+// Blocks the compiler from moving memory operations across this point. It emits no instruction and
+// no hardware fence. codelet.hpp's cofactor fast arm needs it so a runtime alignment test cannot be
+// hoisted above the reinterpreted loads it guards; gcc 13.3 segfaults there without it. The GNU asm
+// is the spelling that check was made against, so MSVC gets the standard equivalent and nobody else
+// changes.
+#if defined(_MSC_VER) && !defined(__clang__)
+#  include <atomic>
+#  define ADM_COMPILER_BARRIER() std::atomic_signal_fence(std::memory_order_seq_cst)
+#else
+#  define ADM_COMPILER_BARRIER() __asm__ __volatile__("" ::: "memory")
+#endif
+
 #if defined(__cpp_lib_is_constant_evaluated) && __cpp_lib_is_constant_evaluated >= 201811L
 #  define ADM_IS_CONSTANT_EVALUATED() std::is_constant_evaluated()
 #elif defined(__GNUC__) || defined(__clang__)

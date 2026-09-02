@@ -401,7 +401,7 @@ struct kernel {
                         }
                     });
                     if constexpr (Wc == r) {
-                        asm volatile("" ::: "memory");
+                        ADM_COMPILER_BARRIER();
                         const bool kb_aligned =
                             (reinterpret_cast<std::uintptr_t>(xre) % alignof(V) == 0) &&
                             (reinterpret_cast<std::uintptr_t>(xim) % alignof(V) == 0);

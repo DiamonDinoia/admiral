@@ -66,8 +66,9 @@ using dif_generic_radix_seq =
                           61, 67, 71, 73, 79, 83, 89, 97>;
 inline constexpr auto dif_generic_radices = radix_seq_to_array(dif_generic_radix_seq{});
 [[nodiscard]] constexpr bool dif_is_generic_radix(std::size_t r) {
-    return detail::const_find(dif_generic_radices.begin(), dif_generic_radices.end(), r)
-        != dif_generic_radices.end();
+    const std::size_t* const first = dif_generic_radices.data();
+    const std::size_t* const last = first + dif_generic_radices.size();
+    return detail::const_find(first, last, r) != last;
 }
 
 using dif_ip_radix_set = dif_radix_set;
@@ -104,8 +105,9 @@ template<typename T>
 inline constexpr std::array<std::size_t, 12> dif_cost_radices{2, 3, 4, 5, 7, 8, 11, 16, 32, 9, 15, 25};
 
 [[nodiscard]] constexpr std::size_t dif_cost_index(std::size_t radix) {
-    const auto* const first = dif_cost_radices.begin();
-    return static_cast<std::size_t>(const_find(first, dif_cost_radices.end(), radix) - first);
+    const std::size_t* const first = dif_cost_radices.data();
+    return static_cast<std::size_t>(
+        const_find(first, first + dif_cost_radices.size(), radix) - first);
 }
 
 static_assert(dif_cost_index(25) < dif_cost_radices.size(),

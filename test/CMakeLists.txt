@@ -1,6 +1,7 @@
 
 set(ADM_TEST_SOURCES
     transforms/test_threads.cpp
+    transforms/test_alloc.cpp
     kernels/test_iterative.cpp
     transforms/test_nd.cpp
     transforms/test_fct.cpp

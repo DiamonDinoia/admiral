@@ -233,6 +233,9 @@ jobs:
             [ -x "$t" ] || continue
             [ "$(basename "$t")" = test_ulp ] && continue
             [ "$(basename "$t")" = test_long_double ] && continue
+            # test_alloc replaces global operator new/delete; valgrind redirects the same
+            # symbols, so its counter and block families are meaningless under memcheck.
+            [ "$(basename "$t")" = test_alloc ] && continue
             echo "--- $t"
             valgrind --error-exitcode=1 --leak-check=full \
               --errors-for-leak-kinds=definite "$t" '~[longdouble]'

@@ -899,7 +899,10 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
                 xsimd::transpose(rr, rr + W);
                 xsimd::transpose(ri, ri + W);
                 poet::static_for<0, W>([&](const auto a) {
-                    if constexpr (off + a < IP) { btr[off + a] = rr[a]; bti[off + a] = ri[a]; }
+                    if constexpr (decltype(off)::value + a < IP) {
+                        btr[off + a] = rr[a];
+                        bti[off + a] = ri[a];
+                    }
                 });
             };
             poet::static_for<0, IP / W>([&](auto Tc) {

@@ -28,6 +28,12 @@ function(set_project_warnings target_name)
         # C4127: a template whose parameter reaches a plain `if` condition. The kernels are written
         # against widths and radices, so the constant conditions are the point.
         /wd4127
+        # C4702: MSVC issues it from the optimizer, so a generic function reads as dead code
+        # wherever one caller pins a runtime parameter. Every call in `src/codelet_apply.hpp`
+        # passes xstride 1, which makes `kernel_batched::apply_impl`'s scalar tail unreachable in
+        # a codelet TU and live in the engine TUs. gcc and clang have no equivalent diagnostic,
+        # and two of the four reported sites were inside xsimd, which SYSTEM did not cover.
+        /wd4702
     )
 
     set(COMMON_WARNINGS

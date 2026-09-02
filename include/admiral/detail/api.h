@@ -18,3 +18,15 @@
 #else
 #  define ADM_VISIBILITY
 #endif
+
+/* MSVC does not carry the attribute from a template's declaration onto an explicit instantiation
+   definition, so `template void forward<double>(...)` in a DLL translation unit exports nothing
+   and a consumer's link fails with LNK2019. The attribute has to sit on the instantiation itself,
+   which is the form the docs give for class templates: `template class __declspec(dllexport)
+   B<int>;`. clang-cl and the ELF toolchains do carry it (verified in the IR), so this repeats
+   what they already did rather than adding anything. */
+#if defined(_WIN32) || defined(__CYGWIN__)
+#  define ADM_API_INST ADM_VISIBILITY
+#else
+#  define ADM_API_INST
+#endif

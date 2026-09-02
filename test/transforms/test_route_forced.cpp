@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -178,7 +179,9 @@ TEMPLATE_TEST_CASE("threaded four_step_large admission scales with nthreads",
 template<typename T>
 static bool routes_large(std::size_t n, std::size_t threads) {
     using P = admiral::detail::plan_impl<T>;
-    return P(n, true, threads, nullptr, admiral::effort::estimate).route_name()
+    // std::string_view, because route_name() hands back a const char*: at -O0 the call lands in
+    // the shared library and the two literals have different addresses, so == compares pointers.
+    return std::string_view(P(n, true, threads, nullptr, admiral::effort::estimate).route_name())
            == "four_step_large";
 }
 

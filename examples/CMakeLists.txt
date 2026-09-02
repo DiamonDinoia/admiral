@@ -35,4 +35,9 @@ foreach(i RANGE 0 ${ADM_LAST} 2)
         target_link_libraries(example_${name} PRIVATE ${ADM_LIBM})
     endif()
     add_test(NAME example_${name} COMMAND example_${name})
+    # Windows resolves a DLL through PATH at load time, not through the link-time path, so an
+    # example linked to a shared surface exits 0xc0000135 (STATUS_DLL_NOT_FOUND) without this.
+    # Harmless on ELF, where the RPATH already answers the question.
+    set_tests_properties(example_${name} PROPERTIES ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:admiral::${surface}>")
 endforeach()

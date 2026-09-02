@@ -74,9 +74,11 @@ function(adm_add_surface name)
     add_library(admiral::${A_EXPORT_NAME}_static ALIAS ${name}_static)
     set_target_properties(${name} PROPERTIES EXPORT_NAME ${A_EXPORT_NAME})
     set_target_properties(${name}_static PROPERTIES EXPORT_NAME ${A_EXPORT_NAME}_static)
-    if(NOT MSVC)
-        # libadmiral.a beside libadmiral.so. Not on an MSVC-style toolchain, where the shared
-        # library's import library is already admiral.lib and ninja refuses the second rule.
+    # libadmiral.a beside libadmiral.so. Skipped wherever the shared library's import library
+    # would take that exact name -- .lib against .lib on every MSVC-ABI toolchain, clang-cl and
+    # clang --target=*-windows-msvc included -- because ninja refuses two rules for one output.
+    # The suffixes are the thing that collides, so they are what the test reads.
+    if(NOT CMAKE_IMPORT_LIBRARY_SUFFIX STREQUAL CMAKE_STATIC_LIBRARY_SUFFIX)
         set_target_properties(${name}_static PROPERTIES OUTPUT_NAME ${name})
     endif()
 

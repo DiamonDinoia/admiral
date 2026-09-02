@@ -9,6 +9,13 @@ set(ADM_EXAMPLES
     fftw_dropin         fftw
 )
 
+# The C examples call libm. It is a separate library on ELF and part of the CRT on Windows,
+# where linking a literal `m` fails as `lld-link: could not open 'm.lib'`.
+find_library(ADM_LIBM m)
+if(NOT ADM_LIBM)
+    set(ADM_LIBM "")
+endif()
+
 list(LENGTH ADM_EXAMPLES ADM_NEX)
 math(EXPR ADM_LAST "${ADM_NEX} - 1")
 foreach(i RANGE 0 ${ADM_LAST} 2)
@@ -25,7 +32,7 @@ foreach(i RANGE 0 ${ADM_LAST} 2)
         target_link_libraries(example_${name} PRIVATE project_sanitizers)
     endif()
     if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${name}.c)
-        target_link_libraries(example_${name} PRIVATE m)
+        target_link_libraries(example_${name} PRIVATE ${ADM_LIBM})
     endif()
     add_test(NAME example_${name} COMMAND example_${name})
 endforeach()

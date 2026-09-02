@@ -25,6 +25,9 @@ function(set_project_warnings target_name)
         # C4275: admiral::error is exported and derives from std::runtime_error, which no DLL
         # exports. Every C++ library with an exception type hits this; the base is header-only.
         /wd4275
+        # C4251: every public class template holds a `unique_ptr` to its state. A pimpl member of
+        # an exported class has no dll-interface by construction; that is the point of the pimpl.
+        /wd4251
         # C4127: a template whose parameter reaches a plain `if` condition. The kernels are written
         # against widths and radices, so the constant conditions are the point.
         /wd4127

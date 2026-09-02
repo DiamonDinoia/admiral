@@ -68,8 +68,11 @@ foreach(test_src IN LISTS ADM_TEST_SOURCES)
     catch_discover_tests(${test_name})
 endforeach()
 
+# ELF only: `nm -D` reads a dynamic symbol table, which a PE DLL does not have, and the
+# patterns below are Itanium mangling. On Windows llvm-nm reports
+# `File format has no dynamic symbol table` and the gate fails on a healthy library.
 find_program(ADM_NM NAMES ${CMAKE_NM} nm)
-if(ADM_NM AND ADM_HAVE_VERSION_SCRIPT)
+if(ADM_NM AND ADM_HAVE_VERSION_SCRIPT AND NOT WIN32)
     foreach(row
         "admiral;^_Z[A-Z]+7admiral;_ZN7admiral7forwardI|_ZN7admiral7inverseI|_ZN7admiral4planI|_ZN7admiral9axis_planI|_ZN7admiral12strides_planI|_ZN7admiral8plan_r2cI|_ZN7admiral8plan_r2rI"
         "admiral_c;^(adm|admf)_;adm_plan_1d|adm_forward|adm_r2c_nd|admf_plan_1d|admf_forward"
@@ -86,5 +89,6 @@ if(ADM_NM AND ADM_HAVE_VERSION_SCRIPT)
                 -P ${PROJECT_SOURCE_DIR}/cmake/CheckExportedSymbols.cmake)
     endforeach()
 else()
-    message(STATUS "ABI export gate: SKIPPED (nm=${ADM_NM}, version-script=${ADM_HAVE_VERSION_SCRIPT})")
+    message(STATUS "ABI export gate: SKIPPED (nm=${ADM_NM}, version-script=${ADM_HAVE_VERSION_SCRIPT}, "
+                   "win32=${WIN32})")
 endif()

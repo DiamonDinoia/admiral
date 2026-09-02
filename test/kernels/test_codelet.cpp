@@ -278,7 +278,11 @@ template<typename T>
 void check_many_sizes() {
     // Sweep the catalog itself: ADM_CODELET_EXTRA_SIZES changes which sizes exist, so a hardcoded
     // list is a different test in every configuration. kGate mirrors kManyRollMinBlocks in
-    // src/codelet_apply.hpp, and the two counts below fail if a catalog stops reaching one arm.
+    // src/codelet_apply.hpp, and the counts below fail if a catalog stops reaching an arm it can
+    // reach. Whether the rolled arm is reachable at all is a property of the catalog and the batch
+    // width, not of the code: the largest size has to carry kGate blocks. Every size is under the
+    // gate at the smallest catalog a sanitizer build accepts, so requiring the arm unconditionally
+    // would fail there for a reason no source change can fix.
     constexpr std::size_t W = xsimd::batch<T>::size;
     constexpr std::size_t kGate = 5;
     std::size_t rolled = 0, statik = 0;
@@ -297,7 +301,7 @@ void check_many_sizes() {
                         else         check_many<T, false>(N, nlines, stride, fct);
                     }
     }
-    REQUIRE(rolled > 0);
+    if (CODELET_CATALOG_SIZES.back() / W >= kGate) REQUIRE(rolled > 0);
     REQUIRE(statik > 0);
 }
 

@@ -9,8 +9,13 @@ set(ADM_CODELET_EXTRA_SIZES "120;65;85;143;100;360" CACHE STRING
     "Semicolon-separated sizes added to the catalog beyond [MIN_N, MAX_N]")
 
 if(NOT ADM_SANITIZER STREQUAL "none")
+    # A sanitized TU costs ~3 GB and minutes, so the catalog is trimmed. 45 stays in it because
+    # the batched leaves roll their block loop only from kManyRollMinBlocks blocks up
+    # (src/codelet_apply.hpp), and 2..16 never reaches that at float: without 45 no sanitizer ever
+    # executes the rolled body. 45 rolls with a non-empty remainder block in both precisions at
+    # x86-64-v2 (11 + 1 at float, 22 + 1 at double) and still rolls at x86-64-v3.
     set(ADM_CODELET_MAX_N 16)
-    set(ADM_CODELET_EXTRA_SIZES "")
+    set(ADM_CODELET_EXTRA_SIZES "45")
 endif()
 
 if(ADM_CODELET_MIN_N LESS 2)

@@ -1,10 +1,12 @@
 
+#include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "utils/reference.hpp"
 
 #include <admiral/detail/codelet.hpp>
 #include <admiral/detail/four_step.hpp>
+#include <admiral/detail/math.hpp>
 
 #include <cmath>
 #include <complex>
@@ -239,4 +241,69 @@ TEST_CASE("codelet forward then inverse is identity (up to 1/N)", "[codelet]") {
     roundtrip(std::integral_constant<unsigned, 12>{});
     roundtrip(std::integral_constant<unsigned, 60>{});
     roundtrip(std::integral_constant<unsigned, 64>{});
+}
+
+namespace {
+
+// The batched leaves transform nlines lines through a blocked gather, one straight-line kernel and
+// a blocked scatter, and a compile-time gate on the block count N / batch width picks a rolled or a
+// fully static block loop per size. Nothing else in the tree reaches either arm, so this is the
+// check on both. The single-line leaf is the reference, itself checked against the reference DFT
+// above, and the guard value in the padding fails the case if a block writes past its own columns.
+template<typename T, bool Forward>
+void check_many(std::size_t N, std::size_t nlines, std::size_t stride, T fct) {
+    REQUIRE(stride >= N);
+    const std::complex<T> guard(T(-9), T(7));
+    const auto x = make_input<T>(nlines * stride, 0x5EEDu);
+
+    std::vector<std::complex<T>> want(nlines * stride, guard);
+    std::vector<std::complex<T>> line(N);
+    for (std::size_t r = 0; r < nlines; ++r) {
+        codelet_dispatch<T, Forward>(x.data() + r * stride, line.data(), N);
+        for (std::size_t k = 0; k < N; ++k) want[r * stride + k] = line[k] * fct;
+    }
+
+    std::vector<std::complex<T>> oop(nlines * stride, guard);
+    codelet_dispatch_many_oop<T, Forward>(x.data(), oop.data(), nlines, stride, stride, N, fct);
+    require_close(oop, want, fft_tol<T>());
+
+    auto ip = x;
+    for (std::size_t r = 0; r < nlines; ++r)
+        for (std::size_t k = N; k < stride; ++k) ip[r * stride + k] = guard;
+    codelet_dispatch_many<T, Forward>(ip.data(), nlines, stride, N, fct);
+    require_close(ip, want, fft_tol<T>());
+}
+
+template<typename T>
+void check_many_sizes() {
+    // Sweep the catalog itself: ADM_CODELET_EXTRA_SIZES changes which sizes exist, so a hardcoded
+    // list is a different test in every configuration. kGate mirrors kManyRollMinBlocks in
+    // src/codelet_apply.hpp, and the two counts below fail if a catalog stops reaching one arm.
+    constexpr std::size_t W = xsimd::batch<T>::size;
+    constexpr std::size_t kGate = 5;
+    std::size_t rolled = 0, statik = 0;
+
+    for (const std::size_t N : CODELET_CATALOG_SIZES) {
+        if (N < 2) continue;
+        ++(N / W >= kGate ? rolled : statik);
+        for (const bool forward : {true, false})
+            for (const T fct : {T(1), T(0.5)})
+                // Under, at and over the batch width, and counts that leave a partial block, so the
+                // block loop, the remainder block and the fewer-than-width residual loop all run.
+                for (const std::size_t nlines : {std::size_t{1}, std::size_t{3}, std::size_t{9},
+                                                 std::size_t{17}})
+                    for (const std::size_t stride : {N, N + 3}) {
+                        if (forward) check_many<T, true>(N, nlines, stride, fct);
+                        else         check_many<T, false>(N, nlines, stride, fct);
+                    }
+    }
+    REQUIRE(rolled > 0);
+    REQUIRE(statik > 0);
+}
+
+}
+
+TEMPLATE_TEST_CASE("batched codelet leaves match the single-line leaf, both gate arms",
+                   "[codelet][batched]", float, double) {
+    check_many_sizes<TestType>();
 }

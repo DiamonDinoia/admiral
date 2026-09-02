@@ -2,13 +2,9 @@
 
 #include <stddef.h>
 
-#if defined(_WIN32) || defined(__CYGWIN__)
-#  define FFTW_C_API __declspec(dllexport)
-#elif defined(__GNUC__) || defined(__clang__)
-#  define FFTW_C_API __attribute__((visibility("default")))
-#else
-#  define FFTW_C_API
-#endif
+#include <admiral/detail/api.h>
+
+#define FFTW_C_API ADM_VISIBILITY
 
 #ifdef __cplusplus
 extern "C" {

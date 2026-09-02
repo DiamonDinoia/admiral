@@ -2,13 +2,9 @@
 
 #include <stddef.h>
 
-#if defined(_WIN32) || defined(__CYGWIN__)
-#  define ADM_C_API __declspec(dllexport)
-#elif defined(__GNUC__) || defined(__clang__)
-#  define ADM_C_API __attribute__((visibility("default")))
-#else
-#  define ADM_C_API
-#endif
+#include <admiral/detail/api.h>
+
+#define ADM_C_API ADM_VISIBILITY
 
 #if defined(__cplusplus) || (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L)
 #  define ADM_NODISCARD [[nodiscard]]

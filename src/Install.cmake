@@ -18,6 +18,7 @@ install(FILES
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/admiral)
 
 install(FILES
+    ${PROJECT_SOURCE_DIR}/include/admiral/detail/api.h
     ${PROJECT_SOURCE_DIR}/include/admiral/detail/cxx_compat.hpp
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/admiral/detail)
 

@@ -35,6 +35,7 @@ target_include_directories(admiral_engine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${ADM_GENERATED_INCLUDE_DIR})
 target_link_libraries(admiral_engine PRIVATE xsimd poet::poet ${ADM_THREADS_LIB})
+target_compile_definitions(admiral_engine PRIVATE ADM_BUILDING)
 adm_apply_build_profile(admiral_engine)
 
 add_library(admiral_codelets STATIC
@@ -47,6 +48,7 @@ target_include_directories(admiral_codelets PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${ADM_GENERATED_INCLUDE_DIR})
 target_link_libraries(admiral_codelets PUBLIC xsimd poet::poet)
+target_compile_definitions(admiral_codelets PRIVATE ADM_BUILDING)
 adm_apply_build_profile(admiral_codelets PUBLIC)
 
 adm_add_surface(admiral
@@ -68,6 +70,8 @@ target_include_directories(admiral_internal INTERFACE
     ${PROJECT_SOURCE_DIR}/include
     ${ADM_GENERATED_INCLUDE_DIR})
 target_compile_features(admiral_internal INTERFACE cxx_std_${ADM_CXX_STANDARD})
+# Tests and benchmarks link the objects, not the DLL, so their headers must not say dllimport.
+target_compile_definitions(admiral_internal INTERFACE ADM_STATIC_DEFINE)
 target_link_libraries(admiral_internal INTERFACE
     xsimd poet::poet admiral_codelets ${ADM_THREADS_LIB})
 target_sources(admiral_internal INTERFACE $<TARGET_OBJECTS:admiral_engine>)

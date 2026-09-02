@@ -18,20 +18,31 @@ if(NOT ADM_LIBM)
     set(ADM_LIBM "")
 endif()
 
-foreach(link admiral admiral_static)
-    add_executable(use_cxx_${link} use_cxx.cpp)
-    target_link_libraries(use_cxx_${link} PRIVATE admiral::${link})
-    add_test(NAME use_cxx_${link} COMMAND use_cxx_${link})
-endforeach()
+# Windows resolves a DLL from the executable's own directory, so a consumer that links the
+# shared surface needs it copied there before ctest runs.
+function(adm_stage_dlls target)
+    if(WIN32)
+        # The list is empty for the static links, and `copy` with no source is an error, so the
+        # command itself is selected by whether there is anything to copy.
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E
+                    $<IF:$<BOOL:$<TARGET_RUNTIME_DLLS:${target}>>,copy,true>
+                    $<TARGET_RUNTIME_DLLS:${target}> $<TARGET_FILE_DIR:${target}>
+            COMMAND_EXPAND_LISTS)
+    endif()
+endfunction()
 
-foreach(link admiral_c admiral_c_static)
-    add_executable(use_c_${link} use_c.c)
-    target_link_libraries(use_c_${link} PRIVATE admiral::${link} ${ADM_LIBM})
-    add_test(NAME use_c_${link} COMMAND use_c_${link})
-endforeach()
-
-foreach(link fftw fftw_static)
-    add_executable(use_fftw_${link} use_fftw.c)
-    target_link_libraries(use_fftw_${link} PRIVATE admiral::${link} ${ADM_LIBM})
-    add_test(NAME use_fftw_${link} COMMAND use_fftw_${link})
+foreach(row "use_cxx;use_cxx.cpp;admiral;admiral_static"
+            "use_c;use_c.c;admiral_c;admiral_c_static"
+            "use_fftw;use_fftw.c;fftw;fftw_static")
+    list(GET row 0 stem)
+    list(GET row 1 src)
+    list(GET row 2 shared_link)
+    list(GET row 3 static_link)
+    foreach(link ${shared_link} ${static_link})
+        add_executable(${stem}_${link} ${src})
+        target_link_libraries(${stem}_${link} PRIVATE admiral::${link} ${ADM_LIBM})
+        adm_stage_dlls(${stem}_${link})
+        add_test(NAME ${stem}_${link} COMMAND ${stem}_${link})
+    endforeach()
 endforeach()

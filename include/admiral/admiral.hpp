@@ -12,14 +12,10 @@
 
 #include "detail/cxx_compat.hpp"
 
+#include <admiral/detail/api.h>
+
 #ifndef ADM_API
-#  if defined(_WIN32) || defined(__CYGWIN__)
-#    define ADM_API __declspec(dllexport)
-#  elif defined(__GNUC__)
-#    define ADM_API __attribute__((visibility("default")))
-#  else
-#    define ADM_API
-#  endif
+#  define ADM_API ADM_VISIBILITY
 #endif
 
 // Every plan type below is safe to execute concurrently from several threads: an execute holds

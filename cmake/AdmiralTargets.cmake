@@ -45,6 +45,7 @@ function(adm_add_surface name)
                 ${ADM_GENERATED_INCLUDE_DIR})
         target_link_libraries(${name}_objects PRIVATE
             xsimd poet::poet admiral_codelets ${ADM_THREADS_LIB})
+        target_compile_definitions(${name}_objects PRIVATE ADM_BUILDING)
         adm_apply_build_profile(${name}_objects)
         set(own_objects $<TARGET_OBJECTS:${name}_objects>)
     endif()
@@ -66,13 +67,18 @@ function(adm_add_surface name)
 
     target_link_libraries(${name} PRIVATE admiral_codelets ${ADM_THREADS_LIB})
     target_link_libraries(${name}_static PUBLIC ${ADM_THREADS_LIB})
+    # A consumer of the archive must not see dllimport; the shared target's consumers must.
+    target_compile_definitions(${name}_static INTERFACE ADM_STATIC_DEFINE)
 
     add_library(admiral::${A_EXPORT_NAME} ALIAS ${name})
     add_library(admiral::${A_EXPORT_NAME}_static ALIAS ${name}_static)
     set_target_properties(${name} PROPERTIES EXPORT_NAME ${A_EXPORT_NAME})
-    set_target_properties(${name}_static PROPERTIES
-        EXPORT_NAME ${A_EXPORT_NAME}_static
-        OUTPUT_NAME ${name})
+    set_target_properties(${name}_static PROPERTIES EXPORT_NAME ${A_EXPORT_NAME}_static)
+    if(NOT MSVC)
+        # libadmiral.a beside libadmiral.so. Not on an MSVC-style toolchain, where the shared
+        # library's import library is already admiral.lib and ninja refuses the second rule.
+        set_target_properties(${name}_static PROPERTIES OUTPUT_NAME ${name})
+    endif()
 
     adm_restrict_exports(${name} ${A_VERSION_SCRIPT})
 endfunction()

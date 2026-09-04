@@ -36,9 +36,11 @@ template<typename T, bool Forward, std::size_t IP>
 void dif_tape_step_first(const T*, const T*, T* dr, T* di,
                          const dif_step<T>& s, const dif_rt<T>& rt) {
     const auto& tw = rt.dtw->passes[s.p];
-    dif_pass_first<T, Forward, IP>(rt.in, dr, di, 1, s.ido, tw.first.data(), tw.second.data(),
-                                   es_stride(s.es, 1),
-                                   rt.dtw->p0_block);
+    // The literal 1 below is the only l1 this pass ever sees, so it is also a template
+    // argument, folding the per-row offsets into a table built once per pass.
+    dif_pass_first<T, Forward, IP, 1u>(rt.in, dr, di, 1, s.ido, tw.first.data(), tw.second.data(),
+                                       es_stride(s.es, 1),
+                                       rt.dtw->p0_block);
 }
 
 template<typename T, std::size_t P, bool Chiplet>

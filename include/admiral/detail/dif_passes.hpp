@@ -732,7 +732,7 @@ inline constexpr bool dif_staged_radix =
     detail::has_single_bit(IP) && IP >= 16 &&
     dif_butterfly_wants_reload<IP> && poet::vector_register_count() >= 32;
 
-template<typename T, bool Forward, std::size_t IP, bool Split = false>
+template<typename T, bool Forward, std::size_t IP, bool Split = false, std::size_t L1 = 0>
 void dif_pass_first_impl(const std::complex<T>* data,
                     T* chre, T* chim,
                     std::size_t l1, std::size_t ido,
@@ -740,6 +740,72 @@ void dif_pass_first_impl(const std::complex<T>* data,
                     std::size_t eso, std::size_t blk = 0) {
     using batch_t = xsimd::batch<T>;
     constexpr std::size_t W = batch_t::size;
+    // L1 == 1 is the only value the engine passes. Then b == 0, the input row j sits at ido*j,
+    // the twiddle row k at ido*(k-1) and the output row k at eso*ido*k, so ONE array of IP
+    // hoisted ido multiples addresses all three families off three base pointers.
+    if constexpr (L1 == 1u && !Split) {
+        const T* const src = reinterpret_cast<const T*>(data);
+        std::size_t roff[IP];
+        poet::static_for<0, IP>([&](const auto j) ADM_LAMBDA_ALWAYS_INLINE { roff[j] = j * ido; });
+        auto one = [&](std::size_t aa) ADM_LAMBDA_ALWAYS_INLINE {
+            auto emit_tw = [&](const auto k, batch_t sr, batch_t si) ADM_LAMBDA_ALWAYS_INLINE {
+                const std::size_t o = (aa + roff[k]) * eso;
+                if constexpr (k > 0u) {
+                    const std::size_t t = roff[k - 1u] + aa;
+                    const batch_t owr = batch_t::load_unaligned(twre + t);
+                    const batch_t owi = batch_t::load_unaligned(twim + t);
+                    (owr * sr - owi * si).store_unaligned(chre + o);
+                    (owr * si + owi * sr).store_unaligned(chim + o);
+                } else {
+                    sr.store_unaligned(chre + o);
+                    si.store_unaligned(chim + o);
+                }
+            };
+            if constexpr (dif_staged_radix<IP>) {
+                auto load_in = [&](const auto j, batch_t& lr, batch_t& li)
+                                   ADM_LAMBDA_ALWAYS_INLINE {
+                    auto [dr, di] = plane_refs<Forward>(lr, li);
+                    aos_deinterleave<T>(src + 2u * (aa + roff[j]), dr, di);
+                };
+                staged_dif_butterfly<T, IP, batch_t>(load_in, emit_tw);
+            } else {
+                batch_t btr[IP], bti[IP];
+                poet::static_for<0, IP>([&](const auto j) ADM_LAMBDA_ALWAYS_INLINE {
+                    auto [dr, di] = plane_refs<Forward>(btr[j], bti[j]);
+                    aos_deinterleave<T>(src + 2u * (aa + roff[j]), dr, di);
+                });
+                dif_butterfly<T, IP>(btr, bti, emit_tw);
+            }
+        };
+        std::size_t a = 0;
+        for (; a + W <= ido; a += W) one(a);
+        if (ido >= W && (ido - a) * 2 >= W) { one(ido - W); a = ido; }
+        for (; a < ido; ++a) {
+            T tr[IP], ti[IP];
+            poet::static_for<0, IP>([&](const auto j) ADM_LAMBDA_ALWAYS_INLINE {
+                const auto& c = data[a + roff[j]];
+                auto [dr, di] = plane_refs<Forward>(tr[j], ti[j]);
+                dr = c.real();
+                di = c.imag();
+            });
+            dif_butterfly<T, IP>(tr, ti, [&](const auto k, T sr, T si) {
+                const std::size_t o = (a + roff[k]) * eso;
+                if constexpr (k > 0u) {
+                    T owr = T(1), owi = T(0);
+                    if (ido > 1) {
+                        owr = twre[roff[k - 1u] + a];
+                        owi = twim[roff[k - 1u] + a];
+                    }
+                    chre[o] = owr * sr - owi * si;
+                    chim[o] = owr * si + owi * sr;
+                } else {
+                    chre[o] = sr;
+                    chim[o] = si;
+                }
+            });
+        }
+        return;
+    }
     const std::size_t idz = ido * eso;
     std::size_t bsh = 0, nb = 0;
     const T* are = nullptr;
@@ -837,23 +903,24 @@ void dif_pass_first_impl(const std::complex<T>* data,
     }
 }
 
-template<typename T, bool Forward, std::size_t IP, bool Split, typename... A>
-ADM_FLATTEN void dif_pass_first_flat(A... a) { dif_pass_first_impl<T, Forward, IP, Split>(a...); }
+template<typename T, bool Forward, std::size_t IP, bool Split, std::size_t L1, typename... A>
+ADM_FLATTEN void dif_pass_first_flat(A... a) {
+    dif_pass_first_impl<T, Forward, IP, Split, L1>(a...);
+}
 
-template<typename T, bool Forward, std::size_t IP>
+template<typename T, bool Forward, std::size_t IP, std::size_t L1 = 0>
 void dif_pass_first(const std::complex<T>* data,
                     T* chre, T* chim,
                     std::size_t l1, std::size_t ido,
                     const T* twre, const T* twim,
                     std::size_t eso, std::size_t blk) {
     const auto run = [&](auto split) {
-        constexpr bool Split = decltype(split)::value;
         if constexpr (dif_butterfly_wants_reload<IP>)
-            dif_pass_first_impl<T, Forward, IP, Split>(data, chre, chim, l1, ido, twre, twim,
-                                                       eso, blk);
+            dif_pass_first_impl<T, Forward, IP, split, L1>(data, chre, chim, l1, ido, twre, twim,
+                                                           eso, blk);
         else
-            dif_pass_first_flat<T, Forward, IP, Split>(data, chre, chim, l1, ido, twre, twim,
-                                                       eso, blk);
+            dif_pass_first_flat<T, Forward, IP, split, L1>(data, chre, chim, l1, ido, twre, twim,
+                                                           eso, blk);
     };
     if (blk != 0) run(std::bool_constant<true>{});
     else run(std::bool_constant<false>{});

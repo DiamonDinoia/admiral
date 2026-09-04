@@ -134,6 +134,65 @@ TEST_CASE("the factored pass-0 row matches the flat one at every column",
     CHECK(first_pass_factored_dev<float, 5>(11017) < factored_tol<float>);
 }
 
+TEST_CASE("iterative DIF matches the reference DFT: forced staged/first/last radix-32 chains",
+          "[iterative_dif]") {
+    // Radix 16 and 32 only join dif_radix_set under dif_wide_radices (>= 32 vector
+    // registers), so every chain below is rejected by build_dif_twiddle_set on a
+    // narrower build; skip rather than force an ISA this test cannot run under.
+    if (poet::vector_register_count() < 32) {
+        SKIP("radix 16/32 need dif_wide_radices (>= 32 vector registers)");
+    }
+    // Each chain forces a specific pass factoring so the staged first-pass split
+    // (dif_staged_radix), the L1==1 first-pass fast path and the last pass's
+    // lane-stage/row-split arm all get walked by a real forward+inverse-matching check.
+    const std::pair<std::size_t, dif_factor_plan> chains[] = {
+        {256, {8, 32}},   {256, {16, 16}},
+        {1024, {8, 8, 16}}, {1024, {16, 8, 8}}, {1024, {32, 32}},
+        {4096, {8, 8, 8, 8}}, {4096, {32, 16, 8}},
+    };
+    for (const auto& [N, plan] : chains) {
+        CAPTURE(N);
+        check_iterative_vs_reference<double, true>(N, &plan);
+        check_iterative_vs_reference<double, false>(N, &plan);
+        check_iterative_vs_reference<float, true>(N, &plan);
+        check_iterative_vs_reference<float, false>(N, &plan);
+    }
+    // The staged first-pass footprint gate (T2) picks the split table only once the plain
+    // table would blow the L1D admission, so it must fire at N=1024 (ido0=128) and stay off
+    // at N=256 (ido0=32) for the same ip0=8 first radix.
+    const dif_factor_plan plan_1024{8, 8, 16};
+    const dif_factor_plan plan_256{8, 32};
+    CHECK(build_dif_twiddle_set<double>(1024, &plan_1024).p0_block != 0);
+    CHECK(build_dif_twiddle_set<double>(256, &plan_256).p0_block == 0);
+}
+
+TEST_CASE("forced radix-32 chain check fires on a perturbed result (positive control)",
+          "[iterative_dif]") {
+    if (poet::vector_register_count() < 32) {
+        SKIP("radix 16/32 need dif_wide_radices (>= 32 vector registers)");
+    }
+    constexpr std::size_t N = 1024;
+    const dif_factor_plan plan{16, 8, 8};
+    const auto x = make_input<double>(N);
+    const auto ref = reference_dft<double, double>(x, true);
+
+    std::vector<std::complex<double>> got(x.begin(), x.end());
+    const auto dtw = build_dif_twiddle_set<double>(N, &plan);
+    std::vector<double> cc0re(N), cc0im(N), cc1re(N), cc1im(N);
+    dif_dispatch<double>(true, got.data(), got.data(), N, cc0re.data(), cc0im.data(),
+                        cc1re.data(), cc1im.data(), dtw);
+
+    const double tol = fft_tol<double>();
+    const double err_ok = relerrtwonorm(ref, got);
+    INFO("unperturbed relative L2 error " << err_ok << " (tol " << tol << ")");
+    CHECK(err_ok <= tol);
+
+    got[0] += std::complex<double>(1.0, 0.0);
+    const double err_bad = relerrtwonorm(ref, got);
+    INFO("perturbed relative L2 error " << err_bad << " (tol " << tol << ")");
+    CHECK(err_bad > tol);
+}
+
 TEST_CASE("col dif: first_src copy-in requires its own stride", "[iterative][col]") {
     const std::size_t N = 16;
     const auto dtw = build_dif_twiddle_set<double>(N, nullptr, false);

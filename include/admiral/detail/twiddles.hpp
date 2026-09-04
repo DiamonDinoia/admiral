@@ -826,7 +826,11 @@ template<typename T>
         constexpr std::size_t W = xsimd::batch<T>::size;
         const std::size_t ip0 = s.radices[0], ido0 = N / ip0;
         const std::size_t flat = 2 * (ip0 - 1) * ido0 * sizeof(T);
-        if (8 * N * sizeof(T) + flat > cpu_cache().l2) {
+        // The first pass streams the complex input (2N reals), the split output pair (2N reals)
+        // and the table, each element once, so the table stays L1-resident only while that sum
+        // leaves room in a 12-way L1D. Three quarters of L1D is the admission, hand set from the
+        // survey reading that 46.0 KiB of a 48 KiB L1D already runs L1 bound, not fitted.
+        if (4 * N * sizeof(T) + flat > (cpu_cache().l1d * 3) / 4) {
             std::size_t bw = W;
             while (bw * bw < ido0) bw *= 2;
             const std::size_t nb = (ido0 + bw - 1) / bw;

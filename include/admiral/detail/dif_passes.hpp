@@ -301,14 +301,14 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                     });
                 };
                 auto ip_half = [&](std::size_t aa, auto ODD) ADM_LAMBDA_ALWAYS_INLINE {
-                    constexpr std::size_t src = decltype(ODD)::value ? H : std::size_t{0};
+                    constexpr std::size_t src = ODD ? H : std::size_t{0};
                     batch hr[H], hi[H];
                     poet::static_for<0, H>([&](const auto n) {
                         hr[n] = batch::load_unaligned(ccre + (aa * esi + idi * (n + src + IP * b)));
                         hi[n] = batch::load_unaligned(ccim + (aa * esi + idi * (n + src + IP * b)));
                     });
                     pow2_dif_butterfly<T, H, batch>(hr, hi, [&](auto Kc, batch yr, batch yi) {
-                        constexpr std::size_t k = 2u * Kc + decltype(ODD)::value;
+                        constexpr std::size_t k = 2u * Kc + ODD;
                         const std::size_t off = obase + aa * eso + kstride * (src + Kc);
                         if constexpr (k > 0u) {
                             const batch owr = batch::load_unaligned(twre + ((k - 1u) * ido + aa));
@@ -440,13 +440,12 @@ ADM_NOINLINE void dif_pass_prime_chip(const T* ccre, const T* ccim,
         for (std::size_t aa = 0; aa < ido; aa += W) {
             const std::size_t rem = ido - aa;
             auto tile = [&](xsimd::batch_bool<T> m, auto full) ADM_LAMBDA_ALWAYS_INLINE {
-                constexpr bool Full = decltype(full)::value;
                 const auto um = xsimd::unaligned_mode{};
                 batch xre[P], xim[P];
                 for (unsigned j = 0; j < P; ++j) {
                     const T* xjr = ccre + (aa * esi + idi * (j + P * b));
                     const T* xji = ccim + (aa * esi + idi * (j + P * b));
-                    if constexpr (Full) {
+                    if constexpr (full) {
                         xre[j] = batch::load_unaligned(xjr);
                         xim[j] = batch::load_unaligned(xji);
                     } else {
@@ -462,7 +461,7 @@ ADM_NOINLINE void dif_pass_prime_chip(const T* ccre, const T* ccim,
                     if (k > 0) {
                         const T* twr = twre + (std::size_t(k - 1u) * ido + aa);
                         const T* twi = twim + (std::size_t(k - 1u) * ido + aa);
-                        if constexpr (Full) {
+                        if constexpr (full) {
                             const batch owr = batch::load_unaligned(twr);
                             const batch owi = batch::load_unaligned(twi);
                             (owr * sr - owi * si).store_unaligned(chre + off);
@@ -474,7 +473,7 @@ ADM_NOINLINE void dif_pass_prime_chip(const T* ccre, const T* ccim,
                             (owr * si + owi * sr).store(chim + off, m, um);
                         }
                     } else {
-                        if constexpr (Full) {
+                        if constexpr (full) {
                             sr.store_unaligned(chre + off);
                             si.store_unaligned(chim + off);
                         } else {

@@ -236,9 +236,8 @@ ADM_NOINLINE void good_thomas_execute(const std::complex<T>* in,
 
     std::array<Batch, N3*BA> Ar, Ai;
     poet::static_for<0, N3*BA>([&](const auto JZ) {
-        constexpr std::size_t jz = decltype(JZ)::value;
-        Ar[JZ] = good_thomas_gather<NS, gt_map_a<N1, N2, N3, W, BA>, W, U, jz>(re_src);
-        Ai[JZ] = good_thomas_gather<NS, gt_map_a<N1, N2, N3, W, BA>, W, U, jz>(im_src);
+        Ar[JZ] = good_thomas_gather<NS, gt_map_a<N1, N2, N3, W, BA>, W, U, JZ>(re_src);
+        Ai[JZ] = good_thomas_gather<NS, gt_map_a<N1, N2, N3, W, BA>, W, U, JZ>(im_src);
     });
     poet::static_for<0, BA>([&](const auto Z) {
         good_thomas_apply_dft<N3, BA, Z>(Ar, Ai);
@@ -246,9 +245,8 @@ ADM_NOINLINE void good_thomas_execute(const std::complex<T>* in,
 
     std::array<Batch, N2*BB> Br, Bi;
     poet::static_for<0, N2*BB>([&](const auto JPZ) {
-        constexpr std::size_t jpz = decltype(JPZ)::value;
-        Br[JPZ] = good_thomas_gather<N3*BA, gt_map_b<N1, N2, N3, W, BA, BB>, W, U, jpz>(Ar);
-        Bi[JPZ] = good_thomas_gather<N3*BA, gt_map_b<N1, N2, N3, W, BA, BB>, W, U, jpz>(Ai);
+        Br[JPZ] = good_thomas_gather<N3*BA, gt_map_b<N1, N2, N3, W, BA, BB>, W, U, JPZ>(Ar);
+        Bi[JPZ] = good_thomas_gather<N3*BA, gt_map_b<N1, N2, N3, W, BA, BB>, W, U, JPZ>(Ai);
     });
     poet::static_for<0, BB>([&](const auto Z) {
         good_thomas_apply_dft<N2, BB, Z>(Br, Bi);
@@ -256,9 +254,8 @@ ADM_NOINLINE void good_thomas_execute(const std::complex<T>* in,
 
     std::array<Batch, N1*BC> Cr, Ci;
     poet::static_for<0, N1*BC>([&](const auto K1Z) {
-        constexpr std::size_t k1z = decltype(K1Z)::value;
-        Cr[K1Z] = good_thomas_gather<N2*BB, gt_map_c<N1, N2, N3, W, BB, BC>, W, U, k1z>(Br);
-        Ci[K1Z] = good_thomas_gather<N2*BB, gt_map_c<N1, N2, N3, W, BB, BC>, W, U, k1z>(Bi);
+        Cr[K1Z] = good_thomas_gather<N2*BB, gt_map_c<N1, N2, N3, W, BB, BC>, W, U, K1Z>(Br);
+        Ci[K1Z] = good_thomas_gather<N2*BB, gt_map_c<N1, N2, N3, W, BB, BC>, W, U, K1Z>(Bi);
     });
     poet::static_for<0, BC>([&](const auto Z) {
         good_thomas_apply_dft<N1, BC, Z>(Cr, Ci);
@@ -266,9 +263,8 @@ ADM_NOINLINE void good_thomas_execute(const std::complex<T>* in,
 
     std::array<Batch, NS> Or, Oi;
     poet::static_for<0, NS>([&](const auto ZO) {
-        constexpr std::size_t zo = decltype(ZO)::value;
-        Or[ZO] = good_thomas_gather<N1*BC, gt_map_out<N1, N2, N3, W, BC>, W, U, zo>(Cr);
-        Oi[ZO] = good_thomas_gather<N1*BC, gt_map_out<N1, N2, N3, W, BC>, W, U, zo>(Ci);
+        Or[ZO] = good_thomas_gather<N1*BC, gt_map_out<N1, N2, N3, W, BC>, W, U, ZO>(Cr);
+        Oi[ZO] = good_thomas_gather<N1*BC, gt_map_out<N1, N2, N3, W, BC>, W, U, ZO>(Ci);
     });
 
     if constexpr (!Forward) {

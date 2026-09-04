@@ -194,9 +194,7 @@ ADM_ALWAYS_INLINE void ct_dif_butterfly(const V (&tr)[N1 * N2],
             bi[n1] = ti[n1 * N2 + n2];
         });
         radix_sym_dft<T, N1>(br, bi, [&](const auto r, V yr, V yi) {
-            constexpr std::size_t e = static_cast<std::size_t>(decltype(r)::value)
-                                    * static_cast<std::size_t>(decltype(n2)::value);
-            const auto [fr, fi] = apply_stage_twiddle<T, IP, e, V>(yr, yi);
+            const auto [fr, fi] = apply_stage_twiddle<T, IP, r * n2, V>(yr, yi);
             ar[r][n2] = fr;
             ai[r][n2] = fi;
         });

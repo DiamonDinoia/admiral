@@ -173,14 +173,13 @@ private:
                 ai[i] = sw ? a.real() : a.imag();
             }
             sub_dft<T, P>(ar, ai, [&](auto sc, T yr, T yi) {
-                constexpr std::size_t s = decltype(sc)::value;
-                if constexpr (s != 0) {
-                    const std::complex<T> w = tw[q * s];
+                if constexpr (sc != 0) {
+                    const std::complex<T> w = tw[q * sc];
                     const T r = yr * w.real() - yi * w.imag();
                     yi = yr * w.imag() + yi * w.real();
                     yr = r;
                 }
-                x[off + q + s * u] = sw ? std::complex<T>(yi, yr) : std::complex<T>(yr, yi);
+                x[off + q + sc * u] = sw ? std::complex<T>(yi, yr) : std::complex<T>(yr, yi);
             });
         }
     }

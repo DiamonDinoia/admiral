@@ -162,6 +162,46 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
         }
     }
 
+    // An in-place pass rewrites the same IP vector slots it reads, so the column index can carry
+    // the outer loop. The twiddles then leave the butterfly and one base pointer pair plus IP row
+    // offsets stay live, in place of the ~30 strided streams the frame had to hold and reload.
+    std::size_t amain = 0;
+    if constexpr (InPlace && !dif_butterfly_wants_reload<IP>) {
+        if (ido >= W && ccre == chre && ccim == chim && esi == eso) {
+            amain = ido - ido % W;
+            T* const re = chre;
+            T* const im = chim;
+            for (std::size_t aa = 0; aa < amain; aa += W) {
+                batch owr[IP - 1], owi[IP - 1];
+                poet::static_for<0, IP - 1>([&](const auto k) ADM_LAMBDA_ALWAYS_INLINE {
+                    owr[k] = batch::load_unaligned(twre + (k * ido + aa));
+                    owi[k] = batch::load_unaligned(twim + (k * ido + aa));
+                });
+                for (std::size_t b = 0; b < l1; ++b) {
+                    const std::size_t o0 = aa * esi + idi * IP * b;
+                    batch tr[IP], ti_arr[IP];
+                    poet::static_for<0, IP>([&](const auto j) ADM_LAMBDA_ALWAYS_INLINE {
+                        tr[j] = batch::load_unaligned(re + (o0 + idi * j));
+                        ti_arr[j] = batch::load_unaligned(im + (o0 + idi * j));
+                    });
+                    dif_butterfly<T, IP>(tr, ti_arr,
+                                         [&](const auto k, batch sr, batch si)
+                                             ADM_LAMBDA_ALWAYS_INLINE {
+                        const std::size_t off = o0 + idi * k;
+                        if constexpr (k > 0u) {
+                            (owr[k - 1u] * sr - owi[k - 1u] * si).store_unaligned(re + off);
+                            (owr[k - 1u] * si + owi[k - 1u] * sr).store_unaligned(im + off);
+                        } else {
+                            sr.store_unaligned(re + off);
+                            si.store_unaligned(im + off);
+                        }
+                    });
+                }
+            }
+            if (amain == ido) return;
+        }
+    }
+
     for (std::size_t b = 0; b < l1; ++b) {
         const std::size_t obase   = InPlace ? idz * IP * b : idz * b;
         const std::size_t kstride = InPlace ? idz : idz * l1;
@@ -228,7 +268,7 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                     emit_h(std::integral_constant<std::size_t, 2 * Kc + ODD>{}, yr, yi);
                 });
             };
-            std::size_t a = 0;
+            std::size_t a = amain;
             if constexpr (dif_butterfly_wants_reload<IP> && !InPlace) {
                 auto sweep = [&](auto ODD) {
                     std::size_t ah = 0;
@@ -634,6 +674,64 @@ void dif_pass_fused3(const T* ccre, const T* ccim,
     }
 }
 
+// Gentleman-Sande outer split of one pow2 radix, IP = N1 * N2, staged through an L1 scratch.
+// The monolithic radix keeps 2*IP vector registers live, so the whole set spills at IP >= 16.
+// Stage A runs N2 radix-N1 butterflies over j = n + N2*m and writes a[r][n] = A_r(n)*w_IP^(n*r);
+// stage B reads one r row back and runs a radix-N2 butterfly, emitting k = r + N1*k2.
+// Peak live is 2*N2 + O(1) registers, and the scratch is IP*W elements per plane.
+template<std::size_t IP>
+[[nodiscard]] ADM_CONSTEVAL std::size_t staged_dif_n2() {
+    return IP / 4u <= 8u ? IP / 4u : 8u;
+}
+
+// Stage B of the outer split: one radix-N2 butterfly over the scratch row.
+template<typename T, std::size_t N2, std::size_t Stride, typename V, typename Emit>
+ADM_ALWAYS_INLINE void staged_dif_stage_b(const T* ar, const T* ai, Emit&& emit) {
+    constexpr std::size_t W = V::size;
+    V cr[N2], ci[N2];
+    poet::static_for<0, N2>([&](const auto n) ADM_LAMBDA_ALWAYS_INLINE {
+        cr[n] = V::load_aligned(ar + n * Stride * W);
+        ci[n] = V::load_aligned(ai + n * Stride * W);
+    });
+    sub_dft<T, N2, V>(cr, ci, std::forward<Emit>(emit));
+}
+
+template<typename T, std::size_t IP, typename V, typename Load, typename Emit>
+ADM_ALWAYS_INLINE void staged_dif_butterfly(Load&& load, Emit&& emit) {
+    constexpr std::size_t N2 = staged_dif_n2<IP>();
+    constexpr std::size_t N1 = IP / N2;
+    constexpr std::size_t W = V::size;
+    static_assert(N1 * N2 == IP && N1 >= 2 && N2 >= 2, "staged split must factor IP");
+    alignas(V::arch_type::alignment()) T ar[IP * W];
+    alignas(V::arch_type::alignment()) T ai[IP * W];
+    poet::static_for<0, N2>([&](const auto n) ADM_LAMBDA_ALWAYS_INLINE {
+        V br[N1], bi[N1];
+        poet::static_for<0, N1>([&](const auto m) ADM_LAMBDA_ALWAYS_INLINE {
+            load(std::integral_constant<std::size_t, n + N2 * m>{}, br[m], bi[m]);
+        });
+        sub_dft<T, N1, V>(br, bi, [&](const auto r, V yr, V yi) ADM_LAMBDA_ALWAYS_INLINE {
+            constexpr std::size_t e = (r * n) % IP;
+            const auto [fr, fi] = apply_stage_twiddle<T, IP, e, V>(yr, yi);
+            fr.store_aligned(ar + (r * N2 + n) * W);
+            fi.store_aligned(ai + (r * N2 + n) * W);
+        });
+    });
+    poet::static_for<0, N1>([&](const auto r) ADM_LAMBDA_ALWAYS_INLINE {
+        constexpr std::size_t off = r * N2 * W;
+        staged_dif_stage_b<T, N2, 1u, V>(
+            ar + off, ai + off, [&](const auto k2, V yr, V yi) ADM_LAMBDA_ALWAYS_INLINE {
+                emit(std::integral_constant<std::size_t, r + N1 * k2>{}, yr, yi);
+            });
+    });
+}
+
+// Radices this large spill the monolithic butterfly's 2*IP live registers, so the first pass
+// routes them through the staged split above instead.
+template<std::size_t IP>
+inline constexpr bool dif_staged_radix =
+    detail::has_single_bit(IP) && IP >= 16 &&
+    dif_butterfly_wants_reload<IP> && poet::vector_register_count() >= 32;
+
 template<typename T, bool Forward, std::size_t IP, bool Split = false>
 void dif_pass_first_impl(const std::complex<T>* data,
                     T* chre, T* chim,
@@ -656,15 +754,9 @@ void dif_pass_first_impl(const std::complex<T>* data,
     for (std::size_t b = 0; b < l1; ++b) {
         constexpr std::size_t U = dif_pass_unroll<IP>();
         auto do_batch = [&](std::size_t aa) ADM_LAMBDA_ALWAYS_INLINE {
-            batch_t btr[IP], bti[IP];
-            for (std::size_t j = 0; j < IP; ++j) {
-                const T* src = reinterpret_cast<const T*>(data + aa + ido * (j + IP * b));
-                auto [dr, di] = plane_refs<Forward>(btr[j], bti[j]);
-                aos_deinterleave<T>(src, dr, di);
-            }
             const std::size_t a0 = Split ? (aa & (blk - 1u)) : aa;
             const std::size_t a1 = Split ? (aa >> bsh) : 0u;
-            dif_butterfly<T, IP>(btr, bti, [&](const auto k, batch_t sr, batch_t si) {
+            auto emit_tw = [&](const auto k, batch_t sr, batch_t si) {
                 if constexpr (k > 0u) {
                     batch_t owr, owi;
                     if constexpr (Split) {
@@ -683,7 +775,24 @@ void dif_pass_first_impl(const std::complex<T>* data,
                     sr.store_unaligned(chre + (aa * eso + idz * (b + l1 * k)));
                     si.store_unaligned(chim + (aa * eso + idz * (b + l1 * k)));
                 }
-            });
+            };
+            if constexpr (dif_staged_radix<IP>) {
+                auto load_in = [&](const auto j, batch_t& lr, batch_t& li)
+                                   ADM_LAMBDA_ALWAYS_INLINE {
+                    const T* src = reinterpret_cast<const T*>(data + aa + ido * (j + IP * b));
+                    auto [dr, di] = plane_refs<Forward>(lr, li);
+                    aos_deinterleave<T>(src, dr, di);
+                };
+                staged_dif_butterfly<T, IP, batch_t>(load_in, emit_tw);
+            } else {
+                batch_t btr[IP], bti[IP];
+                for (std::size_t j = 0; j < IP; ++j) {
+                    const T* src = reinterpret_cast<const T*>(data + aa + ido * (j + IP * b));
+                    auto [dr, di] = plane_refs<Forward>(btr[j], bti[j]);
+                    aos_deinterleave<T>(src, dr, di);
+                }
+                dif_butterfly<T, IP>(btr, bti, emit_tw);
+            }
         };
         std::size_t a = 0;
         if constexpr (U > 1) {
@@ -750,55 +859,40 @@ void dif_pass_first(const std::complex<T>* data,
     else run(std::bool_constant<false>{});
 }
 
-template<typename T, std::size_t SubN, std::size_t Tt, std::size_t W, bool Imag>
-[[nodiscard]] ADM_CONSTEVAL std::array<T, W> row_split_twiddle() {
-    std::array<T, W> a{};
-    for (std::size_t lane = 0; lane < W; ++lane) {
-        const auto sc = ct_sincos_turns(true, Tt * W + lane, SubN);
-        a[lane] = static_cast<T>(Imag ? sc.s : sc.c);
-    }
-    return a;
-}
-
-template<typename T, std::size_t SubN, typename V>
-ADM_ALWAYS_INLINE void row_split_levels(V* ar, V* ai) {
-    constexpr std::size_t g = SubN / V::size;
-    if constexpr (g >= 2) {
-        constexpr std::size_t h = g / 2;
-        constexpr std::size_t W = V::size;
-        poet::static_for<0, h>([&](const auto t) {
-            alignas(V::arch_type::alignment()) static constexpr auto twr =
-                row_split_twiddle<T, SubN, t, W, false>();
-            alignas(V::arch_type::alignment()) static constexpr auto twi =
-                row_split_twiddle<T, SubN, t, W, true>();
-            const V er = ar[t] + ar[t + h];
-            const V ei = ai[t] + ai[t + h];
-            const V dr = ar[t] - ar[t + h];
-            const V di = ai[t] - ai[t + h];
-            const V wr = V::load_aligned(twr.data());
-            const V wi = V::load_aligned(twi.data());
-            ar[t] = er;
-            ai[t] = ei;
-            ar[t + h] = dr * wr - di * wi;
-            ai[t + h] = dr * wi + di * wr;
-        });
-        row_split_levels<T, SubN / 2>(ar, ai);
-        row_split_levels<T, SubN / 2>(ar + h, ai + h);
-    }
-}
-
 template<std::size_t... Is>
 constexpr auto dif_tail_seq_shift(std::index_sequence<Is...>) -> std::index_sequence<(Is + 1)...>;
 template<std::size_t W>
 using dif_last_tail_seq = decltype(dif_tail_seq_shift(std::make_index_sequence<W - 1>{}));
 
-[[nodiscard]] ADM_CONSTEVAL std::size_t row_split_offset(std::size_t p, std::size_t levels) {
-    std::size_t off = 0;
-    for (std::size_t l = 0; l < levels; ++l) {
-        off = (off << 1) | (p & 1u);
-        p >>= 1;
+// Lane-axis stage twiddle w_IP^(R*lane). The last pass loads one row with the lanes along the
+// contiguous j axis, so stage A of its outer split runs the radix over the VECTOR index and its
+// stage twiddle varies per lane. apply_stage_twiddle cannot serve that.
+template<typename T, std::size_t IP, std::size_t R, std::size_t W, bool Imag>
+[[nodiscard]] ADM_CONSTEVAL std::array<T, W> lane_stage_twiddle() {
+    std::array<T, W> a{};
+    for (std::size_t lane = 0; lane < W; ++lane) {
+        const auto sc = ct_sincos_turns<ct_real_t<T>>(true, R * lane, IP);
+        a[lane] = static_cast<T>(Imag ? sc.s : sc.c);
     }
-    return off;
+    return a;
+}
+
+// One stage-A output row of the last pass: R == 0 carries no twiddle, so its scale multiply
+// applies directly; every other row takes the scale prescaled into its twiddle pair, which
+// removes one multiply per output point of the pass.
+template<typename T, std::size_t IP, std::size_t R, typename V>
+[[nodiscard]] ADM_ALWAYS_INLINE std::pair<V, V> lane_stage_apply(V yr, V yi, V sv) {
+    if constexpr (R == 0u) {
+        return {yr * sv, yi * sv};
+    } else {
+        alignas(V::arch_type::alignment()) static constexpr auto twr =
+            lane_stage_twiddle<T, IP, R, V::size, false>();
+        alignas(V::arch_type::alignment()) static constexpr auto twi =
+            lane_stage_twiddle<T, IP, R, V::size, true>();
+        const V wr = V::load_aligned(twr.data()) * sv;
+        const V wi = V::load_aligned(twi.data()) * sv;
+        return {yr * wr - yi * wi, yi * wr + yr * wi};
+    }
 }
 
 template<typename T, bool Forward, std::size_t IP>
@@ -847,27 +941,31 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
             poet::vector_register_count() >= 32 && Rows == W;
         if constexpr (row_split_path) {
             constexpr std::size_t G = IP / W;
-            constexpr std::size_t L = detail::bit_width(G) - 1u;
             alignas(batch_t::arch_type::alignment()) T stg_re[G * W * W];
             alignas(batch_t::arch_type::alignment()) T stg_im[G * W * W];
+            const batch_t sv(scale_val);
             const auto stage = [&](std::size_t bb, std::size_t r) ADM_LAMBDA_ALWAYS_INLINE {
                 batch_t rr[G], ri[G];
                 poet::static_for<0, G>([&](const auto t) {
                     rr[t] = batch_t::load_unaligned(ccre + (IP * r + t * W));
                     ri[t] = batch_t::load_unaligned(ccim + (IP * r + t * W));
                 });
-                row_split_levels<T, IP>(rr, ri);
-                poet::static_for<0, G>([&](const auto p) {
-                    rr[p].store_aligned(stg_re + (p * W + bb) * W);
-                    ri[p].store_aligned(stg_im + (p * W + bb) * W);
-                });
+                // Stage A: one radix-G over the vector index, then the lane twiddle with the
+                // pass scale folded in.
+                sub_dft<T, G, batch_t>(
+                    rr, ri, [&](const auto p, batch_t yr, batch_t yi) ADM_LAMBDA_ALWAYS_INLINE {
+                        const auto [fr, fi] = lane_stage_apply<T, IP, p, batch_t>(yr, yi, sv);
+                        fr.store_aligned(stg_re + (p * W + bb) * W);
+                        fi.store_aligned(stg_im + (p * W + bb) * W);
+                    });
             };
             if (rowperm)
                 for (std::size_t bb = 0; bb < W; ++bb) stage(bb, std::size_t(rowperm[b + bb]));
             else
                 for (std::size_t bb = 0; bb < W; ++bb) stage(bb, b + bb);
             poet::static_for<0, G>([&](const auto p) {
-                constexpr std::size_t K0 = row_split_offset(p, L);
+                // Stage A emits r in natural order, so stage B needs no bit-reversal offset.
+                constexpr std::size_t K0 = std::size_t(p);
                 batch_t tr2[W], ti2[W];
                 for (std::size_t s = 0; s < W; ++s) {
                     tr2[s] = batch_t::load_aligned(stg_re + (p * W + s) * W);
@@ -878,8 +976,7 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
                 pow2_dif_butterfly<T, W, batch_t>(
                     tr2, ti2, [&](const auto k, batch_t yr, batch_t yi) {
                         T* dst = reinterpret_cast<T*>(data + b + l1 * (k * G + K0));
-                        const batch_t sv(scale_val);
-                        const auto [xr, xi] = plane_vals<Forward>(yr * sv, yi * sv);
+                        const auto [xr, xi] = plane_vals<Forward>(yr, yi);
                         aos_interleave<T>(dst, xr, xi);
                     });
             });

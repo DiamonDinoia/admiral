@@ -101,27 +101,27 @@ public:
 
     // The `span` overloads throw `size_error` when the size differs from `size()`. The pointer
     // overloads check nothing and read and write exactly `size()` elements.
-    void forward(span<std::complex<T>> data, std::optional<T> fct = std::nullopt) {
+    void forward(span<std::complex<T>> data, std::optional<T> fct = std::nullopt) const {
         check_size(data.size());
         run(true, data.data(), scale(fct));
     }
-    void forward(std::complex<T>* data, std::optional<T> fct = std::nullopt) {
+    void forward(std::complex<T>* data, std::optional<T> fct = std::nullopt) const {
         run(true, data, scale(fct));
     }
     void forward(const std::complex<T>* src, std::complex<T>* dst,
-                 std::optional<T> fct = std::nullopt) {
+                 std::optional<T> fct = std::nullopt) const {
         run(true, src, dst, scale(fct));
     }
 
-    void inverse(span<std::complex<T>> data, std::optional<T> fct = std::nullopt) {
+    void inverse(span<std::complex<T>> data, std::optional<T> fct = std::nullopt) const {
         check_size(data.size());
         run(false, data.data(), scale(fct));
     }
-    void inverse(std::complex<T>* data, std::optional<T> fct = std::nullopt) {
+    void inverse(std::complex<T>* data, std::optional<T> fct = std::nullopt) const {
         run(false, data, scale(fct));
     }
     void inverse(const std::complex<T>* src, std::complex<T>* dst,
-                 std::optional<T> fct = std::nullopt) {
+                 std::optional<T> fct = std::nullopt) const {
         run(false, src, dst, scale(fct));
     }
 
@@ -134,9 +134,9 @@ private:
     [[nodiscard]] static const T* scale(const std::optional<T>& fct) noexcept {
         return fct ? &*fct : nullptr;
     }
-    void run(bool is_forward, std::complex<T>* data, const T* fct);
+    void run(bool is_forward, std::complex<T>* data, const T* fct) const;
     void run(bool is_forward, const std::complex<T>* src, std::complex<T>* dst,
-             const T* fct);
+             const T* fct) const;
 
     std::unique_ptr<detail::plan_state<T>> m;
 };
@@ -161,13 +161,13 @@ public:
     // `lo` and `hi` are half-open bounds of rank `shape.size()`, or empty for the full extent.
     // The transformed axis must be whole: `lo[axis] == 0` and `hi[axis] == shape[axis]`.
     void execute(std::complex<T>* data, span<const std::size_t> lo,
-                 span<const std::size_t> hi, std::optional<T> fct = std::nullopt);
+                 span<const std::size_t> hi, std::optional<T> fct = std::nullopt) const;
 
     // Runs two disjoint bands in one dispatch. `lo2_last`/`hi2_last` replace the LAST axis bound
     // for the second band; every other bound is shared. `axis` must not be the last axis.
     void execute_bands(std::complex<T>* data, span<const std::size_t> lo,
                        span<const std::size_t> hi, std::size_t lo2_last,
-                       std::size_t hi2_last, std::optional<T> fct = std::nullopt);
+                       std::size_t hi2_last, std::optional<T> fct = std::nullopt) const;
 
 private:
     std::unique_ptr<detail::axis_state<T>> m;
@@ -190,9 +190,9 @@ public:
     // In place (`src == dst`) requires `in_stride == out_stride` and `in_dist == out_dist`;
     // a mismatch throws `size_error`.
     void forward(const std::complex<T>* src, std::complex<T>* dst,
-                 std::optional<T> fct = std::nullopt);
+                 std::optional<T> fct = std::nullopt) const;
     void inverse(const std::complex<T>* src, std::complex<T>* dst,
-                 std::optional<T> fct = std::nullopt);
+                 std::optional<T> fct = std::nullopt) const;
 
     // Total complex elements across every batch, `len * nbatch`, not the per-transform length.
     [[nodiscard]] std::size_t size() const noexcept;
@@ -264,17 +264,17 @@ public:
     plan_r2c& operator=(plan_r2c&&) noexcept;
 
     // `out` holds `cplx_size()` elements: the LAST axis is halved to `shape.back()/2 + 1`.
-    void forward(const T* in, std::complex<T>* out, std::optional<T> fct = std::nullopt);
+    void forward(const T* in, std::complex<T>* out, std::optional<T> fct = std::nullopt) const;
     // At rank >= 2 `inverse` overwrites `spec` while it runs. Copy `spec` first to keep it.
-    void inverse(std::complex<T>* spec, T* out, std::optional<T> fct = std::nullopt);
+    void inverse(std::complex<T>* spec, T* out, std::optional<T> fct = std::nullopt) const;
 
     void forward(span<const T> in, span<std::complex<T>> out,
-                 std::optional<T> fct = std::nullopt) {
+                 std::optional<T> fct = std::nullopt) const {
         check_sizes(in.size(), out.size());
         forward(in.data(), out.data(), fct);
     }
     void inverse(span<std::complex<T>> spec, span<T> out,
-                 std::optional<T> fct = std::nullopt) {
+                 std::optional<T> fct = std::nullopt) const {
         check_sizes(out.size(), spec.size());
         inverse(spec.data(), out.data(), fct);
     }
@@ -349,16 +349,16 @@ public:
     plan_r2r(plan_r2r&&) noexcept;
     plan_r2r& operator=(plan_r2r&&) noexcept;
 
-    void forward(const T* in, T* out, std::optional<T> fct = std::nullopt);
-    void inverse(const T* in, T* out, std::optional<T> fct = std::nullopt);
+    void forward(const T* in, T* out, std::optional<T> fct = std::nullopt) const;
+    void inverse(const T* in, T* out, std::optional<T> fct = std::nullopt) const;
 
     void forward(span<const T> in, span<T> out,
-                 std::optional<T> fct = std::nullopt) {
+                 std::optional<T> fct = std::nullopt) const {
         check_sizes(in.size(), out.size());
         forward(in.data(), out.data(), fct);
     }
     void inverse(span<const T> in, span<T> out,
-                 std::optional<T> fct = std::nullopt) {
+                 std::optional<T> fct = std::nullopt) const {
         check_sizes(in.size(), out.size());
         inverse(in.data(), out.data(), fct);
     }

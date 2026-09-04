@@ -363,13 +363,13 @@ std::size_t plan<T>::size() const noexcept {
 }
 
 template<typename T>
-void plan<T>::run(bool is_forward, std::complex<T>* data, const T* fct) {
+void plan<T>::run(bool is_forward, std::complex<T>* data, const T* fct) const {
     m->run(is_forward, data, fct);
 }
 
 template<typename T>
 void plan<T>::run(bool is_forward, const std::complex<T>* src, std::complex<T>* dst,
-                  const T* fct) {
+                  const T* fct) const {
     m->run(is_forward, src, dst, fct);
 }
 
@@ -387,14 +387,14 @@ axis_plan<T>& axis_plan<T>::operator=(axis_plan&&) noexcept = default;
 
 template<typename T>
 void axis_plan<T>::execute(std::complex<T>* data, span<const std::size_t> lo,
-                           span<const std::size_t> hi, std::optional<T> fct) {
+                           span<const std::size_t> hi, std::optional<T> fct) const {
     execute_bands(data, lo, hi, 0, 0, fct);
 }
 
 template<typename T>
 void axis_plan<T>::execute_bands(std::complex<T>* data, span<const std::size_t> lo,
                                  span<const std::size_t> hi, std::size_t lo2_last,
-                                 std::size_t hi2_last, std::optional<T> fct) {
+                                 std::size_t hi2_last, std::optional<T> fct) const {
     const std::size_t ndim = m->shape.size();
     const std::size_t len = m->shape[m->axis];
     const std::size_t inner = m->stride[m->axis];
@@ -494,13 +494,13 @@ strides_plan<T>& strides_plan<T>::operator=(strides_plan&&) noexcept = default;
 
 template<typename T>
 void strides_plan<T>::forward(const std::complex<T>* src, std::complex<T>* dst,
-                            std::optional<T> fct) {
+                            std::optional<T> fct) const {
     m->run(true, src, dst, fct);
 }
 
 template<typename T>
 void strides_plan<T>::inverse(const std::complex<T>* src, std::complex<T>* dst,
-                            std::optional<T> fct) {
+                            std::optional<T> fct) const {
     m->run(false, src, dst, fct);
 }
 
@@ -521,12 +521,12 @@ template<typename T>
 plan_r2c<T>& plan_r2c<T>::operator=(plan_r2c&&) noexcept = default;
 
 template<typename T>
-void plan_r2c<T>::forward(const T* in, std::complex<T>* out, std::optional<T> fct) {
+void plan_r2c<T>::forward(const T* in, std::complex<T>* out, std::optional<T> fct) const {
     m->forward(in, out, fct);
 }
 
 template<typename T>
-void plan_r2c<T>::inverse(std::complex<T>* spec, T* out, std::optional<T> fct) {
+void plan_r2c<T>::inverse(std::complex<T>* spec, T* out, std::optional<T> fct) const {
     m->inverse(spec, out, fct);
 }
 
@@ -552,12 +552,12 @@ template<typename T>
 plan_r2r<T>& plan_r2r<T>::operator=(plan_r2r&&) noexcept = default;
 
 template<typename T>
-void plan_r2r<T>::forward(const T* in, T* out, std::optional<T> fct) {
+void plan_r2r<T>::forward(const T* in, T* out, std::optional<T> fct) const {
     m->plan.forward(in, out, fct);
 }
 
 template<typename T>
-void plan_r2r<T>::inverse(const T* in, T* out, std::optional<T> fct) {
+void plan_r2r<T>::inverse(const T* in, T* out, std::optional<T> fct) const {
     m->plan.inverse(in, out, fct);
 }
 

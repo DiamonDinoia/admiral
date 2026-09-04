@@ -233,3 +233,69 @@ TEMPLATE_TEST_CASE("options::debug traces without changing the result",
         REQUIRE(back == back_quiet);
     }
 }
+
+// Execution is a const operation on every plan type (the header's thread-safety contract), so a
+// `const` plan must compile and match a mutable one bit for bit.
+TEMPLATE_TEST_CASE("const plans execute", "[fft][const]", float, double) {
+    using T = TestType;
+    constexpr std::size_t n = 48;
+    std::vector<std::complex<T>> x(n);
+    for (std::size_t j = 0; j < n; ++j) x[j] = {T(j % 7) - T(3), T(j % 5) - T(2)};
+    std::vector<std::complex<T>> a(n), b(n);
+
+    SECTION("plan") {
+        admiral::plan<T> mut({n});
+        const admiral::plan<T> cst({n});
+        mut.forward(x.data(), a.data());
+        cst.forward(x.data(), b.data());
+        REQUIRE(a == b);
+        b = x;
+        cst.inverse(admiral::span(b));
+        mut.inverse(x.data(), a.data());
+        REQUIRE(a == b);
+    }
+    SECTION("axis_plan") {
+        admiral::axis_plan<T> mut({6, 8}, 1, true);
+        const admiral::axis_plan<T> cst({6, 8}, 1, true);
+        a = x, b = x;
+        mut.execute(a.data(), {}, {});
+        cst.execute(b.data(), {}, {});
+        REQUIRE(a == b);
+    }
+    SECTION("strides_plan") {
+        admiral::strides_plan<T> mut(12, 4, 4, 1, 4, 1);
+        const admiral::strides_plan<T> cst(12, 4, 4, 1, 4, 1);
+        mut.forward(x.data(), a.data());
+        cst.forward(x.data(), b.data());
+        REQUIRE(a == b);
+        mut.inverse(a.data(), a.data());
+        cst.inverse(b.data(), b.data());
+        REQUIRE(a == b);
+    }
+    SECTION("plan_r2c") {
+        admiral::plan_r2c<T> mut({n});
+        const admiral::plan_r2c<T> cst({n});
+        std::vector<T> in(n);
+        for (std::size_t j = 0; j < n; ++j) in[j] = T(j % 11) - T(5);
+        std::vector<std::complex<T>> sa(mut.cplx_size()), sb(sa.size());
+        mut.forward(in.data(), sa.data());
+        cst.forward(in.data(), sb.data());
+        REQUIRE(sa == sb);
+        std::vector<T> ra(n), rb(n);
+        mut.inverse(sa.data(), ra.data());
+        cst.inverse(sb.data(), rb.data());
+        REQUIRE(ra == rb);
+    }
+    SECTION("plan_r2r") {
+        admiral::plan_r2r<T> mut(n, admiral::r2r_kind::dct2);
+        const admiral::plan_r2r<T> cst(n, admiral::r2r_kind::dct2);
+        std::vector<T> in(n), ra(n), rb(n);
+        for (std::size_t j = 0; j < n; ++j) in[j] = T(j % 11) - T(5);
+        mut.forward(in.data(), ra.data());
+        cst.forward(in.data(), rb.data());
+        REQUIRE(ra == rb);
+        mut.inverse(ra.data(), ra.data());
+        cst.inverse(rb.data(), rb.data());
+        REQUIRE(ra == rb);
+    }
+}

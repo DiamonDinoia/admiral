@@ -12,6 +12,7 @@
 #include "admiral/detail/cxx_compat.hpp"
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <functional>
@@ -29,9 +30,9 @@ std::size_t shape_product(const Shape& shape) {
 
 template <typename A, typename B>
 double relerrtwonorm(const A& a, const B& b) {
-    static_assert(std::is_convertible_v<decltype(std::norm(a[0] - b[0])), double>,
-                  "relerrtwonorm: element types must subtract to something normable");
     using Ref = admiral::detail::remove_cvref_t<decltype(a[0])>;
+    static_assert(std::is_convertible_v<decltype(std::norm(a[0] - static_cast<Ref>(b[0]))), double>,
+                  "relerrtwonorm: element types must subtract to something normable");
     double err = 0.0, nrm = 0.0;
     for (std::size_t m = 0; m < std::size(a); ++m) {
         nrm += static_cast<double>(std::norm(a[m]));
@@ -56,6 +57,35 @@ void require_close(const A& got, const B& ref, double tol) {
     const double err = relerrtwonorm(ref, got);
     INFO("relative L2 error " << err << " (tol " << tol << ")");
     REQUIRE(err <= tol);
+}
+
+// Largest pointwise error in units of eps(T) * max|ref|. One extra rounding per twiddle moves
+// this by about one unit, which a norm hides; ref is long double so its own error stays below.
+template <typename T>
+double max_ulps(const std::vector<std::complex<long double>>& ref,
+                const std::vector<std::complex<T>>& got) {
+    long double err = 0, mag = 0;
+    for (std::size_t i = 0; i < ref.size(); ++i) {
+        err = std::max(err, std::abs(std::complex<long double>(got[i]) - ref[i]));
+        mag = std::max(mag, std::abs(ref[i]));
+    }
+    const auto eps = static_cast<long double>(std::numeric_limits<T>::epsilon());
+    return static_cast<double>(err / (mag > 0 ? mag : 1) / eps);
+}
+
+template <typename T>
+double ulp_bound(std::size_t N) {
+    return 4.0 * std::sqrt(1.0 + std::log2(static_cast<double>(N)));
+}
+
+template <typename T>
+double require_close_pointwise(const std::vector<std::complex<T>>& got,
+                               const std::vector<std::complex<long double>>& ref) {
+    REQUIRE(got.size() == ref.size());
+    const double u = max_ulps(ref, got), bound = ulp_bound<T>(ref.size());
+    INFO("max pointwise error " << u << " ulp of max|ref| (bound " << bound << ")");
+    REQUIRE(u <= bound);
+    return u;
 }
 
 template <typename C>

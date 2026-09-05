@@ -20,10 +20,11 @@ using namespace admiral::detail;
 
 namespace {
 
+// Returns the max pointwise error in ulp of max|ref|, so a caller can report the worst chain.
 template<typename T, bool Forward>
-void check_iterative_vs_reference(std::size_t N, const dif_factor_plan* forced = nullptr) {
+double check_iterative_vs_reference(std::size_t N, const dif_factor_plan* forced = nullptr) {
     const auto x = make_input<T>(N);
-    const auto ref = reference_dft<T, double>(x, Forward);
+    const auto ref = reference_dft<T, long double>(x, Forward);
 
     std::vector<std::complex<T>> got(x.begin(), x.end());
     const auto dtw = build_dif_twiddle_set<T>(N, forced);
@@ -32,6 +33,7 @@ void check_iterative_vs_reference(std::size_t N, const dif_factor_plan* forced =
                     cc1re.data(), cc1im.data(), dtw);
 
     require_close(std::vector<std::complex<double>>(got.begin(), got.end()), ref, fft_tol<T>());
+    return require_close_pointwise(got, ref);
 }
 
 void check_sizes(std::initializer_list<std::size_t> sizes) {
@@ -150,20 +152,27 @@ TEST_CASE("iterative DIF matches the reference DFT: forced staged/first/last rad
         {1024, {8, 8, 16}}, {1024, {16, 8, 8}}, {1024, {32, 32}},
         {4096, {8, 8, 8, 8}}, {4096, {32, 16, 8}},
     };
+    double worst = 0;
+    std::size_t worst_n = 0;
     for (const auto& [N, plan] : chains) {
         CAPTURE(N);
-        check_iterative_vs_reference<double, true>(N, &plan);
-        check_iterative_vs_reference<double, false>(N, &plan);
-        check_iterative_vs_reference<float, true>(N, &plan);
-        check_iterative_vs_reference<float, false>(N, &plan);
+        const double u = std::max({check_iterative_vs_reference<double, true>(N, &plan),
+                                   check_iterative_vs_reference<double, false>(N, &plan),
+                                   check_iterative_vs_reference<float, true>(N, &plan),
+                                   check_iterative_vs_reference<float, false>(N, &plan)});
+        if (u > worst) worst = u, worst_n = N;
     }
-    // The staged first-pass footprint gate (T2) picks the split table only once the plain
-    // table would blow the L1D admission, so it must fire at N=1024 (ido0=128) and stay off
-    // at N=256 (ido0=32) for the same ip0=8 first radix.
-    const dif_factor_plan plan_1024{8, 8, 16};
-    const dif_factor_plan plan_256{8, 32};
-    CHECK(build_dif_twiddle_set<double>(1024, &plan_1024).p0_block != 0);
-    CHECK(build_dif_twiddle_set<double>(256, &plan_256).p0_block == 0);
+    WARN("worst forced chain: " << worst << " ulp of max|ref| at N=" << worst_n);
+}
+
+TEST_CASE("the two-factor first-pass table fires on the L1D footprint",
+          "[iterative_dif][twiddles]") {
+    // 4*N*sizeof(T) + table against 3/4 of L1D. 64 points (2.8 KiB) stay flat on any host;
+    // 4096 f64 (184 KiB) split on any L1D up to 245 KiB. Radix 8 only, so no wide-radix gate.
+    const dif_factor_plan plan_64{8, 8};
+    const dif_factor_plan plan_4096{8, 8, 8, 8};
+    CHECK(build_dif_twiddle_set<double>(64, &plan_64).p0_block == 0);
+    CHECK(build_dif_twiddle_set<double>(4096, &plan_4096).p0_block != 0);
 }
 
 TEST_CASE("forced radix-32 chain check fires on a perturbed result (positive control)",
@@ -174,7 +183,7 @@ TEST_CASE("forced radix-32 chain check fires on a perturbed result (positive con
     constexpr std::size_t N = 1024;
     const dif_factor_plan plan{16, 8, 8};
     const auto x = make_input<double>(N);
-    const auto ref = reference_dft<double, double>(x, true);
+    const auto ref = reference_dft<double, long double>(x, true);
 
     std::vector<std::complex<double>> got(x.begin(), x.end());
     const auto dtw = build_dif_twiddle_set<double>(N, &plan);
@@ -182,15 +191,18 @@ TEST_CASE("forced radix-32 chain check fires on a perturbed result (positive con
     dif_dispatch<double>(true, got.data(), got.data(), N, cc0re.data(), cc0im.data(),
                         cc1re.data(), cc1im.data(), dtw);
 
-    const double tol = fft_tol<double>();
-    const double err_ok = relerrtwonorm(ref, got);
-    INFO("unperturbed relative L2 error " << err_ok << " (tol " << tol << ")");
+    const double tol = fft_tol<double>(), bound = ulp_bound<double>(N);
+    const double err_ok = relerrtwonorm(ref, got), ulp_ok = max_ulps(ref, got);
+    INFO("unperturbed: relative L2 " << err_ok << " (tol " << tol << "), " << ulp_ok
+                                     << " ulp (bound " << bound << ")");
     CHECK(err_ok <= tol);
+    CHECK(ulp_ok <= bound);
 
     got[0] += std::complex<double>(1.0, 0.0);
-    const double err_bad = relerrtwonorm(ref, got);
-    INFO("perturbed relative L2 error " << err_bad << " (tol " << tol << ")");
+    const double err_bad = relerrtwonorm(ref, got), ulp_bad = max_ulps(ref, got);
+    INFO("perturbed: relative L2 " << err_bad << ", " << ulp_bad << " ulp");
     CHECK(err_bad > tol);
+    CHECK(ulp_bad > bound);
 }
 
 TEST_CASE("col dif: first_src copy-in requires its own stride", "[iterative][col]") {

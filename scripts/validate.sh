@@ -118,6 +118,9 @@ arm_valgrind() {
         [[ -x $bin && ! -d $bin ]] || continue
         [[ $(basename "$bin") == test_ulp ]] && continue
         [[ $(basename "$bin") == test_long_double ]] && continue
+        # test_alloc replaces global operator new/delete; valgrind redirects the same symbols
+        # and the counter misreads (6f130b4). CI's valgrind job skips it the same way.
+        [[ $(basename "$bin") == test_alloc ]] && continue
         echo "--- $(basename "$bin")" >>"$log"
         valgrind --error-exitcode=1 --errors-for-leak-kinds=definite \
             --leak-check=full "$bin" '~[ulp]' '~[longdouble]' >>"$log" 2>&1 || { echo "  ERRORS: $(basename "$bin")"; rc=1; }

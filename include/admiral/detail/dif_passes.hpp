@@ -301,14 +301,16 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                     });
                 };
                 auto ip_half = [&](std::size_t aa, auto ODD) ADM_LAMBDA_ALWAYS_INLINE {
-                    constexpr std::size_t src = ODD ? H : std::size_t{0};
+                    // The store lambda sees ODD only through its reference capture, and MSVC 19.44
+                    // cannot fold a reference in a constant expression (P2280): it reads odd.
+                    constexpr std::size_t odd = ODD, src = odd * H;
                     batch hr[H], hi[H];
                     poet::static_for<0, H>([&](const auto n) {
                         hr[n] = batch::load_unaligned(ccre + (aa * esi + idi * (n + src + IP * b)));
                         hi[n] = batch::load_unaligned(ccim + (aa * esi + idi * (n + src + IP * b)));
                     });
                     pow2_dif_butterfly<T, H, batch>(hr, hi, [&](auto Kc, batch yr, batch yi) {
-                        constexpr std::size_t k = 2u * Kc + ODD;
+                        constexpr std::size_t k = 2u * Kc + odd;
                         const std::size_t off = obase + aa * eso + kstride * (src + Kc);
                         if constexpr (k > 0u) {
                             const batch owr = batch::load_unaligned(twre + ((k - 1u) * ido + aa));

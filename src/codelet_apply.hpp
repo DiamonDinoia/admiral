@@ -126,6 +126,67 @@ ADM_ALWAYS_INLINE void many_scatter_block(T* obase, std::size_t out_stride, std:
         aos_interleave_prefix<Cols, T>(obase + l * 2 * out_stride + 2 * j0, tr[l], ti[l]);
 }
 
+// Transposing the RAW interleaved rows lands re and im on alternate output slots, so one W x W
+// transpose covers W / 2 complex columns with no deinterleave at all: the split gather's per-row
+// shuffle pair and one of its two plane transposes both disappear. Per W columns of an eight-row
+// block at W = 8 that is 48 shuffles instead of 64, and the load and store counts are unchanged.
+template<std::size_t Cols, bool Neg, typename T, typename V>
+ADM_ALWAYS_INLINE void many_gather_x(const T* ibase, std::size_t in_stride, std::size_t j0,
+                                     V* re, V* im) {
+    constexpr std::size_t W = V::size;
+    constexpr std::size_t G = W / 2;
+    constexpr std::size_t H = (Cols + G - 1) / G;
+    static_assert(Cols >= 1 && Cols <= W);
+    using arch = typename V::arch_type;
+    V t[H][W];
+    for (std::size_t l = 0; l < W; ++l) {
+        const T* p = ibase + l * 2 * in_stride + 2 * j0;
+        poet::static_for<0, H>([&](auto h) {
+            constexpr std::size_t lanes = 2 * Cols - h * W < W ? 2 * Cols - h * W : W;
+            if constexpr (lanes == W) t[h][l] = V::load_unaligned(p + h * W);
+            else t[h][l] = V::load(p + h * W,
+                                   xsimd::make_batch_bool_constant<T, lane_lt<lanes>, arch>(),
+                                   xsimd::unaligned_mode{});
+        });
+    }
+    poet::static_for<0, H>([&](auto h) { xsimd::transpose(t[h], t[h] + W); });
+    poet::static_for<0, Cols>([&](auto K) {
+        constexpr std::size_t h = K / G, k = 2 * (K % G);
+        re[j0 + K] = t[h][k];
+        im[j0 + K] = Neg ? -t[h][k + 1] : t[h][k + 1];
+    });
+}
+
+template<std::size_t Cols, typename T, typename V>
+ADM_ALWAYS_INLINE void many_scatter_x(T* obase, std::size_t out_stride, std::size_t j0,
+                                      const V* yr, const V* yi, V fr, V fi) {
+    constexpr std::size_t W = V::size;
+    constexpr std::size_t G = W / 2;
+    constexpr std::size_t H = (Cols + G - 1) / G;
+    static_assert(Cols >= 1 && Cols <= W);
+    using arch = typename V::arch_type;
+    V t[H][W];
+    poet::static_for<0, H>([&](auto h) {
+        poet::static_for<0, G>([&](auto K) {
+            constexpr std::size_t j = h * G + K;
+            constexpr std::size_t k = j < Cols ? j : 0;
+            t[h][2 * K] = yr[j0 + k] * fr;
+            t[h][2 * K + 1] = yi[j0 + k] * fi;
+        });
+        xsimd::transpose(t[h], t[h] + W);
+    });
+    for (std::size_t l = 0; l < W; ++l) {
+        T* p = obase + l * 2 * out_stride + 2 * j0;
+        poet::static_for<0, H>([&](auto h) {
+            constexpr std::size_t lanes = 2 * Cols - h * W < W ? 2 * Cols - h * W : W;
+            if constexpr (lanes == W) t[h][l].store_unaligned(p + h * W);
+            else t[h][l].store(p + h * W,
+                               xsimd::make_batch_bool_constant<T, lane_lt<lanes>, arch>(),
+                               xsimd::unaligned_mode{});
+        });
+    }
+}
+
 // A block iteration keeps 2W batches live: the W-line gather and the transpose it feeds. The
 // register file divided by that is how many blocks fit without spilling, which is 1 at every
 // supported float width and 2 at double. Only N / W blocks are full; the N % W remainder keeps its
@@ -135,6 +196,14 @@ inline constexpr std::size_t kManyUnroll =
     poet::vector_register_count() >= 2 * V::size
         ? poet::vector_register_count() / (2 * V::size)
         : 1;
+
+// The fused gather holds 2W batches live per block, so the whole codelet needs 2 * ceil(N / W) * W
+// of them, which is the same 2N <= regs bound flat_leaf uses. Past it gcc runs out of vector
+// registers and lowers xsimd::transpose through the stack: at N = 32, W = 8 the shuffles fall
+// 386 -> 2 and the stack traffic rises 135 -> 366 memory operations, which costs 19% on 2d_32.
+template<unsigned N, typename V>
+inline constexpr bool kManyXpose =
+    2 * V::size * ((N + V::size - 1) / V::size) <= poet::vector_register_count();
 
 // ADM_NOINLINE is load-bearing: `fwd` arrives as a constant from each leaf wrapper, so a compiler
 // free to inline this body would fold it and re-specialise, putting back the copy the merge cut.
@@ -146,6 +215,7 @@ ADM_NOINLINE void codelet_many_body(const std::complex<T>* in, std::complex<T>* 
     constexpr std::size_t W = V::size;
     constexpr std::size_t kFull = N / W;
     constexpr std::size_t kRem = N % W;
+    constexpr std::size_t kUnroll = kManyUnroll<V>;
 
     std::size_t r = 0;
     if constexpr (N != 2 && N != 4) {
@@ -156,19 +226,35 @@ ADM_NOINLINE void codelet_many_body(const std::complex<T>* in, std::complex<T>* 
             const T* ibase = reinterpret_cast<const T*>(in + r * in_stride);
             T* obase = reinterpret_cast<T*>(out + r * out_stride);
 
-            poet::dynamic_for<kManyUnroll<V>>(kFull, [&](std::size_t b) ADM_LAMBDA_ALWAYS_INLINE {
-                many_gather_block<W, T, V>(ibase, in_stride, b * W, re, im);
-            });
-            if constexpr (kRem != 0)
-                many_gather_block<kRem, T, V>(ibase, in_stride, kFull * W, re, im);
+            if constexpr (kManyXpose<N, V>) {
+                poet::dynamic_for<kUnroll>(kFull, [&](std::size_t b) ADM_LAMBDA_ALWAYS_INLINE {
+                    many_gather_x<W, false, T, V>(ibase, in_stride, b * W, re, im);
+                });
+                if constexpr (kRem != 0)
+                    many_gather_x<kRem, false, T, V>(ibase, in_stride, kFull * W, re, im);
 
-            dir.apply();
+                dir.apply();
 
-            poet::dynamic_for<kManyUnroll<V>>(kFull, [&](std::size_t b) ADM_LAMBDA_ALWAYS_INLINE {
-                many_scatter_block<W, T, V>(obase, out_stride, b * W, yr, yi, f);
-            });
-            if constexpr (kRem != 0)
-                many_scatter_block<kRem, T, V>(obase, out_stride, kFull * W, yr, yi, f);
+                poet::dynamic_for<kUnroll>(kFull, [&](std::size_t b) ADM_LAMBDA_ALWAYS_INLINE {
+                    many_scatter_x<W, T, V>(obase, out_stride, b * W, yr, yi, f, f);
+                });
+                if constexpr (kRem != 0)
+                    many_scatter_x<kRem, T, V>(obase, out_stride, kFull * W, yr, yi, f, f);
+            } else {
+                poet::dynamic_for<kUnroll>(kFull, [&](std::size_t b) ADM_LAMBDA_ALWAYS_INLINE {
+                    many_gather_block<W, T, V>(ibase, in_stride, b * W, re, im);
+                });
+                if constexpr (kRem != 0)
+                    many_gather_block<kRem, T, V>(ibase, in_stride, kFull * W, re, im);
+
+                dir.apply();
+
+                poet::dynamic_for<kUnroll>(kFull, [&](std::size_t b) ADM_LAMBDA_ALWAYS_INLINE {
+                    many_scatter_block<W, T, V>(obase, out_stride, b * W, yr, yi, f);
+                });
+                if constexpr (kRem != 0)
+                    many_scatter_block<kRem, T, V>(obase, out_stride, kFull * W, yr, yi, f);
+            }
         }
     }
     const bool unit = (fct == T(1));
@@ -197,40 +283,56 @@ void codelet_many_static(const std::complex<T>* in, std::complex<T>* out,
             T* obase = reinterpret_cast<T*>(out + r * out_stride);
             V re[N], im[N], yr[N], yi[N];
 
-            poet::static_for<0, kBlocks>([&](auto B) {
-                constexpr std::size_t j0 = B * W;
-                constexpr std::size_t cols = (N - j0 < W) ? N - j0 : W;
-                V rb[W], ib[W];
-                for (std::size_t l = 0; l < W; ++l)
-                    aos_deinterleave_masked<(2 * cols > W), T>(
-                        ibase + l * 2 * in_stride + 2 * j0, rb[l], ib[l],
-                        aos_ct_masks<cols, T>{});
-                xsimd::transpose(rb, rb + W);
-                xsimd::transpose(ib, ib + W);
-                poet::static_for<0, cols>([&](auto J) {
-                    re[j0 + J] = rb[J];
-                    im[j0 + J] = Forward ? ib[J] : -ib[J];
+            if constexpr (kManyXpose<N, V>) {
+                poet::static_for<0, kBlocks>([&](auto B) {
+                    constexpr std::size_t j0 = B * W;
+                    constexpr std::size_t cols = (N - j0 < W) ? N - j0 : W;
+                    many_gather_x<cols, !Forward, T, V>(ibase, in_stride, j0, re, im);
                 });
-            });
 
-            kernel_batched<N, T, true, V>::apply(re, im, 1, yr, yi);
+                kernel_batched<N, T, true, V>::apply(re, im, 1, yr, yi);
 
-            poet::static_for<0, kBlocks>([&](auto B) {
-                constexpr std::size_t j0 = B * W;
-                constexpr std::size_t cols = (N - j0 < W) ? N - j0 : W;
-                V tr[W], ti[W];
-                poet::static_for<0, W>([&](auto J) {
-                    constexpr std::size_t j = J;
-                    constexpr std::size_t k = (j < cols) ? j0 + j : 0;
-                    tr[J] = yr[k] * fr;
-                    ti[J] = yi[k] * fi;
+                poet::static_for<0, kBlocks>([&](auto B) {
+                    constexpr std::size_t j0 = B * W;
+                    constexpr std::size_t cols = (N - j0 < W) ? N - j0 : W;
+                    many_scatter_x<cols, T, V>(obase, out_stride, j0, yr, yi, fr, fi);
                 });
-                xsimd::transpose(tr, tr + W);
-                xsimd::transpose(ti, ti + W);
-                for (std::size_t l = 0; l < W; ++l)
-                    aos_interleave_prefix<cols, T>(obase + l * 2 * out_stride + 2 * j0,
-                                                   tr[l], ti[l]);
-            });
+            } else {
+                poet::static_for<0, kBlocks>([&](auto B) {
+                    constexpr std::size_t j0 = B * W;
+                    constexpr std::size_t cols = (N - j0 < W) ? N - j0 : W;
+                    V rb[W], ib[W];
+                    for (std::size_t l = 0; l < W; ++l)
+                        aos_deinterleave_masked<(2 * cols > W), T>(
+                            ibase + l * 2 * in_stride + 2 * j0, rb[l], ib[l],
+                            aos_ct_masks<cols, T>{});
+                    xsimd::transpose(rb, rb + W);
+                    xsimd::transpose(ib, ib + W);
+                    poet::static_for<0, cols>([&](auto J) {
+                        re[j0 + J] = rb[J];
+                        im[j0 + J] = Forward ? ib[J] : -ib[J];
+                    });
+                });
+
+                kernel_batched<N, T, true, V>::apply(re, im, 1, yr, yi);
+
+                poet::static_for<0, kBlocks>([&](auto B) {
+                    constexpr std::size_t j0 = B * W;
+                    constexpr std::size_t cols = (N - j0 < W) ? N - j0 : W;
+                    V tr[W], ti[W];
+                    poet::static_for<0, W>([&](auto J) {
+                        constexpr std::size_t j = J;
+                        constexpr std::size_t k = (j < cols) ? j0 + j : 0;
+                        tr[J] = yr[k] * fr;
+                        ti[J] = yi[k] * fi;
+                    });
+                    xsimd::transpose(tr, tr + W);
+                    xsimd::transpose(ti, ti + W);
+                    for (std::size_t l = 0; l < W; ++l)
+                        aos_interleave_prefix<cols, T>(obase + l * 2 * out_stride + 2 * j0,
+                                                       tr[l], ti[l]);
+                });
+            }
         }
     }
     const bool unit = (fct == T(1));

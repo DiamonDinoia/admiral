@@ -363,6 +363,7 @@ class nd_runtime_plan {
         std::size_t total;
         std::vector<nd_axis_state<T>> axes;
         std::unique_ptr<thread_pool> pool;
+        bool fuse_planes = false;
     } m;
 
 public:
@@ -453,6 +454,15 @@ nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forwa
     }
     if (nthreads > 1 && batch_threadable)
         m.pool = std::make_unique<thread_pool>(nthreads);
+    // Run the last two axes plane by plane when the plane fits L2 and the array does not: below
+    // that the unfused chain is cache-resident end to end, above it the plane itself spills L2.
+    if (m.shape.size() >= 3 && m.pool == nullptr) {
+        const std::size_t ndim = m.shape.size();
+        const std::size_t plane = m.shape[ndim - 1] * m.shape[ndim - 2];
+        const cache_bytes& cc = cpu_cache();
+        m.fuse_planes = cc.l2 != 0 && plane * sizeof(std::complex<T>) <= cc.l2
+                        && m.total * sizeof(std::complex<T>) > cc.l2;
+    }
 }
 
 template<typename T>
@@ -475,11 +485,24 @@ void nd_runtime_plan<T>::execute_nd(std::complex<T>* data, const exec_options<T>
     const std::size_t ndim = m.shape.size();
     if (opts.debug >= dbg_route) ADM_UNLIKELY trace(opts.debug, "in-place");
     const scale_plan sp = make_scale_plan(opts.fct);
+    const std::size_t plane_axes = m.fuse_planes ? 2 : ndim;
+    const std::size_t plane = m.fuse_planes ? m.shape[ndim - 1] * m.shape[ndim - 2] : m.total;
+    if (m.fuse_planes && opts.debug >= dbg_route) ADM_UNLIKELY dbg_print("  fused planes");
     std::size_t inner = 1;
-    for (std::size_t di = 0; di < ndim; ++di) {
+    for (std::size_t off = 0; off < m.total; off += plane) {
+        inner = 1;
+        for (std::size_t di = 0; di < plane_axes; ++di) {
+            const std::size_t d = ndim - 1 - di;
+            nd_apply_axis<T>(data + off, plane, m.shape[d], inner,
+                             d == ndim - 1, m.is_forward, m.axes[d],
+                             axis_fct(sp, d), m.pool.get());
+            inner *= m.shape[d];
+        }
+    }
+    for (std::size_t di = plane_axes; di < ndim; ++di) {
         const std::size_t d = ndim - 1 - di;
         nd_apply_axis<T>(data, m.total, m.shape[d], inner,
-                         d == ndim - 1, m.is_forward, m.axes[d],
+                         false, m.is_forward, m.axes[d],
                          axis_fct(sp, d), m.pool.get());
         inner *= m.shape[d];
     }
@@ -513,26 +536,36 @@ void nd_runtime_plan<T>::execute_nd(const std::complex<T>* src, std::complex<T>*
     const std::size_t ndim = m.shape.size();
     const std::size_t len = m.shape[ndim - 1];
     if (opts.debug >= dbg_route) ADM_UNLIKELY trace(opts.debug, "oop");
-    const std::size_t rows = m.total / len;
     const nd_axis_state<T>& in_st = m.axes[ndim - 1];
     const scale_plan sp = make_scale_plan(opts.fct);
     const exec_options<T> row_opts{axis_fct(sp, ndim - 1)};
-    parallel_for(m.pool.get(), rows, m.total, [&](std::size_t b, std::size_t e, std::size_t) {
-        if (len <= 32 && is_codelet_catalog(len)) {
-            const T fct = row_opts.fct.value_or(m.is_forward ? T(1) : T(1) / static_cast<T>(len));
-            if (m.is_forward)
-                codelet_dispatch_many_oop<T, true >(src + b * len, dst + b * len, e - b,
-                                                    len, len, len, fct);
-            else
-                codelet_dispatch_many_oop<T, false>(src + b * len, dst + b * len, e - b,
-                                                    len, len, len, fct);
-            return;
-        }
-        for (std::size_t r = b; r < e; ++r)
-            in_st.plan->execute(src + r * len, dst + r * len, row_opts);
-    });
-    std::size_t inner = len;
-    for (std::size_t di = 1; di < ndim; ++di) {
+    const std::size_t plane = m.fuse_planes ? len * m.shape[ndim - 2] : m.total;
+    if (m.fuse_planes && opts.debug >= dbg_route) ADM_UNLIKELY dbg_print("  fused planes");
+    for (std::size_t off = 0; off < m.total; off += plane) {
+        const std::complex<T>* const ps = src + off;
+        std::complex<T>* const pd = dst + off;
+        parallel_for(m.pool.get(), plane / len, plane,
+                     [&](std::size_t b, std::size_t e, std::size_t) {
+            if (len <= 32 && is_codelet_catalog(len)) {
+                const T fct =
+                    row_opts.fct.value_or(m.is_forward ? T(1) : T(1) / static_cast<T>(len));
+                if (m.is_forward)
+                    codelet_dispatch_many_oop<T, true >(ps + b * len, pd + b * len, e - b,
+                                                        len, len, len, fct);
+                else
+                    codelet_dispatch_many_oop<T, false>(ps + b * len, pd + b * len, e - b,
+                                                        len, len, len, fct);
+                return;
+            }
+            for (std::size_t r = b; r < e; ++r)
+                in_st.plan->execute(ps + r * len, pd + r * len, row_opts);
+        });
+        if (m.fuse_planes)
+            nd_apply_axis<T>(pd, plane, m.shape[ndim - 2], len, false, m.is_forward,
+                             m.axes[ndim - 2], axis_fct(sp, ndim - 2), nullptr);
+    }
+    std::size_t inner = m.fuse_planes ? plane : len;
+    for (std::size_t di = m.fuse_planes ? 2 : 1; di < ndim; ++di) {
         const std::size_t d = ndim - 1 - di;
         nd_apply_axis<T>(dst, m.total, m.shape[d], inner,
                          false, m.is_forward, m.axes[d],

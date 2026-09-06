@@ -110,8 +110,9 @@ check, and it is a real one: strip the pin and it fails. Release/x86-64-v4, gcc 
 at len 20 offset 1 (2 of 320 elements at f32, 38 of 320 at f64); clang 19 needs len 60
 (159 of 960 at f32). Both fail through `axis_plan`, so the defect is on master and
 predates the `strides_plan` branch; `strides_plan` only reaches the same col chain.
-Since col axes at len <= 64 route the col codelet, the case's dif-chain coverage now
-sits at len 96/192/256 (the lens 20/60 measure the codelet's own layout invariance).
+Since col axes at len <= `e2_len_cap()` (32 below 2 MiB of L3 per core, 64 above) route the
+col codelet, the case's dif-chain coverage sits at len 96/192/256 (the lens 20/60 measure the
+codelet's own layout invariance).
 Every other test in the tree compares against a tolerance and passes either way.
 
 Both flags are load-bearing and the pair is minimal. The 2x2 at v4/gcc 14.2 on that same
@@ -145,6 +146,13 @@ into either (a `std::max(src, dst)` looks reasonable and was the original code) 
 route or the factoring on wide output strides: the "bits do not depend on the output
 layout" case in `test_strides.cpp` then fails at len 64 nbatch 2 out (8192, 1), 100 of
 128 elements, both precisions.
+
+## N-D engine
+
+- Rank >= 3, serial: `execute_nd` runs the last two axes plane by plane when one plane fits L2
+  and the whole array does not (`fuse_planes`). Below the gate the unfused chain is L2-resident
+  anyway and the per-plane loop costs 13% at 8^3; above it the plane itself spills. Measured
+  on SPR (2 MiB L2): 256^3 0.885, 64^3 0.974, everything else inside the 1% floor.
 
 ## Build
 

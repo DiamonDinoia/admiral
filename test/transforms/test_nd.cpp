@@ -450,6 +450,68 @@ std::vector<std::complex<T>> reference_nd(const std::vector<std::complex<T>>& x,
     return cur;
 }
 
+
+// Separable long double reference: one reference_dft per line per axis, last axis first.
+template<typename T>
+std::vector<std::complex<long double>> reference_nd_ld(const std::vector<std::complex<T>>& x,
+                                                        const std::vector<std::size_t>& shape,
+                                                        bool forward) {
+    std::vector<std::complex<long double>> cur(x.begin(), x.end()), next(x.size()), line;
+    std::size_t inner = 1;
+    for (std::size_t d = shape.size(); d-- > 0;) {
+        const std::size_t len = shape[d], outer = x.size() / (len * inner);
+        line.resize(len);
+        for (std::size_t o = 0; o < outer; ++o)
+            for (std::size_t g = 0; g < inner; ++g) {
+                const std::size_t base = o * len * inner + g;
+                for (std::size_t p = 0; p < len; ++p) line[p] = cur[base + p * inner];
+                const auto out = reference_dft<long double>(line, forward);
+                for (std::size_t p = 0; p < len; ++p) next[base + p * inner] = out[p];
+            }
+        cur.swap(next);
+        inner *= len;
+    }
+    return cur;
+}
+
+}
+
+// 64^3 and 128x64x32 run the plane-fused chain wherever 64 KiB <= L2 < 4 MiB; the scaled
+// inverse exercises the factor folded into the fused last pass.
+TEMPLATE_TEST_CASE("3D plane-fused shapes match the separable reference pointwise",
+                   "[nd][3d][fused]", float, double) {
+    using T = TestType;
+    const std::vector<std::vector<std::size_t>> shapes{{64, 64, 64}, {128, 64, 32}};
+    for (const std::vector<std::size_t>& shape : shapes) {
+        const std::size_t n = shape_product(shape);
+        const auto in = make_input<T>(n, 7000u + unsigned(n));
+        admiral::plan<T> p(admiral::span<const std::size_t>(shape.data(), shape.size()));
+        INFO("shape " << shape[0] << "x" << shape[1] << "x" << shape[2]);
+
+        const auto fwd = reference_nd_ld(in, shape, true);
+        std::vector<std::complex<T>> out(n);
+        p.forward(in.data(), out.data());
+        require_close_pointwise(out, fwd);
+        auto ip = in;
+        p.forward(ip.data());
+        require_close_pointwise(ip, fwd);
+
+        auto inv = reference_nd_ld(out, shape, false);
+        for (auto& v : inv) v *= 0.75L;
+        std::vector<std::complex<T>> back(n);
+        p.inverse(out.data(), back.data(), T(0.75));
+        require_close_pointwise(back, inv);
+        p.inverse(ip.data(), T(0.75));
+        require_close_pointwise(ip, inv);
+
+        // Positive control: one element off by 8 bounds must trip the pointwise check.
+        long double mag = 0;
+        for (const auto& v : fwd) mag = std::max(mag, std::abs(v));
+        auto bad = out;
+        const long double eps = static_cast<long double>(std::numeric_limits<T>::epsilon());
+        bad[n / 3] += static_cast<T>(8 * static_cast<long double>(ulp_bound<T>(n)) * eps * mag);
+        REQUIRE(max_ulps(fwd, bad) > ulp_bound<T>(n));
+    }
 }
 
 TEMPLATE_TEST_CASE("N-D out-of-place catalog rows match the reference DFT", "[nd][oop]",

@@ -153,6 +153,14 @@ layout" case in `test_strides.cpp` then fails at len 64 nbatch 2 out (8192, 1), 
   and the whole array does not (`fuse_planes`). Below the gate the unfused chain is L2-resident
   anyway and the per-plane loop costs 13% at 8^3; above it the plane itself spills. Measured
   on SPR (2 MiB L2): 256^3 0.885, 64^3 0.974, everything else inside the 1% floor.
+- Transposed route, rows of one page or more (`inner * 16 >= 4096`): the strip is one page of
+  columns capped at 3/4 of L3, the line pitch is `len + W` when `len` is a multiple of a page
+  (4K aliasing, `address_alias` 0.27), and the gate is `col_budget_block < max(16, 2W)`, an
+  absolute count because a page-wide strip costs the same at every W. Mechanism at 8192^2: the
+  L2 streamer stops at a page, so `l2_rqsts.miss` rises 1.5x while demand `l3_miss` falls to
+  0.25 (IPC 0.61 -> 0.94); 4096^2 0.69, 8192^2 0.54, 2048^2 untouched (block 21 > gate).
+- A default-off arm must leave master's TEXT. `const std::size_t pitch = len;` alone, a pure
+  SSA alias, shifts gcc 14.2's inline budget and breaks the `nm -S` size-multiset identity.
 
 ## Build
 

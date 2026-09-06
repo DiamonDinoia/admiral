@@ -122,9 +122,28 @@ enum class line_route : std::uint8_t {
 };
 
 template<typename T>
-[[nodiscard]] inline std::size_t transpose_group([[maybe_unused]] std::size_t len,
-                                                 std::size_t run_len) {
-    return std::min<std::size_t>(run_len, 2 * kCacheLine / sizeof(std::complex<T>));
+[[nodiscard]] inline std::size_t transpose_group(std::size_t len, std::size_t run_len,
+                                                 std::size_t inner) {
+    constexpr std::size_t kTwoLines = 2 * kCacheLine / sizeof(std::complex<T>);
+    // The L2 streamer stops at a page boundary, so a strip row longer than one page buys no
+    // further run-ahead; the LLC the core owns is what caps it when len makes a page too wide.
+    if (len != 0 && inner * sizeof(std::complex<T>) >= 4096) {
+        constexpr std::size_t W = xsimd::batch<T>::size;
+        constexpr std::size_t kPageCols = 4096 / sizeof(std::complex<T>);
+        const std::size_t cap =
+            (cpu_cache().l3 * 3 / 4 / (len * sizeof(std::complex<T>))) & ~(W - 1);
+        return std::min(run_len, std::max(kTwoLines, std::min(kPageCols, cap)));
+    }
+    return std::min<std::size_t>(run_len, kTwoLines);
+}
+
+// Line pitch of the strip buffer. A power-of-two pitch puts every gathered column on one
+// L1 set; one batch of padding breaks that without moving the FFTs off contiguous lines.
+template<typename T>
+[[nodiscard]] inline std::size_t transpose_pitch(std::size_t len) {
+    constexpr std::size_t W = xsimd::batch<T>::size;
+    constexpr std::size_t critical = 4096 / sizeof(std::complex<T>);
+    return len % critical == 0 ? len + W : len;
 }
 
 template<typename T>
@@ -132,7 +151,13 @@ template<typename T>
                                                   std::size_t inner, std::size_t run_len,
                                                   std::size_t nthreads) {
     if (!st.dif) return line_route::transposed;
-    if (nthreads <= 1 && col_budget_block<T>(len, 1) < 2 * xsimd::batch<T>::size)
+    // A page-wide strip costs the same whatever W is, so the flip is gated on an absolute
+    // col_dif block count; the 2*W form scaled with W only because the strip was two lines.
+    // 2*W stays the lower bound, so the widening never removes a route the narrow strip took.
+    constexpr std::size_t kAbsGate = std::max<std::size_t>(16, 2 * xsimd::batch<T>::size);
+    const std::size_t gate =
+        inner * sizeof(std::complex<T>) >= 4096 ? kAbsGate : 2 * xsimd::batch<T>::size;
+    if (nthreads <= 1 && col_budget_block<T>(len, 1) < gate)
         return line_route::transposed;
     if (2 * run_len <= xsimd::batch<T>::size
         && len * inner * sizeof(std::complex<T>) > col_cache_budget(nthreads))
@@ -143,10 +168,11 @@ template<typename T>
 template<bool Gather, typename T>
 void move_run(std::complex<T>* line, std::size_t inner, std::size_t len, std::size_t gw,
               std::complex<T>* buf) {
+    const std::size_t pitch = transpose_pitch<T>(len);
     for (std::size_t p = 0; p < len; ++p)
         for (std::size_t g = 0; g < gw; ++g) {
-            if constexpr (Gather) buf[g * len + p] = line[p * inner + g];
-            else line[p * inner + g] = buf[g * len + p];
+            if constexpr (Gather) buf[g * pitch + p] = line[p * inner + g];
+            else line[p * inner + g] = buf[g * pitch + p];
         }
 }
 
@@ -187,7 +213,7 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
         });
         return;
     }
-    std::size_t group = transpose_group<T>(len, run_len);
+    std::size_t group = transpose_group<T>(len, run_len, inner);
     if (pool && nruns * ((run_len + group - 1) / group) < 2 * nthreads) {
         constexpr std::size_t kLine = kCacheLine / sizeof(std::complex<T>);
         const std::size_t target =
@@ -198,14 +224,15 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
     const std::size_t nunits = nruns * ngroups;
     const exec_options<T> opts{fct};
     parallel_for(pool, nunits, total_elems, [&](std::size_t b, std::size_t e, std::size_t) {
-        soa_scratch<T, 1> scratch(2 * len * group);
+        const std::size_t pitch = transpose_pitch<T>(len);
+        soa_scratch<T, 1> scratch(2 * pitch * group);
         auto* const buf = reinterpret_cast<std::complex<T>*>(scratch.buf(0));
         for (std::size_t u = b; u < e; ++u) {
             const std::size_t c0 = (u % ngroups) * group;
             const std::size_t gw = std::min(group, run_len - c0);
             auto* const line = data + line_base(u / ngroups) + c0;
             move_run<true>(line, inner, len, gw, buf);
-            st.plan->execute_many(buf, gw, len, opts);
+            st.plan->execute_many(buf, gw, pitch, opts);
             move_run<false>(line, inner, len, gw, buf);
         }
     });
@@ -261,7 +288,7 @@ apply_lines_strided_oop(const std::complex<T>* src, std::size_t src_line,
         });
         return;
     }
-    std::size_t group = transpose_group<T>(len, run_len);
+    std::size_t group = transpose_group<T>(len, run_len, src_line);
     if (pool && nruns * ((run_len + group - 1) / group) < 2 * nthreads) {
         constexpr std::size_t kLine = kCacheLine / sizeof(std::complex<T>);
         const std::size_t target =
@@ -272,7 +299,8 @@ apply_lines_strided_oop(const std::complex<T>* src, std::size_t src_line,
     const std::size_t nunits = nruns * ngroups;
     const exec_options<T> opts{fct};
     parallel_for(pool, nunits, total_elems, [&](std::size_t b, std::size_t e, std::size_t) {
-        soa_scratch<T, 1> scratch(2 * len * group);
+        const std::size_t pitch = transpose_pitch<T>(len);
+        soa_scratch<T, 1> scratch(2 * pitch * group);
         auto* const buf = reinterpret_cast<std::complex<T>*>(scratch.buf(0));
         for (std::size_t u = b; u < e; ++u) {
             const std::size_t c0 = (u % ngroups) * group;
@@ -282,11 +310,11 @@ apply_lines_strided_oop(const std::complex<T>* src, std::size_t src_line,
             std::complex<T>* const dline = dst + dst_base(r) + c0 * dst_batch;
             for (std::size_t p = 0; p < len; ++p)
                 for (std::size_t g = 0; g < gw; ++g)
-                    buf[g * len + p] = sline[p * src_line + g * src_batch];
-            st.plan->execute_many(buf, gw, len, opts);
+                    buf[g * pitch + p] = sline[p * src_line + g * src_batch];
+            st.plan->execute_many(buf, gw, pitch, opts);
             for (std::size_t p = 0; p < len; ++p)
                 for (std::size_t g = 0; g < gw; ++g)
-                    dline[p * dst_line + g * dst_batch] = buf[g * len + p];
+                    dline[p * dst_line + g * dst_batch] = buf[g * pitch + p];
         }
     });
 }

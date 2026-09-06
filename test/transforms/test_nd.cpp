@@ -474,6 +474,27 @@ std::vector<std::complex<long double>> reference_nd_ld(const std::vector<std::co
     return cur;
 }
 
+// Output columns k of a 2-D DFT: bin k of every row, then one length-shape[0] DFT of that column.
+// O(n + shape[0]^2) per column, so a 4096-long strided axis stays checkable in long double.
+template<typename T>
+std::vector<std::complex<long double>>
+reference_2d_columns_ld(const std::vector<std::complex<T>>& x, std::size_t rows, std::size_t cols,
+                        const std::vector<std::size_t>& ks) {
+    std::vector<std::complex<long double>> ref, col(rows);
+    for (const std::size_t k : ks) {
+        for (std::size_t r = 0; r < rows; ++r) {
+            std::complex<long double> acc = 0;
+            for (std::size_t c = 0; c < cols; ++c)
+                acc += std::complex<long double>(x[r * cols + c])
+                       * unit_phasor<long double>(-turn_fraction(k, c, cols));
+            col[r] = acc;
+        }
+        const auto out = reference_dft<long double>(col, true);
+        ref.insert(ref.end(), out.begin(), out.end());
+    }
+    return ref;
+}
+
 }
 
 // 64^3 and 128x64x32 run the plane-fused chain wherever 64 KiB <= L2 < 4 MiB; the scaled
@@ -511,6 +532,52 @@ TEMPLATE_TEST_CASE("3D plane-fused shapes match the separable reference pointwis
         const long double eps = static_cast<long double>(std::numeric_limits<T>::epsilon());
         bad[n / 3] += static_cast<T>(8 * static_cast<long double>(ulp_bound<T>(n)) * eps * mag);
         REQUIRE(max_ulps(fwd, bad) > ulp_bound<T>(n));
+    }
+}
+
+// A 4096-long f64 axis over rows of one page or more takes the transposed route with a
+// page-wide strip and a padded line pitch (4096 % 256 == 0); 2048x512 pads at both precisions.
+TEMPLATE_TEST_CASE("2D page-wide transposed columns match the reference DFT pointwise",
+                   "[nd][2d][transposed]", float, double) {
+    using T = TestType;
+    const std::vector<std::vector<std::size_t>> shapes{{4096, 256}, {2048, 512}};
+    for (const std::vector<std::size_t>& shape : shapes) {
+        const std::size_t rows = shape[0], cols = shape[1], n = rows * cols;
+        const std::vector<std::size_t> ks{0, 1, 7, cols / 2 - 1, cols / 2, cols - 1};
+        const auto in = make_input<T>(n, 9000u + unsigned(n));
+        admiral::plan<T> p(admiral::span<const std::size_t>(shape.data(), shape.size()));
+        INFO("shape " << rows << "x" << cols);
+
+        const auto ref = reference_2d_columns_ld(in, rows, cols, ks);
+        std::vector<std::complex<T>> out(n);
+        p.forward(in.data(), out.data());
+        auto ip = in;
+        p.forward(ip.data());
+        std::vector<std::complex<T>> got_oop, got_ip;
+        for (const std::size_t k : ks)
+            for (std::size_t r = 0; r < rows; ++r) {
+                got_oop.push_back(out[r * cols + k]);
+                got_ip.push_back(ip[r * cols + k]);
+            }
+        const double bound = ulp_bound<T>(n);
+        INFO("bound " << bound << " ulp, oop " << max_ulps(ref, got_oop) << ", in place "
+                      << max_ulps(ref, got_ip));
+        REQUIRE(max_ulps(ref, got_oop) <= bound);
+        REQUIRE(max_ulps(ref, got_ip) <= bound);
+
+        // Round trip through the same strided axis in the inverse direction.
+        std::vector<std::complex<T>> back(n);
+        p.inverse(out.data(), back.data(), T(1) / static_cast<T>(n));
+        const std::vector<std::complex<long double>> in_ld(in.begin(), in.end());
+        require_close_pointwise(back, in_ld);
+
+        // Positive control: one element off by 8 bounds must trip the pointwise check.
+        long double mag = 0;
+        for (const auto& v : ref) mag = std::max(mag, std::abs(v));
+        auto bad = got_oop;
+        const long double eps = static_cast<long double>(std::numeric_limits<T>::epsilon());
+        bad[ref.size() / 3] += static_cast<T>(8 * static_cast<long double>(bound) * eps * mag);
+        REQUIRE(max_ulps(ref, bad) > bound);
     }
 }
 

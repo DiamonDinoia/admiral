@@ -5,6 +5,7 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <utility>
 #include <vector>
 
@@ -81,11 +82,11 @@ void dif_tape_step_f3(const T* sr, const T* si, T* dr, T* di,
                                 t1.second.data(), t2.first.data(), t2.second.data());
 }
 
-template<typename T, bool Forward, std::size_t IP>
+template<typename T, bool Forward, std::size_t IP, std::size_t Esi = 1u>
 void dif_tape_step_last(const T* sr, const T* si, T*, T*,
                         const dif_step<T>& s, const dif_rt<T>& rt) {
     const auto& tw = rt.dtw->passes[s.p];
-    dif_pass_last<T, Forward, IP>(sr, si, rt.out, s.l1, 1, tw.first.data(), tw.second.data(),
+    dif_pass_last<T, Forward, IP, Esi>(sr, si, rt.out, s.l1, 1, tw.first.data(), tw.second.data(),
                                   rt.scale, (s.es & 4u) ? rt.dtw->rowperm.data() : nullptr);
 }
 
@@ -125,10 +126,15 @@ struct dif_tape_fill_first {
     void operator()(dif_step<T>& s) const noexcept { s.fn = &dif_tape_step_first<T, Forward, IP>; }
 };
 
-template<typename T, bool Forward>
+template<typename T, bool Forward, bool Es2 = false>
 struct dif_tape_fill_last {
     template<std::size_t IP>
-    void operator()(dif_step<T>& s) const noexcept { s.fn = &dif_tape_step_last<T, Forward, IP>; }
+    void operator()(dif_step<T>& s) const noexcept {
+        // Es2 needs every row of the last pass to start on a W boundary. dif_build_tape sets the
+        // bit only when IP % W == 0; this fold keeps the other radices out of the Esi = 2 tree.
+        constexpr std::size_t Esi = (Es2 && IP % xsimd::batch<T>::size == 0u) ? 2u : 1u;
+        s.fn = &dif_tape_step_last<T, Forward, IP, Esi>;
+    }
 };
 
 template<typename T>
@@ -192,8 +198,13 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
             for (std::size_t p = 0; p < n_passes; ++p) {
                 const std::size_t ip = dtw.radices[p], idop = N / (lb * ip);
                 lb *= ip;
-                if (p + 1 < n_passes && dtw.sched[p] == dif_fuse::plain && idop % W == 0)
-                    blk |= std::uint64_t{1} << p;
+                if (dtw.sched[p] != dif_fuse::plain) continue;
+                // A non-last pass walks the column axis in W-wide chunks, so its ido must be a
+                // multiple of W. The last pass has ido == 1 and instead reads IP contiguous
+                // elements per row, so W has to divide IP there.
+                const bool ok = p + 1 < n_passes ? idop % W == 0
+                                                 : (ADM_FIX4_ES2 != 0 && ip % W == 0);
+                if (ok) blk |= std::uint64_t{1} << p;
             }
             for (std::size_t p = 0; p + 1 < n_passes; ++p)
                 if ((blk >> p & 1u) && (blk >> (p + 1) & 1u)) es2 |= std::uint64_t{1} << p;
@@ -288,12 +299,30 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
             st.p = p;
             st.l1 = l1;
             st.src = b8(ping);
-            st.sim = b8(ping);
             st.es = dtw.rowperm.empty() ? std::uint8_t{0} : std::uint8_t{4};
-            poet::dispatch(poet::throw_on_no_match, dif_tape_fill_last<T, Forward>{},
-                           poet::dispatch_param<dif_radix_set>{dtw.radices[p]}, st);
+            const auto fill = [&](auto es2c) {
+                constexpr bool E2 = decltype(es2c)::value;
+                st.sim = E2 ? std::uint8_t{2} : b8(ping);
+                st.es = static_cast<std::uint8_t>(st.es | (E2 ? 1u : 0u));
+                poet::dispatch(poet::throw_on_no_match, dif_tape_fill_last<T, Forward, E2>{},
+                               poet::dispatch_param<dif_radix_set>{dtw.radices[p]}, st);
+            };
+            if (ADM_FIX4_ES2 != 0 && es_bit(p - 1))
+                fill(std::bool_constant<ADM_FIX4_ES2 != 0>{});
+            else
+                fill(std::bool_constant<false>{});
             tv.push_back(st);
         }
+#if ADM_FIX4_ES2_TRACE
+        std::fprintf(stderr, "TAPE N=%zu fwd=%d tape=%s es2=0x%llx n_passes=%zu\n", N,
+                     Forward ? 1 : 0, variant == 0 ? "blk" : "flat",
+                     static_cast<unsigned long long>(es2), n_passes);
+        for (std::size_t i = 0; i < tv.size(); ++i)
+            std::fprintf(stderr,
+                         "  step %zu p=%zu l1=%zu ido=%zu es=%u dim=%u sim=%u src=%u dst=%u\n", i,
+                         tv[i].p, tv[i].l1, tv[i].ido, unsigned(tv[i].es), unsigned(tv[i].dim),
+                         unsigned(tv[i].sim), unsigned(tv[i].src), unsigned(tv[i].dst));
+#endif
     }
 }
 
@@ -308,6 +337,16 @@ void iterative_dif_execute_ws(const std::complex<T>* in, std::complex<T>* out,
     constexpr std::size_t W = xsimd::batch<T>::size;
     const auto& tp = dtw.tape[Forward ? 0 : 1];
     const std::vector<dif_step<T>>& tv = soa_stride >= N ? tp.blk : tp.flat;
+#if ADM_FIX4_ES2_TRACE
+    {
+        static int trace_left = 8;
+        if (trace_left > 0) {
+            --trace_left;
+            std::fprintf(stderr, "EXEC N=%zu soa_stride=%zu tape=%s steps=%zu\n", N, soa_stride,
+                         soa_stride >= N ? "blk" : "flat", tv.size());
+        }
+    }
+#endif
     const dif_rt<T> rt{in, out, scale_val, &dtw};
     for (const dif_step<T>& st : tv) {
         T* const dr = st.dst ? cc1re : cc0re;

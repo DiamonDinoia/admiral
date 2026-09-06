@@ -12,6 +12,13 @@
 #include <sys/sysctl.h>
 #endif
 
+// fix4 switch, sweep only. ADM_FIX4_T2 re-gates the two-factor first-pass twiddle table of
+// twiddles.hpp on the L1 data cache. The registry copy sits in dif_passes.hpp, which
+// twiddles.hpp does not include, so the default is repeated here.
+#ifndef ADM_FIX4_T2
+#define ADM_FIX4_T2 0
+#endif
+
 namespace admiral {
 namespace detail {
 

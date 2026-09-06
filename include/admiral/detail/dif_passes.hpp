@@ -22,6 +22,64 @@
 namespace admiral {
 namespace detail {
 
+// fix3 switch, sweep only. ADM_FIX3_FIRST unrolls the first pass by two columns and restricts
+// its outputs. ADM_FIX3 itself landed: the in-place pass blocks over the column index
+// unconditionally.
+#ifndef ADM_FIX3_FIRST
+#define ADM_FIX3_FIRST 0
+#endif
+#if ADM_FIX3_FIRST
+#define ADM_FIX3_FIRST_RESTRICT ADM_RESTRICT
+#else
+#define ADM_FIX3_FIRST_RESTRICT
+#endif
+// fix4 switch, sweep only. ADM_FIX4_ES2 lets the block-interleaved intermediate layout (es == 2)
+// reach the buffer that feeds the last pass, so every pass addresses one base pointer per array.
+#ifndef ADM_FIX4_ES2
+#define ADM_FIX4_ES2 0
+#endif
+// fix4 switch, sweep only. ADM_FIX4_ES2_ONEBASE makes the element stride of the in-place arm and
+// of the first pass compile-time, so the imaginary plane can be named as the real base plus W and
+// both planes address off ONE register. It needs ADM_FIX4_ES2 to have anything to fire on.
+#ifndef ADM_FIX4_ES2_ONEBASE
+#define ADM_FIX4_ES2_ONEBASE 0
+#endif
+// fix4 switch, sweep only. Prints the tape that dif_build_tape builds and the tape the executor
+// picks. Off in every timed build.
+#ifndef ADM_FIX4_ES2_TRACE
+#define ADM_FIX4_ES2_TRACE 0
+#endif
+// fix4 switch, sweep only. ADM_FIX4_ROLL replaces the column loop of the first pass and of the
+// fix3 in-place arm with poet::dynamic_for<1>, whose laundered trip count stops the compiler
+// folding the loop away, and carries the step in a poet::static_for. 1 rolls the loop and keeps
+// one block per iteration; S >= 2 puts S blocks in one iteration with every load issued before
+// any arithmetic, so the allocator sees S independent chains over a body of fixed shape. The
+// barrier makes the COUNT opaque, not the loop: both compilers still unroll a small body at
+// runtime, so the back-edge count in the asm is what says whether the body stayed one copy.
+#ifndef ADM_FIX4_ROLL
+#define ADM_FIX4_ROLL 0
+#endif
+// fix4 switch, sweep only. ADM_FIX4_T2 brackets the landed L1D admission of the two-factor
+// (FFTW `t2`) first-pass twiddle table from above: 2 fires it for every N >= 256, so every cell
+// of the sweep takes the Split arm. The use is in twiddles.hpp, which does not include this
+// header, so the default is repeated in cache.hpp.
+#ifndef ADM_FIX4_T2
+#define ADM_FIX4_T2 0
+#endif
+// fix4 switch, sweep only. ADM_FIX4_U2 forces the first pass's column unroll to its value, so
+// that many radix butterflies sit in flight over one loop body. dif_pass_unroll's budget,
+// peak_live = 2 * IP + 10 against 32 zmm, already returns 1 from IP = 4 up, so no radix reaches
+// 2 on its own and the value is an override rather than a hint. ADM_FIX4_U2_IP restricts the
+// override to that one radix, 0 meaning every radix: 2 blocks of IP rows in two planes need
+// 4 * IP live vectors, so the headroom is per radix and one arm per radix keeps the arms
+// interpretable.
+#ifndef ADM_FIX4_U2
+#define ADM_FIX4_U2 0
+#endif
+#ifndef ADM_FIX4_U2_IP
+#define ADM_FIX4_U2_IP 0
+#endif
+
 template<typename T, std::size_t IP, std::size_t PW, typename CC, typename CH>
 ADM_ALWAYS_INLINE void small_ido_piece(CC ccre, CC ccim, CH chre, CH chim,
                                        std::size_t ido, std::size_t b, std::size_t a,
@@ -169,6 +227,102 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
     if constexpr (InPlace && !dif_butterfly_wants_reload<IP>) {
         if (ido >= W && ccre == chre && ccim == chim && esi == eso) {
             amain = ido - ido % W;
+#if ADM_FIX4_ES2_ONEBASE
+            // fix4: Es == 2 names the imaginary plane as chre + W, the relation es == 2
+            // guarantees, so both planes address off one base register instead of two.
+            const auto run_ip = [&](auto Esc) ADM_LAMBDA_ALWAYS_INLINE {
+                constexpr std::size_t Es = decltype(Esc)::value;
+                T* const re = chre;
+                T* const im = Es == 2u ? chre + W : chim;
+                const std::size_t ide = ido * Es;
+                for (std::size_t aa = 0; aa < amain; aa += W) {
+                    batch owr[IP - 1], owi[IP - 1];
+                    poet::static_for<0, IP - 1>([&](const auto k) ADM_LAMBDA_ALWAYS_INLINE {
+                        owr[k] = batch::load_unaligned(twre + (k * ido + aa));
+                        owi[k] = batch::load_unaligned(twim + (k * ido + aa));
+                    });
+                    for (std::size_t b = 0; b < l1; ++b) {
+                        const std::size_t o0 = aa * Es + ide * IP * b;
+                        batch tr[IP], ti_arr[IP];
+                        poet::static_for<0, IP>([&](const auto j) ADM_LAMBDA_ALWAYS_INLINE {
+                            tr[j] = batch::load_unaligned(re + (o0 + ide * j));
+                            ti_arr[j] = batch::load_unaligned(im + (o0 + ide * j));
+                        });
+                        dif_butterfly<T, IP>(tr, ti_arr,
+                                             [&](const auto k, batch sr, batch si)
+                                                 ADM_LAMBDA_ALWAYS_INLINE {
+                            const std::size_t off = o0 + ide * k;
+                            if constexpr (k > 0u) {
+                                (owr[k - 1u] * sr - owi[k - 1u] * si).store_unaligned(re + off);
+                                (owr[k - 1u] * si + owi[k - 1u] * sr).store_unaligned(im + off);
+                            } else {
+                                sr.store_unaligned(re + off);
+                                si.store_unaligned(im + off);
+                            }
+                        });
+                    }
+                }
+            };
+            if (esi == 2u) run_ip(std::integral_constant<std::size_t, 2u>{});
+            else run_ip(std::integral_constant<std::size_t, 1u>{});
+#elif ADM_FIX4_ROLL
+            // fix4 ROLL: the same treatment as the first pass. dynamic_for<1> keeps the column
+            // loop rolled and the step sits in a static_for, so S columns share one body and the
+            // inner row loop loads both columns before either butterfly runs.
+            {
+                constexpr std::size_t S = ADM_FIX4_ROLL;
+                T* const re = chre;
+                T* const im = chim;
+                auto col_run = [&](auto Nc, std::size_t aa0) ADM_LAMBDA_ALWAYS_INLINE {
+                    constexpr std::size_t NC = decltype(Nc)::value;
+                    batch owr[NC][IP - 1], owi[NC][IP - 1];
+                    poet::static_for<0, NC>([&](const auto s) ADM_LAMBDA_ALWAYS_INLINE {
+                        constexpr std::size_t Sv = decltype(s)::value;
+                        poet::static_for<0, IP - 1>([&](const auto k) ADM_LAMBDA_ALWAYS_INLINE {
+                            owr[Sv][k] = batch::load_unaligned(twre + (k * ido + aa0 + Sv * W));
+                            owi[Sv][k] = batch::load_unaligned(twim + (k * ido + aa0 + Sv * W));
+                        });
+                    });
+                    for (std::size_t b = 0; b < l1; ++b) {
+                        batch tr[NC][IP], ti_arr[NC][IP];
+                        poet::static_for<0, NC>([&](const auto s) ADM_LAMBDA_ALWAYS_INLINE {
+                            constexpr std::size_t Sv = decltype(s)::value;
+                            const std::size_t o0 = (aa0 + Sv * W) * esi + idi * IP * b;
+                            poet::static_for<0, IP>([&](const auto j) ADM_LAMBDA_ALWAYS_INLINE {
+                                tr[Sv][j] = batch::load_unaligned(re + (o0 + idi * j));
+                                ti_arr[Sv][j] = batch::load_unaligned(im + (o0 + idi * j));
+                            });
+                        });
+                        poet::static_for<0, NC>([&](const auto s) ADM_LAMBDA_ALWAYS_INLINE {
+                            constexpr std::size_t Sv = decltype(s)::value;
+                            const std::size_t o0 = (aa0 + Sv * W) * esi + idi * IP * b;
+                            dif_butterfly<T, IP>(tr[Sv], ti_arr[Sv],
+                                                 [&](const auto k, batch sr, batch si)
+                                                     ADM_LAMBDA_ALWAYS_INLINE {
+                                const std::size_t off = o0 + idi * k;
+                                if constexpr (k > 0u) {
+                                    (owr[Sv][k - 1u] * sr - owi[Sv][k - 1u] * si)
+                                        .store_unaligned(re + off);
+                                    (owr[Sv][k - 1u] * si + owi[Sv][k - 1u] * sr)
+                                        .store_unaligned(im + off);
+                                } else {
+                                    sr.store_unaligned(re + off);
+                                    si.store_unaligned(im + off);
+                                }
+                            });
+                        });
+                    }
+                };
+                const std::size_t nstep = (amain / W) / S;
+                if (nstep != 0)
+                    poet::dynamic_for<1, 1>(std::size_t{0}, nstep,
+                                            [&](std::size_t i) ADM_LAMBDA_ALWAYS_INLINE {
+                        col_run(std::integral_constant<std::size_t, S>{}, i * (S * W));
+                    });
+                for (std::size_t aa = nstep * S * W; aa < amain; aa += W)
+                    col_run(std::integral_constant<std::size_t, 1u>{}, aa);
+            }
+#else
             T* const re = chre;
             T* const im = chim;
             for (std::size_t aa = 0; aa < amain; aa += W) {
@@ -198,6 +352,7 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                     });
                 }
             }
+#endif
             if (amain == ido) return;
         }
     }
@@ -675,6 +830,15 @@ void dif_pass_fused3(const T* ccre, const T* ccim,
     }
 }
 
+// Sweep knobs, not shipped API: ADM_FIX2_N2 forces the outer split factor, ADM_FIX2_L3
+// splits stage B again when it is wide enough to pay for a second scratch.
+#ifndef ADM_FIX2_N2
+#define ADM_FIX2_N2 0
+#endif
+#ifndef ADM_FIX2_L3
+#define ADM_FIX2_L3 0
+#endif
+
 // Gentleman-Sande outer split of one pow2 radix, IP = N1 * N2, staged through an L1 scratch.
 // The monolithic radix keeps 2*IP vector registers live, so the whole set spills at IP >= 16.
 // Stage A runs N2 radix-N1 butterflies over j = n + N2*m and writes a[r][n] = A_r(n)*w_IP^(n*r);
@@ -682,19 +846,42 @@ void dif_pass_fused3(const T* ccre, const T* ccim,
 // Peak live is 2*N2 + O(1) registers, and the scratch is IP*W elements per plane.
 template<std::size_t IP>
 [[nodiscard]] ADM_CONSTEVAL std::size_t staged_dif_n2() {
+    constexpr std::size_t forced = ADM_FIX2_N2 > 1u ? std::size_t(ADM_FIX2_N2) : IP;
+    if (forced < IP && IP % forced == 0u) return forced;
     return IP / 4u <= 8u ? IP / 4u : 8u;
 }
+
+template<typename T, std::size_t IP, typename V, typename Load, typename Emit>
+ADM_ALWAYS_INLINE void staged_dif_butterfly(Load&& load, Emit&& emit);
+
+// A stateless loader over one contiguous scratch row, for the recursive stage-B split. A
+// local class cannot carry a member template, so it lives here.
+template<typename T, std::size_t Stride, typename V>
+struct staged_row_loader {
+    const T* ar;
+    const T* ai;
+    template<typename J>
+    ADM_ALWAYS_INLINE void operator()(J, V& lr, V& li) const {
+        lr = V::load_aligned(ar + J::value * Stride * V::size);
+        li = V::load_aligned(ai + J::value * Stride * V::size);
+    }
+};
 
 // Stage B of the outer split: one radix-N2 butterfly over the scratch row.
 template<typename T, std::size_t N2, std::size_t Stride, typename V, typename Emit>
 ADM_ALWAYS_INLINE void staged_dif_stage_b(const T* ar, const T* ai, Emit&& emit) {
     constexpr std::size_t W = V::size;
-    V cr[N2], ci[N2];
-    poet::static_for<0, N2>([&](const auto n) ADM_LAMBDA_ALWAYS_INLINE {
-        cr[n] = V::load_aligned(ar + n * Stride * W);
-        ci[n] = V::load_aligned(ai + n * Stride * W);
-    });
-    sub_dft<T, N2, V>(cr, ci, std::forward<Emit>(emit));
+    if constexpr (ADM_FIX2_L3 && N2 >= 16u) {
+        staged_dif_butterfly<T, N2, V>(staged_row_loader<T, Stride, V>{ar, ai},
+                                       std::forward<Emit>(emit));
+    } else {
+        V cr[N2], ci[N2];
+        poet::static_for<0, N2>([&](const auto n) ADM_LAMBDA_ALWAYS_INLINE {
+            cr[n] = V::load_aligned(ar + n * Stride * W);
+            ci[n] = V::load_aligned(ai + n * Stride * W);
+        });
+        sub_dft<T, N2, V>(cr, ci, std::forward<Emit>(emit));
+    }
 }
 
 template<typename T, std::size_t IP, typename V, typename Load, typename Emit>
@@ -733,7 +920,8 @@ inline constexpr bool dif_staged_radix =
     detail::has_single_bit(IP) && IP >= 16 &&
     dif_butterfly_wants_reload<IP> && poet::vector_register_count() >= 32;
 
-template<typename T, bool Forward, std::size_t IP, bool Split = false, std::size_t L1 = 0>
+template<typename T, bool Forward, std::size_t IP, bool Split = false, std::size_t Eso = 0,
+         std::size_t L1 = 0>
 void dif_pass_first_impl(const std::complex<T>* data,
                     T* chre, T* chim,
                     std::size_t l1, std::size_t ido,
@@ -807,7 +995,21 @@ void dif_pass_first_impl(const std::complex<T>* data,
         }
         return;
     }
-    const std::size_t idz = ido * eso;
+    // fix4: Eso == 0 keeps the element stride a runtime value, which is the shipped form. Eso == 2
+    // makes it compile time so the imaginary plane can be named as chre + W, the relation es == 2
+    // guarantees, and the eight output columns need one base register instead of two.
+#if ADM_FIX4_ES2_ONEBASE
+    // Eso == 0 is the sentinel a direct caller leaves in place, and it keeps the runtime stride.
+    const std::size_t es = Eso == 0u ? eso : Eso;
+#define ADM_F4_ES es
+#define ADM_F4_SRE ore
+#define ADM_F4_SIM oim
+#else
+#define ADM_F4_ES eso
+#define ADM_F4_SRE chre
+#define ADM_F4_SIM chim
+#endif
+    const std::size_t idz = ido * ADM_F4_ES;
     std::size_t bsh = 0, nb = 0;
     const T* are = nullptr;
     const T* aim = nullptr;
@@ -818,8 +1020,23 @@ void dif_pass_first_impl(const std::complex<T>* data,
         aim = twim + (IP - 1) * blk;
     }
 
+    // fix3: two columns per iteration share one set of output stream pointers, and the outputs
+    // cannot alias the input or the twiddle table, so the twiddle loads may cross the stores.
+    T* const ADM_FIX3_FIRST_RESTRICT ore = chre;
+#if ADM_FIX4_ES2_ONEBASE
+    T* const ADM_FIX3_FIRST_RESTRICT oim = Eso == 2u ? chre + W : chim;
+#else
+    T* const ADM_FIX3_FIRST_RESTRICT oim = chim;
+#endif
     for (std::size_t b = 0; b < l1; ++b) {
-        constexpr std::size_t U = dif_pass_unroll<IP>();
+        constexpr std::size_t U0 = dif_pass_unroll<IP>();
+        constexpr std::size_t U1 =
+            (ADM_FIX3_FIRST && !dif_staged_radix<IP> && U0 < 2u) ? 2u : U0;
+        // fix4 U2: the override, on the one radix the arm names, where it raises the unroll.
+        constexpr bool kU2Here =
+            ADM_FIX4_U2 > 1u && (ADM_FIX4_U2_IP == 0u || ADM_FIX4_U2_IP == IP) &&
+            U1 < ADM_FIX4_U2;
+        constexpr std::size_t U = kU2Here ? std::size_t{ADM_FIX4_U2} : U1;
         auto do_batch = [&](std::size_t aa) ADM_LAMBDA_ALWAYS_INLINE {
             const std::size_t a0 = Split ? (aa & (blk - 1u)) : aa;
             const std::size_t a1 = Split ? (aa >> bsh) : 0u;
@@ -836,11 +1053,13 @@ void dif_pass_first_impl(const std::complex<T>* data,
                         owr = batch_t::load_unaligned(twre + ((k - 1u) * ido + aa));
                         owi = batch_t::load_unaligned(twim + ((k - 1u) * ido + aa));
                     }
-                    (owr * sr - owi * si).store_unaligned(chre + (aa * eso + idz * (b + l1 * k)));
-                    (owr * si + owi * sr).store_unaligned(chim + (aa * eso + idz * (b + l1 * k)));
+                    (owr * sr - owi * si)
+                        .store_unaligned(ore + (aa * ADM_F4_ES + idz * (b + l1 * k)));
+                    (owr * si + owi * sr)
+                        .store_unaligned(oim + (aa * ADM_F4_ES + idz * (b + l1 * k)));
                 } else {
-                    sr.store_unaligned(chre + (aa * eso + idz * (b + l1 * k)));
-                    si.store_unaligned(chim + (aa * eso + idz * (b + l1 * k)));
+                    sr.store_unaligned(ore + (aa * ADM_F4_ES + idz * (b + l1 * k)));
+                    si.store_unaligned(oim + (aa * ADM_F4_ES + idz * (b + l1 * k)));
                 }
             };
             if constexpr (dif_staged_radix<IP>) {
@@ -869,6 +1088,64 @@ void dif_pass_first_impl(const std::complex<T>* data,
                 });
             }
         }
+#if ADM_FIX4_ROLL
+        // fix4 ROLL: dynamic_for<1> launders the trip count through an asm barrier, so neither
+        // compiler re-unrolls this loop. The step lives in a static_for, so the body has one
+        // shape. At S >= 2 all S blocks load before any butterfly runs, so S chains overlap.
+        if constexpr (!Split) {
+            constexpr std::size_t S = ADM_FIX4_ROLL;
+            auto blk_load = [&](std::size_t aa, batch_t (&tr)[IP], batch_t (&ti)[IP])
+                                ADM_LAMBDA_ALWAYS_INLINE {
+                poet::static_for<0, IP>([&](const auto j) ADM_LAMBDA_ALWAYS_INLINE {
+                    const T* src = reinterpret_cast<const T*>(
+                        data + aa + ido * (decltype(j)::value + IP * b));
+                    auto [dr, di] = plane_refs<Forward>(tr[decltype(j)::value],
+                                                        ti[decltype(j)::value]);
+                    aos_deinterleave<T>(src, dr, di);
+                });
+            };
+            auto blk_run = [&](std::size_t aa, const batch_t (&tr)[IP], const batch_t (&ti)[IP])
+                               ADM_LAMBDA_ALWAYS_INLINE {
+                dif_butterfly<T, IP>(tr, ti, [&](const auto k, batch_t sr, batch_t si)
+                                                 ADM_LAMBDA_ALWAYS_INLINE {
+                    const std::size_t off = aa * ADM_F4_ES + idz * (b + l1 * k);
+                    if constexpr (k > 0u) {
+                        const batch_t owr = batch_t::load_unaligned(twre + ((k - 1u) * ido + aa));
+                        const batch_t owi = batch_t::load_unaligned(twim + ((k - 1u) * ido + aa));
+                        (owr * sr - owi * si).store_unaligned(ore + off);
+                        (owr * si + owi * sr).store_unaligned(oim + off);
+                    } else {
+                        sr.store_unaligned(ore + off);
+                        si.store_unaligned(oim + off);
+                    }
+                });
+            };
+            const std::size_t nstep = (ido - a) / (S * W);
+            if (nstep != 0) {
+                const std::size_t abase = a;
+                poet::dynamic_for<1, 1>(std::size_t{0}, nstep,
+                                        [&](std::size_t i) ADM_LAMBDA_ALWAYS_INLINE {
+                    const std::size_t a0 = abase + i * (S * W);
+                    if constexpr (S == 1u || dif_staged_radix<IP>) {
+                        poet::static_for<0, S>([&](const auto s) ADM_LAMBDA_ALWAYS_INLINE {
+                            do_batch(a0 + decltype(s)::value * W);
+                        });
+                    } else {
+                        batch_t br[S][IP], bi[S][IP];
+                        poet::static_for<0, S>([&](const auto s) ADM_LAMBDA_ALWAYS_INLINE {
+                            blk_load(a0 + decltype(s)::value * W, br[decltype(s)::value],
+                                     bi[decltype(s)::value]);
+                        });
+                        poet::static_for<0, S>([&](const auto s) ADM_LAMBDA_ALWAYS_INLINE {
+                            blk_run(a0 + decltype(s)::value * W, br[decltype(s)::value],
+                                    bi[decltype(s)::value]);
+                        });
+                    }
+                });
+                a = abase + nstep * (S * W);
+            }
+        }
+#endif
         for (; a + W <= ido; a += W) do_batch(a);
         if (!Split && ido >= W && (ido - a) * 2 >= W) { do_batch(ido - W); a = ido; }
         for (; a < ido; ++a) {
@@ -893,20 +1170,24 @@ void dif_pass_first_impl(const std::complex<T>* data,
                         owr = twre[(k - 1u) * ido + a];
                         owi = twim[(k - 1u) * ido + a];
                     }
-                    chre[a * eso + idz * (b + l1 * k)] = owr * sr - owi * si;
-                    chim[a * eso + idz * (b + l1 * k)] = owr * si + owi * sr;
+                    ADM_F4_SRE[a * ADM_F4_ES + idz * (b + l1 * k)] = owr * sr - owi * si;
+                    ADM_F4_SIM[a * ADM_F4_ES + idz * (b + l1 * k)] = owr * si + owi * sr;
                 } else {
-                    chre[a * eso + idz * (b + l1 * k)] = sr;
-                    chim[a * eso + idz * (b + l1 * k)] = si;
+                    ADM_F4_SRE[a * ADM_F4_ES + idz * (b + l1 * k)] = sr;
+                    ADM_F4_SIM[a * ADM_F4_ES + idz * (b + l1 * k)] = si;
                 }
             });
         }
     }
 }
+#undef ADM_F4_ES
+#undef ADM_F4_SRE
+#undef ADM_F4_SIM
 
-template<typename T, bool Forward, std::size_t IP, bool Split, std::size_t L1, typename... A>
+template<typename T, bool Forward, std::size_t IP, bool Split, std::size_t Eso, std::size_t L1,
+         typename... A>
 ADM_FLATTEN void dif_pass_first_flat(A... a) {
-    dif_pass_first_impl<T, Forward, IP, Split, L1>(a...);
+    dif_pass_first_impl<T, Forward, IP, Split, Eso, L1>(a...);
 }
 
 template<typename T, bool Forward, std::size_t IP, std::size_t L1 = 0>
@@ -915,13 +1196,30 @@ void dif_pass_first(const std::complex<T>* data,
                     std::size_t l1, std::size_t ido,
                     const T* twre, const T* twim,
                     std::size_t eso, std::size_t blk) {
-    const auto run = [&](auto split) {
+#if ADM_FIX4_ES2_ONEBASE
+    const auto run_es = [&](auto split, auto esc) {
+        constexpr bool Split = decltype(split)::value;
+        constexpr std::size_t Eso = decltype(esc)::value;
         if constexpr (dif_butterfly_wants_reload<IP>)
-            dif_pass_first_impl<T, Forward, IP, split, L1>(data, chre, chim, l1, ido, twre, twim,
-                                                           eso, blk);
+            dif_pass_first_impl<T, Forward, IP, Split, Eso, L1>(data, chre, chim, l1, ido, twre,
+                                                                twim, eso, blk);
         else
-            dif_pass_first_flat<T, Forward, IP, split, L1>(data, chre, chim, l1, ido, twre, twim,
-                                                           eso, blk);
+            dif_pass_first_flat<T, Forward, IP, Split, Eso, L1>(data, chre, chim, l1, ido, twre,
+                                                                twim, eso, blk);
+    };
+#endif
+    const auto run = [&](auto split) {
+#if ADM_FIX4_ES2_ONEBASE
+        if (eso == 2u) run_es(split, std::integral_constant<std::size_t, 2u>{});
+        else run_es(split, std::integral_constant<std::size_t, 1u>{});
+#else
+        if constexpr (dif_butterfly_wants_reload<IP>)
+            dif_pass_first_impl<T, Forward, IP, split, 0u, L1>(data, chre, chim, l1, ido, twre,
+                                                               twim, eso, blk);
+        else
+            dif_pass_first_flat<T, Forward, IP, split, 0u, L1>(data, chre, chim, l1, ido, twre,
+                                                               twim, eso, blk);
+#endif
     };
     if (blk != 0) run(std::bool_constant<true>{});
     else run(std::bool_constant<false>{});
@@ -963,18 +1261,37 @@ template<typename T, std::size_t IP, std::size_t R, typename V>
     }
 }
 
-template<typename T, bool Forward, std::size_t IP>
+// Physical offset of logical element `a` in an es == 2 plane. The producer writes W real values
+// then W imaginary values per W-column block, so one block costs 2W slots and the real slot of `a`
+// sits at 2a less the offset of `a` inside its own block. A W-aligned `a` reduces to 2a, which is
+// the only form the vector paths below use.
+template<std::size_t Esi, std::size_t W>
+[[nodiscard]] ADM_ALWAYS_INLINE constexpr std::size_t es_block_off(std::size_t a) {
+    return Esi == 1u ? a : 2u * a - a % W;
+}
+
+template<typename T, bool Forward, std::size_t IP, std::size_t Esi = 1u>
 ADM_COLD ADM_NOINLINE void dif_pass_last_scalar_rows(const T* ccre,
                                             const T* ccim,
                                             std::complex<T>* data,
                                             std::size_t l1, std::size_t b, T scale_val,
                                             const std::uint32_t* rowperm) {
+    constexpr std::size_t Wv = xsimd::batch<T>::size;
+#if ADM_FIX4_ES2_ONEBASE
+    // Esi == 2 is exactly the relation ccim == ccre + W, so one base register serves both planes.
+    const T* const cim = Esi == 2u ? ccre + Wv : ccim;
+#define ADM_F4_CIM cim
+#else
+#define ADM_F4_CIM ccim
+#endif
     for (; b < l1; ++b) {
         const std::size_t rb = rowperm ? std::size_t(rowperm[b]) : b;
+        const std::size_t o0 = Esi * IP * rb;
         T tr[IP], ti[IP];
         for (std::size_t j = 0; j < IP; ++j) {
-            tr[j] = ccre[j + IP * rb];
-            ti[j] = ccim[j + IP * rb];
+            const std::size_t off = o0 + es_block_off<Esi, Wv>(j);
+            tr[j] = ccre[off];
+            ti[j] = ADM_F4_CIM[off];
         }
         dif_butterfly_terminal<T, IP>(tr, ti, [&](const auto k, T sr, T si) {
             const auto [xr, xi] = plane_vals<Forward>(sr * scale_val, si * scale_val);
@@ -982,6 +1299,8 @@ ADM_COLD ADM_NOINLINE void dif_pass_last_scalar_rows(const T* ccre,
         });
     }
 }
+
+#undef ADM_F4_CIM
 
 template<typename T, std::size_t IP>
 struct dif_last_batch {
@@ -991,7 +1310,7 @@ struct dif_last_batch {
     using type = std::conditional_t<std::is_void_v<sized_t>, xsimd::batch<T>, sized_t>;
 };
 
-template<typename T, bool Forward, std::size_t IP, std::size_t Rows>
+template<typename T, bool Forward, std::size_t IP, std::size_t Rows, std::size_t Esi = 1u>
 ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
                                            const T* ccim,
                                            std::complex<T>* data,
@@ -1000,6 +1319,13 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
                                            const std::uint32_t* rowperm) {
     using batch_t = typename dif_last_batch<T, IP>::type;
     constexpr std::size_t W = batch_t::size;
+#if ADM_FIX4_ES2_ONEBASE
+    // Esi == 2 is exactly the relation ccim == ccre + W, so one base register serves both planes.
+    const T* const cim = Esi == 2u ? ccre + xsimd::batch<T>::size : ccim;
+#define ADM_F4_CIM cim
+#else
+#define ADM_F4_CIM ccim
+#endif
     const auto row = [&](std::size_t i) ADM_LAMBDA_ALWAYS_INLINE -> std::size_t {
         return rowperm ? std::size_t(rowperm[i]) : i;
     };
@@ -1015,8 +1341,8 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
             const auto stage = [&](std::size_t bb, std::size_t r) ADM_LAMBDA_ALWAYS_INLINE {
                 batch_t rr[G], ri[G];
                 poet::static_for<0, G>([&](const auto t) {
-                    rr[t] = batch_t::load_unaligned(ccre + (IP * r + t * W));
-                    ri[t] = batch_t::load_unaligned(ccim + (IP * r + t * W));
+                    rr[t] = batch_t::load_unaligned(ccre + Esi * (IP * r + t * W));
+                    ri[t] = batch_t::load_unaligned(ADM_F4_CIM + Esi * (IP * r + t * W));
                 });
                 // Stage A: one radix-G over the vector index, then the lane twiddle with the
                 // pass scale folded in.
@@ -1056,8 +1382,9 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
                 batch_t rr[W], ri[W];
                 poet::static_for<0, W>([&](const auto bb) {
                     if constexpr (detail::cmp_less(bb.value, Rows)) {
-                        rr[bb] = batch_t::load_unaligned(ccre + (IP * row(b + bb) + off));
-                        ri[bb] = batch_t::load_unaligned(ccim + (IP * row(b + bb) + off));
+                        rr[bb] = batch_t::load_unaligned(ccre + Esi * (IP * row(b + bb) + off));
+                        ri[bb] =
+                            batch_t::load_unaligned(ADM_F4_CIM + Esi * (IP * row(b + bb) + off));
                     } else {
                         rr[bb] = batch_t(T(0));
                         ri[bb] = batch_t(T(0));
@@ -1084,8 +1411,10 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
             batch_t rr[W], ri[W];
             poet::static_for<0, W>([&](const auto bb) {
                 if constexpr (detail::cmp_less(bb.value, Rows)) {
-                    rr[bb] = batch_t::load(ccre + IP * row(b + bb), mask, xsimd::unaligned_mode{});
-                    ri[bb] = batch_t::load(ccim + IP * row(b + bb), mask, xsimd::unaligned_mode{});
+                    rr[bb] = batch_t::load(ccre + Esi * IP * row(b + bb), mask,
+                                           xsimd::unaligned_mode{});
+                    ri[bb] = batch_t::load(ADM_F4_CIM + Esi * IP * row(b + bb), mask,
+                                           xsimd::unaligned_mode{});
                 } else {
                     rr[bb] = batch_t(T(0));
                     ri[bb] = batch_t(T(0));
@@ -1108,19 +1437,22 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
     }
 }
 
-template<typename T, bool Forward, std::size_t IP>
+#undef ADM_F4_CIM
+
+template<typename T, bool Forward, std::size_t IP, std::size_t Esi = 1u>
 struct dif_last_tail_invoke_t {
     template<std::size_t Rows>
     void operator()(const T* ccre, const T* ccim,
                     std::complex<T>* data, std::size_t l1, std::size_t b, T scale_val,
                     const std::uint32_t* rowperm) const {
-        dif_pass_last_block<T, Forward, IP, Rows>(ccre, ccim, data, l1, b, scale_val, rowperm);
+        dif_pass_last_block<T, Forward, IP, Rows, Esi>(ccre, ccim, data, l1, b, scale_val,
+                                                       rowperm);
     }
 };
-template<typename T, bool Forward, std::size_t IP>
-inline constexpr dif_last_tail_invoke_t<T, Forward, IP> dif_last_tail_invoke{};
+template<typename T, bool Forward, std::size_t IP, std::size_t Esi = 1u>
+inline constexpr dif_last_tail_invoke_t<T, Forward, IP, Esi> dif_last_tail_invoke{};
 
-template<typename T, bool Forward, std::size_t IP>
+template<typename T, bool Forward, std::size_t IP, std::size_t Esi = 1u>
 void dif_pass_last(const T* ccre, const T* ccim,
                    std::complex<T>* data,
                    std::size_t l1, [[maybe_unused]] std::size_t ido,
@@ -1134,28 +1466,30 @@ void dif_pass_last(const T* ccre, const T* ccim,
     std::size_t b = 0;
     if (const std::size_t peel = aos_store_align_peel<T, W>(data, l1, l1);
         peel != 0 && l1 >= peel + W) {
-        poet::dispatch(dif_last_tail_invoke<T, Forward, IP>,
+        poet::dispatch(dif_last_tail_invoke<T, Forward, IP, Esi>,
                        poet::dispatch_param<dif_last_tail_seq<W>>{peel},
                        ccre, ccim, data, l1, std::size_t{0}, scale_val, rowperm);
         for (b = peel; b + W <= l1; b += W)
-            dif_pass_last_block<T, Forward, IP, W>(ccre, ccim, data, l1, b, scale_val, rowperm);
+            dif_pass_last_block<T, Forward, IP, W, Esi>(ccre, ccim, data, l1, b, scale_val,
+                                                       rowperm);
     } else {
         for (; b + W <= l1; b += W)
-            dif_pass_last_block<T, Forward, IP, W>(ccre, ccim, data, l1, b, scale_val, rowperm);
+            dif_pass_last_block<T, Forward, IP, W, Esi>(ccre, ccim, data, l1, b, scale_val,
+                                                       rowperm);
     }
     if (b == l1) return;
     if (l1 < W) {
-        poet::dispatch(dif_last_tail_invoke<T, Forward, IP>,
+        poet::dispatch(dif_last_tail_invoke<T, Forward, IP, Esi>,
                        poet::dispatch_param<dif_last_tail_seq<W>>{l1},
                        ccre, ccim, data, l1, std::size_t{0}, scale_val, rowperm);
         return;
     }
     if (2 * (l1 - b) >= W) {
-        dif_pass_last_block<T, Forward, IP, W>(ccre, ccim, data, l1, l1 - W,
+        dif_pass_last_block<T, Forward, IP, W, Esi>(ccre, ccim, data, l1, l1 - W,
                                                      scale_val, rowperm);
         return;
     }
-    dif_pass_last_scalar_rows<T, Forward, IP>(ccre, ccim, data, l1, b, scale_val, rowperm);
+    dif_pass_last_scalar_rows<T, Forward, IP, Esi>(ccre, ccim, data, l1, b, scale_val, rowperm);
 }
 
 }

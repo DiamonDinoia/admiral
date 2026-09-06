@@ -217,7 +217,10 @@ has_single_bit(U x) noexcept {
 }
 #endif
 
-#if defined(__cpp_lib_math_constants) && __cpp_lib_math_constants >= 201907L
+// libc++ spells its constants as double literals, so its pi_v<long double> is double pi; the
+// L-suffixed fallback below is what keeps the long double twiddle fold at 64 or 113 bits there.
+#if defined(__cpp_lib_math_constants) && __cpp_lib_math_constants >= 201907L && \
+    !defined(_LIBCPP_VERSION)
 namespace numbers = std::numbers;
 #else
 namespace numbers {

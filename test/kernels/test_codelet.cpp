@@ -274,17 +274,80 @@ void check_many(std::size_t N, std::size_t nlines, std::size_t stride, T fct) {
     require_close(ip, want, fft_tol<T>());
 }
 
+// The column leaf transforms down each column of an (N rows x ncols) block, taking its direction
+// as a RUNTIME bool through the same pointer swap the batched leaves use, and splitting into a
+// vector body over full batches of columns plus an out-of-line tail for the rest. Only the ND
+// plan reaches it otherwise, so a sign error in the tail's swap would surface as a large-N
+// transform failure rather than here. Out of place the two inner strides differ, so a body that
+// reads the destination stride hits a guard value; in place the columns past `ncols` belong to the
+// input and have to come back unchanged.
+template<typename T>
+void check_col(std::size_t N, std::size_t ncols, bool forward, T scale, bool in_place) {
+    CAPTURE(N, ncols, forward, scale, in_place);
+    const std::complex<T> guard(T(5), T(-3));
+    const std::size_t in_inner = ncols + 2;
+    const std::size_t out_inner = in_place ? in_inner : ncols + 5;
+    const auto x = make_input<T>(N * in_inner, 0xC01Du);
+
+    std::vector<std::complex<T>> want(N * out_inner, guard);
+    std::vector<std::complex<T>> col(N), got(N);
+    for (std::size_t c = 0; c < ncols; ++c) {
+        for (std::size_t p = 0; p < N; ++p) col[p] = x[p * in_inner + c];
+        if (forward) codelet_dispatch<T, true >(col.data(), got.data(), N);
+        else         codelet_dispatch<T, false>(col.data(), got.data(), N);
+        for (std::size_t p = 0; p < N; ++p) want[p * out_inner + c] = got[p] * scale;
+    }
+
+    std::vector<std::complex<T>> out(N * out_inner, guard);
+    if (in_place) {
+        // One buffer, so the columns past ncols are the input's and have to survive untouched.
+        out = x;
+        for (std::size_t p = 0; p < N; ++p)
+            for (std::size_t c = ncols; c < out_inner; ++c)
+                want[p * out_inner + c] = x[p * in_inner + c];
+    }
+    const std::complex<T>* src = in_place ? out.data() : x.data();
+    col_codelet_dispatch<T>(forward, src, in_inner, out.data(), out_inner, ncols, N, scale);
+    require_close(out, want, fft_tol<T>());
+}
+
+template<typename T>
+void check_col_sizes() {
+    // Col instantiations stop at 64, so a larger catalog entry dispatches nowhere and would
+    // compare against a stale guard; skip it. Every entry at or below the cap is reachable: range
+    // sizes through the dense jump table, sparse extras (a sanitizer catalog keeps 45) through
+    // the extras if-chain in col_codelet_dispatch.
+    constexpr std::size_t W = xsimd::batch<T>::size;
+    std::size_t vector_body = 0, tail_only = 0;
+
+    for (const std::size_t N : CODELET_CATALOG_SIZES) {
+        if (N < 2 || N > 64) continue;
+        for (const bool forward : {true, false})
+            for (const T scale : {T(1), T(0.25)})
+                // Below, at and above the batch width, and a count that leaves a partial batch, so
+                // the vector body and the out-of-line tail both run.
+                for (const std::size_t ncols : {std::size_t{1}, W, W + 1, 2 * W + 3}) {
+                    ++(ncols >= W ? vector_body : tail_only);
+                    for (const bool in_place : {false, true})
+                        check_col<T>(N, ncols, forward, scale, in_place);
+                }
+    }
+    REQUIRE(vector_body > 0);
+    REQUIRE(tail_only > 0);
+}
+
 template<typename T>
 void check_many_sizes() {
     // Sweep the catalog itself: ADM_CODELET_EXTRA_SIZES changes which sizes exist, so a hardcoded
-    // list is a different test in every configuration. kGate mirrors kManyRollMinBlocks in
-    // src/codelet_apply.hpp, and the counts below fail if a catalog stops reaching an arm it can
-    // reach. Whether the rolled arm is reachable at all is a property of the catalog and the batch
-    // width, not of the code: the largest size has to carry kGate blocks. Every size is under the
-    // gate at the smallest catalog a sanitizer build accepts, so requiring the arm unconditionally
-    // would fail there for a reason no source change can fix.
+    // list is a different test in every configuration. The gate is the production constant, not a
+    // copy, so raising it cannot leave this classification behind. The counts below fail if a
+    // catalog stops reaching an arm it can reach. Whether the rolled arm is reachable at all is a
+    // property of the catalog and the batch width, not of the code: the largest size has to carry
+    // kManyRollMinBlocks blocks. Every size is under the gate at the smallest catalog a sanitizer
+    // build accepts, so requiring the arm unconditionally would fail there for a reason no source
+    // change can fix.
     constexpr std::size_t W = xsimd::batch<T>::size;
-    constexpr std::size_t kGate = 5;
+    constexpr std::size_t kGate = kManyRollMinBlocks;
     std::size_t rolled = 0, statik = 0;
 
     for (const std::size_t N : CODELET_CATALOG_SIZES) {
@@ -310,4 +373,9 @@ void check_many_sizes() {
 TEMPLATE_TEST_CASE("batched codelet leaves match the single-line leaf, both gate arms",
                    "[codelet][batched]", float, double) {
     check_many_sizes<TestType>();
+}
+
+TEMPLATE_TEST_CASE("column codelet leaf matches the single-line leaf across body and tail",
+                   "[codelet][batched][col]", float, double) {
+    check_col_sizes<TestType>();
 }

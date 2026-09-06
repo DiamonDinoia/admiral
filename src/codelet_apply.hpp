@@ -188,8 +188,8 @@ ADM_ALWAYS_INLINE void many_scatter_x(T* obase, std::size_t out_stride, std::siz
 }
 
 // A block iteration keeps 2W batches live: the W-line gather and the transpose it feeds. The
-// register file divided by that is how many blocks fit without spilling, which is 1 at every
-// supported float width and 2 at double. Only N / W blocks are full; the N % W remainder keeps its
+// register file divided by that is how many blocks fit, which over x86-64 through x86-64-v4 is
+// 1 or 2 at float and 2 or 4 at double. Only N / W blocks are full; the N % W remainder keeps its
 // own compile-time width and is emitted once.
 template<typename V>
 inline constexpr std::size_t kManyUnroll =
@@ -341,13 +341,6 @@ void codelet_many_static(const std::complex<T>* in, std::complex<T>* out,
         if (!unit) scale_inplace(out + r * out_stride, N, fct);
     }
 }
-
-// The rolled body pays for itself only where the block loop has enough iterations to amortise its
-// own overhead. Measured on retired instructions per call, gcc 14.2 x86-64-v3, against a
-// byte-identical control arm reading 1.002: N/W of 7, 8, 15 and 16 cost 0.998-1.037, N/W of 1, 2
-// and 3 cost 1.06-1.20. Four is the last count that does not clear it. The gate and the sweep it
-// was read off are one artifact, so re-derive both together if either body changes.
-inline constexpr std::size_t kManyRollMinBlocks = 5;
 
 template<unsigned N, typename T, bool Forward>
 void codelet_apply_many_oop(const std::complex<T>* in, std::complex<T>* out,

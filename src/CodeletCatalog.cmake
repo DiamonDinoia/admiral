@@ -11,9 +11,9 @@ set(ADM_CODELET_EXTRA_SIZES "120;65;85;143;100;360" CACHE STRING
 if(NOT ADM_SANITIZER STREQUAL "none")
     # A sanitized TU costs ~3 GB and minutes, so the catalog is trimmed. 45 stays in it because
     # the batched leaves roll their block loop only from kManyRollMinBlocks blocks up
-    # (src/codelet_apply.hpp), and 2..16 never reaches that at float: without 45 no sanitizer ever
-    # executes the rolled body. 45 rolls with a non-empty remainder block in both precisions at
-    # x86-64-v2 (11 + 1 at float, 22 + 1 at double) and still rolls at x86-64-v3.
+    # (include/admiral/detail/codelet.hpp), and 2..16 never reaches that at float: without 45 no
+    # sanitizer ever executes the rolled body. 45 rolls with a non-empty remainder block in both
+    # precisions at x86-64-v2 (11 + 1 at float, 22 + 1 at double) and still rolls at x86-64-v3.
     set(ADM_CODELET_MAX_N 16)
     set(ADM_CODELET_EXTRA_SIZES "45")
 endif()
@@ -52,6 +52,7 @@ set(ADM_CODELET_SEQUENCE "std::integer_sequence<std::size_t, ${ADM_CODELET_RANGE
 set(ADM_CODELET_EXTRA_DISPATCH "")
 set(ADM_CODELET_EXTRA_DISPATCH_MANY "")
 set(ADM_CODELET_EXTRA_DISPATCH_MANY_OOP "")
+set(ADM_CODELET_EXTRA_DISPATCH_COL "")
 foreach(CODELET_N IN LISTS ADM_CODELET_EXTRA_SIZES)
     if(NOT CODELET_N IN_LIST ADM_CODELET_RANGE_SIZES)
         string(APPEND ADM_CODELET_EXTRA_DISPATCH
@@ -69,6 +70,17 @@ foreach(CODELET_N IN LISTS ADM_CODELET_EXTRA_SIZES)
             "        codelet_apply_many_oop<${CODELET_N}, T, Forward>(in, out, nlines, in_stride, out_stride, fct);\n"
             "        return;\n"
             "    }\n")
+        if(NOT CODELET_N GREATER 64)
+            # The col catalog caps at 64: an extra past it has no col_codelet_apply
+            # instantiation, so it gets no arm here; the col route never asks for one
+            # (make_nd_axis_state gates at kFourStepLeafMax).
+            string(APPEND ADM_CODELET_EXTRA_DISPATCH_COL
+                "    if (N == ${CODELET_N}) {\n"
+                "        if (forward) col_codelet_apply<${CODELET_N}, T, true >(in, in_inner, out, out_inner, ncols, scale);\n"
+                "        else         col_codelet_apply<${CODELET_N}, T, false>(in, in_inner, out, out_inner, ncols, scale);\n"
+                "        return;\n"
+                "    }\n")
+        endif()
     endif()
 endforeach()
 

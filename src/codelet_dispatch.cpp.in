@@ -92,8 +92,10 @@ template void codelet_dispatch_many_oop<float,  false>(const std::complex<float>
 template void codelet_dispatch_many_oop<double, true >(const std::complex<double>*, std::complex<double>*, std::size_t, std::size_t, std::size_t, std::size_t, double);
 template void codelet_dispatch_many_oop<double, false>(const std::complex<double>*, std::complex<double>*, std::size_t, std::size_t, std::size_t, std::size_t, double);
 
-// Column-codelet dispatch (ND col axis, len <= 64 in every shipped catalog). The dense
-// jump table already spans those lengths; no extras if-chain.
+// Column-codelet dispatch (ND col axis). Same dense-jump-table + extras-if-chain shape as its
+// siblings: a catalog extra at or below the col cap of 64 (every sanitizer catalog keeps 45) is
+// outside the dense range, so without the chain poet::dispatch would miss it and transform
+// nothing. Col instantiations stop at 64, so the chain covers every extra the col route can meet.
 template<typename T>
 struct col_codelet_invoke {
     template<std::size_t N>
@@ -113,6 +115,7 @@ template<typename T>
 void col_codelet_dispatch(bool forward, const std::complex<T>* in, std::size_t in_inner,
                           std::complex<T>* out, std::size_t out_inner, std::size_t ncols,
                           std::size_t N, T scale) {
+@ADM_CODELET_EXTRA_DISPATCH_COL@
     poet::dispatch(col_codelet_invoke<T>{}, poet::dispatch_param<codelet_catalog_seq>{N},
                    forward, in, in_inner, out, out_inner, ncols, scale);
 }

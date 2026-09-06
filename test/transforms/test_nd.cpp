@@ -559,7 +559,9 @@ TEMPLATE_TEST_CASE("2D page-wide transposed columns match the reference DFT poin
                 got_oop.push_back(out[r * cols + k]);
                 got_ip.push_back(ip[r * cols + k]);
             }
-        const double bound = ulp_bound<T>(n);
+        // 4096 naive terms in a 53-bit reference cost about as many ulps as the transform.
+        const bool ref_wide = long_double_is_wide() || std::numeric_limits<T>::digits < 53;
+        const double bound = ulp_bound<T>(n) * (ref_wide ? 1 : 2);
         INFO("bound " << bound << " ulp, oop " << max_ulps(ref, got_oop) << ", in place "
                       << max_ulps(ref, got_ip));
         REQUIRE(max_ulps(ref, got_oop) <= bound);

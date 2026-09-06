@@ -78,6 +78,14 @@ double ulp_bound(std::size_t N) {
     return 4.0 * std::sqrt(1.0 + std::log2(static_cast<double>(N)));
 }
 
+// Runtime, not numeric_limits: valgrind reports 64 digits and computes x87 at 53; MSVC and arm64
+// macOS are 53 by type. A double-wide reference carries as much rounding as the transform.
+inline bool long_double_is_wide() {
+    volatile long double one = 1;
+    volatile long double tiny = static_cast<long double>(std::numeric_limits<double>::epsilon()) / 4;
+    return (one + tiny) - one != 0;
+}
+
 template <typename T>
 double require_close_pointwise(const std::vector<std::complex<T>>& got,
                                const std::vector<std::complex<long double>>& ref) {

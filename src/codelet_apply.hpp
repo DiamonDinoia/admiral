@@ -174,7 +174,8 @@ ADM_ALWAYS_INLINE void many_scatter_x(T* obase, std::size_t out_stride, std::siz
     poet::static_for<0, H>([&](auto h) {
         // MSVC 19.44 counts the inner lambda's read of the captured h as a closure read and
         // refuses to fold it (P2280, C2131); a constexpr local of this lambda needs no capture.
-        constexpr std::size_t hb = h * G;
+        // MSVC then reports the fold as leaving hb unreferenced (C4189), so it is maybe_unused.
+        [[maybe_unused]] constexpr std::size_t hb = h * G;
         poet::static_for<0, G>([&](auto K) {
             constexpr std::size_t j = hb + K;
             constexpr std::size_t k = j < Cols ? j : 0;

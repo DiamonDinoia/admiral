@@ -159,6 +159,12 @@ layout" case in `test_strides.cpp` then fails at len 64 nbatch 2 out (8192, 1), 
   absolute count because a page-wide strip costs the same at every W. Mechanism at 8192^2: the
   L2 streamer stops at a page, so `l2_rqsts.miss` rises 1.5x while demand `l3_miss` falls to
   0.25 (IPC 0.61 -> 0.94); 4096^2 0.69, 8192^2 0.54, 2048^2 untouched (block 21 > gate).
+- col_dif tile row: `nd_col_block` floors `Bt` at 2048 B of contiguous run (`kColDifMinRowBytes`)
+  when the array exceeds L3. The per-row cost (prologue, prefetch ramp, DRAM page open) is what
+  it amortizes, so it pays only from DRAM: floor alone loses 2d_1024 1.08-1.23x on every build.
+  Fires on 3 of 24 col_dif axes on SPR (2048^2 Bt 16->128, 512^3 both axes 80->128), 5 on genoa,
+  7 on rome (analytical); 2048^2 0.79/0.88/0.96 and 512^3 0.93/0.94/0.97 at gcc W=8/W=4/clang.
+  Not a TLB effect: walks stay flat across a 4x Bt sweep while cycles track instructions.
 - A default-off arm must leave master's TEXT. `const std::size_t pitch = len;` alone, a pure
   SSA alias, shifts gcc 14.2's inline budget and breaks the `nm -S` size-multiset identity.
 

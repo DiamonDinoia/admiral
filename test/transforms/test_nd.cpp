@@ -581,6 +581,72 @@ TEMPLATE_TEST_CASE("2D page-wide transposed columns match the reference DFT poin
     }
 }
 
+// nd_col_block floors the col_dif tile row at kColDifMinRowBytes once the array does not fit L3.
+// 4096 x 4096 x 64 fires on every host; the second shape sits at half this host's L3 and must not.
+TEMPLATE_TEST_CASE("col_dif tile row run is floored when the array does not fit L3",
+                   "[nd][col_dif]", float, double) {
+    using T = TestType;
+    using admiral::detail::col_budget_block;
+    using admiral::detail::nd_col_block;
+    constexpr std::size_t W = xsimd::batch<T>::size;
+    constexpr std::size_t elem = sizeof(std::complex<T>);
+    constexpr std::size_t floor_elems = admiral::detail::kColDifMinRowBytes / elem;
+    const std::size_t big = nd_col_block<T>(4096, 4096, 1, 64);
+    INFO("big " << big << ", floor " << floor_elems);
+    REQUIRE(big >= floor_elems);
+    REQUIRE(big % W == 0);
+    REQUIRE(big <= 4096);
+
+    const std::size_t l3 = admiral::detail::cpu_cache().l3;
+    const std::size_t run_len = std::max<std::size_t>(W, l3 / (2 * 4096 * elem) / W * W);
+    const std::size_t budget = col_budget_block<T>(4096, 1);
+    const std::size_t unfloored =
+        budget < W ? std::min(run_len, W) : std::min(budget - budget % W, run_len);
+    REQUIRE(nd_col_block<T>(4096, run_len, 1, 1) == unfloored);
+}
+
+// 2048^2 at f64 is 64 MiB: on a host with less L3 the col_dif axis runs with the floored tile
+// (Bt 128 instead of 16-21), on a larger L3 it is the plain col_dif chain. Both must be exact.
+TEMPLATE_TEST_CASE("2D col_dif columns of a 64 MiB array match the reference DFT pointwise",
+                   "[nd][2d][col_dif]", float, double) {
+    using T = TestType;
+    const std::size_t rows = 2048, cols = 2048, n = rows * cols;
+    const std::vector<std::size_t> shape{rows, cols};
+    const std::vector<std::size_t> ks{0, 1, 7, cols / 2 - 1, cols / 2, cols - 1};
+    const auto in = make_input<T>(n, 11000u);
+    admiral::plan<T> p(admiral::span<const std::size_t>(shape.data(), shape.size()));
+
+    const auto ref = reference_2d_columns_ld(in, rows, cols, ks);
+    std::vector<std::complex<T>> out(n);
+    p.forward(in.data(), out.data());
+    auto ip = in;
+    p.forward(ip.data());
+    std::vector<std::complex<T>> got_oop, got_ip;
+    for (const std::size_t k : ks)
+        for (std::size_t r = 0; r < rows; ++r) {
+            got_oop.push_back(out[r * cols + k]);
+            got_ip.push_back(ip[r * cols + k]);
+        }
+    const double bound = ulp_bound<T>(n);
+    INFO("bound " << bound << " ulp, oop " << max_ulps(ref, got_oop) << ", in place "
+                  << max_ulps(ref, got_ip));
+    REQUIRE(max_ulps(ref, got_oop) <= bound);
+    REQUIRE(max_ulps(ref, got_ip) <= bound);
+
+    std::vector<std::complex<T>> back(n);
+    p.inverse(out.data(), back.data(), T(1) / static_cast<T>(n));
+    const std::vector<std::complex<long double>> in_ld(in.begin(), in.end());
+    require_close_pointwise(back, in_ld);
+
+    // Positive control: one element off by 8 bounds must trip the pointwise check.
+    long double mag = 0;
+    for (const auto& v : ref) mag = std::max(mag, std::abs(v));
+    auto bad = got_oop;
+    const long double eps = static_cast<long double>(std::numeric_limits<T>::epsilon());
+    bad[ref.size() / 3] += static_cast<T>(8 * static_cast<long double>(bound) * eps * mag);
+    REQUIRE(max_ulps(ref, bad) > bound);
+}
+
 TEMPLATE_TEST_CASE("N-D out-of-place catalog rows match the reference DFT", "[nd][oop]",
                    float, double) {
     using T = TestType;

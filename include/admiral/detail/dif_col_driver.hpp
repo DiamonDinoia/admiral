@@ -28,6 +28,10 @@ namespace detail {
 }
 
 inline constexpr std::size_t kTilesPerWorker = 4;
+// Floor on a col_dif tile row (bt elements contiguous at the axis stride). Below it the per-row
+// cost (prologue, prefetch ramp, DRAM page open) is not amortized. The wider tile spills the
+// scratch out of L2, which pays back only while the rows come from DRAM: hence the L3 test.
+inline constexpr std::size_t kColDifMinRowBytes = 2048;
 
 template<typename T>
 [[nodiscard]] inline std::size_t col_budget_block(std::size_t len, std::size_t nthreads) {
@@ -41,6 +45,8 @@ template<typename T>
     constexpr std::size_t W = xsimd::batch<T>::size;
     if (len == 0) return run_len;
     std::size_t bt = col_budget_block<T>(len, nthreads);
+    constexpr std::size_t elem = sizeof(std::complex<T>);
+    if (len * run_len * nruns * elem > cpu_cache().l3) bt = std::max(bt, kColDifMinRowBytes / elem);
     if (nthreads > 1) {
         const std::size_t tiles = (kTilesPerWorker * nthreads + nruns - 1) / nruns;
         bt = std::min(bt, run_len / tiles);

@@ -65,9 +65,14 @@ void codelet_apply(const std::complex<T>* in, std::complex<T>* out) {
             }
         }
     });
-    for (; i < N; ++i) {
-        xre[i] = in[i].real();
-        xim[i] = in[i].imag();
+    // Every arm above advances i only while i + w <= N, so i <= N holds here; gcc 13 at
+    // x86-64-v2 loses that under -Waggressive-loop-optimizations and reads a wrap into the
+    // scalar tail (false positive; the install job is -Werror). Counting the bounded copy out
+    // from N - i keeps the analysis.
+    const std::size_t tail = N - i;
+    for (std::size_t j = 0; j < tail; ++j) {
+        xre[i + j] = in[i + j].real();
+        xim[i + j] = in[i + j].imag();
     }
 
     if constexpr (!Forward) for (std::size_t k = 0; k < N; ++k) xim[k] = -xim[k];

@@ -102,6 +102,15 @@ template<typename T, std::size_t Wt = 2>
     else return min_sized_tail_width<T, Wt * 2>();
 }
 
+// Block count from which the batched codelet leaves roll their block loop instead of emitting one
+// copy per block (src/codelet_apply.hpp). Measured on retired instructions per call, gcc 14.2
+// x86-64-v3, against a byte-identical control arm reading 1.002: N/W of 7, 8, 15 and 16 cost
+// 0.998-1.037, N/W of 1, 2 and 3 cost 1.06-1.20. Four is the last count that does not clear it.
+// The constant and the sweep it was read off are one artifact; re-derive both together.
+// It lives here, not beside the body it gates, so the test that checks both arms names the same
+// value the body does instead of copying it.
+inline constexpr std::size_t kManyRollMinBlocks = 5;
+
 template<unsigned R, unsigned N, typename T, typename Sink>
 ADM_ALWAYS_INLINE void radix_butterfly_ct(T* ADM_RESTRICT yre, T* ADM_RESTRICT yim,
                                           Sink&& sink) {

@@ -391,7 +391,10 @@ ADM_NOINLINE void col_codelet_tail(const std::complex<T>* in, std::size_t in_inn
     alignas(xsimd::batch<T>::arch_type::alignment()) T sre[W];
     alignas(xsimd::batch<T>::arch_type::alignment()) T sim[W];
     V xre[N], xim[N], yre[N], yim[N];
-    const dir_swap<N, T, V> dir(fwd, xre, xim, yre, yim);
+    // Carry the direction on the data, not on the pointers: feed the forward kernel
+    // (xre, gi*xim), gi = fwd ? 1 : -1, and unfold the output conjugation in the scale.
+    const V gi(fwd ? T(1) : T(-1));
+    const T si = fwd ? scale : -scale;
     for (std::size_t p = 0; p < N; ++p) {
         for (std::size_t l = 0; l < bc; ++l) {
             sre[l] = in[p * in_inner + c + l].real();
@@ -399,14 +402,14 @@ ADM_NOINLINE void col_codelet_tail(const std::complex<T>* in, std::size_t in_inn
         }
         for (std::size_t l = bc; l < W; ++l) { sre[l] = T(0); sim[l] = T(0); }
         xre[p] = V::load_aligned(sre);
-        xim[p] = V::load_aligned(sim);
+        xim[p] = gi * V::load_aligned(sim);
     }
-    dir.apply();
+    kernel_batched<N, T, true, V>::apply(xre, xim, 1, yre, yim);
     for (std::size_t p = 0; p < N; ++p) {
         yre[p].store_aligned(sre);
         yim[p].store_aligned(sim);
         for (std::size_t l = 0; l < bc; ++l)
-            out[p * out_inner + c + l] = std::complex<T>(sre[l] * scale, sim[l] * scale);
+            out[p * out_inner + c + l] = std::complex<T>(sre[l] * scale, sim[l] * si);
     }
 }
 
@@ -429,16 +432,22 @@ ADM_NOINLINE void col_codelet_body(const std::complex<T>* in, std::size_t in_inn
     constexpr std::size_t W = V::size;
     const V sc(scale);
     V xre[N], xim[N], yre[N], yim[N];
-    const dir_swap<N, T, V> dir(fwd, xre, xim, yre, yim);
+    // Carry the direction on the data, not on four runtime-selected pointers: feed the
+    // forward kernel (xre, gi*xim), gi = fwd ? 1 : -1, and unfold the output conjugation
+    // in the scatter's scale (si = fwd ? scale : -scale). The plane arrays are then named
+    // unconditionally, so SRA can promote them and kernel_batched<N>::apply can inline.
+    const V gi(fwd ? T(1) : T(-1));
+    const V si(fwd ? scale : -scale);
     std::size_t c = 0;
     for (; c + W <= ncols; c += W) {
         poet::dynamic_for<kColUnroll>(std::size_t(N), [&](std::size_t p) ADM_LAMBDA_ALWAYS_INLINE {
             aos_deinterleave(reinterpret_cast<const T*>(in + p * in_inner + c), xre[p], xim[p]);
+            xim[p] *= gi;
         });
-        dir.apply();
+        kernel_batched<N, T, true, V>::apply(xre, xim, 1, yre, yim);
         poet::dynamic_for<kColUnroll>(std::size_t(N), [&](std::size_t p) ADM_LAMBDA_ALWAYS_INLINE {
             aos_interleave<T, V>(reinterpret_cast<T*>(out + p * out_inner + c),
-                                 yre[p] * sc, yim[p] * sc);
+                                 yre[p] * sc, yim[p] * si);
         });
     }
     if (c < ncols)

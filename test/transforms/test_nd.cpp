@@ -387,6 +387,38 @@ TEMPLATE_TEST_CASE("choose_line_route narrow-run criterion", "[nd][route]", floa
     CHECK(choose_line_route<T>(st, len_coll, 1, 2 * W, 2) == line_route::col_dif);
 }
 
+TEMPLATE_TEST_CASE("choose_line_route page-strip gate is 2W", "[nd][route]", float, double) {
+    // SP3-GATE-ROME: the col/transposed gate is 2*W columns of budget block at page
+    // geometry (inner * 16 >= 4096) too. The 2026-09-05 widening to max(16, 2W) was
+    // fitted before the 2048 B col-dif floor existed; it flipped rome's 2d_1024 to the
+    // strip route for +14.1%, and once the floor re-priced col_dif both measurable W=4
+    // flips (rome 2d_1024, SPR-v3 2d_4096) favored col_dif instead. The [2W, 16) block
+    // window exists wherever a precision's W < 8 (f64 W=4: rome/v3; f64 W=2 and f32 W=4:
+    // v2/NEON-class, unmeasured), so only such a host fires the distinguishing col_dif
+    // rows; where W >= 8 the forms coincide and the test asserts the shared behavior.
+    using T = TestType;
+    using admiral::detail::choose_line_route;
+    using admiral::detail::col_budget_block;
+    using admiral::detail::line_route;
+
+    admiral::detail::nd_axis_state<T> st{};
+    st.dif = true;
+    constexpr std::size_t W = xsimd::batch<T>::size;
+    constexpr std::size_t elem = sizeof(std::complex<T>);
+    for (std::size_t len = 256; len <= 16384; len *= 2) {
+        if (len * elem < 4096) continue;  // keep the page branch (inner == len geometry)
+        const std::size_t blk = col_budget_block<T>(len, 1);
+        CAPTURE(len, blk);
+        if (blk < 2 * W) {
+            CHECK(choose_line_route<T>(st, len, len, len, 1) == line_route::transposed);
+        } else {
+            // The rome 2d_1024 class (blk in [2W, 16)): must stay col_dif; anything that
+            // resurrects an absolute 16 floor flips this row back to the strip route.
+            CHECK(choose_line_route<T>(st, len, len, len, 1) == line_route::col_dif);
+        }
+    }
+}
+
 TEMPLATE_TEST_CASE("real_run_copy copies exactly its run", "[nd][swizzle]", float, double) {
     using T = TestType;
     constexpr std::size_t W = xsimd::batch<T>::size;

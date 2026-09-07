@@ -155,10 +155,19 @@ layout" case in `test_strides.cpp` then fails at len 64 nbatch 2 out (8192, 1), 
   on SPR (2 MiB L2): 256^3 0.885, 64^3 0.974, everything else inside the 1% floor.
 - Transposed route, rows of one page or more (`inner * 16 >= 4096`): the strip is one page of
   columns capped at 3/4 of L3, the line pitch is `len + W` when `len` is a multiple of a page
-  (4K aliasing, `address_alias` 0.27), and the gate is `col_budget_block < max(16, 2W)`, an
-  absolute count because a page-wide strip costs the same at every W. Mechanism at 8192^2: the
-  L2 streamer stops at a page, so `l2_rqsts.miss` rises 1.5x while demand `l3_miss` falls to
-  0.25 (IPC 0.61 -> 0.94); 4096^2 0.69, 8192^2 0.54, 2048^2 untouched (block 21 > gate).
+  (4K aliasing, `address_alias` 0.27), and the gate is `col_budget_block < 2W`. The step5a
+  widening to `max(16, 2W)` was fitted before the 2048 B col floor re-priced col_dif; with the
+  floor in, both measurable W=4 flips favor col_dif (rome 2d_1024 block 10: 0.86 counter-backed;
+  SPR-v3 4096^2 block 10, Bt floored to 128: 0.92). The forms coincide wherever a precision's
+  W >= 8 (2W >= 16): every campaign-native build except rome's f64 — AVX-512 f64 W=8, f32
+  anywhere on the campaign hosts — so ice/genoa/SPR-native are unchanged by folding and rome
+  keeps the strip at 2d_2048/4096/8192 (blocks 5/2/1, transposed under both forms, the
+  2d_2048/4096 D1 flip wins intact). Where W < 8 the forms differ and none of it is measured
+  here: f64 at v3 (covered: 0.92 above) and at v2/NEON (W=2), f32 at v2/NEON (W=4) — for those
+  targets the change is no fix, it RESTORES the pre-step5a gate those builds always ran.
+  Mechanism at 8192^2: the L2 streamer stops at a page, so `l2_rqsts.miss` rises 1.5x while
+  demand `l3_miss` falls to 0.25 (IPC 0.61 -> 0.94); 4096^2 0.69, 8192^2 0.54, 2048^2 untouched
+  (block 21 > gate).
 - col_dif tile row: `nd_col_block` floors `Bt` at 2048 B of contiguous run (`kColDifMinRowBytes`)
   when the array exceeds L3. The per-row cost (prologue, prefetch ramp, DRAM page open) is what
   it amortizes, so it pays only from DRAM: floor alone loses 2d_1024 1.08-1.23x on every build.

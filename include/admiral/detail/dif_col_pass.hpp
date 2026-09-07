@@ -1,6 +1,9 @@
 #pragma once
 
 // DIF passes down columns, one SIMD lane per column. Butterflies come from butterfly.hpp.
+// Twiddle applies go through piece_fma/piece_fnma (the dif_passes.hpp spelling): the inst_col_*
+// numerics pin (-ffp-contract=on) blocks compiler contraction, so the source fixes the FMA form
+// identically for every store-policy clone.
 
 #include <array>
 #include <cassert>
@@ -38,8 +41,8 @@ ADM_ALWAYS_INLINE void dif_col_piece(const T* ccre, const T* ccim,
         if constexpr (k > 0u) {
             const V owr(twre[(k - 1u) * ido + a]);
             const V owi(twim[(k - 1u) * ido + a]);
-            store_piece<T, PW>(chre + p * B + c, owr * sr - owi * si);
-            store_piece<T, PW>(chim + p * B + c, owr * si + owi * sr);
+            store_piece<T, PW>(chre + p * B + c, piece_fnma(owi, si, owr * sr));
+            store_piece<T, PW>(chim + p * B + c, piece_fma(owr, si, owi * sr));
         } else {
             store_piece<T, PW>(chre + p * B + c, sr);
             store_piece<T, PW>(chim + p * B + c, si);
@@ -77,8 +80,8 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_col_piece_masked(const T* ccre,
         if constexpr (k > 0u) {
             const batch owr(twre[(k - 1u) * ido + a]);
             const batch owi(twim[(k - 1u) * ido + a]);
-            (owr * sr - owi * si).store(chre + p * B + c, m, xsimd::unaligned_mode{});
-            (owr * si + owi * sr).store(chim + p * B + c, m, xsimd::unaligned_mode{});
+            piece_fnma(owi, si, owr * sr).store(chre + p * B + c, m, xsimd::unaligned_mode{});
+            piece_fma(owr, si, owi * sr).store(chim + p * B + c, m, xsimd::unaligned_mode{});
         } else {
             sr.store(chre + p * B + c, m, xsimd::unaligned_mode{});
             si.store(chim + p * B + c, m, xsimd::unaligned_mode{});
@@ -107,8 +110,8 @@ ADM_ALWAYS_INLINE void dif_col_piece_first(const std::complex<T>* data,
         if constexpr (k > 0u) {
             const V owr(twre[(k - 1u) * ido + a]);
             const V owi(twim[(k - 1u) * ido + a]);
-            store_piece<T, PW>(chre + p * B + c, owr * sr - owi * si);
-            store_piece<T, PW>(chim + p * B + c, owr * si + owi * sr);
+            store_piece<T, PW>(chre + p * B + c, piece_fnma(owi, si, owr * sr));
+            store_piece<T, PW>(chim + p * B + c, piece_fma(owr, si, owi * sr));
         } else {
             store_piece<T, PW>(chre + p * B + c, sr);
             store_piece<T, PW>(chim + p * B + c, si);
@@ -135,8 +138,8 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_col_piece_first_masked(
         if constexpr (k > 0u) {
             const batch owr(twre[(k - 1u) * ido + a]);
             const batch owi(twim[(k - 1u) * ido + a]);
-            (owr * sr - owi * si).store(chre + p * B + c, m, xsimd::unaligned_mode{});
-            (owr * si + owi * sr).store(chim + p * B + c, m, xsimd::unaligned_mode{});
+            piece_fnma(owi, si, owr * sr).store(chre + p * B + c, m, xsimd::unaligned_mode{});
+            piece_fma(owr, si, owi * sr).store(chim + p * B + c, m, xsimd::unaligned_mode{});
         } else {
             sr.store(chre + p * B + c, m, xsimd::unaligned_mode{});
             si.store(chim + p * B + c, m, xsimd::unaligned_mode{});
@@ -492,8 +495,8 @@ void dif_col_pass(const T* ccre, const T* ccim,
                         if constexpr (k > 0u) {
                             const batch owr(twre[(k - 1u) * ido + a]);
                             const batch owi(twim[(k - 1u) * ido + a]);
-                            (owr * sr - owi * si).store_unaligned(chre + p * B + c);
-                            (owr * si + owi * sr).store_unaligned(chim + p * B + c);
+                            (piece_fnma(owi, si, owr * sr)).store_unaligned(chre + p * B + c);
+                            (piece_fma(owr, si, owi * sr)).store_unaligned(chim + p * B + c);
                         } else {
                             sr.store_unaligned(chre + p * B + c);
                             si.store_unaligned(chim + p * B + c);
@@ -536,8 +539,8 @@ void dif_col_pass_first(const std::complex<T>* data, std::size_t axis_stride,
                         if constexpr (k > 0u) {
                             const batch owr(twre[(k - 1u) * ido + a]);
                             const batch owi(twim[(k - 1u) * ido + a]);
-                            (owr * sr - owi * si).store_unaligned(chre + p * B + c);
-                            (owr * si + owi * sr).store_unaligned(chim + p * B + c);
+                            (piece_fnma(owi, si, owr * sr)).store_unaligned(chre + p * B + c);
+                            (piece_fma(owr, si, owi * sr)).store_unaligned(chim + p * B + c);
                         } else {
                             sr.store_unaligned(chre + p * B + c);
                             si.store_unaligned(chim + p * B + c);

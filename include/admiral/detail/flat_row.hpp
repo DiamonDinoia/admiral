@@ -201,15 +201,21 @@ ADM_ALWAYS_INLINE void flat_row_apply(const T* ADM_RESTRICT srcp, T* ADM_RESTRIC
             // (t0 = [qa.c0|qc.c0|qb.c0|qd.c0]), so sourcing in natural G-stride order is what
             // lands the rev2-folded lifted cell: T_l lane c = sub-dft G*rev2(c) + g.
             const V qa = d[g], qb = d[G + g], qc = d[2 * G + g], qd = d[3 * G + g];
-            const V A = xsimd::shuffle(qa, qb, xsimd::make_batch_constant<index, fr_merge_lo<W>, arch>());
-            const V B = xsimd::shuffle(qc, qd, xsimd::make_batch_constant<index, fr_merge_lo<W>, arch>());
-            const V Ap = xsimd::shuffle(qa, qb, xsimd::make_batch_constant<index, fr_merge_hi<W>, arch>());
-            const V Bp = xsimd::shuffle(qc, qd, xsimd::make_batch_constant<index, fr_merge_hi<W>, arch>());
+            const V A =
+                xsimd::shuffle(qa, qb, xsimd::make_batch_constant<index, fr_merge_lo<W>, arch>());
+            const V B =
+                xsimd::shuffle(qc, qd, xsimd::make_batch_constant<index, fr_merge_lo<W>, arch>());
+            const V Ap =
+                xsimd::shuffle(qa, qb, xsimd::make_batch_constant<index, fr_merge_hi<W>, arch>());
+            const V Bp =
+                xsimd::shuffle(qc, qd, xsimd::make_batch_constant<index, fr_merge_hi<W>, arch>());
             V t[4];
             t[0] = xsimd::shuffle(A, B, xsimd::make_batch_constant<index, fr_merge_lo<W>, arch>());
             t[1] = xsimd::shuffle(A, B, xsimd::make_batch_constant<index, fr_merge_hi<W>, arch>());
-            t[2] = xsimd::shuffle(Ap, Bp, xsimd::make_batch_constant<index, fr_merge_lo<W>, arch>());
-            t[3] = xsimd::shuffle(Ap, Bp, xsimd::make_batch_constant<index, fr_merge_hi<W>, arch>());
+            t[2] =
+                xsimd::shuffle(Ap, Bp, xsimd::make_batch_constant<index, fr_merge_lo<W>, arch>());
+            t[3] =
+                xsimd::shuffle(Ap, Bp, xsimd::make_batch_constant<index, fr_merge_hi<W>, arch>());
             fr_dif_regs<4, Forward, T, V>(t);
             poet::static_for<0, 4>([&](auto l) {
                 (t[fr_rev2(l)] * f).store_unaligned(dstp + (G * l + g) * W);

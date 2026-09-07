@@ -81,7 +81,7 @@ struct fr_merge_hi {
 
 // Stage twiddle for DIF sub-length 2M, diff-register I: complex lanes j = I*C + c get
 // w_{2M}^j. The AoS multiply needs u = [wr, wr] per pair and v = [-wi, +wi].
-template<unsigned M, unsigned I, bool Conj, typename T, std::size_t W>
+template<unsigned M, std::size_t I, bool Conj, typename T, std::size_t W>
 [[nodiscard]] ADM_CONSTEVAL std::array<T, W> fr_tw(bool swapped) {
     constexpr std::size_t C = W / 2;
     std::array<T, W> a{};
@@ -94,7 +94,7 @@ template<unsigned M, unsigned I, bool Conj, typename T, std::size_t W>
 }
 
 // Broadcast twiddle w_Den^Num: every complex lane of the lifted cell shares one factor.
-template<unsigned Num, unsigned Den, bool Conj, typename T, std::size_t W>
+template<std::size_t Num, std::size_t Den, bool Conj, typename T, std::size_t W>
 [[nodiscard]] ADM_CONSTEVAL std::array<T, W> fr_splat(bool swapped) {
     constexpr std::size_t C = W / 2;
     const ct_sincos_t w = ct_sincos_turns(Conj, Num, Den);
@@ -127,8 +127,9 @@ ADM_ALWAYS_INLINE void fr_stages(V* d) {
         poet::static_for<0, K / (2 * S)>([&](auto G) {
             poet::static_for<0, S>([&](auto I) {
                 constexpr std::size_t a = G * 2 * S + I;
-                static constexpr auto tu = fr_tw<M, I, Forward, T, W>(false);
-                static constexpr auto tv = fr_tw<M, I, Forward, T, W>(true);
+                constexpr std::size_t ii = I;
+                static constexpr auto tu = fr_tw<M, ii, Forward, T, W>(false);
+                static constexpr auto tv = fr_tw<M, ii, Forward, T, W>(true);
                 const V x = d[a], y = d[a + S];
                 d[a] = x + y;
                 d[a + S] = fr_cmul(x - y, V::load_unaligned(tu.data()),
@@ -158,8 +159,8 @@ ADM_ALWAYS_INLINE void fr_dif_regs(V* t) {
                 t[j + M] = x - y;
             } else {
                 constexpr std::size_t W = V::size;
-                static constexpr auto tu = fr_splat<J, D, Forward, T, W>(false);
-                static constexpr auto tv = fr_splat<J, D, Forward, T, W>(true);
+                static constexpr auto tu = fr_splat<j, D, Forward, T, W>(false);
+                static constexpr auto tv = fr_splat<j, D, Forward, T, W>(true);
                 t[j + M] = fr_cmul(x - y, V::load_unaligned(tu.data()),
                                    V::load_unaligned(tv.data()));
             }

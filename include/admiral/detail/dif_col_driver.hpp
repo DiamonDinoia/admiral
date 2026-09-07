@@ -129,6 +129,15 @@ void col_dif_execute_ws(std::complex<T>* data,
         const T* src_re = ping ? cc1re : cc0re;
         const T* src_im = ping ? cc1im : cc0im;
 
+#if ADM_COLDIF_DIET
+        if (N >= kColdifDietMinLen) {
+            poet::dispatch(poet::throw_on_no_match, dif_col_pass_last_staged_invoke<T, Forward>,
+                           poet::dispatch_param<dif_radix_set>{ip},
+                           src_re, src_im, data, axis_stride, l1, ido, B,
+                           dtw.passes[p].first.data(), dtw.passes[p].second.data(), scale_val);
+            return;
+        }
+#endif
         poet::dispatch(poet::throw_on_no_match, dif_col_pass_last_invoke<T, Forward>,
                        poet::dispatch_param<dif_radix_set>{ip},
                        src_re, src_im, data, axis_stride, l1, ido, B,

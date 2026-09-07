@@ -281,7 +281,7 @@ TEMPLATE_TEST_CASE("column engine is bit-identical across alignment classes",
                    "[transforms][strides][numerics]", float, double) {
     using T = TestType;
     for (const std::size_t len : {std::size_t{20}, std::size_t{60}, std::size_t{96},
-                                  std::size_t{192}, std::size_t{256}})
+                                  std::size_t{192}, std::size_t{256}, std::size_t{1024}})
         for (const bool forward : {true, false})
             for (const bool axis : {true, false})
                 require_align_stable<T>(len, 16, forward, axis);

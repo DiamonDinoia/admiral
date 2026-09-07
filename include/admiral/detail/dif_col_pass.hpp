@@ -563,12 +563,16 @@ void dif_col_pass_first(const std::complex<T>* data, std::size_t axis_stride,
 // COLDIF bench arm, default off: preprocessor-armed like the fix4/TINY switches, so at 0 the
 // TU's text is token-identical to the shipped form, and the shipped pass body keeps that text
 // at every switch state — the arm lives in the separate dif_col_pass_last_staged symbol that
-// the last-pass trampoline selects. At 1 the last pass's big pow2 radix runs through
-// staged_dif_butterfly (the row engine's Gentleman-Sande split in butterfly.hpp) instead of
-// the monolithic 2*IP-live terminal radix, on the same gate the row engine uses.
+// the last-pass dispatcher selects on chain length. At 1 the last pass's big pow2 radix runs
+// through staged_dif_butterfly (the row engine's Gentleman-Sande split in butterfly.hpp)
+// instead of the monolithic 2*IP-live terminal radix, on the same gate the row engine uses.
+// A/B 2026-09-07 (logs/coldif-{icelake,genoa}-*): the arm wins at len >= 1024 on both wide
+// hosts (ice 2d_1024/3d_512, genoa 2d_1024/3d_512) and regresses genoa 2d_512's 8 MiB
+// L3-resident class (+3.5% cyc with -8% instr), so admission gates at chain length >= 1024.
 #ifndef ADM_COLDIF_DIET
 #define ADM_COLDIF_DIET 0
 #endif
+inline constexpr std::size_t kColdifDietMinLen = 1024;
 
 template<typename T, bool Forward, std::size_t IP>
 void dif_col_pass_last(const T* ccre, const T* ccim,
@@ -736,19 +740,37 @@ struct dif_col_pass_last_invoke_t {
                     std::complex<T>* data, std::size_t axis_stride,
                     std::size_t l1, std::size_t ido, std::size_t B,
                     const T* twre, const T* twim, T scale_val) const {
-#if ADM_COLDIF_DIET
-        if constexpr (dif_staged_radix<IP>) {
-            dif_col_pass_last_staged<T, Forward, IP>(ccre, ccim, data, axis_stride, l1, B,
-                                                     scale_val);
-            return;
-        }
-#endif
         dif_col_pass_last<T, Forward, IP>(ccre, ccim, data, axis_stride, l1, ido, B, twre, twim,
                                           scale_val);
     }
 };
 template<typename T, bool Forward>
 inline constexpr dif_col_pass_last_invoke_t<T, Forward> dif_col_pass_last_invoke{};
+
+#if ADM_COLDIF_DIET
+// The arm's dispatch twin: instantiated for every dif radix like the shipped table, falling
+// back to the shipped pass outside dif_staged_radix<IP>. col_dif_execute_ws picks this table
+// only when the chain length reaches kColdifDietMinLen, keeping a single len/ISA decision
+// point per dispatch.
+template<typename T, bool Forward>
+struct dif_col_pass_last_staged_invoke_t {
+    template<std::size_t IP>
+    void operator()(const T* ccre, const T* ccim,
+                    std::complex<T>* data, std::size_t axis_stride,
+                    std::size_t l1, std::size_t ido, std::size_t B,
+                    const T* twre, const T* twim, T scale_val) const {
+        if constexpr (dif_staged_radix<IP>) {
+            dif_col_pass_last_staged<T, Forward, IP>(ccre, ccim, data, axis_stride, l1, B,
+                                                     scale_val);
+        } else {
+            dif_col_pass_last<T, Forward, IP>(ccre, ccim, data, axis_stride, l1, ido, B, twre,
+                                              twim, scale_val);
+        }
+    }
+};
+template<typename T, bool Forward>
+inline constexpr dif_col_pass_last_staged_invoke_t<T, Forward> dif_col_pass_last_staged_invoke{};
+#endif
 
 template<typename T, bool Forward>
 struct dif_col_pass_fused_invoke_t {

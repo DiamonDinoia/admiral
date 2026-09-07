@@ -43,7 +43,7 @@ namespace detail {
 // campaign item).
 template<unsigned N, typename V>
 [[nodiscard]] ADM_CONSTEVAL bool fr_shape() {
-    constexpr unsigned K = 2u * N / V::size;
+    constexpr std::size_t K = 2u * N / V::size;
     return K == 2u || K == 4u || K == 8u;
 }
 template<unsigned N, typename V>
@@ -150,7 +150,8 @@ ADM_ALWAYS_INLINE void fr_dif_regs(V* t) {
     if constexpr (D > 1) {
         constexpr unsigned M = D / 2;
         poet::static_for<0, M>([&](auto J) {
-            constexpr unsigned j = J;
+            // poet indices are ptrdiff_t; narrowing the copy trips MSVC C4244 under /WX.
+            constexpr std::size_t j = J;
             const V x = t[j], y = t[j + M];
             t[j] = x + y;
             if constexpr (j == 0) {

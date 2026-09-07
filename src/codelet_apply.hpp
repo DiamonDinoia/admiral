@@ -214,6 +214,13 @@ template<unsigned N, typename V>
 inline constexpr bool kManyXpose =
     2 * V::size * ((N + V::size - 1) / V::size) <= poet::vector_register_count();
 
+// The fused gather is one transpose per row group where the split gather priced two plane
+// transposes plus a per-row deinterleave pair, so at N = 2/4 the block costs less than the
+// scalar per-line fallback this exclusion was written for.
+template<unsigned N, typename V>
+inline constexpr bool kManyBlocked =
+    kManyXpose<N, V> || (N != 2 && N != 4);
+
 // ADM_NOINLINE is load-bearing: `fwd` arrives as a constant from each leaf wrapper, so a compiler
 // free to inline this body would fold it and re-specialise, putting back the copy the merge cut.
 template<unsigned N, typename T>
@@ -227,7 +234,7 @@ ADM_NOINLINE void codelet_many_body(const std::complex<T>* in, std::complex<T>* 
     constexpr std::size_t kUnroll = kManyUnroll<V>;
 
     std::size_t r = 0;
-    if constexpr (N != 2 && N != 4) {
+    if constexpr (kManyBlocked<N, V>) {
         const V f(fct);
         V re[N], im[N], yr[N], yi[N];
         const dir_swap<N, T, V> dir(fwd, re, im, yr, yi);
@@ -285,7 +292,7 @@ void codelet_many_static(const std::complex<T>* in, std::complex<T>* out,
     constexpr std::size_t kBlocks = (N + W - 1) / W;
 
     std::size_t r = 0;
-    if constexpr (N != 2 && N != 4) {
+    if constexpr (kManyBlocked<N, V>) {
         const V fr(fct), fi(Forward ? fct : -fct);
         for (; r + W <= nlines; r += W) {
             const T* ibase = reinterpret_cast<const T*>(in + r * in_stride);

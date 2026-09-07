@@ -124,17 +124,19 @@ ADM_ALWAYS_INLINE void fr_stages(V* d) {
     constexpr std::size_t K = 2 * N / W;
     if constexpr (M >= C) {
         constexpr std::size_t S = M / C;
-        poet::static_for<0, K / (2 * S)>([&](auto G) {
-            poet::static_for<0, S>([&](auto I) {
-                constexpr std::size_t a = G * 2 * S + I;
-                constexpr std::size_t ii = I;
-                static constexpr auto tu = fr_tw<M, ii, Forward, T, W>(false);
-                static constexpr auto tv = fr_tw<M, ii, Forward, T, W>(true);
-                const V x = d[a], y = d[a + S];
-                d[a] = x + y;
-                d[a + S] = fr_cmul(x - y, V::load_unaligned(tu.data()),
-                                   V::load_unaligned(tv.data()));
-            });
+        // One static_for level only: MSVC's constant evaluator cannot read an
+        // integral_constant through two nested closure floors (C2131).
+        poet::static_for<0, K / 2>([&](auto P) {
+            constexpr std::size_t t = P;
+            constexpr std::size_t G = t / S;
+            constexpr std::size_t I = t % S;
+            constexpr std::size_t a = G * 2 * S + I;
+            static constexpr auto tu = fr_tw<M, I, Forward, T, W>(false);
+            static constexpr auto tv = fr_tw<M, I, Forward, T, W>(true);
+            const V x = d[a], y = d[a + S];
+            d[a] = x + y;
+            d[a + S] = fr_cmul(x - y, V::load_unaligned(tu.data()),
+                               V::load_unaligned(tv.data()));
         });
         fr_stages<N, M / 2, Forward, T, V>(d);
     }

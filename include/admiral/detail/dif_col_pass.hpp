@@ -560,6 +560,16 @@ void dif_col_pass_first(const std::complex<T>* data, std::size_t axis_stride,
                                               twre, twim);
 }
 
+// COLDIF bench arm, default off: preprocessor-armed like the fix4/TINY switches, so at 0 the
+// TU's text is token-identical to the shipped form, and the shipped pass body keeps that text
+// at every switch state — the arm lives in the separate dif_col_pass_last_staged symbol that
+// the last-pass trampoline selects. At 1 the last pass's big pow2 radix runs through
+// staged_dif_butterfly (the row engine's Gentleman-Sande split in butterfly.hpp) instead of
+// the monolithic 2*IP-live terminal radix, on the same gate the row engine uses.
+#ifndef ADM_COLDIF_DIET
+#define ADM_COLDIF_DIET 0
+#endif
+
 template<typename T, bool Forward, std::size_t IP>
 void dif_col_pass_last(const T* ccre, const T* ccim,
                        std::complex<T>* data, std::size_t axis_stride,
@@ -607,6 +617,57 @@ void dif_col_pass_last(const T* ccre, const T* ccim,
         }
     }
 }
+
+#if ADM_COLDIF_DIET
+// The armed form of dif_col_pass_last: same c-walk and store policies, but the butterfly runs
+// through staged_dif_butterfly. A separate symbol, selected in the trampoline, so the shipped
+// body's TU stays token-identical at every switch state (a shared lambda with a discarded arm
+// perturbs gcc's cloning of the untouched radices; measured 5-14 byte growth on
+// pass_last<7..25> with the arm text present).
+template<typename T, bool Forward, std::size_t IP>
+void dif_col_pass_last_staged(const T* ccre, const T* ccim,
+                              std::complex<T>* data, std::size_t axis_stride,
+                              std::size_t l1, std::size_t B, T scale_val = T(1)) {
+    using batch = xsimd::batch<T>;
+    constexpr std::size_t W = batch::size;
+
+    if (B < W) {
+        dif_col_tail_last<T, Forward, IP>(ccre, ccim, data, axis_stride, l1, B, scale_val);
+        return;
+    }
+
+    const std::size_t peel = aos_store_align_peel<T>(data, axis_stride, B);
+
+    for (std::size_t b = 0; b < l1; ++b) {
+        const auto vec_block = [&](std::size_t c, auto store) {
+            const auto load_in = [&](const auto j, batch& lr, batch& li) {
+                const std::size_t p = j + IP * b;
+                lr = batch::load_unaligned(ccre + p * B + c);
+                li = batch::load_unaligned(ccim + p * B + c);
+            };
+            const batch sv(scale_val);
+            staged_dif_butterfly<T, IP, batch>(load_in,
+                                               [&](const auto k, batch sr, batch si) {
+                    T* dst =
+                        reinterpret_cast<T*>(data + (b + l1 * k) * axis_stride + c);
+                    const auto [xr, xi] = plane_vals<Forward>(sr * sv, si * sv);
+                    store(dst, xr, xi);
+                });
+        };
+        std::size_t c = 0;
+        if (peel > 0) {
+            vec_block(0, [peel](T* d, batch r, batch i) { aos_interleave_prefix_n<T>(d, r, i, peel); });
+            c = peel;
+        }
+        const auto full_store = [](T* d, batch r, batch i) { aos_interleave<T>(d, r, i); };
+        for (; c + W <= B; c += W) vec_block(c, full_store);
+        if (c < B) {
+            const std::size_t m0 = c - (B - W);
+            vec_block(B - W, [m0](T* d, batch r, batch i) { aos_interleave_suffix_n<T>(d, r, i, m0); });
+        }
+    }
+}
+#endif
 
 template<typename T, bool Forward, std::size_t IP>
 void dif_col_pass_fused(std::complex<T>* data, std::size_t axis_stride,
@@ -675,6 +736,13 @@ struct dif_col_pass_last_invoke_t {
                     std::complex<T>* data, std::size_t axis_stride,
                     std::size_t l1, std::size_t ido, std::size_t B,
                     const T* twre, const T* twim, T scale_val) const {
+#if ADM_COLDIF_DIET
+        if constexpr (dif_staged_radix<IP>) {
+            dif_col_pass_last_staged<T, Forward, IP>(ccre, ccim, data, axis_stride, l1, B,
+                                                     scale_val);
+            return;
+        }
+#endif
         dif_col_pass_last<T, Forward, IP>(ccre, ccim, data, axis_stride, l1, ido, B, twre, twim,
                                           scale_val);
     }

@@ -254,6 +254,96 @@ ADM_ALWAYS_INLINE void dif_butterfly_terminal(const V (&tr)[IP],
     }
 }
 
+// Sweep knobs, not shipped API: ADM_FIX2_N2 forces the outer split factor, ADM_FIX2_L3
+// splits stage B again when it is wide enough to pay for a second scratch.
+#ifndef ADM_FIX2_N2
+#define ADM_FIX2_N2 0
+#endif
+#ifndef ADM_FIX2_L3
+#define ADM_FIX2_L3 0
+#endif
+
+// Gentleman-Sande outer split of one pow2 radix, IP = N1 * N2, staged through an L1 scratch.
+// The monolithic radix keeps 2*IP vector registers live, so the whole set spills at IP >= 16.
+// Stage A runs N2 radix-N1 butterflies over j = n + N2*m and writes a[r][n] = A_r(n)*w_IP^(n*r);
+// stage B reads one r row back and runs a radix-N2 butterfly, emitting k = r + N1*k2.
+// Peak live is 2*N2 + O(1) registers, and the scratch is IP*W elements per plane.
+template<std::size_t IP>
+[[nodiscard]] ADM_CONSTEVAL std::size_t staged_dif_n2() {
+    constexpr std::size_t forced = ADM_FIX2_N2 > 1u ? std::size_t(ADM_FIX2_N2) : IP;
+    if (forced < IP && IP % forced == 0u) return forced;
+    return IP / 4u <= 8u ? IP / 4u : 8u;
+}
+
+template<typename T, std::size_t IP, typename V, typename Load, typename Emit>
+ADM_ALWAYS_INLINE void staged_dif_butterfly(Load&& load, Emit&& emit);
+
+// A stateless loader over one contiguous scratch row, for the recursive stage-B split. A
+// local class cannot carry a member template, so it lives here.
+template<typename T, std::size_t Stride, typename V>
+struct staged_row_loader {
+    const T* ar;
+    const T* ai;
+    template<typename J>
+    ADM_ALWAYS_INLINE void operator()(J, V& lr, V& li) const {
+        lr = V::load_aligned(ar + J::value * Stride * V::size);
+        li = V::load_aligned(ai + J::value * Stride * V::size);
+    }
+};
+
+// Stage B of the outer split: one radix-N2 butterfly over the scratch row.
+template<typename T, std::size_t N2, std::size_t Stride, typename V, typename Emit>
+ADM_ALWAYS_INLINE void staged_dif_stage_b(const T* ar, const T* ai, Emit&& emit) {
+    constexpr std::size_t W = V::size;
+    if constexpr (ADM_FIX2_L3 && N2 >= 16u) {
+        staged_dif_butterfly<T, N2, V>(staged_row_loader<T, Stride, V>{ar, ai},
+                                       std::forward<Emit>(emit));
+    } else {
+        V cr[N2], ci[N2];
+        poet::static_for<0, N2>([&](const auto n) ADM_LAMBDA_ALWAYS_INLINE {
+            cr[n] = V::load_aligned(ar + n * Stride * W);
+            ci[n] = V::load_aligned(ai + n * Stride * W);
+        });
+        sub_dft<T, N2, V>(cr, ci, std::forward<Emit>(emit));
+    }
+}
+
+template<typename T, std::size_t IP, typename V, typename Load, typename Emit>
+ADM_ALWAYS_INLINE void staged_dif_butterfly(Load&& load, Emit&& emit) {
+    constexpr std::size_t N2 = staged_dif_n2<IP>();
+    constexpr std::size_t N1 = IP / N2;
+    constexpr std::size_t W = V::size;
+    static_assert(N1 * N2 == IP && N1 >= 2 && N2 >= 2, "staged split must factor IP");
+    alignas(V::arch_type::alignment()) T ar[IP * W];
+    alignas(V::arch_type::alignment()) T ai[IP * W];
+    poet::static_for<0, N2>([&](const auto n) ADM_LAMBDA_ALWAYS_INLINE {
+        V br[N1], bi[N1];
+        poet::static_for<0, N1>([&](const auto m) ADM_LAMBDA_ALWAYS_INLINE {
+            load(std::integral_constant<std::size_t, n + N2 * m>{}, br[m], bi[m]);
+        });
+        sub_dft<T, N1, V>(br, bi, [&](const auto r, V yr, V yi) ADM_LAMBDA_ALWAYS_INLINE {
+            constexpr std::size_t e = (r * n) % IP;
+            const auto [fr, fi] = apply_stage_twiddle<T, IP, e, V>(yr, yi);
+            fr.store_aligned(ar + (r * N2 + n) * W);
+            fi.store_aligned(ai + (r * N2 + n) * W);
+        });
+    });
+    poet::static_for<0, N1>([&](const auto r) ADM_LAMBDA_ALWAYS_INLINE {
+        constexpr std::size_t off = r * N2 * W;
+        staged_dif_stage_b<T, N2, 1u, V>(
+            ar + off, ai + off, [&](const auto k2, V yr, V yi) ADM_LAMBDA_ALWAYS_INLINE {
+                emit(std::integral_constant<std::size_t, r + N1 * k2>{}, yr, yi);
+            });
+    });
+}
+
+// Radices this large spill the monolithic butterfly's 2*IP live registers, so passes route
+// them through the staged split above instead.
+template<std::size_t IP>
+inline constexpr bool dif_staged_radix =
+    detail::has_single_bit(IP) && IP >= 16 &&
+    dif_butterfly_wants_reload<IP> && poet::vector_register_count() >= 32;
+
 template<std::size_t IP>
 ADM_CONSTEVAL std::size_t dif_pass_unroll() {
     constexpr std::size_t peak_live = 2u * IP + 10u;

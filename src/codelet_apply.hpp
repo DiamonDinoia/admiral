@@ -4,8 +4,15 @@
 #include <cstddef>
 #include "admiral/detail/cxx_compat.hpp"
 
+#ifndef ADM_ND_FLATROW
+#define ADM_ND_FLATROW 0
+#endif
+
 #include "admiral/detail/codelet.hpp"
 #include "admiral/detail/math.hpp"
+#if ADM_ND_FLATROW
+#include "admiral/detail/flat_row.hpp"
+#endif
 #include "admiral/detail/simd_swizzle.hpp"
 #include "admiral/detail/macros.hpp"
 
@@ -299,6 +306,15 @@ void codelet_many_static(const std::complex<T>* in, std::complex<T>* out,
             T* obase = reinterpret_cast<T*>(out + r * out_stride);
             V re[N], im[N], yr[N], yi[N];
 
+#if ADM_ND_FLATROW
+            if constexpr (kFlatRow<N, V>) {
+                const V f(fct);
+                poet::static_for<0, W>([&](auto L) {
+                    flat_row_apply<N, T, V, Forward>(
+                        ibase + L * 2 * in_stride, obase + L * 2 * out_stride, f);
+                });
+            } else
+#endif
             if constexpr (kManyXpose<N, V>) {
                 poet::static_for<0, kBlocks>([&](auto B) {
                     constexpr std::size_t j0 = B * W;

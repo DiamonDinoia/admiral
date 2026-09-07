@@ -30,11 +30,15 @@ namespace detail {
 // Admission: powers of two covering whole batches with the lift group intact, sized by the
 // register model. Live set is K = 2N/W data registers plus a working set of four (twiddle
 // operands fold from memory as FMA sources; gcc needs two table loads and two temporaries in
-// flight), priced against the same 3/4-file budget usable_vector_regs gives flat_leaf.
+// flight), priced against the same 3/4-file budget usable_vector_regs gives flat_leaf. The
+// K <= 8 clause is kernel shape, not register price: the intra-store maps are derived for
+// K in {4, 8} (see the static_asserts), and it is what keeps 128-bit ISAs with 32+ vector
+// registers (arm_neon, ppc_vsx/altivec, mips_msa) from admitting f32 N = 32 at K = 16, a
+// shape the register budget alone would wave through and the asserts would then hard-stop.
 template<unsigned N, typename V>
 inline constexpr bool kFlatRow =
     (N & (N - 1u)) == 0u && N >= 16u && N <= 32u && V::size >= 4 &&
-    2u * N / V::size >= V::size / 2u &&
+    2u * N / V::size >= V::size / 2u && 2u * N / V::size <= 8u &&
     2u * N / V::size + 4u <= usable_vector_regs(poet::vector_register_count());
 
 // Swap re/im inside every complex element.

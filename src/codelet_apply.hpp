@@ -5,7 +5,7 @@
 #include "admiral/detail/cxx_compat.hpp"
 
 #ifndef ADM_ND_FLATROW
-#define ADM_ND_FLATROW 0
+#define ADM_ND_FLATROW 1
 #endif
 
 #include "admiral/detail/codelet.hpp"

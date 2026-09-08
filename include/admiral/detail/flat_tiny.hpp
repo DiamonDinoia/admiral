@@ -33,9 +33,9 @@ namespace detail {
 // incumbent, instruction count sane; evidence w2-tiny-census-{master,on}.txt):
 //   N=4 W=2  (f64 v2):        8 -> 0 sh, total 196 -> 177
 //   N=4 W=4  (f32 v2/f64 v3): 17 -> 9 / 32+4 -> 20+2 sh+sp, total +-2%
-//   N=4 W=8  f64 only (v4):   6 -> 4 sh/row, spills 0; total +11% all on FP ports (the in-
-//        register net computes both butterfly halves by construction) — the intended port
-//        trade, not the TINY3 shape (which ADDED p5 uops).
+//   N=4 W=8  f64 only (v4):   net p5 shuffle class -16 per 8-row block (48 -> 32) with the
+//        scalar/addressing side lower; the +11% total is FP-port arithmetic — the in-regis-
+//        ter net computes both butterfly halves by construction. The port trade, not TINY3's.
 //        EXCLUDED f32 at W = 8 (v3): 48 sh per 8-row block both arms, total +15% — no
 //        shuffle win paid for by more work.
 //   N=4 W=16 f32 (v4 braid):  108+2 -> 56+2 per 16-line block, total 329 -> 315.

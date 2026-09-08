@@ -8,7 +8,7 @@
 #define ADM_ND_FLATROW 1
 #endif
 #ifndef ADM_ND_FLATTINY
-#define ADM_ND_FLATTINY 0
+#define ADM_ND_FLATTINY 1
 #endif
 
 #include "admiral/detail/codelet.hpp"

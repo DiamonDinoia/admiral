@@ -575,14 +575,14 @@ void dif_col_pass_first(const std::complex<T>* data, std::size_t axis_stride,
 #endif
 inline constexpr std::size_t kColdifDietMinLen = 1024;
 
-// COLDIF A2 prototype, default OFF pending the host A/B wave: the same staged diet for the
-// col chain's FIRST pass and the single-pass fused form. The chain-length floor differs from
-// A1's on purpose: A1's 1024 prices the LAST pass's L3-resident regression class (genoa
-// 2d_512), while the first pass's named wins sit at chains 128/256 (ice 2d_128/3d_128
+// COLDIF A2 arm, default ON since the host A/B wave (team-r5-shared/ab/w1): the same staged
+// diet for the col chain's FIRST pass and the single-pass fused form. The chain-length floor
+// differs from A1's on purpose: A1's 1024 prices the LAST pass's L3-resident regression class
+// (genoa 2d_512), while the first pass's named wins sit at chains 128/256 (ice 2d_128/3d_128
 // first<16> shares), so 128 is the floor the wave re-prices. The same discipline as A1
 // below: at 0 the TU's text is token-identical to the shipped form.
 #ifndef ADM_COLDIF_FIRST
-#define ADM_COLDIF_FIRST 0
+#define ADM_COLDIF_FIRST 1
 #endif
 inline constexpr std::size_t kColdifFirstMinLen = 128;
 

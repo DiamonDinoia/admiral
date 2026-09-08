@@ -560,7 +560,8 @@ void dif_col_pass_first(const std::complex<T>* data, std::size_t axis_stride,
                                               twre, twim);
 }
 
-// COLDIF bench arm, default off: preprocessor-armed like the fix4/TINY switches, so at 0 the
+// COLDIF arm, default ON since the A/B (2026-09-07, jobs 6997097/6997221/6997847/6998024):
+// wins at chain length >= 1024 on both wide hosts, exclusions proven neutral below. At 0 the
 // TU's text is token-identical to the shipped form, and the shipped pass body keeps that text
 // at every switch state — the arm lives in the separate dif_col_pass_last_staged symbol that
 // the last-pass dispatcher selects on chain length. At 1 the last pass's big pow2 radix runs
@@ -570,7 +571,7 @@ void dif_col_pass_first(const std::complex<T>* data, std::size_t axis_stride,
 // hosts (ice 2d_1024/3d_512, genoa 2d_1024/3d_512) and regresses genoa 2d_512's 8 MiB
 // L3-resident class (+3.5% cyc with -8% instr), so admission gates at chain length >= 1024.
 #ifndef ADM_COLDIF_DIET
-#define ADM_COLDIF_DIET 0
+#define ADM_COLDIF_DIET 1
 #endif
 inline constexpr std::size_t kColdifDietMinLen = 1024;
 

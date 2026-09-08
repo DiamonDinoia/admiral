@@ -28,14 +28,29 @@
 namespace admiral {
 namespace detail {
 
-// Candidate (N, W) shapes, as an equality whitelist so the census can drop entries with a
-// rationale comment. N = 4: W in {2, 4, 8} flat with K in {4, 2, 1}, W = 16 braided two rows
-// per register. N = 8: W in {2, 4, 8, 16} flat with K in {8, 4, 2, 1}.
+// Admission: an equality whitelist per (N, W, sizeof(T)), cut by the w2 static census of
+// codelet_many_static<N> at v2/v3/v4 (shuffles+spills must fall against the batched
+// incumbent, instruction count sane; evidence w2-tiny-census-{master,on}.txt):
+//   N=4 W=2  (f64 v2):        8 -> 0 sh, total 196 -> 177
+//   N=4 W=4  (f32 v2/f64 v3): 17 -> 9 / 32+4 -> 20+2 sh+sp, total +-2%
+//   N=4 W=8  f64 only (v4):   6 -> 4 sh/row, spills 0; total +11% all on FP ports (the in-
+//        register net computes both butterfly halves by construction) — the intended port
+//        trade, not the TINY3 shape (which ADDED p5 uops).
+//        EXCLUDED f32 at W = 8 (v3): 48 sh per 8-row block both arms, total +15% — no
+//        shuffle win paid for by more work.
+//   N=4 W=16 f32 (v4 braid):  108+2 -> 56+2 per 16-line block, total 329 -> 315.
+//   N=8 W=2  (f64 v2):        16 -> 1 sh, total 381 -> 308.
+//   N=8 W=4  (f32 v2/f64 v3): 33 -> 25 / 64+29 -> 48+4 sh+sp, totals -44/-56.
+//   N=8 W=8  (f32 v3/f64 v4): 96+42 -> 88+2 / 96+4 -> 72+0 sh+sp, totals -40/+6%.
+//        EXCLUDED N=8 W=16 (f32 v4): the incumbent's 16-line transpose amortises to
+//        64+38 per block; the C=8 intra net costs 96 — shuffles go UP.
 template<unsigned N, typename V>
 [[nodiscard]] ADM_CONSTEVAL bool ft_shape() {
     constexpr std::size_t W = V::size;
-    if constexpr (N == 4) return W == 2u || W == 4u || W == 8u || W == 16u;
-    else if constexpr (N == 8) return W == 2u || W == 4u || W == 8u || W == 16u;
+    constexpr std::size_t B = sizeof(typename V::value_type);
+    if constexpr (N == 4) return W == 2u || W == 4u || (W == 8u && B == 8u) ||
+                                 (W == 16u && B == 4u);
+    else if constexpr (N == 8) return W == 2u || W == 4u || W == 8u;
     else return false;
 }
 template<unsigned N, typename V>
@@ -62,7 +77,9 @@ inline constexpr bool kFlatTiny =
 // map stays row-local because 2M <= N.
 template<std::size_t M>
 struct ft_xor {
-    static constexpr std::size_t get(std::size_t i, std::size_t) { return 2u * ((i / 2u) ^ M) + (i % 2u); }
+    static constexpr std::size_t get(std::size_t i, std::size_t) {
+        return 2u * ((i / 2u) ^ M) + (i % 2u);
+    }
 };
 
 // Stage-M merge: lanes with bit log2(M) set take the (twiddled) diff in source b, the rest

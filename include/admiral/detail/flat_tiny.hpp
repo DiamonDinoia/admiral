@@ -28,29 +28,24 @@
 namespace admiral {
 namespace detail {
 
-// Admission: an equality whitelist per (N, W, sizeof(T)), cut by the w2 static census of
-// codelet_many_static<N> at v2/v3/v4 (shuffles+spills must fall against the batched
-// incumbent, instruction count sane; evidence w2-tiny-census-{master,on}.txt):
-//   N=4 W=2  (f64 v2):        8 -> 0 sh, total 196 -> 177
-//   N=4 W=4  (f32 v2/f64 v3): 17 -> 9 / 32+4 -> 20+2 sh+sp, total +-2%
-//   N=4 W=8  f64 only (v4):   net p5 shuffle class -16 per 8-row block (48 -> 32) with the
-//        scalar/addressing side lower; the +11% total is FP-port arithmetic — the in-regis-
-//        ter net computes both butterfly halves by construction. The port trade, not TINY3's.
-//        EXCLUDED f32 at W = 8 (v3): 48 sh per 8-row block both arms, total +15% — no
-//        shuffle win paid for by more work.
-//   N=4 W=16 f32 (v4 braid):  108+2 -> 56+2 per 16-line block, total 329 -> 315.
-//   N=8 W=2  (f64 v2):        16 -> 1 sh, total 381 -> 308.
-//   N=8 W=4  (f32 v2/f64 v3): 33 -> 25 / 64+29 -> 48+4 sh+sp, totals -44/-56.
-//   N=8 W=8  (f32 v3/f64 v4): 96+42 -> 88+2 / 96+4 -> 72+0 sh+sp, totals -40/+6%.
-//        EXCLUDED N=8 W=16 (f32 v4): the incumbent's 16-line transpose amortises to
-//        64+38 per block; the C=8 intra net costs 96 — shuffles go UP.
+// Admission: an equality whitelist per (N, W, sizeof(T)). The w2 static census
+// (evidence w2-tiny-census-{master,on}.txt) kept every (N, W, T) whose shuffles+spills
+// fell against the batched incumbent; the r5 wave A/B then cut the default-on set by
+// measured floor (team-r5-shared/ab/w2/, reroll mds), landing on f64 at W <= 4 only:
+//   ADMIT:  N in {4, 8}, sizeof(T) == 8, W in {2, 4}.
+//   EXCLUDED W = 8 f64 (v4 class): ice 3d_8 -3.3% WIN vs genoa +3.1% REAL-REGRESSION
+//     (reroll-icelake.md:14 / reroll-genoa.md:14, dir-consistent both instruments) —
+//     same (N, W, T), opposite sign, no geometry key separates them; 3d_4 at-best-noise
+//     both hosts (ice +2.0% / genoa -0.9%, under the 2% lottery tolerance).
+//   EXCLUDED W = 16 f32 (v4 braid) and all remaining f32: never reached a beyond-floor
+//     wave measurement; static-only wins stay off by default.
+//   Census losers excluded at that stage: N4 W8 f32 (48 = 48 sh per block, +15% instr),
+//   N8 W16 (sh 64 -> 96 UP).
 template<unsigned N, typename V>
 [[nodiscard]] ADM_CONSTEVAL bool ft_shape() {
     constexpr std::size_t W = V::size;
     constexpr std::size_t B = sizeof(typename V::value_type);
-    if constexpr (N == 4) return W == 2u || W == 4u || (W == 8u && B == 8u) ||
-                                 (W == 16u && B == 4u);
-    else if constexpr (N == 8) return W == 2u || W == 4u || W == 8u;
+    if constexpr (N == 4 || N == 8) return B == 8u && (W == 2u || W == 4u);
     else return false;
 }
 template<unsigned N, typename V>

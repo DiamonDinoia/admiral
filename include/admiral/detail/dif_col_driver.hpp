@@ -84,10 +84,17 @@ void col_dif_execute_ws(std::complex<T>* data,
                     data[i * axis_stride + j] = first_src[i * first_src_stride + j];
         const std::size_t ip = dtw.radices[0];
         const std::size_t ido = N / ip;
+#if ADM_COLDIF_FIRST
+        poet::dispatch(poet::throw_on_no_match, dif_col_pass_fused_staged_invoke<T, Forward>,
+                       poet::dispatch_param<dif_radix_set>{ip},
+                       data, axis_stride, std::size_t{1}, ido, B,
+                       dtw.passes[0].first.data(), dtw.passes[0].second.data(), scale_val);
+#else
         poet::dispatch(poet::throw_on_no_match, dif_col_pass_fused_invoke<T, Forward>,
                        poet::dispatch_param<dif_radix_set>{ip},
                        data, axis_stride, std::size_t{1}, ido, B,
                        dtw.passes[0].first.data(), dtw.passes[0].second.data(), scale_val);
+#endif
         return;
     }
 
@@ -96,10 +103,21 @@ void col_dif_execute_ws(std::complex<T>* data,
         const std::size_t rd_stride = first_src ? first_src_stride : axis_stride;
         const std::size_t ip = dtw.radices[0];
         const std::size_t ido = N / ip;
-        poet::dispatch(poet::throw_on_no_match, dif_col_pass_first_invoke<T, Forward>,
-                       poet::dispatch_param<dif_radix_set>{ip},
-                       rd, rd_stride, cc0re, cc0im, std::size_t{1}, ido, B,
-                       dtw.passes[0].first.data(), dtw.passes[0].second.data());
+#if ADM_COLDIF_FIRST
+        if (N >= kColdifFirstMinLen) {
+            poet::dispatch(poet::throw_on_no_match,
+                           dif_col_pass_first_staged_invoke<T, Forward>,
+                           poet::dispatch_param<dif_radix_set>{ip},
+                           rd, rd_stride, cc0re, cc0im, std::size_t{1}, ido, B,
+                           dtw.passes[0].first.data(), dtw.passes[0].second.data());
+        } else
+#endif
+        {
+            poet::dispatch(poet::throw_on_no_match, dif_col_pass_first_invoke<T, Forward>,
+                           poet::dispatch_param<dif_radix_set>{ip},
+                           rd, rd_stride, cc0re, cc0im, std::size_t{1}, ido, B,
+                           dtw.passes[0].first.data(), dtw.passes[0].second.data());
+        }
     }
 
     std::size_t l1 = dtw.radices[0];

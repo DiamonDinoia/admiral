@@ -575,6 +575,17 @@ void dif_col_pass_first(const std::complex<T>* data, std::size_t axis_stride,
 #endif
 inline constexpr std::size_t kColdifDietMinLen = 1024;
 
+// COLDIF A2 prototype, default OFF pending the host A/B wave: the same staged diet for the
+// col chain's FIRST pass and the single-pass fused form. The chain-length floor differs from
+// A1's on purpose: A1's 1024 prices the LAST pass's L3-resident regression class (genoa
+// 2d_512), while the first pass's named wins sit at chains 128/256 (ice 2d_128/3d_128
+// first<16> shares), so 128 is the floor the wave re-prices. The same discipline as A1
+// below: at 0 the TU's text is token-identical to the shipped form.
+#ifndef ADM_COLDIF_FIRST
+#define ADM_COLDIF_FIRST 0
+#endif
+inline constexpr std::size_t kColdifFirstMinLen = 128;
+
 template<typename T, bool Forward, std::size_t IP>
 void dif_col_pass_last(const T* ccre, const T* ccim,
                        std::complex<T>* data, std::size_t axis_stride,
@@ -708,6 +719,95 @@ void dif_col_pass_fused(std::complex<T>* data, std::size_t axis_stride,
         dif_col_tail_fused<T, Forward, IP>(data, axis_stride, l1, B, cfull, scale_val);
 }
 
+#if ADM_COLDIF_FIRST
+// The A2 arms of dif_col_pass_first / dif_col_pass_fused: the same b/a/c walk and tails as the
+// shipped bodies, but the big pow2 radix's butterfly runs through staged_dif_butterfly (the
+// row engine's Gentleman-Sande split in butterfly.hpp), halving peak live registers the way
+// A1's dif_col_pass_last_staged does. Separate symbols, selected in the trampolines, so the
+// shipped bodies' text stays token-identical at every switch state. The emit lambdas keep the
+// shipped piece_fma/piece_fnma spellings: the inst_col_* numerics pin blocks contraction, so
+// the source fixes the FMA form identically for every clone.
+template<typename T, bool Forward, std::size_t IP>
+void dif_col_pass_first_staged(const std::complex<T>* data, std::size_t axis_stride,
+                               T* chre, T* chim,
+                               std::size_t l1, std::size_t ido, std::size_t B,
+                               const T* twre, const T* twim) {
+    using batch = xsimd::batch<T>;
+    constexpr std::size_t W = batch::size;
+    const std::size_t cfull = B - B % W;
+
+    if (B >= W) {
+        for (std::size_t b = 0; b < l1; ++b) {
+            for (std::size_t a = 0; a < ido; ++a) {
+                for (std::size_t c = 0; c < cfull; c += W) {
+                    const auto load_in = [&](const auto j, batch& lr, batch& li) {
+                        const std::size_t p = a + ido * (j + IP * b);
+                        const T* src =
+                            reinterpret_cast<const T*>(data + p * axis_stride + c);
+                        auto [dr, di] = plane_refs<Forward>(lr, li);
+                        aos_deinterleave<T>(src, dr, di);
+                    };
+                    staged_dif_butterfly<T, IP, batch>(
+                        load_in, [&](const auto k, batch sr, batch si) {
+                            const std::size_t p = a + ido * (b + l1 * k);
+                            if constexpr (k > 0u) {
+                                const batch owr(twre[(k - 1u) * ido + a]);
+                                const batch owi(twim[(k - 1u) * ido + a]);
+                                (piece_fnma(owi, si, owr * sr)).store_unaligned(chre + p * B + c);
+                                (piece_fma(owr, si, owi * sr)).store_unaligned(chim + p * B + c);
+                            } else {
+                                sr.store_unaligned(chre + p * B + c);
+                                si.store_unaligned(chim + p * B + c);
+                            }
+                        });
+                }
+            }
+        }
+    }
+    if (cfull != B)
+        if (!dispatch_one_piece<T>(B - cfull, [&](auto PW) {
+                dif_col_tail_first_one_piece<T, Forward, IP, PW.value>(data, axis_stride, chre,
+                                                                      chim, l1, ido, B, cfull,
+                                                                      twre, twim);
+            }))
+            dif_col_tail_first<T, Forward, IP>(data, axis_stride, chre, chim, l1, ido, B, cfull,
+                                              twre, twim);
+}
+
+// The fused single-pass arm: the same staged split with the shipped terminal emit (scale +
+// interleave). A single-pass chain has N == IP, so the trampoline's dif_staged_radix<IP>
+// constexpr is the whole admission test; no chain-length gate applies.
+template<typename T, bool Forward, std::size_t IP>
+void dif_col_pass_fused_staged(std::complex<T>* data, std::size_t axis_stride,
+                               std::size_t l1, std::size_t B, T scale_val = T(1)) {
+    using batch = xsimd::batch<T>;
+    constexpr std::size_t W = batch::size;
+    const std::size_t cfull = B - B % W;
+
+    if (B >= W) {
+        for (std::size_t b = 0; b < l1; ++b) {
+            for (std::size_t c = 0; c < cfull; c += W) {
+                const auto load_in = [&](const auto j, batch& lr, batch& li) {
+                    const T* src =
+                        reinterpret_cast<const T*>(data + (j + IP * b) * axis_stride + c);
+                    auto [dr, di] = plane_refs<Forward>(lr, li);
+                    aos_deinterleave<T>(src, dr, di);
+                };
+                staged_dif_butterfly<T, IP, batch>(load_in,
+                                                   [&](const auto k, batch sr, batch si) {
+                    T* dst = reinterpret_cast<T*>(data + (b + l1 * k) * axis_stride + c);
+                    const batch sv(scale_val);
+                    const auto [xr, xi] = plane_vals<Forward>(sr * sv, si * sv);
+                    aos_interleave<T>(dst, xr, xi);
+                });
+            }
+        }
+    }
+    if (cfull != B)
+        dif_col_tail_fused<T, Forward, IP>(data, axis_stride, l1, B, cfull, scale_val);
+}
+#endif
+
 template<typename T>
 struct dif_col_pass_invoke_t {
     template<std::size_t IP>
@@ -784,6 +884,51 @@ struct dif_col_pass_fused_invoke_t {
 };
 template<typename T, bool Forward>
 inline constexpr dif_col_pass_fused_invoke_t<T, Forward> dif_col_pass_fused_invoke{};
+
+#if ADM_COLDIF_FIRST
+// The A2 dispatch twins, on the A1 pattern: instantiated for every dif radix like the shipped
+// tables, falling back to the shipped passes outside dif_staged_radix<IP>. col_dif_execute_ws
+// picks the first-pass table only when the chain length reaches kColdifFirstMinLen, and the
+// fused single-pass table unconditionally (its constexpr is the whole admission test), keeping
+// a single len/ISA decision point per dispatch.
+template<typename T, bool Forward>
+struct dif_col_pass_first_staged_invoke_t {
+    template<std::size_t IP>
+    void operator()(const std::complex<T>* data, std::size_t axis_stride,
+                    T* chre, T* chim,
+                    std::size_t l1, std::size_t ido, std::size_t B,
+                    const T* twre, const T* twim) const {
+        if constexpr (dif_staged_radix<IP>) {
+            dif_col_pass_first_staged<T, Forward, IP>(data, axis_stride, chre, chim, l1, ido, B,
+                                                      twre, twim);
+        } else {
+            dif_col_pass_first<T, Forward, IP>(data, axis_stride, chre, chim, l1, ido, B, twre,
+                                               twim);
+        }
+    }
+};
+template<typename T, bool Forward>
+inline constexpr dif_col_pass_first_staged_invoke_t<T, Forward>
+    dif_col_pass_first_staged_invoke{};
+
+template<typename T, bool Forward>
+struct dif_col_pass_fused_staged_invoke_t {
+    template<std::size_t IP>
+    void operator()(std::complex<T>* data, std::size_t axis_stride,
+                    std::size_t l1, std::size_t ido, std::size_t B,
+                    const T* twre, const T* twim, T scale_val) const {
+        if constexpr (dif_staged_radix<IP>) {
+            dif_col_pass_fused_staged<T, Forward, IP>(data, axis_stride, l1, B, scale_val);
+        } else {
+            dif_col_pass_fused<T, Forward, IP>(data, axis_stride, l1, ido, B, twre, twim,
+                                               scale_val);
+        }
+    }
+};
+template<typename T, bool Forward>
+inline constexpr dif_col_pass_fused_staged_invoke_t<T, Forward>
+    dif_col_pass_fused_staged_invoke{};
+#endif
 
 }
 }

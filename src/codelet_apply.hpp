@@ -7,11 +7,17 @@
 #ifndef ADM_ND_FLATROW
 #define ADM_ND_FLATROW 1
 #endif
+#ifndef ADM_ND_FLATTINY
+#define ADM_ND_FLATTINY 0
+#endif
 
 #include "admiral/detail/codelet.hpp"
 #include "admiral/detail/math.hpp"
 #if ADM_ND_FLATROW
 #include "admiral/detail/flat_row.hpp"
+#endif
+#if ADM_ND_FLATTINY
+#include "admiral/detail/flat_tiny.hpp"
 #endif
 #include "admiral/detail/simd_swizzle.hpp"
 #include "admiral/detail/macros.hpp"
@@ -306,6 +312,23 @@ void codelet_many_static(const std::complex<T>* in, std::complex<T>* out,
             T* obase = reinterpret_cast<T*>(out + r * out_stride);
             V re[N], im[N], yr[N], yi[N];
 
+#if ADM_ND_FLATTINY
+            if constexpr (kFlatTiny<N, V>) {
+                const V f(fct);
+                if constexpr (4u * N == V::size) {
+                    poet::static_for<0, W / 2>([&](auto L) {
+                        flat_tiny2_apply<N, T, V, Forward>(
+                            ibase + L * 4 * in_stride, obase + L * 4 * out_stride,
+                            2 * in_stride, 2 * out_stride, f);
+                    });
+                } else {
+                    poet::static_for<0, W>([&](auto L) {
+                        flat_tiny_apply<N, T, V, Forward>(
+                            ibase + L * 2 * in_stride, obase + L * 2 * out_stride, f);
+                    });
+                }
+            } else
+#endif
 #if ADM_ND_FLATROW
             if constexpr (kFlatRow<N, V>) {
                 const V f(fct);

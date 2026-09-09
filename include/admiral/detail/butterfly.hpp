@@ -140,7 +140,7 @@ template<typename T, std::size_t IP, std::size_t N, typename V>
         return {c * (fr + fi), c * (fi - fr)};
     } else {
         const V c(static_cast<T>(w.c)), s(static_cast<T>(w.s));
-        return {piece_fnma(s, fi, c * fr), piece_fma(c, fi, s * fr)};
+        return {c * fr - s * fi, c * fi + s * fr};
     }
 }
 

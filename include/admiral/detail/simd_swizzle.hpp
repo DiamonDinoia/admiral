@@ -83,6 +83,26 @@ template<typename V>
     if constexpr (kFusedFma) { return xsimd::fma(a, b, c); } else { return a * b + c; }
 }
 
+template<typename V>
+[[nodiscard]] ADM_ALWAYS_INLINE V piece_fms(V a, V b, V c) {
+    if constexpr (kFusedFma) { return xsimd::fms(a, b, c); } else { return a * b - c; }
+}
+
+// Wrap-rule (round wrap lane, user directive): every runtime mul+add/shape routes through
+// these so FMA targets fuse explicitly and non-FMA targets textually keep the old
+// expression (v2 has no FMA3: its objects must stay byte-identical).
+// Canonical twiddle spellings (the col TU pin's text cites these):
+//   re-side: piece_fnma(twim, sim, twre * sre)  im-side: piece_fma(twre, sim, twim * sre).
+// fnms is deliberately absent: every A*B - C*D site rewrites as fms or fnma.
+// fmaddsub needs alternating add/sub LANES (AoS-interleaved complex); the mainline engine
+// is split re/im planes (SoA), where the equivalent is the fnma/fma register pair. The
+// interleaved kernels (flat_row's fr_cmul) already sit at the 2-instruction cmul minimum:
+// xsimd::fmas (real _mm_fmaddsub kernels + portable fma+select fallback, both exist API-
+// level) would refold cmul into 3 shuffles + mul + fmas vs the current shuffle-in-table +
+// mul + fma: count-neutral or worse, never landed without counter proof. piece_fmas is
+// deliberately absent: its portable fallback is not textually a*b+/-c, so any use breaks
+// the v2 byte-identity gate.
+
 template<typename T, std::size_t... Ws>
 ADM_CONSTEVAL std::uint64_t piece_width_mask(std::index_sequence<Ws...>) {
     return std::uint64_t{2} | ((sized_piece_width<T, Ws + 2>() == Ws + 2 ? std::uint64_t{1} << (Ws + 2)

@@ -17,7 +17,7 @@
 #include "simd.hpp"
 
 #ifndef ADM_ND_TILEMOVE
-#define ADM_ND_TILEMOVE 0
+#define ADM_ND_TILEMOVE 1
 #endif
 #if ADM_ND_TILEMOVE
 #include "simd_swizzle.hpp"

@@ -73,19 +73,36 @@ inline constexpr bool kFusedFma = XSIMD_WITH_FMA3_SSE || XSIMD_WITH_FMA3_AVX
                                  || XSIMD_WITH_SVE || XSIMD_WITH_RVV || XSIMD_WITH_VSX
                                  || XSIMD_WITH_VXE;
 
+// kFusedFma keys the fused arm (target has an FMA unit). The wider-than-double scalar
+// carve-out: piece_* instantiate with V = scalar T (scalar_fft's long double engine);
+// std::fma(long double) is a libm call on every FMA-capable x86 ABI (no x87 FMA), so the
+// fused arm there is a regression AND a behavior change; keep the raw expression.
+// (evidence: wrap lane scalar_fft probes — mulp+addp inline vs fmal PLT.)
 template<typename V>
 [[nodiscard]] ADM_ALWAYS_INLINE V piece_fnma(V a, V b, V c) {
-    if constexpr (kFusedFma) { return xsimd::fnma(a, b, c); } else { return c - a * b; }
+    if constexpr (kFusedFma && !(std::is_floating_point_v<V> && sizeof(V) > sizeof(double))) {
+        return xsimd::fnma(a, b, c);
+    } else {
+        return c - a * b;
+    }
 }
 
 template<typename V>
 [[nodiscard]] ADM_ALWAYS_INLINE V piece_fma(V a, V b, V c) {
-    if constexpr (kFusedFma) { return xsimd::fma(a, b, c); } else { return a * b + c; }
+    if constexpr (kFusedFma && !(std::is_floating_point_v<V> && sizeof(V) > sizeof(double))) {
+        return xsimd::fma(a, b, c);
+    } else {
+        return a * b + c;
+    }
 }
 
 template<typename V>
 [[nodiscard]] ADM_ALWAYS_INLINE V piece_fms(V a, V b, V c) {
-    if constexpr (kFusedFma) { return xsimd::fms(a, b, c); } else { return a * b - c; }
+    if constexpr (kFusedFma && !(std::is_floating_point_v<V> && sizeof(V) > sizeof(double))) {
+        return xsimd::fms(a, b, c);
+    } else {
+        return a * b - c;
+    }
 }
 
 // Wrap-rule (round wrap lane, user directive): every runtime mul+add/shape routes through

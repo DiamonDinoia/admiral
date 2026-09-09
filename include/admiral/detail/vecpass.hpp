@@ -78,8 +78,10 @@ ADM_ALWAYS_INLINE void vpass_one(const V* src_re, const V* src_im,
                         if constexpr (k > 0u) {
                             const V owr(tw_re[(k - 1u) * ido + a]);
                             const V owi(tw_im[(k - 1u) * ido + a]);
-                            dst_re[a + ido * (b + l1 * k)] = (owr * sr - owi * si);
-                            dst_im[a + ido * (b + l1 * k)] = (owr * si + owi * sr);
+                            dst_re[a + ido * (b + l1 * k)] =
+                                admiral::detail::piece_fnma(owi, si, owr * sr);
+                            dst_im[a + ido * (b + l1 * k)] =
+                                admiral::detail::piece_fma(owr, si, owi * sr);
                         } else {
                             dst_re[a + ido * (b + l1 * k)] = sr;
                             dst_im[a + ido * (b + l1 * k)] = si;
@@ -91,8 +93,10 @@ ADM_ALWAYS_INLINE void vpass_one(const V* src_re, const V* src_im,
                         if constexpr (k > 0u) {
                             const V owr(tw_re[(k - 1u) * ido + a]);
                             const V owi(tw_im[(k - 1u) * ido + a]);
-                            dst_re[a + ido * (b + l1 * k)] = (owr * si + owi * sr);
-                            dst_im[a + ido * (b + l1 * k)] = (owr * sr - owi * si);
+                            dst_re[a + ido * (b + l1 * k)] =
+                                admiral::detail::piece_fma(owr, si, owi * sr);
+                            dst_im[a + ido * (b + l1 * k)] =
+                                admiral::detail::piece_fnma(owi, si, owr * sr);
                         } else {
                             dst_re[a + ido * (b + l1 * k)] = si;
                             dst_im[a + ido * (b + l1 * k)] = sr;

@@ -16,6 +16,13 @@
 
 #include "simd.hpp"
 
+#ifndef ADM_ND_TILEMOVE
+#define ADM_ND_TILEMOVE 0
+#endif
+#if ADM_ND_TILEMOVE
+#include "simd_swizzle.hpp"
+#endif
+
 #include "dif_col_driver.hpp"
 #include "cache.hpp"
 #include "math.hpp"
@@ -165,10 +172,62 @@ template<typename T>
     return line_route::col_dif;
 }
 
+#if ADM_ND_TILEMOVE
+// W5-tail prototype (default off): tile the strip gather/scatter with the tree's own
+// W x W complex blocks (aos_deinterleave + xsimd::transpose + aos_interleave), replacing
+// the 8-insn-per-complex scalar loops. Pure data movement: bits cannot change. The p tail
+// and any gw % W != 0 group keep the scalar loops. Measured at the 2d_8192 geometry
+// (SPR, gcc 14.2): tile arm 0.467x of the scalar mover's cycles (w5-report.md).
+template<bool Gather, typename T>
+void move_run_tiled(std::complex<T>* line, std::size_t inner, std::size_t len, std::size_t gw,
+                    std::complex<T>* buf, std::size_t pitch) {
+    using V = xsimd::batch<T>;
+    constexpr std::size_t W = V::size;
+    const std::size_t pfull = len - len % W;
+    for (std::size_t p0 = 0; p0 < pfull; p0 += W) {
+        for (std::size_t g0 = 0; g0 < gw; g0 += W) {
+            V rr[W], ii[W];
+            if constexpr (Gather) {
+                const T* ib = reinterpret_cast<const T*>(line + p0 * inner) + 2 * g0;
+                for (std::size_t l = 0; l < W; ++l)
+                    aos_deinterleave(ib + l * 2 * inner, rr[l], ii[l]);
+                xsimd::transpose(rr, rr + W);
+                xsimd::transpose(ii, ii + W);
+                for (std::size_t k = 0; k < W; ++k)
+                    aos_interleave(reinterpret_cast<T*>(buf + (g0 + k) * pitch + p0),
+                                   rr[k], ii[k]);
+            } else {
+                for (std::size_t k = 0; k < W; ++k)
+                    aos_deinterleave(
+                        reinterpret_cast<const T*>(buf + (g0 + k) * pitch + p0),
+                        rr[k], ii[k]);
+                xsimd::transpose(rr, rr + W);
+                xsimd::transpose(ii, ii + W);
+                T* ob = reinterpret_cast<T*>(line + p0 * inner) + 2 * g0;
+                for (std::size_t l = 0; l < W; ++l) aos_interleave(ob + l * 2 * inner,
+                                                                   rr[l], ii[l]);
+            }
+        }
+    }
+    for (std::size_t p = pfull; p < len; ++p)
+        for (std::size_t g = 0; g < gw; ++g) {
+            if constexpr (Gather) buf[g * pitch + p] = line[p * inner + g];
+            else line[p * inner + g] = buf[g * pitch + p];
+        }
+}
+#endif
+
 template<bool Gather, typename T>
 void move_run(std::complex<T>* line, std::size_t inner, std::size_t len, std::size_t gw,
               std::complex<T>* buf) {
     const std::size_t pitch = transpose_pitch<T>(len);
+#if ADM_ND_TILEMOVE
+    constexpr std::size_t W = xsimd::batch<T>::size;
+    if (gw % W == 0 && len >= W) {
+        move_run_tiled<Gather>(line, inner, len, gw, buf, pitch);
+        return;
+    }
+#endif
     for (std::size_t p = 0; p < len; ++p)
         for (std::size_t g = 0; g < gw; ++g) {
             if constexpr (Gather) buf[g * pitch + p] = line[p * inner + g];

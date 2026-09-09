@@ -22,6 +22,7 @@
 #include "vecpass.hpp"
 #include <poet/poet.hpp>
 #include "simd.hpp"
+#include "simd_swizzle.hpp"
 #include "macros.hpp"
 
 namespace admiral {
@@ -96,13 +97,13 @@ private:
                                           V twi) {
         const V Zer = (zkr + zcr) * hv, Zei = (zki + zci) * hv;
         const V Zor = (zki - zci) * hv, Zoi = (zcr - zkr) * hv;
-        return {Zer + (twr * Zor - twi * Zoi), Zei + (twr * Zoi + twi * Zor)};
+        return {Zer + piece_fnma(twi, Zoi, twr * Zor), Zei + piece_fma(twr, Zoi, twi * Zor)};
     }
     static ADM_ALWAYS_INLINE std::pair<V, V> c2r_recombine(V Xkr, V Xki, V Xmr, V Xmi, V hv, V twr,
                                           V twi) {
         const V Zer = (Xkr + Xmr) * hv, Zei = (Xki - Xmi) * hv;
         const V Vor = (Xkr - Xmr) * hv, Voi = (Xki + Xmi) * hv;
-        const V Zor = twr * Vor + twi * Voi, Zoi = twr * Voi - twi * Vor;
+        const V Zor = twr * Vor + twi * Voi, Zoi = piece_fnma(twi, Vor, twr * Voi);
         return {Zer - Zoi, Zei + Zor};
     }
 

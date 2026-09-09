@@ -11,6 +11,7 @@
 #include "cxx_compat.hpp"
 
 #include "ct_math.hpp"
+#include "simd_swizzle.hpp"
 
 #include "macros.hpp"
 
@@ -46,10 +47,10 @@ ADM_ALWAYS_INLINE void radix_sym_dft(const V (&xr)[IP],
             constexpr auto w =
                 ct_sincos_turns<ct_real_t<T>>(
                     false, (m * std::decay_t<decltype(k)>::value) % IP, IP);
-            PR = PR + V(static_cast<T>(w.c)) * ar[m];
-            PI = PI + V(static_cast<T>(w.c)) * ai[m];
-            QR = QR + V(static_cast<T>(w.s)) * di[m];
-            QI = QI + V(static_cast<T>(w.s)) * dr[m];
+            PR = piece_fma(V(static_cast<T>(w.c)), ar[m], PR);
+            PI = piece_fma(V(static_cast<T>(w.c)), ai[m], PI);
+            QR = piece_fma(V(static_cast<T>(w.s)), di[m], QR);
+            QI = piece_fma(V(static_cast<T>(w.s)), dr[m], QI);
         });
         emit(std::integral_constant<std::size_t, k>{}, PR + QR, PI - QI);
         emit(std::integral_constant<std::size_t, IP - k>{}, PR - QR, PI + QI);
@@ -139,7 +140,7 @@ template<typename T, std::size_t IP, std::size_t N, typename V>
         return {c * (fr + fi), c * (fi - fr)};
     } else {
         const V c(static_cast<T>(w.c)), s(static_cast<T>(w.s));
-        return {c * fr - s * fi, c * fi + s * fr};
+        return {piece_fnma(s, fi, c * fr), piece_fma(c, fi, s * fr)};
     }
 }
 
@@ -231,10 +232,10 @@ ADM_ALWAYS_INLINE void dif_butterfly(const V (&tr)[IP],
             poet::static_for<1, IP>([&](const auto jj) {
                 constexpr auto w = ct_sincos_turns<ct_real_t<T>>(
                     true, jj * std::decay_t<decltype(k)>::value, IP);
-                sr = sr + V(static_cast<T>(w.c)) * tr[jj]
-                        - V(static_cast<T>(w.s)) * ti[jj];
-                si = si + V(static_cast<T>(w.c)) * ti[jj]
-                        + V(static_cast<T>(w.s)) * tr[jj];
+                sr = piece_fnma(V(static_cast<T>(w.s)), ti[jj],
+                                piece_fma(V(static_cast<T>(w.c)), tr[jj], sr));
+                si = piece_fma(V(static_cast<T>(w.s)), tr[jj],
+                               piece_fma(V(static_cast<T>(w.c)), ti[jj], si));
             });
             emit(std::integral_constant<std::size_t, k>{}, sr, si);
         });

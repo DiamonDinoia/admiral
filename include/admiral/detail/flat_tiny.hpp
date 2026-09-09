@@ -118,10 +118,18 @@ struct ft_braid_hi {
 };
 
 // Bit-reversed complex lane permutation of a C-complex register (the K == 1 output order).
+// The reverse is spelled out rather than routed through ft_rev: inside a make_batch_constant
+// expansion MSVC's evaluator rejects a consteval call whose argument reads get()'s
+// parameter-derived locals (C7595 on the w2 MSVC legs, see ft_outm). C <= 2 is the identity,
+// C == 4 the two-bit swap, C == 8 the three-bit reverse.
 template<std::size_t C>
 struct ft_rev_lane {
     static constexpr std::size_t get(std::size_t i, std::size_t) {
-        return 2u * ft_rev(i / 2u, C) + (i % 2u);
+        const std::size_t c = i / 2u;
+        return 2u * (C == 4u ? ((c & 1u) << 1u) | (c >> 1u)
+                           : C == 8u ? ((c & 1u) << 2u) | (c & 2u) | (c >> 2u)
+                                     : c) +
+               (i % 2u);
     }
 };
 // Braided two-row analogue: reverse the two low bits of each four-complex-lane half.
@@ -150,12 +158,17 @@ template<std::size_t O, std::size_t K, std::size_t C>
 }
 template<std::size_t O, std::size_t K, std::size_t C>
 struct ft_outm {
+    // src0 folds in a static member initializer (an all-constant context MSVC accepts),
+    // and the reversals in get() are spelled out: MSVC's constant evaluator rejects a
+    // consteval call reading get()'s parameter-derived locals inside the batch_constant
+    // expansion (C7595, w2 MSVC legs). K, C in {2, 4} by the caller's static_assert, so
+    // each reverse is the identity or the two-bit swap.
+    static constexpr std::size_t src0 = ft_out_srcs<O, K, C>().first;
     static constexpr std::size_t get(std::size_t i, std::size_t size) {
-        const std::size_t m = i / 2u;
-        const std::size_t s = O * C + m;
-        const std::size_t k = ft_rev(s % K, K);
-        const std::size_t l = ft_rev(s / K, C);
-        return (k == ft_out_srcs<O, K, C>().first ? 0u : size) + 2u * l + (i % 2u);
+        const std::size_t s = O * C + i / 2u;
+        const std::size_t k = K == 2u ? s % K : ((s % K & 1u) << 1u) | (s % K >> 1u);
+        const std::size_t l = C == 2u ? s / K : ((s / K & 1u) << 1u) | (s / K >> 1u);
+        return (k == src0 ? 0u : size) + 2u * l + (i % 2u);
     }
 };
 

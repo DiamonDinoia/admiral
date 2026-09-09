@@ -12,6 +12,7 @@
 #include "codelet.hpp"
 #include "math.hpp"
 #include "portable_trig.hpp"
+#include "simd_swizzle.hpp"
 
 namespace admiral {
 namespace detail {
@@ -164,8 +165,8 @@ void four_step_batched_ct(const T* in_re, const T* in_im, T* out_re, T* out_im,
             const std::size_t tvi = (g * N2 + k2) * W;
             const V wr = V::load_unaligned(twvre + tvi);
             const V wi = V::load_unaligned(twvim + tvi);
-            const V gr = ov[k2] * wr - oi[k2] * wi;
-            const V gi = ov[k2] * wi + oi[k2] * wr;
+            const V gr = piece_fms(ov[k2], wr, oi[k2] * wi);
+            const V gi = piece_fma(ov[k2], wi, oi[k2] * wr);
             ov[k2] = gr;
             oi[k2] = gi;
         }

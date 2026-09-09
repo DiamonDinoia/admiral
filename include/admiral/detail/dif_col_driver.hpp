@@ -8,6 +8,14 @@
 #include <stdexcept>
 #include <utility>
 
+#ifndef ADM_COLDIF_GEO
+#define ADM_COLDIF_GEO 0
+#endif
+
+#if ADM_COLDIF_GEO
+#include <cstdlib>
+#endif
+
 #include <admiral/errors.hpp>
 
 #include <poet/poet.hpp>
@@ -58,6 +66,50 @@ template<typename T>
     bt -= bt % gran;
     return std::min(bt, run_len);
 }
+
+#if ADM_COLDIF_GEO
+// L6 geometry probe arm (default off). Hypothesis: team-r5-shared evidence/l3/memo.md. The
+// flat floor under-amortizes the per-row cost it exists for (prologue, prefetch ramp, DRAM
+// page open) when the floored row covers < half of its write period (rome 512^3 axis1: a
+// 2 KiB row at an 8 KiB period), so when the floor fires the arm widens it toward
+// min(period/2, one 4 KiB page). Probe-only override: ADM_COLDIF_BT=<elements> replaces the
+// floor outright for the Bt sweep. Plan-time pricing only: routes and bit patterns never
+// read this (Bt moves tile boundaries; inst_col_*'s pin keeps per-clone bits fixed).
+[[nodiscard]] inline std::size_t coldif_geo_floor_bytes(std::size_t row_period_bytes,
+                                                        std::size_t elem) {
+    if (const char* e = std::getenv("ADM_COLDIF_BT")) {
+        const unsigned long v = std::strtoul(e, nullptr, 10);
+        if (v > 0) return v * elem;
+    }
+    if (row_period_bytes > 2 * kColDifMinRowBytes)
+        return std::max(kColDifMinRowBytes,
+                        std::min(row_period_bytes / 2, std::size_t{4096}));
+    return kColDifMinRowBytes;
+}
+
+// nd_col_block with the geo floor substituted; the rest of the schedule is master's.
+template<typename T>
+[[nodiscard]] inline std::size_t nd_col_block_geo(std::size_t len, std::size_t run_len,
+                                                  std::size_t row_period_bytes,
+                                                  std::size_t nthreads, std::size_t nruns) {
+    constexpr std::size_t W = xsimd::batch<T>::size;
+    if (len == 0) return run_len;
+    std::size_t bt = col_budget_block<T>(len, nthreads);
+    constexpr std::size_t elem = sizeof(std::complex<T>);
+    if (len * run_len * nruns * elem > cpu_cache().l3)
+        bt = std::max(bt, coldif_geo_floor_bytes(row_period_bytes, elem) / elem);
+    if (nthreads > 1) {
+        const std::size_t tiles = (kTilesPerWorker * nthreads + nruns - 1) / nruns;
+        bt = std::min(bt, run_len / tiles);
+    }
+    constexpr std::size_t line_elems = kCacheLine / sizeof(std::complex<T>);
+    const std::size_t gran =
+        nthreads > 1 && W < line_elems ? line_elems : W;
+    if (bt < gran) return std::min(run_len, gran);
+    bt -= bt % gran;
+    return std::min(bt, run_len);
+}
+#endif
 
 template<typename T, bool Forward>
 void col_dif_execute_ws(std::complex<T>* data,

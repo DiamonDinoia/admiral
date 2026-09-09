@@ -138,6 +138,9 @@ private:
 
     static routed_plan route_plan(std::size_t size, bool is_forward, std::size_t nthreads,
                                   const dif_factor_plan* dif_override, admiral::effort eff) {
+#ifdef ADM_PIN_PLAN_ESTIMATE
+        eff = admiral::effort::estimate;  // measurement knob: measure/automatic cannot race
+#endif
         if (size == 0) ADM_UNLIKELY return {measured_choice{}, 1, dif_override};
         if (dif_override) return {measured_choice{route_kind::iterative_dif, {}}, nthreads, dif_override};
         const auto elect = [&](std::size_t nt) {

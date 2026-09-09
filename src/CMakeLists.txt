@@ -36,6 +36,10 @@ target_include_directories(admiral_engine PRIVATE
     ${ADM_GENERATED_INCLUDE_DIR})
 target_link_libraries(admiral_engine PRIVATE xsimd poet::poet ${ADM_THREADS_LIB})
 target_compile_definitions(admiral_engine PRIVATE ADM_BUILDING)
+# PRIVATE covers every route decision: plan_impl is extern-templated inside admiral_engine only.
+if(ADM_PIN_PLAN_ESTIMATE)
+    target_compile_definitions(admiral_engine PRIVATE ADM_PIN_PLAN_ESTIMATE)
+endif()
 adm_apply_build_profile(admiral_engine)
 
 add_library(admiral_codelets STATIC

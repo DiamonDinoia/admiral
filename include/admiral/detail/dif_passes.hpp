@@ -205,9 +205,9 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                     });
                     dif_butterfly<T, IP>(tr, ti_arr, [&](const auto k, batch sr, batch si) {
                         if constexpr (k > 0u) {
-                            (owr[k - 1] * sr - owi[k - 1] * si)
+                            piece_fnma(owi[k - 1], si, owr[k - 1] * sr)
                                 .store_unaligned(chre + (aa * eso + idz * (b + l1 * k)));
-                            (owr[k - 1] * si + owi[k - 1] * sr)
+                            piece_fma(owr[k - 1], si, owi[k - 1] * sr)
                                 .store_unaligned(chim + (aa * eso + idz * (b + l1 * k)));
                         } else {
                             sr.store_unaligned(chre + (aa * eso + idz * (b + l1 * k)));
@@ -253,8 +253,10 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                                                  ADM_LAMBDA_ALWAYS_INLINE {
                             const std::size_t off = o0 + ide * k;
                             if constexpr (k > 0u) {
-                                (owr[k - 1u] * sr - owi[k - 1u] * si).store_unaligned(re + off);
-                                (owr[k - 1u] * si + owi[k - 1u] * sr).store_unaligned(im + off);
+                                piece_fnma(owi[k - 1u], si, owr[k - 1u] * sr)
+                                    .store_unaligned(re + off);
+                                piece_fma(owr[k - 1u], si, owi[k - 1u] * sr)
+                                    .store_unaligned(im + off);
                             } else {
                                 sr.store_unaligned(re + off);
                                 si.store_unaligned(im + off);
@@ -301,9 +303,9 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                                                      ADM_LAMBDA_ALWAYS_INLINE {
                                 const std::size_t off = o0 + idi * k;
                                 if constexpr (k > 0u) {
-                                    (owr[Sv][k - 1u] * sr - owi[Sv][k - 1u] * si)
+                                    piece_fnma(owi[Sv][k - 1u], si, owr[Sv][k - 1u] * sr)
                                         .store_unaligned(re + off);
-                                    (owr[Sv][k - 1u] * si + owi[Sv][k - 1u] * sr)
+                                    piece_fma(owr[Sv][k - 1u], si, owi[Sv][k - 1u] * sr)
                                         .store_unaligned(im + off);
                                 } else {
                                     sr.store_unaligned(re + off);
@@ -343,8 +345,10 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                                              ADM_LAMBDA_ALWAYS_INLINE {
                         const std::size_t off = o0 + idi * k;
                         if constexpr (k > 0u) {
-                            (owr[k - 1u] * sr - owi[k - 1u] * si).store_unaligned(re + off);
-                            (owr[k - 1u] * si + owi[k - 1u] * sr).store_unaligned(im + off);
+                            piece_fnma(owi[k - 1u], si, owr[k - 1u] * sr)
+                                .store_unaligned(re + off);
+                            piece_fma(owr[k - 1u], si, owi[k - 1u] * sr)
+                                .store_unaligned(im + off);
                         } else {
                             sr.store_unaligned(re + off);
                             si.store_unaligned(im + off);
@@ -373,8 +377,8 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                     if constexpr (k > 0u) {
                         const batch owr = batch::load_unaligned(twre + ((k - 1u) * ido + aa));
                         const batch owi = batch::load_unaligned(twim + ((k - 1u) * ido + aa));
-                        (owr * sr - owi * si).store_unaligned(chre + off);
-                        (owr * si + owi * sr).store_unaligned(chim + off);
+                        piece_fnma(owi, si, owr * sr).store_unaligned(chre + off);
+                        piece_fma(owr, si, owi * sr).store_unaligned(chim + off);
                     } else {
                         sr.store_unaligned(chre + off);
                         si.store_unaligned(chim + off);
@@ -396,8 +400,8 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                     if constexpr (k > 0u) {
                         const batch owr = batch::load_unaligned(twre + ((k - 1u) * ido + aa));
                         const batch owi = batch::load_unaligned(twim + ((k - 1u) * ido + aa));
-                        (owr * sr - owi * si).store_unaligned(chre + off);
-                        (owr * si + owi * sr).store_unaligned(chim + off);
+                        piece_fnma(owi, si, owr * sr).store_unaligned(chre + off);
+                        piece_fma(owr, si, owi * sr).store_unaligned(chim + off);
                     } else {
                         sr.store_unaligned(chre + off);
                         si.store_unaligned(chim + off);
@@ -470,8 +474,8 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                         if constexpr (k > 0u) {
                             const batch owr = batch::load_unaligned(twre + ((k - 1u) * ido + aa));
                             const batch owi = batch::load_unaligned(twim + ((k - 1u) * ido + aa));
-                            (owr * yr - owi * yi).store_unaligned(chre + off);
-                            (owr * yi + owi * yr).store_unaligned(chim + off);
+                            piece_fnma(owi, yi, owr * yr).store_unaligned(chre + off);
+                            piece_fma(owr, yi, owi * yr).store_unaligned(chim + off);
                         } else {
                             yr.store_unaligned(chre + off);
                             yi.store_unaligned(chim + off);
@@ -517,8 +521,8 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                                         batch::load(twre + ((k - 1u) * ido + a), m, um);
                                     const batch owi =
                                         batch::load(twim + ((k - 1u) * ido + a), m, um);
-                                    (owr * sr - owi * si).store(chre + off, m, um);
-                                    (owr * si + owi * sr).store(chim + off, m, um);
+                                    piece_fnma(owi, si, owr * sr).store(chre + off, m, um);
+                                    piece_fma(owr, si, owi * sr).store(chim + off, m, um);
                                 } else {
                                     sr.store(chre + off, m, um);
                                     si.store(chim + off, m, um);
@@ -544,8 +548,8 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                         if constexpr (k > 0u) {
                             const T owr = twre[(k - 1u) * ido + a];
                             const T owi = twim[(k - 1u) * ido + a];
-                            chre[obase + a * eso + kstride * k] = owr * sr - owi * si;
-                            chim[obase + a * eso + kstride * k] = owr * si + owi * sr;
+                            chre[obase + a * eso + kstride * k] = piece_fnma(owi, si, owr * sr);
+                            chim[obase + a * eso + kstride * k] = piece_fma(owr, si, owi * sr);
                         } else {
                             chre[obase + a * eso + kstride * k] = sr;
                             chim[obase + a * eso + kstride * k] = si;
@@ -621,13 +625,13 @@ ADM_NOINLINE void dif_pass_prime_chip(const T* ccre, const T* ccim,
                         if constexpr (full) {
                             const batch owr = batch::load_unaligned(twr);
                             const batch owi = batch::load_unaligned(twi);
-                            (owr * sr - owi * si).store_unaligned(chre + off);
-                            (owr * si + owi * sr).store_unaligned(chim + off);
+                            piece_fnma(owi, si, owr * sr).store_unaligned(chre + off);
+                            piece_fma(owr, si, owi * sr).store_unaligned(chim + off);
                         } else {
                             const batch owr = batch::load(twr, m, um);
                             const batch owi = batch::load(twi, m, um);
-                            (owr * sr - owi * si).store(chre + off, m, um);
-                            (owr * si + owi * sr).store(chim + off, m, um);
+                            piece_fnma(owi, si, owr * sr).store(chre + off, m, um);
+                            piece_fma(owr, si, owi * sr).store(chim + off, m, um);
                         }
                     } else {
                         if constexpr (full) {
@@ -683,8 +687,8 @@ void dif_pass_fused2(const T* ccre, const T* ccim,
                         if constexpr (k > 0u) {
                             const batch owr = batch::load_unaligned(ptw1_cur + (k - 1u) * 2u * W);
                             const batch owi = batch::load_unaligned(ptw1_cur + (k - 1u) * 2u * W + W);
-                            (owr * sr - owi * si).store_aligned(lr);
-                            (owr * si + owi * sr).store_aligned(li);
+                            piece_fnma(owi, si, owr * sr).store_aligned(lr);
+                            piece_fma(owr, si, owi * sr).store_aligned(li);
                         } else {
                             sr.store_aligned(lr);
                             si.store_aligned(li);
@@ -709,8 +713,10 @@ void dif_pass_fused2(const T* ccre, const T* ccim,
                         if constexpr (k2 > 0u) {
                             const batch owr = batch::load_unaligned(ptw2_cur + (k2 - 1u) * 2u * W);
                             const batch owi = batch::load_unaligned(ptw2_cur + (k2 - 1u) * 2u * W + W);
-                            (owr * sr - owi * si).store_unaligned(chre + (a2 + ido2 * (bp + l12 * k2)));
-                            (owr * si + owi * sr).store_unaligned(chim + (a2 + ido2 * (bp + l12 * k2)));
+                            piece_fnma(owi, si, owr * sr)
+                                .store_unaligned(chre + (a2 + ido2 * (bp + l12 * k2)));
+                            piece_fma(owr, si, owi * sr)
+                                .store_unaligned(chim + (a2 + ido2 * (bp + l12 * k2)));
                         } else {
                             sr.store_unaligned(chre + (a2 + ido2 * (bp + l12 * k2)));
                             si.store_unaligned(chim + (a2 + ido2 * (bp + l12 * k2)));
@@ -765,8 +771,8 @@ void dif_pass_fused3(const T* ccre, const T* ccim,
                             if constexpr (Kc > 0u) {
                                 const batch owr = batch::load_unaligned(tw1re + ((Kc - 1u) * ido + a));
                                 const batch owi = batch::load_unaligned(tw1im + ((Kc - 1u) * ido + a));
-                                (owr * sr - owi * si).store_aligned(lr);
-                                (owr * si + owi * sr).store_aligned(li);
+                                piece_fnma(owi, si, owr * sr).store_aligned(lr);
+                                piece_fma(owr, si, owi * sr).store_aligned(li);
                             } else {
                                 sr.store_aligned(lr);
                                 si.store_aligned(li);
@@ -791,8 +797,8 @@ void dif_pass_fused3(const T* ccre, const T* ccim,
                             if constexpr (Kc > 0u) {
                                 const batch owr = batch::load_unaligned(tw2re + ((Kc - 1u) * ido2 + a1));
                                 const batch owi = batch::load_unaligned(tw2im + ((Kc - 1u) * ido2 + a1));
-                                (owr * sr - owi * si).store_aligned(lr);
-                                (owr * si + owi * sr).store_aligned(li);
+                                piece_fnma(owi, si, owr * sr).store_aligned(lr);
+                                piece_fma(owr, si, owi * sr).store_aligned(li);
                             } else {
                                 sr.store_aligned(lr);
                                 si.store_aligned(li);
@@ -816,8 +822,10 @@ void dif_pass_fused3(const T* ccre, const T* ccim,
                             if constexpr (Kc > 0u) {
                                 const batch owr = batch::load_unaligned(tw3re + ((Kc - 1u) * ido3 + a3));
                                 const batch owi = batch::load_unaligned(tw3im + ((Kc - 1u) * ido3 + a3));
-                                (owr * sr - owi * si).store_unaligned(chre + (a3 + ido3 * (bp2 + l123 * Kc)));
-                                (owr * si + owi * sr).store_unaligned(chim + (a3 + ido3 * (bp2 + l123 * Kc)));
+                                piece_fnma(owi, si, owr * sr)
+                                    .store_unaligned(chre + (a3 + ido3 * (bp2 + l123 * Kc)));
+                                piece_fma(owr, si, owi * sr)
+                                    .store_unaligned(chim + (a3 + ido3 * (bp2 + l123 * Kc)));
                             } else {
                                 sr.store_unaligned(chre + (a3 + ido3 * (bp2 + l123 * Kc)));
                                 si.store_unaligned(chim + (a3 + ido3 * (bp2 + l123 * Kc)));
@@ -1022,8 +1030,8 @@ void dif_pass_first_impl(const std::complex<T>* data,
                     if constexpr (k > 0u) {
                         const batch_t owr = batch_t::load_unaligned(twre + ((k - 1u) * ido + aa));
                         const batch_t owi = batch_t::load_unaligned(twim + ((k - 1u) * ido + aa));
-                        (owr * sr - owi * si).store_unaligned(ore + off);
-                        (owr * si + owi * sr).store_unaligned(oim + off);
+                        piece_fnma(owi, si, owr * sr).store_unaligned(ore + off);
+                        piece_fma(owr, si, owi * sr).store_unaligned(oim + off);
                     } else {
                         sr.store_unaligned(ore + off);
                         si.store_unaligned(oim + off);
@@ -1167,7 +1175,7 @@ template<typename T, std::size_t IP, std::size_t R, typename V>
             lane_stage_twiddle<T, IP, R, V::size, true>();
         const V wr = V::load_aligned(twr.data()) * sv;
         const V wi = V::load_aligned(twi.data()) * sv;
-        return {yr * wr - yi * wi, yi * wr + yr * wi};
+        return {piece_fnma(wi, yi, wr * yr), piece_fma(wr, yi, wi * yr)};
     }
 }
 

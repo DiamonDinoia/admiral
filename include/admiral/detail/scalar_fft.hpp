@@ -111,8 +111,8 @@ public:
         } else {
             dft<forward>(x, 0, 0, tid);
         }
-        soa_scratch<std::complex<T>, 1> sx_sc(n_);
-        std::complex<T>* sx = sx_sc.buf(0);
+        soa_scratch<T, 1> sx_sc(2 * n_);
+        std::complex<T>* sx = reinterpret_cast<std::complex<T>*>(sx_sc.buf(0));
         for (std::size_t k = 0; k < n_; ++k) sx[k] = x[pos_of_[k]];
         if (fct != T(1))
             for (std::size_t k = 0; k < n_; ++k) x[k] = sx[k] * fct;
@@ -259,8 +259,8 @@ private:
     void bluestein(std::complex<T>* x, std::size_t m, T fct, std::size_t tid) const {
         const blue_state& B = *blue_;
         const std::size_t pad = B.pad;
-        soa_scratch<std::complex<T>, 1> a_sc(pad);
-        std::complex<T>* a = a_sc.buf(0);
+        soa_scratch<T, 1> a_sc(2 * pad);
+        std::complex<T>* a = reinterpret_cast<std::complex<T>*>(a_sc.buf(0));
         std::fill_n(a, pad, std::complex<T>(0, 0));
         for (std::size_t k = 0; k < m; ++k) a[k] = x[k] * maybe_conj<T>(B.chirp[k], !forward);
         B.inner.template execute<true>(a, T(1), tid);
@@ -323,8 +323,9 @@ public:
             admiral::detail::parallel_for(
                 pool, nlines, total_,
                 [&](std::size_t begin, std::size_t end, std::size_t tid) {
-                    soa_scratch<std::complex<T>, 1> line_sc(line_cap_);
-                    auto line = line_sc.buf(0);
+                    soa_scratch<T, 1> line_sc(2 * line_cap_);
+                    std::complex<T>* line =
+                        reinterpret_cast<std::complex<T>*>(line_sc.buf(0));
                     for (std::size_t i = begin; i < end; ++i) {
                         const std::size_t p = st == 1 ? i : i / st;
                         const std::size_t q = st == 1 ? 0 : i - p * st;
@@ -362,8 +363,8 @@ public:
     [[nodiscard]] std::size_t cplx_size() const { return nh_; }
 
     void forward(const T* in, std::complex<T>* out, std::size_t tid) const {
-        soa_scratch<std::complex<T>, 1> buf_sc(even_ ? n_ / 2 : n_);
-        auto buf = buf_sc.buf(0);
+        soa_scratch<T, 1> buf_sc(2 * (even_ ? n_ / 2 : n_));
+        auto buf = reinterpret_cast<std::complex<T>*>(buf_sc.buf(0));
         if (!even_) {
             for (std::size_t i = 0; i < n_; ++i) buf[i] = {in[i], T(0)};
             eng_.template execute<true>(buf, T(1), tid);
@@ -378,8 +379,8 @@ public:
     }
 
     void inverse(std::complex<T>* spec, T* out, T extra_scale, std::size_t tid) const {
-        soa_scratch<std::complex<T>, 1> buf_sc(even_ ? n_ / 2 : n_);
-        auto buf = buf_sc.buf(0);
+        soa_scratch<T, 1> buf_sc(2 * (even_ ? n_ / 2 : n_));
+        auto buf = reinterpret_cast<std::complex<T>*>(buf_sc.buf(0));
         if (!even_) {
             for (std::size_t k = 0; k < nh_; ++k) buf[k] = spec[k];
             for (std::size_t k = nh_; k < n_; ++k) buf[k] = std::conj(spec[n_ - k]);

@@ -86,9 +86,9 @@ template<typename T>
 void r2r_plan<T>::dct2_rows(const T* in, T* out, T scale) const {
     const bool sine = r2r_is_sine(kind_);
     soa_scratch<T, 1> v_sc(rows_ * N_);
-    soa_scratch<std::complex<T>, 1> spec_sc(rows_ * Nh_);
+    soa_scratch<T, 1> spec_sc(2 * (rows_ * Nh_));
     T* v_buf = v_sc.buf(0);
-    std::complex<T>* spec_buf = spec_sc.buf(0);
+    std::complex<T>* spec_buf = reinterpret_cast<std::complex<T>*>(spec_sc.buf(0));
     for (std::size_t r = 0; r < rows_; ++r) {
         const T* x = in + r * N_;
         T* v = v_buf + r * N_;
@@ -117,9 +117,9 @@ void r2r_plan<T>::dct3_rows(const T* in, T* out, T scale) const {
     const bool sine = r2r_is_sine(kind_);
     const T half = T(0.5);
     soa_scratch<T, 1> v_sc(rows_ * N_);
-    soa_scratch<std::complex<T>, 1> spec_sc(rows_ * Nh_);
+    soa_scratch<T, 1> spec_sc(2 * (rows_ * Nh_));
     T* v_buf = v_sc.buf(0);
-    std::complex<T>* spec_buf = spec_sc.buf(0);
+    std::complex<T>* spec_buf = reinterpret_cast<std::complex<T>*>(spec_sc.buf(0));
     for (std::size_t r = 0; r < rows_; ++r) {
         const T* y = in + r * N_;
         std::complex<T>* V = spec_buf + r * Nh_;

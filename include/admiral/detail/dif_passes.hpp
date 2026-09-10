@@ -22,64 +22,6 @@
 namespace admiral {
 namespace detail {
 
-// fix3 switch, sweep only. ADM_FIX3_FIRST unrolls the first pass by two columns and restricts
-// its outputs. ADM_FIX3 itself landed: the in-place pass blocks over the column index
-// unconditionally.
-#ifndef ADM_FIX3_FIRST
-#define ADM_FIX3_FIRST 0
-#endif
-#if ADM_FIX3_FIRST
-#define ADM_FIX3_FIRST_RESTRICT ADM_RESTRICT
-#else
-#define ADM_FIX3_FIRST_RESTRICT
-#endif
-// fix4 switch, sweep only. ADM_FIX4_ES2 lets the block-interleaved intermediate layout (es == 2)
-// reach the buffer that feeds the last pass, so every pass addresses one base pointer per array.
-#ifndef ADM_FIX4_ES2
-#define ADM_FIX4_ES2 0
-#endif
-// fix4 switch, sweep only. ADM_FIX4_ES2_ONEBASE makes the element stride of the in-place arm and
-// of the first pass compile-time, so the imaginary plane can be named as the real base plus W and
-// both planes address off ONE register. It needs ADM_FIX4_ES2 to have anything to fire on.
-#ifndef ADM_FIX4_ES2_ONEBASE
-#define ADM_FIX4_ES2_ONEBASE 0
-#endif
-// fix4 switch, sweep only. Prints the tape that dif_build_tape builds and the tape the executor
-// picks. Off in every timed build.
-#ifndef ADM_FIX4_ES2_TRACE
-#define ADM_FIX4_ES2_TRACE 0
-#endif
-// fix4 switch, sweep only. ADM_FIX4_ROLL replaces the column loop of the first pass and of the
-// fix3 in-place arm with poet::dynamic_for<1>, whose laundered trip count stops the compiler
-// folding the loop away, and carries the step in a poet::static_for. 1 rolls the loop and keeps
-// one block per iteration; S >= 2 puts S blocks in one iteration with every load issued before
-// any arithmetic, so the allocator sees S independent chains over a body of fixed shape. The
-// barrier makes the COUNT opaque, not the loop: both compilers still unroll a small body at
-// runtime, so the back-edge count in the asm is what says whether the body stayed one copy.
-#ifndef ADM_FIX4_ROLL
-#define ADM_FIX4_ROLL 0
-#endif
-// fix4 switch, sweep only. ADM_FIX4_T2 brackets the landed L1D admission of the two-factor
-// (FFTW `t2`) first-pass twiddle table from above: 2 fires it for every N >= 256, so every cell
-// of the sweep takes the Split arm. The use is in twiddles.hpp, which does not include this
-// header, so the default is repeated in cache.hpp.
-#ifndef ADM_FIX4_T2
-#define ADM_FIX4_T2 0
-#endif
-// fix4 switch, sweep only. ADM_FIX4_U2 forces the first pass's column unroll to its value, so
-// that many radix butterflies sit in flight over one loop body. dif_pass_unroll's budget,
-// peak_live = 2 * IP + 10 against 32 zmm, already returns 1 from IP = 4 up, so no radix reaches
-// 2 on its own and the value is an override rather than a hint. ADM_FIX4_U2_IP restricts the
-// override to that one radix, 0 meaning every radix: 2 blocks of IP rows in two planes need
-// 4 * IP live vectors, so the headroom is per radix and one arm per radix keeps the arms
-// interpretable.
-#ifndef ADM_FIX4_U2
-#define ADM_FIX4_U2 0
-#endif
-#ifndef ADM_FIX4_U2_IP
-#define ADM_FIX4_U2_IP 0
-#endif
-
 template<typename T, std::size_t IP, std::size_t PW, typename CC, typename CH>
 ADM_ALWAYS_INLINE void small_ido_piece(CC ccre, CC ccim, CH chre, CH chim,
                                        std::size_t ido, std::size_t b, std::size_t a,
@@ -227,102 +169,6 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
     if constexpr (InPlace && !dif_butterfly_wants_reload<IP>) {
         if (ido >= W && ccre == chre && ccim == chim && esi == eso) {
             amain = ido - ido % W;
-#if ADM_FIX4_ES2_ONEBASE
-            // fix4: Es == 2 names the imaginary plane as chre + W, the relation es == 2
-            // guarantees, so both planes address off one base register instead of two.
-            const auto run_ip = [&](auto Esc) ADM_LAMBDA_ALWAYS_INLINE {
-                constexpr std::size_t Es = decltype(Esc)::value;
-                T* const re = chre;
-                T* const im = Es == 2u ? chre + W : chim;
-                const std::size_t ide = ido * Es;
-                for (std::size_t aa = 0; aa < amain; aa += W) {
-                    batch owr[IP - 1], owi[IP - 1];
-                    poet::static_for<0, IP - 1>([&](const auto k) ADM_LAMBDA_ALWAYS_INLINE {
-                        owr[k] = batch::load_unaligned(twre + (k * ido + aa));
-                        owi[k] = batch::load_unaligned(twim + (k * ido + aa));
-                    });
-                    for (std::size_t b = 0; b < l1; ++b) {
-                        const std::size_t o0 = aa * Es + ide * IP * b;
-                        batch tr[IP], ti_arr[IP];
-                        poet::static_for<0, IP>([&](const auto j) ADM_LAMBDA_ALWAYS_INLINE {
-                            tr[j] = batch::load_unaligned(re + (o0 + ide * j));
-                            ti_arr[j] = batch::load_unaligned(im + (o0 + ide * j));
-                        });
-                        dif_butterfly<T, IP>(tr, ti_arr,
-                                             [&](const auto k, batch sr, batch si)
-                                                 ADM_LAMBDA_ALWAYS_INLINE {
-                            const std::size_t off = o0 + ide * k;
-                            if constexpr (k > 0u) {
-                                (owr[k - 1u] * sr - owi[k - 1u] * si).store_unaligned(re + off);
-                                (owr[k - 1u] * si + owi[k - 1u] * sr).store_unaligned(im + off);
-                            } else {
-                                sr.store_unaligned(re + off);
-                                si.store_unaligned(im + off);
-                            }
-                        });
-                    }
-                }
-            };
-            if (esi == 2u) run_ip(std::integral_constant<std::size_t, 2u>{});
-            else run_ip(std::integral_constant<std::size_t, 1u>{});
-#elif ADM_FIX4_ROLL
-            // fix4 ROLL: the same treatment as the first pass. dynamic_for<1> keeps the column
-            // loop rolled and the step sits in a static_for, so S columns share one body and the
-            // inner row loop loads both columns before either butterfly runs.
-            {
-                constexpr std::size_t S = ADM_FIX4_ROLL;
-                T* const re = chre;
-                T* const im = chim;
-                auto col_run = [&](auto Nc, std::size_t aa0) ADM_LAMBDA_ALWAYS_INLINE {
-                    constexpr std::size_t NC = decltype(Nc)::value;
-                    batch owr[NC][IP - 1], owi[NC][IP - 1];
-                    poet::static_for<0, NC>([&](const auto s) ADM_LAMBDA_ALWAYS_INLINE {
-                        constexpr std::size_t Sv = decltype(s)::value;
-                        poet::static_for<0, IP - 1>([&](const auto k) ADM_LAMBDA_ALWAYS_INLINE {
-                            owr[Sv][k] = batch::load_unaligned(twre + (k * ido + aa0 + Sv * W));
-                            owi[Sv][k] = batch::load_unaligned(twim + (k * ido + aa0 + Sv * W));
-                        });
-                    });
-                    for (std::size_t b = 0; b < l1; ++b) {
-                        batch tr[NC][IP], ti_arr[NC][IP];
-                        poet::static_for<0, NC>([&](const auto s) ADM_LAMBDA_ALWAYS_INLINE {
-                            constexpr std::size_t Sv = decltype(s)::value;
-                            const std::size_t o0 = (aa0 + Sv * W) * esi + idi * IP * b;
-                            poet::static_for<0, IP>([&](const auto j) ADM_LAMBDA_ALWAYS_INLINE {
-                                tr[Sv][j] = batch::load_unaligned(re + (o0 + idi * j));
-                                ti_arr[Sv][j] = batch::load_unaligned(im + (o0 + idi * j));
-                            });
-                        });
-                        poet::static_for<0, NC>([&](const auto s) ADM_LAMBDA_ALWAYS_INLINE {
-                            constexpr std::size_t Sv = decltype(s)::value;
-                            const std::size_t o0 = (aa0 + Sv * W) * esi + idi * IP * b;
-                            dif_butterfly<T, IP>(tr[Sv], ti_arr[Sv],
-                                                 [&](const auto k, batch sr, batch si)
-                                                     ADM_LAMBDA_ALWAYS_INLINE {
-                                const std::size_t off = o0 + idi * k;
-                                if constexpr (k > 0u) {
-                                    (owr[Sv][k - 1u] * sr - owi[Sv][k - 1u] * si)
-                                        .store_unaligned(re + off);
-                                    (owr[Sv][k - 1u] * si + owi[Sv][k - 1u] * sr)
-                                        .store_unaligned(im + off);
-                                } else {
-                                    sr.store_unaligned(re + off);
-                                    si.store_unaligned(im + off);
-                                }
-                            });
-                        });
-                    }
-                };
-                const std::size_t nstep = (amain / W) / S;
-                if (nstep != 0)
-                    poet::dynamic_for<1, 1>(std::size_t{0}, nstep,
-                                            [&](std::size_t i) ADM_LAMBDA_ALWAYS_INLINE {
-                        col_run(std::integral_constant<std::size_t, S>{}, i * (S * W));
-                    });
-                for (std::size_t aa = nstep * S * W; aa < amain; aa += W)
-                    col_run(std::integral_constant<std::size_t, 1u>{}, aa);
-            }
-#else
             T* const re = chre;
             T* const im = chim;
             for (std::size_t aa = 0; aa < amain; aa += W) {
@@ -352,7 +198,6 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                     });
                 }
             }
-#endif
             if (amain == ido) return;
         }
     }
@@ -905,20 +750,9 @@ void dif_pass_first_impl(const std::complex<T>* data,
         }
         return;
     }
-    // fix4: Eso == 0 keeps the element stride a runtime value, which is the shipped form. Eso == 2
-    // makes it compile time so the imaginary plane can be named as chre + W, the relation es == 2
-    // guarantees, and the eight output columns need one base register instead of two.
-#if ADM_FIX4_ES2_ONEBASE
-    // Eso == 0 is the sentinel a direct caller leaves in place, and it keeps the runtime stride.
-    const std::size_t es = Eso == 0u ? eso : Eso;
-#define ADM_F4_ES es
-#define ADM_F4_SRE ore
-#define ADM_F4_SIM oim
-#else
 #define ADM_F4_ES eso
 #define ADM_F4_SRE chre
 #define ADM_F4_SIM chim
-#endif
     const std::size_t idz = ido * ADM_F4_ES;
     std::size_t bsh = 0, nb = 0;
     const T* are = nullptr;
@@ -932,21 +766,12 @@ void dif_pass_first_impl(const std::complex<T>* data,
 
     // fix3: two columns per iteration share one set of output stream pointers, and the outputs
     // cannot alias the input or the twiddle table, so the twiddle loads may cross the stores.
-    T* const ADM_FIX3_FIRST_RESTRICT ore = chre;
-#if ADM_FIX4_ES2_ONEBASE
-    T* const ADM_FIX3_FIRST_RESTRICT oim = Eso == 2u ? chre + W : chim;
-#else
-    T* const ADM_FIX3_FIRST_RESTRICT oim = chim;
-#endif
+    T* const ore = chre;
+    T* const oim = chim;
     for (std::size_t b = 0; b < l1; ++b) {
         constexpr std::size_t U0 = dif_pass_unroll<IP>();
-        constexpr std::size_t U1 =
-            (ADM_FIX3_FIRST && !dif_staged_radix<IP> && U0 < 2u) ? 2u : U0;
-        // fix4 U2: the override, on the one radix the arm names, where it raises the unroll.
-        constexpr bool kU2Here =
-            ADM_FIX4_U2 > 1u && (ADM_FIX4_U2_IP == 0u || ADM_FIX4_U2_IP == IP) &&
-            U1 < ADM_FIX4_U2;
-        constexpr std::size_t U = kU2Here ? std::size_t{ADM_FIX4_U2} : U1;
+        constexpr std::size_t U1 = U0;
+        constexpr std::size_t U = U1;
         auto do_batch = [&](std::size_t aa) ADM_LAMBDA_ALWAYS_INLINE {
             const std::size_t a0 = Split ? (aa & (blk - 1u)) : aa;
             const std::size_t a1 = Split ? (aa >> bsh) : 0u;
@@ -998,64 +823,6 @@ void dif_pass_first_impl(const std::complex<T>* data,
                 });
             }
         }
-#if ADM_FIX4_ROLL
-        // fix4 ROLL: dynamic_for<1> launders the trip count through an asm barrier, so neither
-        // compiler re-unrolls this loop. The step lives in a static_for, so the body has one
-        // shape. At S >= 2 all S blocks load before any butterfly runs, so S chains overlap.
-        if constexpr (!Split) {
-            constexpr std::size_t S = ADM_FIX4_ROLL;
-            auto blk_load = [&](std::size_t aa, batch_t (&tr)[IP], batch_t (&ti)[IP])
-                                ADM_LAMBDA_ALWAYS_INLINE {
-                poet::static_for<0, IP>([&](const auto j) ADM_LAMBDA_ALWAYS_INLINE {
-                    const T* src = reinterpret_cast<const T*>(
-                        data + aa + ido * (decltype(j)::value + IP * b));
-                    auto [dr, di] = plane_refs<Forward>(tr[decltype(j)::value],
-                                                        ti[decltype(j)::value]);
-                    aos_deinterleave<T>(src, dr, di);
-                });
-            };
-            auto blk_run = [&](std::size_t aa, const batch_t (&tr)[IP], const batch_t (&ti)[IP])
-                               ADM_LAMBDA_ALWAYS_INLINE {
-                dif_butterfly<T, IP>(tr, ti, [&](const auto k, batch_t sr, batch_t si)
-                                                 ADM_LAMBDA_ALWAYS_INLINE {
-                    const std::size_t off = aa * ADM_F4_ES + idz * (b + l1 * k);
-                    if constexpr (k > 0u) {
-                        const batch_t owr = batch_t::load_unaligned(twre + ((k - 1u) * ido + aa));
-                        const batch_t owi = batch_t::load_unaligned(twim + ((k - 1u) * ido + aa));
-                        (owr * sr - owi * si).store_unaligned(ore + off);
-                        (owr * si + owi * sr).store_unaligned(oim + off);
-                    } else {
-                        sr.store_unaligned(ore + off);
-                        si.store_unaligned(oim + off);
-                    }
-                });
-            };
-            const std::size_t nstep = (ido - a) / (S * W);
-            if (nstep != 0) {
-                const std::size_t abase = a;
-                poet::dynamic_for<1, 1>(std::size_t{0}, nstep,
-                                        [&](std::size_t i) ADM_LAMBDA_ALWAYS_INLINE {
-                    const std::size_t a0 = abase + i * (S * W);
-                    if constexpr (S == 1u || dif_staged_radix<IP>) {
-                        poet::static_for<0, S>([&](const auto s) ADM_LAMBDA_ALWAYS_INLINE {
-                            do_batch(a0 + decltype(s)::value * W);
-                        });
-                    } else {
-                        batch_t br[S][IP], bi[S][IP];
-                        poet::static_for<0, S>([&](const auto s) ADM_LAMBDA_ALWAYS_INLINE {
-                            blk_load(a0 + decltype(s)::value * W, br[decltype(s)::value],
-                                     bi[decltype(s)::value]);
-                        });
-                        poet::static_for<0, S>([&](const auto s) ADM_LAMBDA_ALWAYS_INLINE {
-                            blk_run(a0 + decltype(s)::value * W, br[decltype(s)::value],
-                                    bi[decltype(s)::value]);
-                        });
-                    }
-                });
-                a = abase + nstep * (S * W);
-            }
-        }
-#endif
         for (; a + W <= ido; a += W) do_batch(a);
         if (!Split && ido >= W && (ido - a) * 2 >= W) { do_batch(ido - W); a = ido; }
         for (; a < ido; ++a) {
@@ -1106,30 +873,13 @@ void dif_pass_first(const std::complex<T>* data,
                     std::size_t l1, std::size_t ido,
                     const T* twre, const T* twim,
                     std::size_t eso, std::size_t blk) {
-#if ADM_FIX4_ES2_ONEBASE
-    const auto run_es = [&](auto split, auto esc) {
-        constexpr bool Split = decltype(split)::value;
-        constexpr std::size_t Eso = decltype(esc)::value;
-        if constexpr (dif_butterfly_wants_reload<IP>)
-            dif_pass_first_impl<T, Forward, IP, Split, Eso, L1>(data, chre, chim, l1, ido, twre,
-                                                                twim, eso, blk);
-        else
-            dif_pass_first_flat<T, Forward, IP, Split, Eso, L1>(data, chre, chim, l1, ido, twre,
-                                                                twim, eso, blk);
-    };
-#endif
     const auto run = [&](auto split) {
-#if ADM_FIX4_ES2_ONEBASE
-        if (eso == 2u) run_es(split, std::integral_constant<std::size_t, 2u>{});
-        else run_es(split, std::integral_constant<std::size_t, 1u>{});
-#else
         if constexpr (dif_butterfly_wants_reload<IP>)
             dif_pass_first_impl<T, Forward, IP, split, 0u, L1>(data, chre, chim, l1, ido, twre,
                                                                twim, eso, blk);
         else
             dif_pass_first_flat<T, Forward, IP, split, 0u, L1>(data, chre, chim, l1, ido, twre,
                                                                twim, eso, blk);
-#endif
     };
     if (blk != 0) run(std::bool_constant<true>{});
     else run(std::bool_constant<false>{});
@@ -1187,13 +937,7 @@ ADM_COLD ADM_NOINLINE void dif_pass_last_scalar_rows(const T* ccre,
                                             std::size_t l1, std::size_t b, T scale_val,
                                             const std::uint32_t* rowperm) {
     constexpr std::size_t Wv = xsimd::batch<T>::size;
-#if ADM_FIX4_ES2_ONEBASE
-    // Esi == 2 is exactly the relation ccim == ccre + W, so one base register serves both planes.
-    const T* const cim = Esi == 2u ? ccre + Wv : ccim;
-#define ADM_F4_CIM cim
-#else
 #define ADM_F4_CIM ccim
-#endif
     for (; b < l1; ++b) {
         const std::size_t rb = rowperm ? std::size_t(rowperm[b]) : b;
         const std::size_t o0 = Esi * IP * rb;
@@ -1229,13 +973,7 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
                                            const std::uint32_t* rowperm) {
     using batch_t = typename dif_last_batch<T, IP>::type;
     constexpr std::size_t W = batch_t::size;
-#if ADM_FIX4_ES2_ONEBASE
-    // Esi == 2 is exactly the relation ccim == ccre + W, so one base register serves both planes.
-    const T* const cim = Esi == 2u ? ccre + xsimd::batch<T>::size : ccim;
-#define ADM_F4_CIM cim
-#else
 #define ADM_F4_CIM ccim
-#endif
     const auto row = [&](std::size_t i) ADM_LAMBDA_ALWAYS_INLINE -> std::size_t {
         return rowperm ? std::size_t(rowperm[i]) : i;
     };

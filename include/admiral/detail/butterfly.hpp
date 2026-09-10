@@ -254,15 +254,6 @@ ADM_ALWAYS_INLINE void dif_butterfly_terminal(const V (&tr)[IP],
     }
 }
 
-// Sweep knobs, not shipped API: ADM_FIX2_N2 forces the outer split factor, ADM_FIX2_L3
-// splits stage B again when it is wide enough to pay for a second scratch.
-#ifndef ADM_FIX2_N2
-#define ADM_FIX2_N2 0
-#endif
-#ifndef ADM_FIX2_L3
-#define ADM_FIX2_L3 0
-#endif
-
 // Gentleman-Sande outer split of one pow2 radix, IP = N1 * N2, staged through an L1 scratch.
 // The monolithic radix keeps 2*IP vector registers live, so the whole set spills at IP >= 16.
 // Stage A runs N2 radix-N1 butterflies over j = n + N2*m and writes a[r][n] = A_r(n)*w_IP^(n*r);
@@ -270,42 +261,19 @@ ADM_ALWAYS_INLINE void dif_butterfly_terminal(const V (&tr)[IP],
 // Peak live is 2*N2 + O(1) registers, and the scratch is IP*W elements per plane.
 template<std::size_t IP>
 [[nodiscard]] ADM_CONSTEVAL std::size_t staged_dif_n2() {
-    constexpr std::size_t forced = ADM_FIX2_N2 > 1u ? std::size_t(ADM_FIX2_N2) : IP;
-    if (forced < IP && IP % forced == 0u) return forced;
     return IP / 4u <= 8u ? IP / 4u : 8u;
 }
-
-template<typename T, std::size_t IP, typename V, typename Load, typename Emit>
-ADM_ALWAYS_INLINE void staged_dif_butterfly(Load&& load, Emit&& emit);
-
-// A stateless loader over one contiguous scratch row, for the recursive stage-B split. A
-// local class cannot carry a member template, so it lives here.
-template<typename T, std::size_t Stride, typename V>
-struct staged_row_loader {
-    const T* ar;
-    const T* ai;
-    template<typename J>
-    ADM_ALWAYS_INLINE void operator()(J, V& lr, V& li) const {
-        lr = V::load_aligned(ar + J::value * Stride * V::size);
-        li = V::load_aligned(ai + J::value * Stride * V::size);
-    }
-};
 
 // Stage B of the outer split: one radix-N2 butterfly over the scratch row.
 template<typename T, std::size_t N2, std::size_t Stride, typename V, typename Emit>
 ADM_ALWAYS_INLINE void staged_dif_stage_b(const T* ar, const T* ai, Emit&& emit) {
     constexpr std::size_t W = V::size;
-    if constexpr (ADM_FIX2_L3 && N2 >= 16u) {
-        staged_dif_butterfly<T, N2, V>(staged_row_loader<T, Stride, V>{ar, ai},
-                                       std::forward<Emit>(emit));
-    } else {
-        V cr[N2], ci[N2];
-        poet::static_for<0, N2>([&](const auto n) ADM_LAMBDA_ALWAYS_INLINE {
-            cr[n] = V::load_aligned(ar + n * Stride * W);
-            ci[n] = V::load_aligned(ai + n * Stride * W);
-        });
-        sub_dft<T, N2, V>(cr, ci, std::forward<Emit>(emit));
-    }
+    V cr[N2], ci[N2];
+    poet::static_for<0, N2>([&](const auto n) ADM_LAMBDA_ALWAYS_INLINE {
+        cr[n] = V::load_aligned(ar + n * Stride * W);
+        ci[n] = V::load_aligned(ai + n * Stride * W);
+    });
+    sub_dft<T, N2, V>(cr, ci, std::forward<Emit>(emit));
 }
 
 template<typename T, std::size_t IP, typename V, typename Load, typename Emit>

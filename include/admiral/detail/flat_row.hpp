@@ -1,6 +1,6 @@
 #pragma once
 
-// Flat interleaved-lane row codelet (ADM_ND_FLATROW): one whole row of N complex stays packed
+// Flat interleaved-lane row codelet: one whole row of N complex stays packed
 // re/im in K = 2N/W registers, the DIF stages run between whole registers while the partner
 // distance is >= one register, and the remaining intra-register stages are lifted onto a
 // register-major layout by ONE small lane permutation per group, where every twiddle factor

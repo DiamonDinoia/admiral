@@ -16,12 +16,7 @@
 
 #include "simd.hpp"
 
-#ifndef ADM_ND_TILEMOVE
-#define ADM_ND_TILEMOVE 1
-#endif
-#if ADM_ND_TILEMOVE
 #include "simd_swizzle.hpp"
-#endif
 
 #include "dif_col_driver.hpp"
 #include "cache.hpp"
@@ -172,8 +167,7 @@ template<typename T>
     return line_route::col_dif;
 }
 
-#if ADM_ND_TILEMOVE
-// W5-tail prototype (default off): tile the strip gather/scatter with the tree's own
+// Tile the strip gather/scatter with the tree's own
 // W x W complex blocks (aos_deinterleave + xsimd::transpose + aos_interleave), replacing
 // the 8-insn-per-complex scalar loops. Pure data movement: bits cannot change. The p tail
 // and any gw % W != 0 group keep the scalar loops. Measured at the 2d_8192 geometry
@@ -215,19 +209,16 @@ void move_run_tiled(std::complex<T>* line, std::size_t inner, std::size_t len, s
             else line[p * inner + g] = buf[g * pitch + p];
         }
 }
-#endif
 
 template<bool Gather, typename T>
 void move_run(std::complex<T>* line, std::size_t inner, std::size_t len, std::size_t gw,
               std::complex<T>* buf) {
     const std::size_t pitch = transpose_pitch<T>(len);
-#if ADM_ND_TILEMOVE
     constexpr std::size_t W = xsimd::batch<T>::size;
     if (gw % W == 0 && len >= W) {
         move_run_tiled<Gather>(line, inner, len, gw, buf, pitch);
         return;
     }
-#endif
     for (std::size_t p = 0; p < len; ++p)
         for (std::size_t g = 0; g < gw; ++g) {
             if constexpr (Gather) buf[g * pitch + p] = line[p * inner + g];

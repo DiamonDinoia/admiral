@@ -230,11 +230,7 @@ private:
 
     void r2c_even_scalar(const T* in, std::complex<T>* out, std::size_t rows) const {
         const std::size_t M = M_, half = N_ / 2;
-#if ADM_ALIGN_STAB
         const auto z = detail::make_aligned_buffer<std::complex<T>>(M == 0 ? 1 : M);
-#else
-        const auto z = detail::make_unique_for_overwrite<std::complex<T>[]>(M == 0 ? 1 : M);
-#endif
         for (std::size_t r = 0; r < rows; ++r) {
             const T* xr = in + r * N_;
             for (std::size_t j = 0; j < M; ++j) z[j] = std::complex<T>(xr[2 * j], xr[2 * j + 1]);
@@ -246,11 +242,7 @@ private:
 
     void c2r_even_scalar(const std::complex<T>* in, T* out, std::size_t rows) const {
         const std::size_t M = M_;
-#if ADM_ALIGN_STAB
         const auto Z = detail::make_aligned_buffer<std::complex<T>>(M == 0 ? 1 : M);
-#else
-        const auto Z = detail::make_unique_for_overwrite<std::complex<T>[]>(M == 0 ? 1 : M);
-#endif
         for (std::size_t r = 0; r < rows; ++r) {
             const std::complex<T>* Xr = in + r * Nh_;
             for (std::size_t k = 0; k < M; ++k) Z[k] = c2r_even_bin(Xr, tw_[k], M, k);
@@ -262,11 +254,7 @@ private:
 
     void r2c_odd(const T* in, std::complex<T>* out, std::size_t rows, thread_pool* pool) const {
         parallel_for(pool, rows, rows * N_, [&](std::size_t b, std::size_t e, std::size_t) {
-#if ADM_ALIGN_STAB
             const auto c = detail::make_aligned_buffer<std::complex<T>>(N_);
-#else
-            const auto c = detail::make_unique_for_overwrite<std::complex<T>[]>(N_);
-#endif
             for (std::size_t r = b; r < e; ++r) {
                 const T* xr = in + r * N_;
                 for (std::size_t i = 0; i < N_; ++i) c[i] = std::complex<T>(xr[i], T(0));
@@ -279,11 +267,7 @@ private:
 
     void c2r_odd(const std::complex<T>* in, T* out, std::size_t rows, thread_pool* pool) const {
         parallel_for(pool, rows, rows * N_, [&](std::size_t b, std::size_t e, std::size_t) {
-#if ADM_ALIGN_STAB
             const auto c = detail::make_aligned_buffer<std::complex<T>>(N_);
-#else
-            const auto c = detail::make_unique_for_overwrite<std::complex<T>[]>(N_);
-#endif
             for (std::size_t r = b; r < e; ++r) {
                 const std::complex<T>* Xr = in + r * Nh_;
                 for (std::size_t k = 0; k < Nh_; ++k) c[k] = Xr[k];

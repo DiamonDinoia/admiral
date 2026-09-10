@@ -29,6 +29,18 @@ endif()
 set_source_files_properties(
     inst_col_f_fwd.cpp inst_col_f_inv.cpp inst_col_d_fwd.cpp inst_col_d_inv.cpp
     PROPERTIES COMPILE_OPTIONS "${_adm_col_numerics}")
+
+# ADM_PIN_1D: extend the same numerics pin to the unpinned 1-D engine instantiation TUs.
+# Closes the per-inline-context contraction/reassociation clone channel there the same way
+# the col pin does for the column engine; default OFF, i.e. no flag is emitted unless asked.
+option(ADM_PIN_1D "Pin fp contraction/reassociation in the 1-D engine instantiation TUs" OFF)
+if(ADM_PIN_1D)
+    set_source_files_properties(
+        inst_dif_f_fwd.cpp inst_dif_f_inv.cpp inst_dif_d_fwd.cpp inst_dif_d_inv.cpp
+        inst_dif_thunks_f.cpp inst_dif_thunks_d.cpp
+        inst_real_f.cpp inst_real_d.cpp inst_api_ld.cpp
+        PROPERTIES COMPILE_OPTIONS "${_adm_col_numerics}")
+endif()
 target_compile_features(admiral_engine PRIVATE cxx_std_${ADM_CXX_STANDARD})
 target_include_directories(admiral_engine PRIVATE
     ${PROJECT_SOURCE_DIR}/include

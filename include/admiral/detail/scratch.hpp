@@ -12,6 +12,15 @@
 namespace admiral {
 namespace detail {
 
+// S1b alignment-stabilization arm, sweep only. When ADM_ALIGN_STAB is set, the 1-D/axis
+// engines' execute-time row workspaces (real_fft.hpp's make_unique_for_overwrite sites)
+// allocate through make_aligned_buffer, pinning their base alignment to span_align<T> so the
+// soa->aos store around the dif last pass sees one cache-line class for a given size,
+// independent of malloc history. Default OFF: the call sites keep their master spelling.
+#ifndef ADM_ALIGN_STAB
+#define ADM_ALIGN_STAB 0
+#endif
+
 inline constexpr std::size_t SBO_MAX = 4096;
 
 inline constexpr std::size_t SBO_PAD = 16;

@@ -12,6 +12,7 @@
 #include <numeric>
 #include <regex>
 #include <set>
+#include <sstream>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -546,7 +547,162 @@ struct Args {
     std::string data = "bench-results";
     std::string out = "include/admiral/detail/base_cost_model.hpp";
     double alpha = 0.05;
+    std::vector<std::string> score;
 };
+
+// Reads a GENERATED base_cost_model.hpp back into full-NF weight vectors: the emitted
+// array keeps the form's own features followed by the shared tail, and the middle slots
+// multiply features that are always zero, so zero-filling them is exact.
+std::map<std::string, Fitted> parse_coef_header(const std::string& path) {
+    std::ifstream fh(path);
+    if (!fh) die("cannot open " + path);
+    std::stringstream ss;
+    ss << fh.rdbuf();
+    const std::string text = ss.str();
+    std::map<std::string, Fitted> out;
+    const std::regex bias_re(R"(bias = ([-+0-9.eE]+);)");
+    const std::regex w_re(R"(w = \{([\s\S]*?)\};)");
+    for (const char* fp : FORM_ORDER) {
+        const std::string form = fp;
+        const std::size_t pos = text.find("struct " + form + " {");
+        if (pos == std::string::npos) continue;
+        const std::size_t end = text.find("\n};", pos);
+        if (end == std::string::npos) die(path + ": unterminated struct " + form);
+        const std::string blk = text.substr(pos, end - pos);
+        std::smatch m;
+        if (!std::regex_search(blk, m, bias_re))
+            die(path + ": no bias in struct " + form);
+        const double bias = std::stod(m[1]);
+        if (!std::regex_search(blk, m, w_re)) die(path + ": no w in struct " + form);
+        std::vector<double> flat;
+        std::stringstream ws(m[1]);
+        std::string tok;
+        while (std::getline(ws, tok, ',')) {
+            const auto b = tok.find_first_not_of(" \t\n");
+            if (b == std::string::npos) continue;
+            flat.push_back(std::stod(tok.substr(b)));
+        }
+        const std::size_t keep = form_body(form).exprs.size();
+        if (flat.size() != keep + 3)
+            die(path + ": struct " + form + " has " + std::to_string(flat.size()) +
+                " coefficients, expected " + std::to_string(keep + 3));
+        std::vector<double> w(NF, 0.0);
+        for (std::size_t i = 0; i < keep; ++i) w[i] = flat[i];
+        w[NF - 3] = flat[keep];
+        w[NF - 2] = flat[keep + 1];
+        w[NF - 1] = flat[keep + 2];
+        out[form] = Fitted{std::move(w), bias};
+    }
+    if (out.empty()) die(path + ": no form structs parsed (not a generated cost header?)");
+    return out;
+}
+
+// Scores generated headers against receipts without fitting: per-key route regret for
+// each header side by side, plus the count of sizes in the full model domain where the
+// headers elect different routes. All headers must carry the same form set.
+int run_score(const Args& args) {
+    if (!std::filesystem::is_directory(args.data))
+        die("no sweep data at " + args.data + " (pass --data)");
+    const Table T = load(args.data);
+    std::vector<std::pair<std::string, std::map<std::string, Fitted>>> hdrs;
+    for (const std::string& p : args.score) {
+        std::map<std::string, Fitted> hc = parse_coef_header(p);
+        if (!hdrs.empty()) {
+            std::string a, b;
+            for (const auto& [f, c] : hdrs.front().second) a += f + ",";
+            for (const auto& [f, c] : hc) b += f + ",";
+            if (hdrs.front().second.size() != hc.size() || a != b)
+                die("form set of " + p + " (" + b + ") differs from " +
+                    args.score.front() + " (" + a + ")");
+        }
+        hdrs.emplace_back(std::filesystem::path(p).filename().string(), std::move(hc));
+    }
+    const auto argmin_measured = [](const std::map<std::string, double>& m) {
+        return std::min_element(m.begin(), m.end(),
+                                [](const auto& a, const auto& b) {
+                                    return a.second < b.second;
+                                })
+            ->first;
+    };
+    std::vector<std::string> forms;
+    for (const auto& [f, c] : hdrs.front().second) forms.push_back(f);
+    for (const auto& [k, d] : T) {
+        [[maybe_unused]] const auto& [arch, cc, major, w, regs, prec, uarch] = k;
+        const double byt = (prec == "f32" ? 4 : 8) * 2;
+        std::vector<std::vector<double>> reg(hdrs.size());
+        std::size_t cells = 0;
+        for (const auto& [n, fs] : d) {
+            std::array<bool, 8> usable{};
+            bool all = true;
+            std::array<std::pair<std::string, double>, 8> pick;
+            for (std::size_t h = 0; h < hdrs.size(); ++h) {
+                std::map<std::string, double> p;
+                for (const auto& f : forms)
+                    if (fs.count(f)) {
+                        bool ok;
+                        const auto x = feat(f, n, std::size_t(w), std::size_t(regs), byt,
+                                            cc, ok);
+                        const auto& c = hdrs[h].second.at(f);
+                        p[f] = score(x, c.w, c.b);
+                    }
+                usable[h] = p.size() >= 2;
+                all = all && usable[h];
+                if (usable[h]) {
+                    const auto it = std::min_element(p.begin(), p.end(),
+                                                     [](const auto& a, const auto& b) {
+                                                         return a.second < b.second;
+                                                     });
+                    pick[h] = {it->first, it->second};
+                }
+            }
+            if (!all) continue;
+            ++cells;
+            const double best_cyc = fs.at(argmin_measured(fs));
+            for (std::size_t h = 0; h < hdrs.size(); ++h)
+                reg[h].push_back(fs.at(pick[h].first) / best_cyc - 1.0);
+        }
+        std::size_t flips = 0, flips_measured = 0;
+        std::string flip_ns;
+        for (std::size_t n = NMIN; n <= NMAX; ++n) {
+            std::string r0;
+            for (std::size_t h = 0; h < hdrs.size(); ++h) {
+                std::pair<std::string, double> best{"", 1e300};
+                for (const auto& f : forms) {
+                    bool ok;
+                    const auto x =
+                        feat(f, n, std::size_t(w), std::size_t(regs), byt, cc, ok);
+                    const auto& c = hdrs[h].second.at(f);
+                    const double s = score(x, c.w, c.b);
+                    if (s < best.second) best = {f, s};
+                }
+                if (h == 0) r0 = best.first;
+                else if (best.first != r0) {
+                    ++flips;
+                    const auto m_it = d.find(n);
+                    if (m_it != d.end() && m_it->second.count(best.first))
+                        ++flips_measured;
+                    if (flip_ns.size() < 60)
+                        flip_ns += " " + std::to_string(n) + ":" + r0 + ">" + best.first;
+                    break;
+                }
+            }
+        }
+        std::cout << "  " << build_name(k) << ": cells " << cells;
+        for (std::size_t h = 0; h < hdrs.size(); ++h) {
+            char buf[160];
+            const double mx =
+                reg[h].empty() ? 0.0 : *std::max_element(reg[h].begin(), reg[h].end());
+            std::snprintf(buf, sizeof buf, " | %s mean %4.2f%% max %5.1f%%",
+                          hdrs[h].first.c_str(), 100 * mean(reg[h]), 100 * mx);
+            std::cout << buf;
+        }
+        std::cout << " | route-flips vs " << hdrs[0].first << ": " << flips
+                  << " (winner measured in receipt: " << flips_measured << ")";
+        if (flips) std::cout << " [" << flip_ns.substr(1) << (flip_ns.size() >= 60 ? " ..." : "") << "]";
+        std::cout << "\n";
+    }
+    return 0;
+}
 
 int run(const Args& args) {
     if (!std::filesystem::is_directory(args.data))
@@ -709,8 +865,13 @@ int main(int argc, char** argv) {
             args.out = next("--out");
         else if (a == "--alpha")
             args.alpha = std::stod(next("--alpha"));
-        else
+        else if (a == "--score") {
+            std::stringstream ss(next("--score"));
+            std::string tok;
+            while (std::getline(ss, tok, ',')) args.score.push_back(tok);
+        } else
             die("unknown argument: " + a);
     }
+    if (!args.score.empty()) return run_score(args);
     return run(args);
 }

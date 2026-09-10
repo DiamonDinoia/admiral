@@ -108,7 +108,7 @@ if(NOT TARGET poet::poet AND NOT TARGET poet)
     CPMAddPackage(
         NAME poet
         GITHUB_REPOSITORY DiamonDinoia/poet
-        GIT_TAG 59329e168554568d0708b6a9c46a4edc080820d2
+        GIT_TAG 1f136442c5a91755c39090a5a8140c6a35921b25
         SYSTEM YES
         EXCLUDE_FROM_ALL YES
         OPTIONS
@@ -119,7 +119,7 @@ if(NOT TARGET poet::poet AND NOT TARGET poet)
     )
 
     if(poet_ADDED)
-        message(STATUS "poet: DiamonDinoia/poet 59329e16 (branch admiral, feat/exact-unroll tip + sysroot fix)")
+        message(STATUS "poet: DiamonDinoia/poet 1f136442 (main tip)")
     endif()
 else()
     message(STATUS "poet: reusing parent-provided target")

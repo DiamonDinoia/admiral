@@ -235,13 +235,7 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
                                            LineBase line_base) {
     const std::size_t nthreads = pool_size(pool);
     if (choose_line_route<T>(st, len, inner, run_len, nthreads) == line_route::col_dif) {
-#if ADM_COLDIF_GEO
-        const std::size_t Bt =
-            nd_col_block_geo<T>(len, run_len, inner * sizeof(std::complex<T>), nthreads,
-                                nruns);
-#else
         const std::size_t Bt = nd_col_block<T>(len, run_len, nthreads, nruns);
-#endif
         const std::size_t ntiles = (run_len + Bt - 1) / Bt;
         const std::size_t nunits = nruns * ntiles;
         const T scale = fct.value_or(forward ? T(1) : T(1) / static_cast<T>(len));
@@ -306,13 +300,7 @@ apply_lines_strided_oop(const std::complex<T>* src, std::size_t src_line,
     if (src_batch == 1 && dst_batch == 1 &&
         choose_line_route<T>(st, len, src_line, run_len, nthreads) ==
             line_route::col_dif) {
-#if ADM_COLDIF_GEO
-        const std::size_t Bt =
-            nd_col_block_geo<T>(len, run_len, dst_line * sizeof(std::complex<T>), nthreads,
-                                nruns);
-#else
         const std::size_t Bt = nd_col_block<T>(len, run_len, nthreads, nruns);
-#endif
         const std::size_t ntiles = (run_len + Bt - 1) / Bt;
         const std::size_t nunits = nruns * ntiles;
         const T scale = fct.value_or(forward ? T(1) : T(1) / static_cast<T>(len));

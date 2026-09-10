@@ -328,8 +328,15 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
     const line_plan lp = resolve_line_plan<T>(st, len, inner, run_len, nruns, nthreads,
                                               pool != nullptr);
     if (lp.route == line_route::col_dif) {
+#if ADM_COLDIF_GEO
+        const std::size_t Bt =
+            nd_col_block_geo<T>(len, run_len, inner * sizeof(std::complex<T>), nthreads,
+                                nruns);
+        const std::size_t ntiles = (run_len + Bt - 1) / Bt;
+#else
         const std::size_t Bt = lp.tile;
         const std::size_t ntiles = lp.units;
+#endif
         const std::size_t nunits = nruns * ntiles;
         const T scale = fct.value_or(forward ? T(1) : T(1) / static_cast<T>(len));
         // nd_col_block caps Bt at run_len, so ntiles == 1 means the tile covers the whole run and
@@ -406,8 +413,15 @@ apply_lines_strided_oop(const std::complex<T>* src, std::size_t src_line,
     const line_plan lp = resolve_line_plan<T>(st, len, src_line, run_len, nruns, nthreads,
                                               pool != nullptr, batch_ok);
     if (lp.route == line_route::col_dif) {
+#if ADM_COLDIF_GEO
+        const std::size_t Bt =
+            nd_col_block_geo<T>(len, run_len, dst_line * sizeof(std::complex<T>), nthreads,
+                                nruns);
+        const std::size_t ntiles = (run_len + Bt - 1) / Bt;
+#else
         const std::size_t Bt = lp.tile;
         const std::size_t ntiles = lp.units;
+#endif
         const std::size_t nunits = nruns * ntiles;
         const T scale = fct.value_or(forward ? T(1) : T(1) / static_cast<T>(len));
         parallel_for(pool, nunits, total_elems, [&](std::size_t b, std::size_t e, std::size_t) {

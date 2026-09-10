@@ -1,6 +1,6 @@
 #pragma once
 
-// Flat tiny row codelets (ADM_ND_FLATTINY): the flat_row shape pushed below N = 16. A whole
+// Flat tiny row codelets: the flat_row shape pushed below N = 16. A whole
 // N <= 8 complex row is 2N fp lanes, so at the campaign widths it sits in K = 2N/W in
 // {1, 2, 4, 8} registers, or HALF a register at N = 4, W = 16 where one register braids two
 // rows. The batched incumbent (many_gather_x + kernel_batched + many_scatter_x) pays two

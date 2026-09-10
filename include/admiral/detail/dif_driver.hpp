@@ -5,7 +5,6 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <utility>
 #include <vector>
 
@@ -203,7 +202,7 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
                 // multiple of W. The last pass has ido == 1 and instead reads IP contiguous
                 // elements per row, so W has to divide IP there.
                 const bool ok = p + 1 < n_passes ? idop % W == 0
-                                                 : (ADM_FIX4_ES2 != 0 && ip % W == 0);
+                                                 : false;
                 if (ok) blk |= std::uint64_t{1} << p;
             }
             for (std::size_t p = 0; p + 1 < n_passes; ++p)
@@ -307,22 +306,9 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
                 poet::dispatch(poet::throw_on_no_match, dif_tape_fill_last<T, Forward, E2>{},
                                poet::dispatch_param<dif_radix_set>{dtw.radices[p]}, st);
             };
-            if (ADM_FIX4_ES2 != 0 && es_bit(p - 1))
-                fill(std::bool_constant<ADM_FIX4_ES2 != 0>{});
-            else
-                fill(std::bool_constant<false>{});
+            fill(std::bool_constant<false>{});
             tv.push_back(st);
         }
-#if ADM_FIX4_ES2_TRACE
-        std::fprintf(stderr, "TAPE N=%zu fwd=%d tape=%s es2=0x%llx n_passes=%zu\n", N,
-                     Forward ? 1 : 0, variant == 0 ? "blk" : "flat",
-                     static_cast<unsigned long long>(es2), n_passes);
-        for (std::size_t i = 0; i < tv.size(); ++i)
-            std::fprintf(stderr,
-                         "  step %zu p=%zu l1=%zu ido=%zu es=%u dim=%u sim=%u src=%u dst=%u\n", i,
-                         tv[i].p, tv[i].l1, tv[i].ido, unsigned(tv[i].es), unsigned(tv[i].dim),
-                         unsigned(tv[i].sim), unsigned(tv[i].src), unsigned(tv[i].dst));
-#endif
     }
 }
 
@@ -337,16 +323,6 @@ void iterative_dif_execute_ws(const std::complex<T>* in, std::complex<T>* out,
     constexpr std::size_t W = xsimd::batch<T>::size;
     const auto& tp = dtw.tape[Forward ? 0 : 1];
     const std::vector<dif_step<T>>& tv = soa_stride >= N ? tp.blk : tp.flat;
-#if ADM_FIX4_ES2_TRACE
-    {
-        static int trace_left = 8;
-        if (trace_left > 0) {
-            --trace_left;
-            std::fprintf(stderr, "EXEC N=%zu soa_stride=%zu tape=%s steps=%zu\n", N, soa_stride,
-                         soa_stride >= N ? "blk" : "flat", tv.size());
-        }
-    }
-#endif
     const dif_rt<T> rt{in, out, scale_val, &dtw};
     for (const dif_step<T>& st : tv) {
         T* const dr = st.dst ? cc1re : cc0re;

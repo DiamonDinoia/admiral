@@ -426,14 +426,12 @@ using dif_fused_pair_set = std::integer_sequence<std::size_t, 4, 5, 8>;
     return in_seq(dif_fused_pair_set{}, r);
 }
 
-// fix4 sweep only: overrides the >16-register fusion floor. Default keeps current behaviour.
-#ifndef ADM_FIX4_FUSEMIN
-#define ADM_FIX4_FUSEMIN 8192
-#endif
+// The fusion floor past a 16-register file; at or below it the floor stays precision-keyed.
+inline constexpr std::size_t kDifFuseMinNWide = 8192;
 
 template<typename T>
 inline constexpr std::size_t kDifFuseMinN =
-    poet::vector_register_count() <= 16 ? (sizeof(T) == 8 ? 2048 : 4096) : ADM_FIX4_FUSEMIN;
+    poet::vector_register_count() <= 16 ? (sizeof(T) == 8 ? 2048 : 4096) : kDifFuseMinNWide;
 
 inline constexpr std::size_t kDifFused3MaxNF64 = 256u * 1024u / (2 * sizeof(double));
 
@@ -830,21 +828,12 @@ template<typename T>
     if (fuse_packed && !s.radices.empty()) {
         constexpr std::size_t W = xsimd::batch<T>::size;
         const std::size_t ip0 = s.radices[0], ido0 = N / ip0;
-#if ADM_FIX4_T2 == 2
-        [[maybe_unused]]
-#endif
         const std::size_t flat = 2 * (ip0 - 1) * ido0 * sizeof(T);
-#if ADM_FIX4_T2 == 2
-        // fix4 T2: the L1D admission landed unconditional; this arm brackets it from above by
-        // firing the split for every N >= 256.
-        if (N >= 256) {
-#else
         // The first pass streams the complex input (2N reals), the split output pair (2N reals)
         // and the table, each element once, so the table stays L1-resident only while that sum
         // leaves room in a 12-way L1D. Three quarters of L1D is the admission, hand set from the
         // survey reading that 46.0 KiB of a 48 KiB L1D already runs L1 bound, not fitted.
         if (4 * N * sizeof(T) + flat > (cpu_cache().l1d * 3) / 4) {
-#endif
             std::size_t bw = W;
             while (bw * bw < ido0) bw *= 2;
             const std::size_t nb = (ido0 + bw - 1) / bw;

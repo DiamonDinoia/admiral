@@ -560,30 +560,12 @@ void dif_col_pass_first(const std::complex<T>* data, std::size_t axis_stride,
                                               twre, twim);
 }
 
-// COLDIF arm, default ON since the A/B (2026-09-07, jobs 6997097/6997221/6997847/6998024):
-// wins at chain length >= 1024 on both wide hosts, exclusions proven neutral below. At 0 the
-// TU's text is token-identical to the shipped form, and the shipped pass body keeps that text
-// at every switch state — the arm lives in the separate dif_col_pass_last_staged symbol that
-// the last-pass dispatcher selects on chain length. At 1 the last pass's big pow2 radix runs
-// through staged_dif_butterfly (the row engine's Gentleman-Sande split in butterfly.hpp)
-// instead of the monolithic 2*IP-live terminal radix, on the same gate the row engine uses.
-// A/B 2026-09-07 (logs/coldif-{icelake,genoa}-*): the arm wins at len >= 1024 on both wide
-// hosts (ice 2d_1024/3d_512, genoa 2d_1024/3d_512) and regresses genoa 2d_512's 8 MiB
-// L3-resident class (+3.5% cyc with -8% instr), so admission gates at chain length >= 1024.
-#ifndef ADM_COLDIF_DIET
-#define ADM_COLDIF_DIET 1
-#endif
+// Staged last-pass admission floor: the staged split wins from chain length 1024 on both wide
+// hosts and regresses the 8 MiB L3-resident class below it.
 inline constexpr std::size_t kColdifDietMinLen = 1024;
 
-// COLDIF A2 arm, default ON since the host A/B wave (team-r5-shared/ab/w1): the same staged
-// diet for the col chain's FIRST pass and the single-pass fused form. The chain-length floor
-// differs from A1's on purpose: A1's 1024 prices the LAST pass's L3-resident regression class
-// (genoa 2d_512), while the first pass's named wins sit at chains 128/256 (ice 2d_128/3d_128
-// first<16> shares), so 128 is the floor the wave re-prices. The same discipline as A1
-// below: at 0 the TU's text is token-identical to the shipped form.
-#ifndef ADM_COLDIF_FIRST
-#define ADM_COLDIF_FIRST 1
-#endif
+// Staged first-pass admission floor, below kColdifDietMinLen on purpose: 1024 prices the last
+// pass's L3-resident regression class, while the first pass's wins sit at chains 128/256.
 inline constexpr std::size_t kColdifFirstMinLen = 128;
 
 template<typename T, bool Forward, std::size_t IP>
@@ -634,12 +616,8 @@ void dif_col_pass_last(const T* ccre, const T* ccim,
     }
 }
 
-#if ADM_COLDIF_DIET
-// The armed form of dif_col_pass_last: same c-walk and store policies, but the butterfly runs
-// through staged_dif_butterfly. A separate symbol, selected in the trampoline, so the shipped
-// body's TU stays token-identical at every switch state (a shared lambda with a discarded arm
-// perturbs gcc's cloning of the untouched radices; measured 5-14 byte growth on
-// pass_last<7..25> with the arm text present).
+// dif_col_pass_last with the staged split: same c-walk and store policies, but the butterfly
+// runs through staged_dif_butterfly instead of the monolithic 2*IP-live terminal radix.
 template<typename T, bool Forward, std::size_t IP>
 void dif_col_pass_last_staged(const T* ccre, const T* ccim,
                               std::complex<T>* data, std::size_t axis_stride,
@@ -683,7 +661,6 @@ void dif_col_pass_last_staged(const T* ccre, const T* ccim,
         }
     }
 }
-#endif
 
 template<typename T, bool Forward, std::size_t IP>
 void dif_col_pass_fused(std::complex<T>* data, std::size_t axis_stride,
@@ -719,14 +696,12 @@ void dif_col_pass_fused(std::complex<T>* data, std::size_t axis_stride,
         dif_col_tail_fused<T, Forward, IP>(data, axis_stride, l1, B, cfull, scale_val);
 }
 
-#if ADM_COLDIF_FIRST
-// The A2 arms of dif_col_pass_first / dif_col_pass_fused: the same b/a/c walk and tails as the
-// shipped bodies, but the big pow2 radix's butterfly runs through staged_dif_butterfly (the
+// The staged forms of dif_col_pass_first / dif_col_pass_fused: the same b/a/c walk and tails as
+// the unstaged bodies, but the big pow2 radix's butterfly runs through staged_dif_butterfly (the
 // row engine's Gentleman-Sande split in butterfly.hpp), halving peak live registers the way
-// A1's dif_col_pass_last_staged does. Separate symbols, selected in the trampolines, so the
-// shipped bodies' text stays token-identical at every switch state. The emit lambdas keep the
-// shipped piece_fma/piece_fnma spellings: the inst_col_* numerics pin blocks contraction, so
-// the source fixes the FMA form identically for every clone.
+// dif_col_pass_last_staged does. The emit lambdas keep the piece_fma/piece_fnma spellings: the
+// inst_col_* numerics pin blocks contraction, so the source fixes the FMA form identically for
+// every clone.
 template<typename T, bool Forward, std::size_t IP>
 void dif_col_pass_first_staged(const std::complex<T>* data, std::size_t axis_stride,
                                T* chre, T* chim,
@@ -774,7 +749,7 @@ void dif_col_pass_first_staged(const std::complex<T>* data, std::size_t axis_str
                                               twre, twim);
 }
 
-// The fused single-pass arm: the same staged split with the shipped terminal emit (scale +
+// The fused single-pass staged form: the same staged split with the terminal emit (scale +
 // interleave). A single-pass chain has N == IP, so the trampoline's dif_staged_radix<IP>
 // constexpr is the whole admission test; no chain-length gate applies.
 template<typename T, bool Forward, std::size_t IP>
@@ -806,7 +781,6 @@ void dif_col_pass_fused_staged(std::complex<T>* data, std::size_t axis_stride,
     if (cfull != B)
         dif_col_tail_fused<T, Forward, IP>(data, axis_stride, l1, B, cfull, scale_val);
 }
-#endif
 
 template<typename T>
 struct dif_col_pass_invoke_t {
@@ -848,9 +822,8 @@ struct dif_col_pass_last_invoke_t {
 template<typename T, bool Forward>
 inline constexpr dif_col_pass_last_invoke_t<T, Forward> dif_col_pass_last_invoke{};
 
-#if ADM_COLDIF_DIET
-// The arm's dispatch twin: instantiated for every dif radix like the shipped table, falling
-// back to the shipped pass outside dif_staged_radix<IP>. col_dif_execute_ws picks this table
+// The staged dispatch twin: instantiated for every dif radix like the unstaged table, falling
+// back to dif_col_pass_last outside dif_staged_radix<IP>. col_dif_execute_ws picks this table
 // only when the chain length reaches kColdifDietMinLen, keeping a single len/ISA decision
 // point per dispatch.
 template<typename T, bool Forward>
@@ -871,7 +844,6 @@ struct dif_col_pass_last_staged_invoke_t {
 };
 template<typename T, bool Forward>
 inline constexpr dif_col_pass_last_staged_invoke_t<T, Forward> dif_col_pass_last_staged_invoke{};
-#endif
 
 template<typename T, bool Forward>
 struct dif_col_pass_fused_invoke_t {
@@ -885,12 +857,11 @@ struct dif_col_pass_fused_invoke_t {
 template<typename T, bool Forward>
 inline constexpr dif_col_pass_fused_invoke_t<T, Forward> dif_col_pass_fused_invoke{};
 
-#if ADM_COLDIF_FIRST
-// The A2 dispatch twins, on the A1 pattern: instantiated for every dif radix like the shipped
-// tables, falling back to the shipped passes outside dif_staged_radix<IP>. col_dif_execute_ws
-// picks the first-pass table only when the chain length reaches kColdifFirstMinLen, and the
-// fused single-pass table unconditionally (its constexpr is the whole admission test), keeping
-// a single len/ISA decision point per dispatch.
+// The staged first-pass/fused dispatch twins, on the last-pass pattern: instantiated for every
+// dif radix like the unstaged tables, falling back to the unstaged passes outside
+// dif_staged_radix<IP>. col_dif_execute_ws picks the first-pass table only when the chain
+// length reaches kColdifFirstMinLen, and the fused single-pass table unconditionally (its
+// constexpr is the whole admission test), keeping a single len/ISA decision point per dispatch.
 template<typename T, bool Forward>
 struct dif_col_pass_first_staged_invoke_t {
     template<std::size_t IP>
@@ -928,7 +899,6 @@ struct dif_col_pass_fused_staged_invoke_t {
 template<typename T, bool Forward>
 inline constexpr dif_col_pass_fused_staged_invoke_t<T, Forward>
     dif_col_pass_fused_staged_invoke{};
-#endif
 
 }
 }

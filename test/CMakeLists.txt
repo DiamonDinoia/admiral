@@ -65,7 +65,9 @@ foreach(test_src IN LISTS ADM_TEST_SOURCES)
         target_link_libraries(${test_name} PRIVATE project_sanitizers)
     endif()
 
-    catch_discover_tests(${test_name})
+    # admiral_internal is a shared library, so Windows resolves it through PATH at load time
+    # rather than through the link-time path. Harmless on ELF, where the RPATH answers it.
+    catch_discover_tests(${test_name} DL_PATHS $<TARGET_FILE_DIR:admiral_internal>)
 endforeach()
 
 # ELF only: `nm -D` reads a dynamic symbol table, which a PE DLL does not have, and the
@@ -74,7 +76,7 @@ endforeach()
 find_program(ADM_NM NAMES ${CMAKE_NM} nm)
 if(ADM_NM AND ADM_HAVE_VERSION_SCRIPT AND NOT WIN32)
     foreach(row
-        "admiral;^_Z[A-Z]+7admiral;_ZN7admiral7forwardI|_ZN7admiral7inverseI|_ZN7admiral4planI|_ZN7admiral9axis_planI|_ZN7admiral12strides_planI|_ZN7admiral8plan_r2cI|_ZN7admiral8plan_r2rI"
+        "admiral;^_Z[A-Z]+7admiral(4plan|5error|7forward|7inverse|8plan_r2[cr]|9axis_plan|10size_error|12strides_plan|14internal_error|17unsupported_error);_ZN7admiral7forwardI|_ZN7admiral7inverseI|_ZN7admiral4planI|_ZN7admiral9axis_planI|_ZN7admiral12strides_planI|_ZN7admiral8plan_r2cI|_ZN7admiral8plan_r2rI|_ZTIN7admiral5error|_ZTIN7admiral10size_error|_ZTIN7admiral14internal_error|_ZTIN7admiral17unsupported_error"
         "admiral_c;^(adm|admf)_;adm_plan_1d|adm_forward|adm_r2c_nd|admf_plan_1d|admf_forward"
         "admiral_fftw;^fftw[f]?_;fftw_plan_dft_1d|fftw_execute|fftwf_plan_dft_1d")
         list(GET row 0 lib)

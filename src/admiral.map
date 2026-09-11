@@ -1,22 +1,35 @@
-/* Exported ABI of libadmiral.so: namespace admiral, nothing else. Hidden
-   visibility alone leaks RTTI. The typeinfo for polymorphic template instantiations
-   carries default visibility, which exported
-   std::thread::_State_impl<...admiral::detail::thread_pool...>.
+/* Exported ABI of libadmiral.so: the public entities of namespace admiral, nothing else.
 
-   Mangled globs, not extern "C++" { admiral::*; }. The linker matches that
-   against the *demangled* name, and a function template demangles with its
-   return type first ("void admiral::forward<double>(...)"), so the free
-   functions silently became local while the class members were exported.
+   The engine objects compile with default visibility, so that one shared library can hand
+   admiral::detail to the tests, and this script is therefore the only thing that decides what
+   ships. It names the public entities one by one rather than globbing the namespace, because
+   _ZN7admiral* also matches admiral::detail and GNU ld 2.35 ignores a narrower local: pattern
+   whenever a wider global: one matches as well. The patterns are mangled: a demangled one
+   would have to spell the return type, which differs between the C++17 and C++20 arms of the
+   compat seam. local: * is what strips the RTTI that hidden visibility used to leak.
 
-   admiral::detail::* matches too, harmlessly: a version script cannot re-export
-   what visibility already made local. */
+   test/CMakeLists.txt's exported_symbols.admiral gate checks both directions: its allow
+   pattern fails on anything exported from outside this list, and its required list fails when
+   one of these stops being exported. Add a public entity here and there in the same commit. */
 {
     global:
-        _ZN7admiral*;    /* functions, members, static data */
-        _ZNK7admiral*;   /* const members */
-        _ZTIN7admiral*;  /* typeinfo, for catch across the boundary */
-        _ZTSN7admiral*;
-        _ZTVN7admiral*;
+        /* Free functions. */
+        _ZN7admiral7forwardI*;
+        _ZN7admiral7inverseI*;
+
+        /* Plan class templates, non-const and const members. */
+        _ZN7admiral4planI*;          _ZNK7admiral4planI*;
+        _ZN7admiral9axis_planI*;     _ZNK7admiral9axis_planI*;
+        _ZN7admiral12strides_planI*; _ZNK7admiral12strides_planI*;
+        _ZN7admiral8plan_r2cI*;      _ZNK7admiral8plan_r2cI*;
+        _ZN7admiral8plan_r2rI*;      _ZNK7admiral8plan_r2rI*;
+
+        /* The exception types are the only polymorphic public types, so they are the only ones
+           whose typeinfo, typeinfo name and vtable a catch across the boundary needs. */
+        _ZT[ISV]N7admiral5errorE;
+        _ZT[ISV]N7admiral10size_errorE;
+        _ZT[ISV]N7admiral14internal_errorE;
+        _ZT[ISV]N7admiral17unsupported_errorE;
     local:
         *;
 };

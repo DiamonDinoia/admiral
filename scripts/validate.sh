@@ -15,6 +15,7 @@ mkdir -p "$TMPDIR"
 
 pass=0
 declare -a failed=()
+declare -a skipped=()
 
 check_flags() {
     local dir=$1 spec pat n rc=0
@@ -43,7 +44,7 @@ run_arm() {
     step configure cmake -S "$src" -B "$dir" -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON "$@" &&
         check_flags "$dir" "${checks[@]}" &&
         step build cmake --build "$dir" -j "$jobs" &&
-        step ctest ctest --test-dir "$dir" -j "$jobs" --output-on-failure ||
+        step ctest ctest --test-dir "$dir" -j "$jobs" --output-on-failure --timeout 900 ||
         { failed+=("$name"); return; }
     rm -rf "$dir"
     echo "  OK"; ((pass++))
@@ -60,7 +61,7 @@ arm_isa() {
 arm_compilers() {
     for cxx in "${cxx_list[@]}"; do
         if ! command -v "$cxx" >/dev/null; then
-            echo "=== compiler-$cxx: skipped, not on PATH"; continue
+            echo "=== compiler-$cxx: skipped, not on PATH"; skipped+=("compiler-$cxx"); continue
         fi
         run_arm "compiler-${cxx//+/p}" "want:-march=x86-64-v3" "want:$cxx" -- \
             -DCMAKE_CXX_COMPILER="$cxx" -DCMAKE_BUILD_TYPE=Release \
@@ -78,7 +79,7 @@ arm_sanitize() {
     local spec san cxx
     for spec in address+undefined:clang++ thread:g++; do
         san=${spec%%:*} cxx=${spec#*:}
-        command -v "$cxx" >/dev/null || { echo "=== san-$san: skipped, $cxx not on PATH"; continue; }
+        command -v "$cxx" >/dev/null || { echo "=== san-$san: skipped, $cxx not on PATH"; skipped+=("san-$san"); continue; }
 
         local cxxflags=-O1
         [[ $cxx == clang++ ]] && cxxflags="-O1 -fconstexpr-steps=100000000"
@@ -106,7 +107,7 @@ arm_catalog() {
 arm_valgrind() {
     local dir=$out/valgrind log=$out/valgrind.log rc=0
     echo "=== valgrind"
-    command -v valgrind >/dev/null || { echo "  skipped: valgrind not on PATH"; return; }
+    command -v valgrind >/dev/null || { echo "  skipped: valgrind not on PATH"; skipped+=(valgrind); return; }
     rm -rf "$dir"; : >"$log"
     cmake -S "$src" -B "$dir" -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
         -DCMAKE_BUILD_TYPE=RelWithDebInfo -DADM_TARGET_ARCH=x86-64-v2 \
@@ -134,7 +135,7 @@ arm_tidy() {
     local dir=$out/tidy log=$out/tidy.log
     echo "=== tidy"
     if ! command -v clang-tidy >/dev/null; then
-        echo "  skipped: clang-tidy not on PATH"; return
+        echo "  skipped: clang-tidy not on PATH"; skipped+=(tidy); return
     fi
     grep -q 'HeaderFilterRegex' "$src/.clang-tidy" ||
         { echo "  MISSING: HeaderFilterRegex in .clang-tidy"; failed+=("tidy"); return; }
@@ -156,7 +157,7 @@ arm_cppcheck() {
     local dir=$out/cppcheck log=$out/cppcheck.log
     echo "=== cppcheck"
     if ! command -v cppcheck >/dev/null; then
-        echo "  skipped: cppcheck not on PATH"; return
+        echo "  skipped: cppcheck not on PATH"; skipped+=(cppcheck); return
     fi
     rm -rf "$dir"; : >"$log"
     cmake -S "$src" -B "$dir" -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
@@ -181,6 +182,7 @@ for arm in "${arms[@]}"; do
 done
 
 echo
-echo "validate: $pass passed, ${#failed[@]} failed"
+echo "validate: $pass passed, ${#failed[@]} failed, ${#skipped[@]} skipped"
+((${#skipped[@]} == 0)) || printf 'skipped: %s\n' "${skipped[*]}"
 ((pass > 0)) || { echo "validate: no arm reported success"; exit 1; }
 ((${#failed[@]} == 0)) || { printf 'failed: %s\n' "${failed[@]}"; exit 1; }

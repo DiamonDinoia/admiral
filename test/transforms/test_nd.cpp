@@ -529,16 +529,20 @@ reference_2d_columns_ld(const std::vector<std::complex<T>>& x, std::size_t rows,
 
 }
 
-// 64^3 and 128x64x32 run the plane-fused chain wherever 64 KiB <= L2 < 4 MiB; the scaled
+// 64^3 and 128x64x32 run the plane-fused chain wherever 64 KiB <= L2 < 4 MiB. The chain is
+// gated on a null pool, so the plan must be forced serial: at auto width both shapes cross
+// the threading gate on a many-core host and take the unfused route instead. The scaled
 // inverse exercises the factor folded into the fused last pass.
 TEMPLATE_TEST_CASE("3D plane-fused shapes match the separable reference pointwise",
                    "[nd][3d][fused]", float, double) {
     using T = TestType;
     const std::vector<std::vector<std::size_t>> shapes{{64, 64, 64}, {128, 64, 32}};
+    admiral::options serial;
+    serial.nthreads = 1;
     for (const std::vector<std::size_t>& shape : shapes) {
         const std::size_t n = shape_product(shape);
         const auto in = make_input<T>(n, 7000u + unsigned(n));
-        admiral::plan<T> p(admiral::span<const std::size_t>(shape.data(), shape.size()));
+        admiral::plan<T> p(admiral::span<const std::size_t>(shape.data(), shape.size()), serial);
         INFO("shape " << shape[0] << "x" << shape[1] << "x" << shape[2]);
 
         const auto fwd = reference_nd_ld(in, shape, true);

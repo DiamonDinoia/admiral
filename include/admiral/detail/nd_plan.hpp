@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
@@ -40,6 +41,20 @@ namespace detail {
     return total;
 }
 
+enum class line_route : std::uint8_t {
+    col_dif,
+    transposed,
+};
+
+// Line pitch of the strip buffer. A power-of-two pitch puts every gathered column on one
+// L1 set; one batch of padding breaks that without moving the FFTs off contiguous lines.
+template<typename T>
+[[nodiscard]] inline std::size_t transpose_pitch(std::size_t len) {
+    constexpr std::size_t W = xsimd::batch<T>::size;
+    constexpr std::size_t critical = 4096 / sizeof(std::complex<T>);
+    return len % critical == 0 ? len + W : len;
+}
+
 template<typename T>
 struct nd_axis_state {
     std::size_t length = 0;
@@ -47,6 +62,23 @@ struct nd_axis_state {
     bool col_codelet = false;
     dif_twiddle_set<T> dtw;
     std::optional<plan_impl<T>> plan;
+    std::size_t pitch = 0;
+
+    // Line-route plan for a non-innermost axis: which chain the axis takes and its tile/group
+    // width, cached only when (len, inner, run_len, nruns, nthreads) are fixed for the plan's
+    // whole life. nd_runtime_plan's constructor is the only place that sets route_cached: its
+    // pool is immutable post-construction and its per-axis (inner, nruns) are shape-derived, so
+    // the cached values stay valid for every future execute(). axis_plan reuses this same struct
+    // across execute_bands() calls whose caller-supplied box changes run_len/nruns per call, so
+    // it never sets route_cached and apply_lines_strided[_oop] fall back to computing live.
+    bool route_cached = false;
+    line_route route = line_route::transposed;
+    std::size_t tile = 0;   // col_dif: Bt.  transposed: post pool-adjustment group width.
+    std::size_t units = 0;  // col_dif: ntiles.  transposed: ngroups.
+    // The dispatch count the cache was built for. nd_col_block reads nruns only through its L3
+    // floor, so a wrong nruns is invisible in tile/units until the array crosses L3; the assert
+    // in resolve_line_plan compares this directly instead of waiting for that.
+    std::size_t plan_nruns = 0;
 };
 
 [[nodiscard]] inline dif_factor_plan build_radix4_plan(std::size_t n) {
@@ -76,6 +108,7 @@ template<typename T>
                                                              admiral::effort::estimate) {
     nd_axis_state<T> st;
     st.length = length;
+    st.pitch = transpose_pitch<T>(length);
     if (length <= 1) {
         st.plan.emplace(length, is_forward, nthreads, nullptr, eff);
         return st;
@@ -118,11 +151,6 @@ ADM_ALWAYS_INLINE void apply_lines_contiguous(std::complex<T>* data, std::size_t
     });
 }
 
-enum class line_route : std::uint8_t {
-    col_dif,
-    transposed,
-};
-
 template<typename T>
 [[nodiscard]] inline std::size_t transpose_group(std::size_t len, std::size_t run_len,
                                                  std::size_t inner) {
@@ -137,15 +165,6 @@ template<typename T>
         return std::min(run_len, std::max(kTwoLines, std::min(kPageCols, cap)));
     }
     return std::min<std::size_t>(run_len, kTwoLines);
-}
-
-// Line pitch of the strip buffer. A power-of-two pitch puts every gathered column on one
-// L1 set; one batch of padding breaks that without moving the FFTs off contiguous lines.
-template<typename T>
-[[nodiscard]] inline std::size_t transpose_pitch(std::size_t len) {
-    constexpr std::size_t W = xsimd::batch<T>::size;
-    constexpr std::size_t critical = 4096 / sizeof(std::complex<T>);
-    return len % critical == 0 ? len + W : len;
 }
 
 template<typename T>
@@ -165,6 +184,62 @@ template<typename T>
         && len * inner * sizeof(std::complex<T>) > col_cache_budget(nthreads))
         return line_route::transposed;
     return line_route::col_dif;
+}
+
+struct line_plan {
+    line_route route;
+    std::size_t tile;   // col_dif: Bt.  transposed: post pool-adjustment group width.
+    std::size_t units;  // col_dif: ntiles.  transposed: ngroups.
+
+    [[nodiscard]] bool same_as(line_route r, std::size_t t, std::size_t u) const {
+        return route == r && tile == t && units == u;
+    }
+};
+
+// The live route/tile/unit-count decision, from the dispatch's own (len, inner, run_len, nruns,
+// nthreads). resolve_line_plan() below is what callers use.
+template<typename T>
+[[nodiscard]] inline line_plan live_line_plan(const nd_axis_state<T>& st, std::size_t len,
+                                              std::size_t inner, std::size_t run_len,
+                                              std::size_t nruns, std::size_t nthreads,
+                                              bool has_pool, bool allow_col_dif) {
+    const line_route route =
+        allow_col_dif ? choose_line_route<T>(st, len, inner, run_len, nthreads)
+                      : line_route::transposed;
+    if (route == line_route::col_dif) {
+        const std::size_t Bt = nd_col_block<T>(len, run_len, nthreads, nruns);
+        return {route, Bt, (run_len + Bt - 1) / Bt};
+    }
+    std::size_t group = transpose_group<T>(len, run_len, inner);
+    if (has_pool && nruns * ((run_len + group - 1) / group) < 2 * nthreads) {
+        constexpr std::size_t kLine = kCacheLine / sizeof(std::complex<T>);
+        const std::size_t target =
+            ((run_len + 2 * nthreads - 1) / (2 * nthreads) + kLine - 1) / kLine * kLine;
+        group = std::min(group, std::max(kLine, target));
+    }
+    return {route, group, (run_len + group - 1) / group};
+}
+
+// Resolves the route/tile/unit-count for one dispatch of a non-innermost axis. Reads the
+// nd_runtime_plan-populated cache when present (st.route_cached); axis_plan's execute_bands()
+// varies run_len/nruns per call on the same nd_axis_state, so it never sets route_cached and
+// always falls through to the live computation below, unchanged from before this was factored
+// out. `allow_col_dif` is apply_lines_strided_oop's pre-existing src_batch/dst_batch == 1 gate,
+// threaded through so a batch mismatch still forces the transposed group computation (with its
+// pool adjustment) instead of ever considering col_dif.
+template<typename T>
+[[nodiscard]] inline line_plan resolve_line_plan(const nd_axis_state<T>& st, std::size_t len,
+                                                 std::size_t inner, std::size_t run_len,
+                                                 std::size_t nruns, std::size_t nthreads,
+                                                 bool has_pool, bool allow_col_dif = true) {
+    if (st.route_cached && (allow_col_dif || st.route != line_route::col_dif)) {
+        // The cache is only valid while the dispatch's inputs stay what the constructor assumed.
+        assert(nruns == st.plan_nruns);
+        assert(live_line_plan<T>(st, len, inner, run_len, nruns, nthreads, has_pool, allow_col_dif)
+                   .same_as(st.route, st.tile, st.units));
+        return {st.route, st.tile, st.units};
+    }
+    return live_line_plan<T>(st, len, inner, run_len, nruns, nthreads, has_pool, allow_col_dif);
 }
 
 // Tile the strip gather/scatter with the tree's own
@@ -234,9 +309,11 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
                                            std::size_t run_len, std::size_t total_elems,
                                            LineBase line_base) {
     const std::size_t nthreads = pool_size(pool);
-    if (choose_line_route<T>(st, len, inner, run_len, nthreads) == line_route::col_dif) {
-        const std::size_t Bt = nd_col_block<T>(len, run_len, nthreads, nruns);
-        const std::size_t ntiles = (run_len + Bt - 1) / Bt;
+    const line_plan lp = resolve_line_plan<T>(st, len, inner, run_len, nruns, nthreads,
+                                              pool != nullptr);
+    if (lp.route == line_route::col_dif) {
+        const std::size_t Bt = lp.tile;
+        const std::size_t ntiles = lp.units;
         const std::size_t nunits = nruns * ntiles;
         const T scale = fct.value_or(forward ? T(1) : T(1) / static_cast<T>(len));
         parallel_for(pool, nunits, total_elems, [&](std::size_t b, std::size_t e, std::size_t) {
@@ -263,18 +340,12 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
         });
         return;
     }
-    std::size_t group = transpose_group<T>(len, run_len, inner);
-    if (pool && nruns * ((run_len + group - 1) / group) < 2 * nthreads) {
-        constexpr std::size_t kLine = kCacheLine / sizeof(std::complex<T>);
-        const std::size_t target =
-            ((run_len + 2 * nthreads - 1) / (2 * nthreads) + kLine - 1) / kLine * kLine;
-        group = std::min(group, std::max(kLine, target));
-    }
-    const std::size_t ngroups = (run_len + group - 1) / group;
+    const std::size_t group = lp.tile;
+    const std::size_t ngroups = lp.units;
     const std::size_t nunits = nruns * ngroups;
     const exec_options<T> opts{fct};
+    const std::size_t pitch = st.pitch;
     parallel_for(pool, nunits, total_elems, [&](std::size_t b, std::size_t e, std::size_t) {
-        const std::size_t pitch = transpose_pitch<T>(len);
         soa_scratch<T, 1> scratch(2 * pitch * group);
         auto* const buf = reinterpret_cast<std::complex<T>*>(scratch.buf(0));
         for (std::size_t u = b; u < e; ++u) {
@@ -297,11 +368,12 @@ apply_lines_strided_oop(const std::complex<T>* src, std::size_t src_line,
                         thread_pool* pool, std::size_t nruns, std::size_t run_len,
                         std::size_t total_elems, SrcBase src_base, DstBase dst_base) {
     const std::size_t nthreads = pool_size(pool);
-    if (src_batch == 1 && dst_batch == 1 &&
-        choose_line_route<T>(st, len, src_line, run_len, nthreads) ==
-            line_route::col_dif) {
-        const std::size_t Bt = nd_col_block<T>(len, run_len, nthreads, nruns);
-        const std::size_t ntiles = (run_len + Bt - 1) / Bt;
+    const bool batch_ok = src_batch == 1 && dst_batch == 1;
+    const line_plan lp = resolve_line_plan<T>(st, len, src_line, run_len, nruns, nthreads,
+                                              pool != nullptr, batch_ok);
+    if (lp.route == line_route::col_dif) {
+        const std::size_t Bt = lp.tile;
+        const std::size_t ntiles = lp.units;
         const std::size_t nunits = nruns * ntiles;
         const T scale = fct.value_or(forward ? T(1) : T(1) / static_cast<T>(len));
         parallel_for(pool, nunits, total_elems, [&](std::size_t b, std::size_t e, std::size_t) {
@@ -338,18 +410,12 @@ apply_lines_strided_oop(const std::complex<T>* src, std::size_t src_line,
         });
         return;
     }
-    std::size_t group = transpose_group<T>(len, run_len, src_line);
-    if (pool && nruns * ((run_len + group - 1) / group) < 2 * nthreads) {
-        constexpr std::size_t kLine = kCacheLine / sizeof(std::complex<T>);
-        const std::size_t target =
-            ((run_len + 2 * nthreads - 1) / (2 * nthreads) + kLine - 1) / kLine * kLine;
-        group = std::min(group, std::max(kLine, target));
-    }
-    const std::size_t ngroups = (run_len + group - 1) / group;
+    const std::size_t group = lp.tile;
+    const std::size_t ngroups = lp.units;
     const std::size_t nunits = nruns * ngroups;
     const exec_options<T> opts{fct};
+    const std::size_t pitch = st.pitch;
     parallel_for(pool, nunits, total_elems, [&](std::size_t b, std::size_t e, std::size_t) {
-        const std::size_t pitch = transpose_pitch<T>(len);
         soa_scratch<T, 1> scratch(2 * pitch * group);
         auto* const buf = reinterpret_cast<std::complex<T>*>(scratch.buf(0));
         for (std::size_t u = b; u < e; ++u) {
@@ -518,18 +584,6 @@ nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forwa
         const unsigned cls = m.shape.size() >= 3 ? 2 : 1;
         nthreads = resolve_nthreads(0, m.total, dispatches, work_cyc / core_cyc_per_ns(), cls);
     }
-    m.axes.resize(m.shape.size());
-    std::size_t inner = 1;
-    for (std::size_t di = 0; di < m.shape.size(); ++di) {
-        const std::size_t d = m.shape.size() - 1 - di;
-        const std::size_t units = m.total / m.shape[d];
-        const bool threads_above = units >= 2 && m.total >= kThreadMinElems;
-        const std::size_t axis_threads = threads_above ? 1 : nthreads;
-        m.axes[d] = make_nd_axis_state<T>(m.shape[d], inner, is_forward,
-                                          d == m.shape.size() - 1, axis_threads,
-                                          eff);
-        inner *= m.shape[d];
-    }
     if (nthreads > 1 && batch_threadable)
         m.pool = std::make_unique<thread_pool>(nthreads);
     // Run the last two axes plane by plane when the plane fits L2 and the array does not: below
@@ -540,6 +594,40 @@ nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forwa
         const cache_bytes& cc = cpu_cache();
         m.fuse_planes = cc.l2 != 0 && plane * sizeof(std::complex<T>) <= cc.l2
                         && m.total * sizeof(std::complex<T>) > cc.l2;
+    }
+    m.axes.resize(m.shape.size());
+    // nthreads for the line-route decision comes from the plan's own pool, immutable from here
+    // on, never from exec_options (it carries no thread override) or from any per-call state.
+    const std::size_t route_nthreads = pool_size(m.pool.get());
+    std::size_t inner = 1;
+    for (std::size_t di = 0; di < m.shape.size(); ++di) {
+        const std::size_t d = m.shape.size() - 1 - di;
+        const bool innermost = d == m.shape.size() - 1;
+        const std::size_t units = m.total / m.shape[d];
+        const bool threads_above = units >= 2 && m.total >= kThreadMinElems;
+        const std::size_t axis_threads = threads_above ? 1 : nthreads;
+        m.axes[d] = make_nd_axis_state<T>(m.shape[d], inner, is_forward, innermost, axis_threads,
+                                          eff);
+        // Every non-innermost axis always dispatches through apply_lines_strided with this same
+        // (len=m.shape[d], inner, nruns) triple on every future execute(): inner is this loop's
+        // running product regardless of fuse_planes (fusing only ever changes which axes share
+        // a `total`, never the per-axis stride product), and nruns is 1 for the second-to-last
+        // axis exactly when fuse_planes folds it into the per-plane pass, m.total/(len*inner)
+        // otherwise -- both in-place and out-of-place execute_nd agree, so the route/tile/unit
+        // decision computed once here from these values is valid for the plan's whole life.
+        if (!innermost && m.shape[d] > 1) {
+            const std::size_t nruns = (m.fuse_planes && d + 2 == m.shape.size())
+                                          ? 1
+                                          : m.total / (m.shape[d] * inner);
+            const line_plan lp = resolve_line_plan<T>(m.axes[d], m.shape[d], inner, inner, nruns,
+                                                      route_nthreads, m.pool != nullptr);
+            m.axes[d].route_cached = true;
+            m.axes[d].route = lp.route;
+            m.axes[d].tile = lp.tile;
+            m.axes[d].units = lp.units;
+            m.axes[d].plan_nruns = nruns;
+        }
+        inner *= m.shape[d];
     }
 }
 

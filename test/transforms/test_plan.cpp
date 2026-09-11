@@ -9,6 +9,7 @@
 #include <cmath>
 #include <limits>
 #include <chrono>
+#include <random>
 
 using namespace Catch::Matchers;
 using admiral::span;
@@ -462,4 +463,44 @@ TEMPLATE_TEST_CASE("effort::measure elects twice the same route at one shape",
             REQUIRE(ra == rb);
         }
     }
+}
+
+// Auto (`nthreads=0`) resolves to serial below the thread gate, so it must elect the route the
+// same way `nthreads=1` does. Returning the cost-model estimate instead makes effort::measure
+// behave as effort::estimate, which cost up to 1.46x on the 2026-09-11 standings sweep.
+// The election is a race, so the observable is a bitwise change in the output. Two controls keep
+// it honest: every transform writes the SAME buffer, because the codelet's aligned arm makes the
+// bits depend on the output's alignment class, and the estimate-versus-estimate pair asserts that
+// the observable is quiet when nothing elects. The `nthreads=1` count is the sensitivity control:
+// a host where measurement never overrides the model cannot tell the two implementations apart,
+// and the case says so instead of passing.
+TEMPLATE_TEST_CASE("effort::measure reaches the auto-thread route election", "[plan][measure]",
+                   float, double) {
+    using T = TestType;
+    const std::size_t sizes[] = {240, 250, 256, 384, 500, 512, 1000, 1024,
+                                 2520, 3720, 4096, 8192, 16384};
+    std::mt19937 rng(20260911);
+    std::uniform_real_distribution<double> u(-1, 1);
+
+    const auto overrides = [&](std::size_t nthreads) {
+        std::size_t count = 0;
+        for (const std::size_t n : sizes) {
+            CAPTURE(nthreads, n);
+            std::vector<std::complex<T>> x(n), out(n), est(n), est2(n);
+            for (auto& v : x) v = {T(u(rng)), T(u(rng))};
+            admiral::plan<T>(n, {nthreads, admiral::effort::estimate}).forward(x.data(), out.data());
+            est = out;
+            admiral::plan<T>(n, {nthreads, admiral::effort::estimate}).forward(x.data(), out.data());
+            est2 = out;
+            REQUIRE(est2 == est);  // the observable is quiet when no election happens
+            admiral::plan<T>(n, {nthreads, admiral::effort::measure}).forward(x.data(), out.data());
+            count += static_cast<std::size_t>(out != est);
+        }
+        return count;
+    };
+
+    if (overrides(1) == 0)
+        SKIP("measurement never overrides the cost model at nthreads=1 on this host, so the "
+             "auto path cannot be distinguished from it");
+    REQUIRE(overrides(0) > 0);
 }

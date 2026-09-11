@@ -3,13 +3,17 @@
 #include "utils/reference.hpp"
 
 #include <admiral/admiral.hpp>
+#include <xsimd/xsimd.hpp>
 #include <admiral/detail/four_step_large.hpp>
 #include <admiral/detail/plan.hpp>
 #include <admiral/detail/scratch.hpp>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <complex>
 #include <cstddef>
+#include <cstring>
+#include <iostream>
 #include <cstdint>
 #include <limits>
 #include <random>
@@ -244,6 +248,87 @@ TEST_CASE("WS-3 sweep-bits invariant pins the pool gate", "[large][fourstep]") {
     fsp.execute(in.data(), st0.data(), 1.0, nullptr);
     for (std::size_t i = 0; i < N; ++i)
         REQUIRE(std::abs(st0[i] - buf[i]) <= 1e-9 * std::max(1.0, std::abs(buf[i])));
+}
+
+TEST_CASE("streaming transpose band matches the cached one bit for bit", "[large][fourstep]") {
+    using admiral::detail::four_step_transpose_band;
+    using admiral::detail::four_step_stream_ok;
+    constexpr std::size_t A = xsimd::batch<double>::arch_type::alignment();
+    constexpr std::size_t n1 = 64, n2 = 128;
+
+    // The gate decides whether the streaming arm ever runs, so it is checked in both directions
+    // before the kernel is. span_align is max(arch alignment, 64), so offset_buffer supplies an
+    // arch-aligned base on every target and the positive control is not host-specific.
+    const std::size_t huge = 64 * admiral::detail::cpu_cache().l3;
+    offset_buffer<double> aligned(n1 * n2, 0);
+    REQUIRE(reinterpret_cast<std::uintptr_t>(aligned.ptr) % A == 0);
+    CHECK(four_step_stream_ok<double>(aligned.ptr, n2, huge));
+    CHECK(!four_step_stream_ok<double>(aligned.ptr, n2, 0));
+
+    // One T past the base, never dereferenced. Shifting by a whole complex would still be
+    // arch-aligned wherever A is 16, so that control could not fail on SSE.
+    const auto* shifted =
+        reinterpret_cast<const std::complex<double>*>(reinterpret_cast<const double*>(aligned.ptr) + 1);
+    CHECK(!four_step_stream_ok<double>(shifted, n2, huge));
+
+    // A row pitch that is not a whole number of arch vectors. It can only fail where an arch
+    // vector holds more than one complex, so it is asserted only there.
+    if constexpr (xsimd::batch<double>::size > 2) {
+        CHECK(!four_step_stream_ok<double>(aligned.ptr, n2 + 1, huge));
+    }
+
+    const auto in = make_input<double>(n1 * n2, 0x5EED);
+    offset_buffer<double> cached(n1 * n2, 0), streamed(n1 * n2, 0);
+    std::fill_n(cached.ptr, n1 * n2, std::complex<double>(-1.0, -1.0));
+    std::fill_n(streamed.ptr, n1 * n2, std::complex<double>(-1.0, -1.0));
+    four_step_transpose_band<double, false>(in.data(), cached.ptr, n1, n1, n2, 0, n2);
+    four_step_transpose_band<double, true>(in.data(), streamed.ptr, n1, n1, n2, 0, n2);
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+    REQUIRE(std::memcmp(cached.ptr, streamed.ptr, n1 * n2 * sizeof(std::complex<double>)) == 0);
+
+    // A transpose that wrote nothing would also compare equal, so one element is checked
+    // against the source it came from.
+    REQUIRE(streamed.ptr[1 * n2 + 0] == in[0 * n1 + 1]);
+}
+
+TEST_CASE("2^24 impulse against the analytic spectrum, aligned out-of-place",
+          "[large][fourstep]") {
+    // Coverage stopped at 2^23. Two 256 MiB buffers is the whole budget, so the reference is
+    // recomputed per element instead of materialized.
+    constexpr std::size_t N = std::size_t{1} << 24;
+    const std::size_t n0 = N / 3 + 11;
+    offset_buffer<double> in(N, 0), out(N, 0);
+    std::fill_n(in.ptr, N, std::complex<double>(0.0, 0.0));
+    in.ptr[n0] = {1.0, 0.0};
+
+    admiral::plan<double> p(N, {std::size_t{1}, admiral::effort::estimate});
+    REQUIRE(std::string(admiral::detail::plan_impl<double>(N, true).route_name())
+            == "four_step_large");
+    p.forward(in.ptr, out.ptr);
+
+    // Whether the streaming arm ran depends on this host's L3, so the test says which path it
+    // measured instead of assuming one. The check is not the byte line restated: it fails if
+    // this buffer stops satisfying the arm's alignment condition while the byte line still asks
+    // for it, which is how a silently non-streaming run would look.
+    const auto split = admiral::detail::choose_fused_large_split<double>(N);
+    REQUIRE(split.valid());
+    const std::size_t bytes = N * sizeof(std::complex<double>);
+    const std::size_t l3 = admiral::detail::cpu_cache().l3;
+    const bool streamed = admiral::detail::four_step_stream_ok<double>(out.ptr, split.n2, bytes);
+    std::cout << "[2^24 aligned out-of-place] " << bytes / (1024 * 1024) << " MiB, L3 "
+              << l3 / (1024 * 1024) << " MiB, streaming transpose = " << streamed << '\n';
+    CHECK(streamed == (bytes >= admiral::detail::kFourStepStreamL3Mult * l3));
+
+    const double tol = fft_tol<double>();
+    double worst = 0.0;
+    std::size_t worst_k = 0;
+    for (std::size_t k = 0; k < N; ++k) {
+        const auto ref = std::conj(unit_phasor<double>(turn_fraction(n0, k, N)));
+        const double e = std::abs(out.ptr[k] - ref);
+        if (e > worst) { worst = e; worst_k = k; }
+    }
+    CAPTURE(worst_k, worst, tol, streamed);
+    CHECK(worst <= tol);
 }
 
 TEST_CASE("WS-3 impulse flatness at 2^23, serial and auto", "[large][fourstep]") {

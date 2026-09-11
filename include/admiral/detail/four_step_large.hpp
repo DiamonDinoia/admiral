@@ -11,8 +11,10 @@
 #include <cmath>
 #include <complex>
 #include <cstddef>
+#include <cstdint>
 
 #include <vector>
+#include "cache.hpp"
 #include "cxx_compat.hpp"
 
 #include "dif_driver.hpp"
@@ -29,7 +31,16 @@ namespace detail {
 
 constexpr std::size_t four_step_tblock = 32;
 
-template<typename T>
+// Where the streaming transpose starts to pay, in multiples of L3. Read off a crossover on SPR
+// (Xeon w5-3435X, 47.2 MB L3, W=8 f64, serial, out-of-place): the arm reads 1.007 at 32 MiB and
+// 0.999 at 64 MiB against a 0.985-1.004 same-binary control, then 0.973, 0.946 and 0.914 at 128,
+// 256 and 512 MiB. The sign flips between 1.36x and 2.71x of L3, and 2 is the geometric middle
+// of that bracket. Re-derive it on any host class before trusting it there.
+constexpr std::size_t kFourStepStreamL3Mult = 2;
+
+// Stream: store the transposed columns non-temporally. Legal only when four_step_stream_ok
+// says every destination address is arch-aligned, and profitable only past the byte line there.
+template<typename T, bool Stream = false>
 void four_step_transpose_band(const std::complex<T>* Wm, std::complex<T>* out,
                               std::size_t n1, std::size_t ld, std::size_t n2,
                               std::size_t i_lo, std::size_t i_hi) {
@@ -49,10 +60,33 @@ void four_step_transpose_band(const std::complex<T>* Wm, std::complex<T>* out,
                     aos_deinterleave<T>(src + ((i + r) * ld + j) * 2, re[r], im[r]);
                 xsimd::transpose(re, re + W);
                 xsimd::transpose(im, im + W);
-                for (std::size_t c = 0; c < W; ++c)
-                    aos_interleave<T>(dst + ((j + c) * n2 + i) * 2, re[c], im[c]);
+                for (std::size_t c = 0; c < W; ++c) {
+                    T* p = dst + ((j + c) * n2 + i) * 2;
+                    if constexpr (Stream) {
+                        aos_interleave_stream<T>(p, re[c], im[c]);
+                    } else {
+                        aos_interleave<T>(p, re[c], im[c]);
+                    }
+                }
             }
     }
+}
+
+// The out-of-place transpose may stream its stores when both hold:
+//
+//   alignment  every store is one arch vector at dst + ((j + c) * n2 + i) * 2 reals, with i a
+//              multiple of W. An arch-aligned base plus a row pitch that is a whole number of
+//              arch vectors makes every such address arch-aligned.
+//   profit     a stream store bypasses the cache, so it costs where the output is still read
+//              back from L3 on the next pass and pays once it cannot be. The line is relative
+//              to L3 and not absolute, because that is the quantity the sign tracks.
+template<typename T>
+[[nodiscard]] inline bool four_step_stream_ok(const std::complex<T>* out, std::size_t n2,
+                                              std::size_t bytes) {
+    constexpr std::size_t A = xsimd::batch<T>::arch_type::alignment();
+    const auto base = reinterpret_cast<std::uintptr_t>(out);
+    if (base % A != 0 || (n2 * 2 * sizeof(T)) % A != 0) return false;
+    return bytes >= kFourStepStreamL3Mult * cpu_cache().l3;
 }
 
 template<typename T>
@@ -503,10 +537,19 @@ struct four_step_large_plan {
         } else {
             const std::size_t n2v = n2 & ~(Wv - 1);
             const std::size_t nbands = (n2 + RB - 1) / RB;
+            const bool stream = four_step_stream_ok<T>(out, n2, N * sizeof(std::complex<T>));
             parallel_for(pool, nbands, N, [&](std::size_t b0, std::size_t b1, std::size_t) {
                 const std::size_t i0 = std::min(b0 * RB, n2v);
                 const std::size_t iE = std::min(b1 * RB, n2v);
-                if (iE > i0) four_step_transpose_band<T>(in, out, n1, n1, n2, i0, iE);
+                if (iE <= i0) return;
+                if (stream) {
+                    four_step_transpose_band<T, true>(in, out, n1, n1, n2, i0, iE);
+                    // Non-temporal stores are weakly ordered, so the next pass over out only
+                    // sees them after the storing thread drains its write-combining buffers.
+                    std::atomic_thread_fence(std::memory_order_seq_cst);
+                } else {
+                    four_step_transpose_band<T>(in, out, n1, n1, n2, i0, iE);
+                }
             });
             four_step_transpose_remainder<T>(in, out, n1, n1, n2);
         }

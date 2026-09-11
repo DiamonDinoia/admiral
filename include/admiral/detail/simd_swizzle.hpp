@@ -114,6 +114,17 @@ ADM_ALWAYS_INLINE void aos_interleave(T* ADM_RESTRICT dst, Batch re, Batch im) {
     xsimd::zip_hi(re, im).store_unaligned(dst + W);
 }
 
+// Non-temporal twin of aos_interleave. The two stores are ALIGNED and each covers exactly one
+// arch vector, so dst must carry the batch's arch alignment or this faults. A stream store
+// bypasses the cache, so it pays only where the destination cannot be re-read from cache, and
+// the writing thread owes a seq_cst fence before anything reads what it wrote.
+template<typename T, typename Batch = xsimd::batch<T>>
+ADM_ALWAYS_INLINE void aos_interleave_stream(T* ADM_RESTRICT dst, Batch re, Batch im) {
+    constexpr std::size_t W = Batch::size;
+    xsimd::store(dst, xsimd::zip_lo(re, im), xsimd::stream_mode{});
+    xsimd::store(dst + W, xsimd::zip_hi(re, im), xsimd::stream_mode{});
+}
+
 template<typename T, std::size_t PW>
 ADM_ALWAYS_INLINE void aos_deinterleave_piece(const T* ADM_RESTRICT src,
                                               sized_piece_t<T, PW>& re,

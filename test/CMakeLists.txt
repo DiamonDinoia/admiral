@@ -65,9 +65,7 @@ foreach(test_src IN LISTS ADM_TEST_SOURCES)
         target_link_libraries(${test_name} PRIVATE project_sanitizers)
     endif()
 
-    # admiral_internal is a shared library, so Windows resolves it through PATH at load time
-    # rather than through the link-time path. Harmless on ELF, where the RPATH answers it.
-    catch_discover_tests(${test_name} DL_PATHS $<TARGET_FILE_DIR:admiral_internal>)
+    catch_discover_tests(${test_name})
 endforeach()
 
 # ELF only: `nm -D` reads a dynamic symbol table, which a PE DLL does not have, and the

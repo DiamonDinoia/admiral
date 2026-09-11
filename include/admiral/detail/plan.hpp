@@ -152,7 +152,9 @@ private:
         const std::size_t P = resolve_nthreads(0);
         measured_choice route_est{select_route(size, P), {}};
         if (route_est.route != route_kind::four_step_large)
-            return {route_est, 1, dif_override};
+            // Auto resolved to serial, so elect at that width. Returning the P-wide estimate
+            // would downgrade effort::measure to effort::estimate on every non-large route.
+            return {eff == admiral::effort::estimate ? route_est : elect(1), 1, dif_override};
         const std::size_t nt = resolve_nthreads(0, size, kLargeDispatches, large_work_ns(size), 0);
         measured_choice ch = elect(nt);
         if (ch.route != route_kind::four_step_large)

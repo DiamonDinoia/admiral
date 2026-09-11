@@ -85,6 +85,7 @@ TEMPLATE_TEST_CASE("column codelet lens <= 64 match per-line plan, tails include
     using T = TestType;
     REQUIRE(admiral::detail::make_nd_axis_state<T>(16, 17, true, false).col_codelet);
     REQUIRE(admiral::detail::make_nd_axis_state<T>(8, 17, true, false).col_codelet);
+    REQUIRE(!admiral::detail::make_nd_axis_state<T>(4, 17, true, false).col_codelet);
     REQUIRE(!admiral::detail::make_nd_axis_state<T>(96, 17, true, false).col_codelet);
 
     using admiral::detail::e2_len_cap;

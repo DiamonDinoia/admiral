@@ -316,10 +316,21 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
         const std::size_t ntiles = lp.units;
         const std::size_t nunits = nruns * ntiles;
         const T scale = fct.value_or(forward ? T(1) : T(1) / static_cast<T>(len));
+        // nd_col_block caps Bt at run_len, so ntiles == 1 means the tile covers the whole run and
+        // tile/c0/bc are loop-invariant. Naming that case drops six live values from a loop that
+        // already spills its induction variables around the non-inlined kernel call.
+        const bool one_tile = ntiles == 1;
+        assert(!one_tile || Bt == run_len);
         parallel_for(pool, nunits, total_elems, [&](std::size_t b, std::size_t e, std::size_t) {
             std::size_t run = b / ntiles, tile = b % ntiles;
             auto* line = data + line_base(run);
             if (st.col_codelet) {
+                if (one_tile) {
+                    for (std::size_t r = b; r < e; ++r)
+                        col_codelet_dispatch<T>(forward, data + line_base(r), inner,
+                                                data + line_base(r), inner, run_len, len, scale);
+                    return;
+                }
                 for (std::size_t u = b; u < e; ++u) {
                     const std::size_t c0 = tile * Bt;
                     const std::size_t bc = std::min(Bt, run_len - c0);
@@ -330,6 +341,13 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
                 return;
             }
             soa_scratch<T, 4> sc(len * Bt);
+            if (one_tile) {
+                for (std::size_t r = b; r < e; ++r)
+                    col_dif_dispatch<T>(forward, data + line_base(r), len, inner, run_len,
+                                        sc.buf(0), sc.buf(1), sc.buf(2), sc.buf(3), st.dtw,
+                                        scale);
+                return;
+            }
             for (std::size_t u = b; u < e; ++u) {
                 const std::size_t c0 = tile * Bt;
                 const std::size_t bc = std::min(Bt, run_len - c0);

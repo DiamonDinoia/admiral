@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
@@ -117,12 +118,26 @@ ADM_ALWAYS_INLINE void aos_interleave(T* ADM_RESTRICT dst, Batch re, Batch im) {
 // Non-temporal twin of aos_interleave. The two stores are ALIGNED and each covers exactly one
 // arch vector, so dst must carry the batch's arch alignment or this faults. A stream store
 // bypasses the cache, so it pays only where the destination cannot be re-read from cache, and
-// the writing thread owes a seq_cst fence before anything reads what it wrote.
+// the writing thread owes a stream_store_fence before anything reads what it wrote.
 template<typename T, typename Batch = xsimd::batch<T>>
 ADM_ALWAYS_INLINE void aos_interleave_stream(T* ADM_RESTRICT dst, Batch re, Batch im) {
     constexpr std::size_t W = Batch::size;
     xsimd::store(dst, xsimd::zip_lo(re, im), xsimd::stream_mode{});
     xsimd::store(dst + W, xsimd::zip_hi(re, im), xsimd::stream_mode{});
+}
+
+// Publishes what aos_interleave_stream wrote. Only x86 needs it: movnt leaves the line in a
+// write-combining buffer that ordinary release ordering does not drain. xsimd's stream store
+// is a plain aligned store on the generic backend and stnp on neon64, both of which the
+// join's own acquire-release already orders.
+// sfence rather than std::atomic_thread_fence, which gcc rejects under -fsanitize=thread
+// because tsan cannot instrument a fence. It is also the exact strength needed: store-store.
+ADM_ALWAYS_INLINE void stream_store_fence() noexcept {
+#if defined(__x86_64__) || defined(__i386__)
+    __asm__ __volatile__("sfence" ::: "memory");
+#elif defined(_M_X64) || defined(_M_IX86)
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+#endif
 }
 
 template<typename T, std::size_t PW>

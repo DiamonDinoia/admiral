@@ -7,7 +7,6 @@
 // nthreads = 1, so a shared plan never nests a `parallel_for`.
 
 #include <algorithm>
-#include <atomic>
 #include <cmath>
 #include <complex>
 #include <cstddef>
@@ -544,9 +543,7 @@ struct four_step_large_plan {
                 if (iE <= i0) return;
                 if (stream) {
                     four_step_transpose_band<T, true>(in, out, n1, n1, n2, i0, iE);
-                    // Non-temporal stores are weakly ordered, so the next pass over out only
-                    // sees them after the storing thread drains its write-combining buffers.
-                    std::atomic_thread_fence(std::memory_order_seq_cst);
+                    stream_store_fence();  // the next pass reads what this band just wrote
                 } else {
                     four_step_transpose_band<T>(in, out, n1, n1, n2, i0, iE);
                 }

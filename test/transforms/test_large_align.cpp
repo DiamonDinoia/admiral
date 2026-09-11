@@ -8,7 +8,6 @@
 #include <admiral/detail/plan.hpp>
 #include <admiral/detail/scratch.hpp>
 #include <algorithm>
-#include <atomic>
 #include <cmath>
 #include <complex>
 #include <cstddef>
@@ -283,7 +282,7 @@ TEST_CASE("streaming transpose band matches the cached one bit for bit", "[large
     std::fill_n(streamed.ptr, n1 * n2, std::complex<double>(-1.0, -1.0));
     four_step_transpose_band<double, false>(in.data(), cached.ptr, n1, n1, n2, 0, n2);
     four_step_transpose_band<double, true>(in.data(), streamed.ptr, n1, n1, n2, 0, n2);
-    std::atomic_thread_fence(std::memory_order_seq_cst);
+    admiral::detail::stream_store_fence();
     REQUIRE(std::memcmp(cached.ptr, streamed.ptr, n1 * n2 * sizeof(std::complex<double>)) == 0);
 
     // A transpose that wrote nothing would also compare equal, so one element is checked

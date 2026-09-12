@@ -21,6 +21,7 @@ jobs:
   # about which diagnostics are errors, and a warning class only one of them raises is invisible
   # until that one is in the matrix.
   build:
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -85,7 +86,7 @@ jobs:
             ! grep -qF -- '-O0' build/compile_commands.json
           fi
       - run: cmake --build build
-      - run: ctest --test-dir build --output-on-failure --no-tests=error
+      - run: ctest --test-dir build --timeout 900 --output-on-failure --no-tests=error
       # The only cell that links a consumer against the DLL, which is what proves the headers
       # say dllimport outside the build.
       - name: Install and consume
@@ -94,7 +95,7 @@ jobs:
           cmake -S test/package -B build-pkg -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="$PWD/prefix"
           cmake --build build-pkg
-          ctest --test-dir build-pkg --output-on-failure --no-tests=error
+          ctest --test-dir build-pkg --timeout 900 --output-on-failure --no-tests=error
       - name: Upload logs
         if: failure()
         uses: actions/upload-artifact@v7
@@ -108,6 +109,7 @@ jobs:
   # belongs to the Visual Studio generator, and setup-cpp's vcvarsall makes NMake the default,
   # which rejects a platform specification outright.
   windows:
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -140,7 +142,7 @@ jobs:
           -DADM_TARGET_ARCH=x86-64-v3
           -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF
       - run: cmake --build build
-      - run: ctest --test-dir build --output-on-failure --no-tests=error
+      - run: ctest --test-dir build --timeout 900 --output-on-failure --no-tests=error
       - name: Upload logs
         if: failure()
         uses: actions/upload-artifact@v7
@@ -151,6 +153,7 @@ jobs:
 
   # A preset that no longer configures is a broken entry point, and nothing else in CI reads them.
   presets:
+    timeout-minutes: 30
     name: preset ${{ matrix.preset }}
     runs-on: ubuntu-24.04
     strategy:
@@ -165,6 +168,7 @@ jobs:
 
   # clang-tidy and cppcheck run as compiler launchers, so a finding fails this build.
   static-analysis:
+    timeout-minutes: 60
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -203,6 +207,7 @@ jobs:
         run: ./scripts/static_analysis_control.sh build/cppcheck
 
   sanitizers:
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -230,10 +235,11 @@ jobs:
           grep -qF -- '=x86-64-v2' build/${{ matrix.preset }}/compile_commands.json
           ! grep -qF -- '=native' build/${{ matrix.preset }}/compile_commands.json
       - run: cmake --build --preset ${{ matrix.preset }} -- -j 4
-      - run: ctest --preset ${{ matrix.preset }} --no-tests=error
+      - run: ctest --preset ${{ matrix.preset }} --timeout 900 --no-tests=error
         env: {TSAN_OPTIONS: "handle_segv=0"}
 
   valgrind:
+    timeout-minutes: 90
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -272,6 +278,7 @@ jobs:
           [ "$ran" -ge 15 ]
 
   coverage:
+    timeout-minutes: 60
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -293,7 +300,7 @@ jobs:
       - name: Test
         run: |
           mkdir -p build/coverage/profraw
-          ctest --preset coverage --no-tests=error
+          ctest --preset coverage --timeout 900 --no-tests=error
         env: {LLVM_PROFILE_FILE: "${{ github.workspace }}/build/coverage/profraw/%m.profraw"}
       - name: Report
         run: |
@@ -322,6 +329,7 @@ jobs:
             coverage.lcov
 
   install:
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -340,15 +348,16 @@ jobs:
         run: |
           cmake -S test/package -B build-pkg -G Ninja -DCMAKE_PREFIX_PATH=$PWD/prefix
           cmake --build build-pkg
-          ctest --test-dir build-pkg --output-on-failure --no-tests=error
+          ctest --test-dir build-pkg --timeout 900 --output-on-failure --no-tests=error
       - name: Consume the source tree through FetchContent
         run: |
           cmake -S test/package -B build-fc -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DADM_PACKAGE_TEST_FETCH=$PWD -DADM_TARGET_ARCH=x86-64-v2
           cmake --build build-fc
-          ctest --test-dir build-fc --output-on-failure --no-tests=error
+          ctest --test-dir build-fc --timeout 900 --output-on-failure --no-tests=error
 
   v4-sde:
+    timeout-minutes: 60
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -369,10 +378,11 @@ jobs:
           cmake --build build -j "$(nproc)"
       - name: Test under SDE
         run: |
-          ctest --test-dir build --output-on-failure --no-tests=error -j "$(nproc)" --timeout 1800
+          ctest --test-dir build --timeout 900 --output-on-failure --no-tests=error -j "$(nproc)" --timeout 1800
           sde-spr build/benchmark/admiral_benchmark --verify
 
   catalog:
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -383,9 +393,10 @@ jobs:
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_COMPILER=g++-14 -DADM_TARGET_ARCH=x86-64-v2 -DADM_CODELET_EXTRA_SIZES=66
           cmake --build build
-          ctest --test-dir build --output-on-failure --no-tests=error
+          ctest --test-dir build --timeout 900 --output-on-failure --no-tests=error
 
   nothreads:
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -396,9 +407,10 @@ jobs:
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_COMPILER=g++-14 -DADM_TARGET_ARCH=x86-64-v2 -DADM_ENABLE_THREADS=OFF
           cmake --build build
-          ctest --test-dir build --output-on-failure --no-tests=error
+          ctest --test-dir build --timeout 900 --output-on-failure --no-tests=error
 
   bench-verify:
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7

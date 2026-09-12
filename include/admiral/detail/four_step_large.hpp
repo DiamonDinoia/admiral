@@ -210,23 +210,48 @@ void four_step_transpose_inplace(std::complex<T>* m, std::size_t R, std::size_t 
     }
 }
 
+// Tile rows per panel. `ld` is n2, a power of two whenever the length is, so the partner tile
+// at M + j0 * ld + i0 advances W * ld per step and a whole row walk lands in the same cache
+// sets. A B x B panel holds both tiles of every pair in L1 across the panel, which is the
+// blocking four_step_transpose_band already has and this walk never got.
+[[nodiscard]] inline constexpr std::size_t four_step_panel_tiles(std::size_t W) {
+    return four_step_tblock >= W ? four_step_tblock / W : std::size_t{1};
+}
+
+// Transposes the tile rows [a0, a1) of every one of the `m` n1-wide blocks of `out`, pairing
+// each with all tiles to its left. Every unordered pair is touched exactly once, so the panel
+// order below moves the same data as a tile-at-a-time walk.
 template<typename T>
-inline void four_step_fused_sweep_step(std::complex<T>* out, std::size_t ld,
-                                       std::size_t n1, std::size_t m, std::size_t a,
-                                       std::complex<T>* stage) {
+inline void four_step_fused_sweep_range(std::complex<T>* out, std::size_t ld, std::size_t n1,
+                                        std::size_t m, std::size_t a0, std::size_t a1,
+                                        std::complex<T>* stage) {
     using batch = xsimd::batch<T>;
     constexpr std::size_t W = batch::size;
-    const std::size_t i0 = a * W;
-    for (std::size_t q = 0; q < m; ++q) {
-        std::complex<T>* const M = out + q * n1;
-        four_step_tile_transpose<T>(M + i0 * ld + i0, ld, M + i0 * ld + i0, ld);
-        for (std::size_t j0 = 0; j0 < i0; j0 += W) {
-            std::complex<T>* const hi = M + i0 * ld + j0;
-            std::complex<T>* const lo = M + j0 * ld + i0;
-            for (std::size_t r = 0; r < W; ++r)
-                std::copy_n(hi + r * ld, W, stage + r * W);
-            four_step_tile_transpose<T>(lo, ld, hi, ld);
-            four_step_tile_transpose<T>(stage, W, lo, ld);
+    constexpr std::size_t B = four_step_tblock;
+    constexpr std::size_t PT = four_step_panel_tiles(W);
+    const auto swap_pair = [&](std::complex<T>* M, std::size_t i0, std::size_t j0) {
+        std::complex<T>* const hi = M + i0 * ld + j0;
+        std::complex<T>* const lo = M + j0 * ld + i0;
+        for (std::size_t r = 0; r < W; ++r) std::copy_n(hi + r * ld, W, stage + r * W);
+        four_step_tile_transpose<T>(lo, ld, hi, ld);
+        four_step_tile_transpose<T>(stage, W, lo, ld);
+    };
+    for (std::size_t pa = a0; pa < a1; pa += PT) {
+        const std::size_t paE = std::min(pa + PT, a1);
+        const std::size_t jdiag = pa * W;
+        for (std::size_t q = 0; q < m; ++q) {
+            std::complex<T>* const M = out + q * n1;
+            for (std::size_t jb = 0; jb < jdiag; jb += B) {
+                const std::size_t jE = std::min(jb + B, jdiag);
+                for (std::size_t a = pa; a < paE; ++a)
+                    for (std::size_t j0 = jb; j0 < jE; j0 += W) swap_pair(M, a * W, j0);
+            }
+            // The panel's own diagonal block, where the column bound depends on the row.
+            for (std::size_t a = pa; a < paE; ++a) {
+                const std::size_t i0 = a * W;
+                four_step_tile_transpose<T>(M + i0 * ld + i0, ld, M + i0 * ld + i0, ld);
+                for (std::size_t j0 = jdiag; j0 < i0; j0 += W) swap_pair(M, i0, j0);
+            }
         }
     }
 }
@@ -252,8 +277,7 @@ inline void four_step_fused_sweep_phase(std::complex<T>* out, std::size_t ld,
         const std::size_t r0 = four_step_sweep_lo(c, nparts, ntiles);
         const std::size_t r1 = four_step_sweep_lo(c + 1, nparts, ntiles);
         alignas(batch::arch_type::alignment()) std::complex<T> stage[W * W];
-        for (std::size_t a = r0; a < r1; ++a)
-            four_step_fused_sweep_step(out, ld, n1, m, a, stage);
+        four_step_fused_sweep_range(out, ld, n1, m, r0, r1, stage);
     });
 }
 
@@ -285,13 +309,19 @@ void four_step_dft_transpose_fused(std::complex<T>* out, std::size_t n1, std::si
     parallel_for(pool, ntiles, total, [&](std::size_t a0, std::size_t a1, std::size_t) {
         soa_scratch<T, 4> rsc(n1);
         alignas(batch::arch_type::alignment()) std::complex<T> stage[W * W];
-        for (std::size_t a = a0; a < a1; ++a) {
-            const std::size_t k0 = a * bandw;
-            for (std::size_t k = k0; k < k0 + bandw; ++k)
-                dif_dispatch<T>(is_forward, out + k * n1, out + k * n1, n1, rsc.buf(0),
-                                rsc.buf(1), rsc.buf(2), rsc.buf(3), dtw, row_scale,
-                                rsc.stride());
-            four_step_fused_sweep_step<T>(out, ld, n1, m, a, stage);
+        // A panel's sweeps run after the panel's own DFTs, and a sweep of tile row `a` reads
+        // rows at most a * W + W - 1, which band floor(a / m) <= a already produced. So
+        // deferring the sweeps by one panel keeps the dependency and buys the blocking.
+        for (std::size_t pa = a0; pa < a1; pa += four_step_panel_tiles(W)) {
+            const std::size_t paE = std::min(pa + four_step_panel_tiles(W), a1);
+            for (std::size_t a = pa; a < paE; ++a) {
+                const std::size_t k0 = a * bandw;
+                for (std::size_t k = k0; k < k0 + bandw; ++k)
+                    dif_dispatch<T>(is_forward, out + k * n1, out + k * n1, n1, rsc.buf(0),
+                                    rsc.buf(1), rsc.buf(2), rsc.buf(3), dtw, row_scale,
+                                    rsc.stride());
+            }
+            four_step_fused_sweep_range<T>(out, ld, n1, m, pa, paE, stage);
         }
     });
 }
@@ -337,11 +367,13 @@ void four_step_twist_dft_transpose_fused(std::complex<T>* out, std::size_t n1,
     parallel_for(pool, ntiles, total, [&](std::size_t a0, std::size_t a1, std::size_t) {
         soa_scratch<T, 4> rsc(n2);
         alignas(batch::arch_type::alignment()) std::complex<T> stage[W * W];
-        for (std::size_t a = a0; a < a1; ++a) {
-            for (std::size_t j = a * W; j < (a + 1) * W; ++j)
-                four_step_row_dft_twist<T>(out + j * n2, n2, j, is_forward, dtw, p2_scale,
-                                           rsc, hitab, lotab, twist_M, twist_logM);
-            four_step_fused_sweep_step<T>(out, ld, n1, m, a, stage);
+        for (std::size_t pa = a0; pa < a1; pa += four_step_panel_tiles(W)) {
+            const std::size_t paE = std::min(pa + four_step_panel_tiles(W), a1);
+            for (std::size_t a = pa; a < paE; ++a)
+                for (std::size_t j = a * W; j < (a + 1) * W; ++j)
+                    four_step_row_dft_twist<T>(out + j * n2, n2, j, is_forward, dtw, p2_scale,
+                                               rsc, hitab, lotab, twist_M, twist_logM);
+            four_step_fused_sweep_range<T>(out, ld, n1, m, pa, paE, stage);
         }
     });
 }

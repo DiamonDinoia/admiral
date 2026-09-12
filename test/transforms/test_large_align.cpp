@@ -345,3 +345,39 @@ TEST_CASE("WS-3 impulse flatness at 2^23, serial and auto", "[large][fourstep]")
         require_close(out, ref, fft_tol<double>());
     }
 }
+
+TEST_CASE("2^25 impulse against the analytic spectrum, aligned out-of-place",
+          "[large][fourstep]") {
+    // Coverage stopped at 2^24 (test above). Two 512 MiB buffers is the whole budget, so the
+    // reference is recomputed per element instead of materialized.
+    constexpr std::size_t N = std::size_t{1} << 25;
+    const std::size_t n0 = N / 3 + 11;
+    offset_buffer<double> in(N, 0), out(N, 0);
+    std::fill_n(in.ptr, N, std::complex<double>(0.0, 0.0));
+    in.ptr[n0] = {1.0, 0.0};
+
+    admiral::plan<double> p(N, {std::size_t{1}, admiral::effort::estimate});
+    REQUIRE(std::string(admiral::detail::plan_impl<double>(N, true).route_name())
+            == "four_step_large");
+    p.forward(in.ptr, out.ptr);
+
+    const auto split = admiral::detail::choose_fused_large_split<double>(N);
+    REQUIRE(split.valid());
+    const std::size_t bytes = N * sizeof(std::complex<double>);
+    const std::size_t l3 = admiral::detail::cpu_cache().l3;
+    const bool streamed = admiral::detail::four_step_stream_ok<double>(out.ptr, split.n2, bytes);
+    std::cout << "[2^25 aligned out-of-place] " << bytes / (1024 * 1024) << " MiB, L3 "
+              << l3 / (1024 * 1024) << " MiB, streaming transpose = " << streamed << '\n';
+    CHECK(streamed == (bytes >= admiral::detail::kFourStepStreamL3Mult * l3));
+
+    const double tol = fft_tol<double>();
+    double worst = 0.0;
+    std::size_t worst_k = 0;
+    for (std::size_t k = 0; k < N; ++k) {
+        const auto ref = std::conj(unit_phasor<double>(turn_fraction(n0, k, N)));
+        const double e = std::abs(out.ptr[k] - ref);
+        if (e > worst) { worst = e; worst_k = k; }
+    }
+    CAPTURE(worst_k, worst, tol, streamed);
+    CHECK(worst <= tol);
+}

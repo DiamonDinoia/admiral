@@ -23,19 +23,25 @@ template<typename T>
 inline constexpr std::size_t span_align =
     std::max(xsimd::batch<T>::arch_type::alignment(), kCacheLine);
 
+// Defined in src/scratch_alloc.cpp, which is the only translation unit that names the
+// allocator. Keeping it out of line keeps snmalloc's headers, and its C++20 and cmpxchg16b
+// requirements, out of every TU that includes admiral.
+void* scratch_alloc(std::size_t bytes, std::size_t align);
+void scratch_free(void* p, std::size_t align) noexcept;
+// Allocations made through the seam since process start. Test observable only; the version
+// script keeps it out of the shipped ABI.
+long scratch_alloc_count() noexcept;
+
 template<typename T>
 struct aligned_delete {
-    void operator()(T* p) const noexcept {
-        ::operator delete[](p, std::align_val_t{span_align<T>});
-    }
+    void operator()(T* p) const noexcept { scratch_free(p, span_align<T>); }
 };
 template<typename T>
 using aligned_buffer = std::unique_ptr<T[], aligned_delete<T>>;
 
 template<typename T>
 [[nodiscard]] aligned_buffer<T> make_aligned_buffer(std::size_t n) {
-    return aligned_buffer<T>(static_cast<T*>(
-        ::operator new[](n * sizeof(T), std::align_val_t{span_align<T>})));
+    return aligned_buffer<T>(static_cast<T*>(scratch_alloc(n * sizeof(T), span_align<T>)));
 }
 
 template<typename T, std::size_t K>

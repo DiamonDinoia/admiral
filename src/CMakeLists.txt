@@ -9,7 +9,8 @@ add_library(admiral_engine OBJECT
     inst_gt_f.cpp inst_gt_d.cpp
     inst_nd_f.cpp inst_nd_d.cpp
     inst_real_f.cpp inst_real_d.cpp
-    inst_api_f.cpp inst_api_d.cpp inst_api_ld.cpp)
+    inst_api_f.cpp inst_api_d.cpp inst_api_ld.cpp
+    scratch_alloc.cpp)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set(_adm_col_numerics -ffp-contract=on -fno-associative-math)
@@ -46,7 +47,7 @@ target_include_directories(admiral_engine PRIVATE
     ${PROJECT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${ADM_GENERATED_INCLUDE_DIR})
-target_link_libraries(admiral_engine PRIVATE xsimd poet::poet ${ADM_THREADS_LIB})
+target_link_libraries(admiral_engine PRIVATE xsimd poet::poet snmalloc ${ADM_THREADS_LIB})
 target_compile_definitions(admiral_engine PRIVATE ADM_BUILDING)
 # PRIVATE covers every route decision: plan_impl is extern-templated inside admiral_engine only.
 if(ADM_PIN_PLAN_ESTIMATE)

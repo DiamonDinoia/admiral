@@ -7,6 +7,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <admiral/admiral.hpp>
+#include <admiral/detail/scratch.hpp>
 
 #include <atomic>
 #include <complex>
@@ -85,6 +86,12 @@ void operator delete[](void* p, std::size_t, std::align_val_t) noexcept {
 
 // Execute a plan<long double> at n <= SBO_MAX must not heap-allocate scratch;
 // at n > SBO_MAX the soa_scratch heap path must fire.
+//
+// The two directions need two counters. The global replacements above see every allocation the
+// process makes, which is what "small n allocates nothing at all" needs. They do NOT see the
+// scratch itself: it goes through admiral::detail::scratch_alloc, which allocates from snmalloc
+// and never calls operator new. So the large-n direction, the one that makes this a check rather
+// than a tautology, reads the seam's own counter.
 // plan<long double> routes exclusively through scalar_nd_c2c<long double>, which
 // uses soa_scratch<std::complex<long double>, 1> in every execute path.
 TEST_CASE("soa_scratch: small-n execute uses zero heap allocations; large-n uses nonzero",
@@ -96,9 +103,11 @@ TEST_CASE("soa_scratch: small-n execute uses zero heap allocations; large-n uses
         std::vector<std::complex<long double>> v(64, {1, 0});
         p.forward(v.data());  // warmup: flushes any lazy init
         const long before = g_alloc_count.load(std::memory_order_relaxed);
+        const long before_scratch = admiral::detail::scratch_alloc_count();
         p.forward(v.data());
         const long after = g_alloc_count.load(std::memory_order_relaxed);
         REQUIRE(after == before);
+        REQUIRE(admiral::detail::scratch_alloc_count() == before_scratch);
     }
     // Large: n=8192 > SBO_MAX=4096 — soa_scratch falls back to heap.
     {
@@ -106,9 +115,9 @@ TEST_CASE("soa_scratch: small-n execute uses zero heap allocations; large-n uses
         admiral::plan<long double> p({8192});
         std::vector<std::complex<long double>> v(8192, {1, 0});
         p.forward(v.data());  // warmup
-        const long before = g_alloc_count.load(std::memory_order_relaxed);
+        const long before = admiral::detail::scratch_alloc_count();
         p.forward(v.data());
-        const long after = g_alloc_count.load(std::memory_order_relaxed);
+        const long after = admiral::detail::scratch_alloc_count();
         REQUIRE(after > before);
     }
 }

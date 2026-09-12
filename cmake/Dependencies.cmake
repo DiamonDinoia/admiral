@@ -125,6 +125,38 @@ else()
     message(STATUS "poet: reusing parent-provided target")
 endif()
 
+# The engine's scratch blocks reach multiple MiB and are allocated per execute. glibc unmaps
+# any block past DEFAULT_MMAP_THRESHOLD_MAX (32 MiB) on free, so the next execute re-faults the
+# whole thing, and even below that a fresh address costs the cache residency the previous call
+# built up. snmalloc keeps the mapping and the address and releases only the PAGES, through
+# MADV_FREE on Linux and BSD, MADV_FREE_REUSABLE on Apple and its own Windows PAL. It is used
+# ONLY through src/scratch_alloc.cpp and it does not replace the global operator new, so an
+# application's own allocator is untouched.
+if(NOT TARGET snmalloc)
+    if(ADM_CXX_STANDARD LESS 20)
+        set(_adm_snmalloc_cxx17 ON)
+    else()
+        set(_adm_snmalloc_cxx17 OFF)
+    endif()
+    CPMAddPackage(
+        NAME snmalloc
+        GITHUB_REPOSITORY microsoft/snmalloc
+        GIT_TAG 511e91a2de604ce716841f32f5e929a066c4a978
+        SYSTEM YES
+        EXCLUDE_FROM_ALL YES
+        OPTIONS
+            "SNMALLOC_HEADER_ONLY_LIBRARY ON"
+            "SNMALLOC_BUILD_TESTING OFF"
+            "SNMALLOC_USE_CXX17 ${_adm_snmalloc_cxx17}"
+    )
+
+    if(snmalloc_ADDED)
+        message(STATUS "snmalloc: microsoft/snmalloc 511e91ad (header-only, scratch only)")
+    endif()
+else()
+    message(STATUS "snmalloc: reusing parent-provided target")
+endif()
+
 foreach(_hdr_only xsimd poet)
     if(TARGET ${_hdr_only})
         get_target_property(_inc ${_hdr_only} INTERFACE_INCLUDE_DIRECTORIES)

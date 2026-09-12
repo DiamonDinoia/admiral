@@ -508,7 +508,7 @@ void nd_apply_axis(std::complex<T>* data, std::size_t total, std::size_t len,
                    const nd_axis_state<T>& st, std::optional<T> axis_fct,
                    thread_pool* pool = nullptr) {
     if (len <= 1) return;
-    const std::size_t outer = total / (len * inner);
+    const std::size_t outer = st.plan_nruns;
     if (innermost)
         apply_lines_contiguous<T>(data, len, st, axis_fct, pool, outer, total,
                                   [len](std::size_t r) { return r * len; }, len);
@@ -633,17 +633,30 @@ nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forwa
         // axis exactly when fuse_planes folds it into the per-plane pass, m.total/(len*inner)
         // otherwise -- both in-place and out-of-place execute_nd agree, so the route/tile/unit
         // decision computed once here from these values is valid for the plan's whole life.
-        if (!innermost && m.shape[d] > 1) {
-            const std::size_t nruns = (m.fuse_planes && d + 2 == m.shape.size())
-                                          ? 1
-                                          : m.total / (m.shape[d] * inner);
-            const line_plan lp = resolve_line_plan<T>(m.axes[d], m.shape[d], inner, inner, nruns,
-                                                      route_nthreads, m.pool != nullptr);
-            m.axes[d].route_cached = true;
-            m.axes[d].route = lp.route;
-            m.axes[d].tile = lp.tile;
-            m.axes[d].units = lp.units;
+        if (m.shape[d] > 1) {
+            // nruns is plan-invariant (total, shape[d] and inner never change after construction),
+            // so nd_apply_axis reads m.axes[d].plan_nruns instead of recomputing total/(len*inner)
+            // on every execute(). Both execute_nd overloads pass total=plane (not m.total) for the
+            // second-to-last axis under fuse_planes (in-place's fused loop, and out-of-place's own
+            // call a few lines below its row loop): plane/(shape[d]*inner) == 1 there, since
+            // inner==len. Only the in-place fused loop ever reaches the innermost axis under
+            // fuse_planes -- out-of-place never calls nd_apply_axis on it, that row goes through
+            // in_st.plan->execute/codelet_dispatch_many_oop instead -- where total=plane and
+            // inner==1 give plane/len == shape[ndim-2], not m.total/len. Every other case (both
+            // overloads' non-fused axes) passes m.total, so the plain formula holds there.
+            const std::size_t ndim = m.shape.size();
+            const std::size_t nruns = (m.fuse_planes && d + 2 == ndim) ? 1
+                                     : (m.fuse_planes && d + 1 == ndim) ? m.shape[ndim - 2]
+                                                                        : m.total / (m.shape[d] * inner);
             m.axes[d].plan_nruns = nruns;
+            if (!innermost) {
+                const line_plan lp = resolve_line_plan<T>(m.axes[d], m.shape[d], inner, inner, nruns,
+                                                          route_nthreads, m.pool != nullptr);
+                m.axes[d].route_cached = true;
+                m.axes[d].route = lp.route;
+                m.axes[d].tile = lp.tile;
+                m.axes[d].units = lp.units;
+            }
         }
         inner *= m.shape[d];
     }

@@ -396,6 +396,11 @@ nd_real_plan<T>::nd_real_plan(span<const std::size_t> shape, std::size_t nthread
                                               false, 1, eff);
         m.inv_axes[d] = make_nd_axis_state<T>(m.shape[d], inner, false,
                                               false, 1, eff);
+        // run_outer always calls nd_apply_axis with total=m.total_c (no plane-fusion here),
+        // so plan_nruns is plan-invariant the same way nd_runtime_plan's is.
+        const std::size_t nruns = m.total_c / (m.shape[d] * inner);
+        m.fwd_axes[d].plan_nruns = nruns;
+        m.inv_axes[d].plan_nruns = nruns;
         inner *= m.shape[d];
     }
     if (nthreads == 0) {

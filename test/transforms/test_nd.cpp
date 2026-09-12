@@ -529,18 +529,38 @@ reference_2d_columns_ld(const std::vector<std::complex<T>>& x, std::size_t rows,
 
 }
 
-// 64^3 and 128x64x32 run the plane-fused chain wherever 64 KiB <= L2 < 4 MiB. The chain is
-// gated on a null pool, so the plan must be forced serial: at auto width both shapes cross
-// the threading gate on a many-core host and take the unfused route instead. The scaled
-// inverse exercises the factor folded into the fused last pass.
+// 128x64x64 and 256x64x32 run the plane-fused chain: the last two axes (4096 and 2048 complex
+// elements) sit far under any real L2, and the full array (4 MiB fp32, 8 MiB fp64) sits over it
+// at both this host's reported L2 and the 262144 valgrind reports in place of it (cache.hpp's
+// sysconf read differs there). The REQUIRE loop below checks both bounds at both those L2 values
+// directly, rather than trusting a claimed window in prose. The chain is gated on a null pool,
+// so the plan must be forced serial: at auto width both shapes cross the threading gate on a
+// many-core host and take the unfused route instead. The scaled inverse exercises the factor
+// folded into the fused last pass.
+//
+// nd_apply_axis (nd_plan.hpp) reads a construction-time-cached m.axes[d].plan_nruns instead of
+// recomputing total/(len*inner) on every execute(). The in-place execute_nd loop is the only
+// caller reaching the innermost axis under fuse_planes (out-of-place never calls nd_apply_axis
+// on the innermost axis: that row goes through in_st.plan->execute / codelet_dispatch_many_oop
+// instead), so a wrong cached value there is invisible to the out-of-place overload and shows up
+// only on the in-place call below. This is the shape that segfaulted before nd_plan.hpp's cached
+// plan_nruns learned the fused innermost-axis case (plane/len, not m.total/len).
 TEMPLATE_TEST_CASE("3D plane-fused shapes match the separable reference pointwise",
                    "[nd][3d][fused]", float, double) {
     using T = TestType;
-    const std::vector<std::vector<std::size_t>> shapes{{64, 64, 64}, {128, 64, 32}};
+    const std::vector<std::vector<std::size_t>> shapes{{128, 64, 64}, {256, 64, 32}};
     admiral::options serial;
     serial.nthreads = 1;
     for (const std::vector<std::size_t>& shape : shapes) {
         const std::size_t n = shape_product(shape);
+        const std::size_t ndim = shape.size();
+        const std::size_t plane_bytes = shape[ndim - 1] * shape[ndim - 2] * sizeof(std::complex<T>);
+        const std::size_t total_bytes = n * sizeof(std::complex<T>);
+        for (const std::size_t l2 : {std::size_t{262144}, admiral::detail::cpu_cache().l2}) {
+            INFO("shape " << shape[0] << "x" << shape[1] << "x" << shape[2] << " l2=" << l2);
+            REQUIRE(plane_bytes <= l2);
+            REQUIRE(total_bytes > l2);
+        }
         const auto in = make_input<T>(n, 7000u + unsigned(n));
         admiral::plan<T> p(admiral::span<const std::size_t>(shape.data(), shape.size()), serial);
         INFO("shape " << shape[0] << "x" << shape[1] << "x" << shape[2]);

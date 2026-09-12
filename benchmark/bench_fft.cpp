@@ -618,7 +618,7 @@ bool compare_min_of_n(std::size_t N, int reps, long inner,
         ? l2_rel_error<T>(fftw.forward(data), reference_forward_dft<T>(data))
         : l2_rel_error<T>(fftw.forward(data), gated_fwd);
     const bool fftw_ok = fftw_l2 <= tol;
-    NbStat fftw_fwd{0, 0, 0}, fftw_rt{0, 0, 0};
+    NbStat fftw_fwd{0, 0, 0, 0}, fftw_rt{0, 0, 0, 0};
     if (fftw_ok) {
         fftw_fwd = nb_measure("fftw_fwd", reps, inner, [&]() { sink += fftw.forward(data)[N / 2].real(); });
         fftw_rt  = nb_measure("fftw_rt",  reps, inner, [&]() { sink += fftw.roundtrip(data)[N / 2].real(); });
@@ -842,7 +842,7 @@ void codelet_sweep(int reps, long inner, bool with_ducc) {
             admiral::detail::codelet_dispatch<T, true>(buf.data(), buf.data(), N);
             sink += buf[N / 2].real();
         });
-        NbStat dc{0, 0, 0};
+        NbStat dc{0, 0, 0, 0};
         if (with_ducc) {
             dc = nb_measure("ducc", reps, inner, [&]() {
                 auto out = ducc0_forward_fft<T>(data);
@@ -1390,6 +1390,35 @@ int main(int argc, char** argv) {
             if (cmp_prec == "f64" || cmp_prec == "both") run(double{});
             if (cmp_prec == "f32" || cmp_prec == "both") run(float{});
             return (fail_on_lose && !ok) ? 1 : 0;
+        }
+    }
+
+    {
+        bool overhead = false;
+        std::string ov_prec = "f64";
+        int reps = 9;
+        long inner = 0;
+        std::vector<std::vector<std::size_t>> shapes;
+        for (int i = 1; i < argc; ++i) {
+            const std::string arg = argv[i];
+            if (arg == "--overhead") overhead = true;
+            else if (arg.rfind("--prec=", 0) == 0) ov_prec = arg.substr(7);
+            else if (arg.rfind("--reps=", 0) == 0) reps = std::stoi(arg.substr(7));
+            else if (arg.rfind("--inner=", 0) == 0) inner = std::stol(arg.substr(8));
+            else if (arg.rfind("--shapes=", 0) == 0) shapes = parse_nd_shape_list(arg.substr(9));
+        }
+        if (overhead) {
+            if (shapes.empty())
+                shapes = {{4, 4, 4}, {8, 8, 8}, {16, 16}, {16, 16, 16}, {32, 32}};
+            bool ok = true;
+            auto run = [&](auto tag) {
+                using T = decltype(tag);
+                for (const auto& shape : shapes)
+                    ok = bench_execute_overhead<T>(shape, reps, inner) && ok;
+            };
+            if (ov_prec == "f64" || ov_prec == "both") run(double{});
+            if (ov_prec == "f32" || ov_prec == "both") run(float{});
+            return ok ? 0 : 1;
         }
     }
 

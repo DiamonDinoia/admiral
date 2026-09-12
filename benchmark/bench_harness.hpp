@@ -28,7 +28,7 @@ constexpr double default_accuracy_tol() {
     return std::is_same_v<T, float> ? 1e-3 : 1e-9;
 }
 
-struct NbStat { double us; double cyc; double err; };
+struct NbStat { double us; double cyc; double err; double instr; };
 
 inline constexpr double kStableMdape = 0.05;
 
@@ -40,7 +40,7 @@ template<typename Func>
 NbStat nb_measure(const char* name, int reps, long min_iters, Func&& func) {
     using ankerl::nanobench::Result;
     constexpr int kMaxMs = 64;
-    NbStat stat{0.0, 0.0, 1e9};
+    NbStat stat{0.0, 0.0, 1e9, 0.0};
     for (int ms = 1; ms <= kMaxMs; ms *= 2) {
         ankerl::nanobench::Bench b;
         b.output(nullptr);
@@ -54,7 +54,9 @@ NbStat nb_measure(const char* name, int reps, long min_iters, Func&& func) {
         const bool have_cyc = cyc > 0.0 && cyc < std::numeric_limits<double>::max();
         const double err = have_cyc ? r.medianAbsolutePercentError(Result::Measure::cpucycles)
                                     : r.medianAbsolutePercentError(Result::Measure::elapsed);
-        stat = {r.minimum(Result::Measure::elapsed) * 1e6, have_cyc ? cyc : 0.0, err};
+        const bool have_instr = r.has(Result::Measure::instructions);
+        const double instr = have_instr ? r.minimum(Result::Measure::instructions) : 0.0;
+        stat = {r.minimum(Result::Measure::elapsed) * 1e6, have_cyc ? cyc : 0.0, err, instr};
         if (min_iters > 0 || stat.err <= kStableMdape) break;
     }
     return stat;
@@ -159,6 +161,12 @@ template<typename T>
 bool compare_nd_r2c_robust(const std::vector<std::size_t>& shape, int rounds, int reps, long inner,
                            int nthreads = 1);
 
+// Per-execute overhead: p.forward() cost for a plan built once outside the timed region,
+// reported in retired instructions (exact, comparable across shapes) alongside cycles, plus
+// a same-binary control and a ducc0 correctness check. See bench_execute_overhead.cpp.
+template<typename T>
+bool bench_execute_overhead(const std::vector<std::size_t>& shape, int reps, long inner);
+
 extern template bool compare_nd<float>(const std::vector<std::size_t>&, int, long, int);
 extern template bool compare_nd<double>(const std::vector<std::size_t>&, int, long, int);
 extern template bool compare_nd_r2c<float>(const std::vector<std::size_t>&, int, long, int);
@@ -170,6 +178,8 @@ extern template bool compare_nd_r2c_robust<float>(const std::vector<std::size_t>
                                                   int);
 extern template bool compare_nd_r2c_robust<double>(const std::vector<std::size_t>&, int, int, long,
                                                    int);
+extern template bool bench_execute_overhead<float>(const std::vector<std::size_t>&, int, long);
+extern template bool bench_execute_overhead<double>(const std::vector<std::size_t>&, int, long);
 
 #ifdef ADM_BENCH_FFTW
 inline unsigned fftw_plan_flag() {

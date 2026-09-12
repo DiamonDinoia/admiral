@@ -118,7 +118,7 @@ bool compare_nd(const std::vector<std::size_t>& shape, int reps, long inner, int
     });
 #ifdef ADM_BENCH_FFTW
     fftw_c2c<T> fftw(shape, nthreads);
-    NbStat fftw_fwd{0, 0, 0}, fftw_rt{0, 0, 0};
+    NbStat fftw_fwd{0, 0, 0, 0}, fftw_rt{0, 0, 0, 0};
     fftw_fwd = nb_measure("fftwnd_fwd", reps, inner, [&]() { sink += fftw.forward(data)[Ntot / 2].real(); });
     fftw_rt  = nb_measure("fftwnd_rt",  reps, inner, [&]() { sink += fftw.roundtrip(data)[Ntot / 2].real(); });
 #endif
@@ -233,7 +233,7 @@ bool compare_nd_r2c(const std::vector<std::size_t>& shape, int reps, long inner,
     });
 #ifdef ADM_BENCH_FFTW
     fftw_r2c<T> fftw(shape, nthreads);
-    NbStat fftw_fwd{0, 0, 0}, fftw_rt{0, 0, 0};
+    NbStat fftw_fwd{0, 0, 0, 0}, fftw_rt{0, 0, 0, 0};
     fftw_fwd = nb_measure("fftw_r2c_fwd", reps, inner, [&]() { sink += fftw.forward(real_in)[Nc / 2].real(); });
     fftw_rt  = nb_measure("fftw_r2c_rt",  reps, inner, [&]() { sink += fftw.roundtrip(real_in)[Nreal / 2]; });
 #endif

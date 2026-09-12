@@ -105,7 +105,7 @@ arm_catalog() {
 }
 
 arm_valgrind() {
-    local dir=$out/valgrind log=$out/valgrind.log rc=0
+    local dir=$out/valgrind log=$out/valgrind.log rc=0 vrc=0
     echo "=== valgrind"
     command -v valgrind >/dev/null || { echo "  skipped: valgrind not on PATH"; skipped+=(valgrind); return; }
     rm -rf "$dir"; : >"$log"
@@ -123,8 +123,14 @@ arm_valgrind() {
         # and the counter misreads (6f130b4). CI's valgrind job skips it the same way.
         [[ $(basename "$bin") == test_alloc ]] && continue
         echo "--- $(basename "$bin")" >>"$log"
-        valgrind --error-exitcode=1 --errors-for-leak-kinds=definite \
-            --leak-check=full "$bin" '~[ulp]' '~[longdouble]' >>"$log" 2>&1 || { echo "  ERRORS: $(basename "$bin")"; rc=1; }
+        # This loop walks the binaries directly, so ctest's --timeout never reaches them.
+        # Valgrind serialises threads and costs 50-100x, so a deadlocked binary never returns.
+        # Slowest measured binary is test_threads at 642 s (ccmlin075, 22 binaries, 2026-09-12).
+        timeout 1800 valgrind --error-exitcode=1 --errors-for-leak-kinds=definite \
+            --leak-check=full "$bin" '~[ulp]' '~[longdouble]' >>"$log" 2>&1
+        vrc=$?
+        ((vrc == 124)) && echo "  TIMEOUT after 1800s: $(basename "$bin")" >>"$log"
+        ((vrc == 0)) || { echo "  ERRORS: $(basename "$bin")$( ((vrc == 124)) && printf ' (timeout)')"; rc=1; }
     done
     ((rc == 0)) && { echo "  OK"; ((pass++)); rm -rf "$dir"; } || failed+=("valgrind")
 }

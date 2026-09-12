@@ -269,8 +269,15 @@ jobs:
             # symbols, so its counter and block families are meaningless under memcheck.
             [ "$(basename "$t")" = test_alloc ] && continue
             echo "--- $t"
-            valgrind --error-exitcode=1 --leak-check=full \
-              --errors-for-leak-kinds=definite "$t" '~[longdouble]'
+            # The loop walks the binaries directly, so no ctest --timeout reaches them, and a
+            # deadlocked binary under valgrind never returns. Slowest measured binary is
+            # test_threads at 642 s (ccmlin075, 22 binaries, 2026-09-12).
+            timeout 1800 valgrind --error-exitcode=1 --leak-check=full \
+              --errors-for-leak-kinds=definite "$t" '~[longdouble]' || {
+                rc=$?
+                [ "$rc" = 124 ] && echo "TIMEOUT after 1800s: $t"
+                exit 1
+              }
             ran=$((ran + 1))
           done
           # An unmatched glob walks zero binaries and reports success.

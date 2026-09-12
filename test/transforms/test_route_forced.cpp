@@ -329,3 +329,19 @@ TEMPLATE_TEST_CASE("forced Bluestein with a codelet-catalog pad", "[coverage][ro
         require_close(got, ref, fft_tol<TestType>());
     }
 }
+
+TEST_CASE("serial four_step_large admission matches the measured crossovers",
+          "[coverage][route][four_step_large]") {
+    using namespace admiral::detail;
+
+    // Absolute sizes on purpose. Deriving them from the constants would make the case pass
+    // for any value of them, and the line and the A/B crossover it was read from are one
+    // artifact: moving either without re-deriving the other is the defect this guards.
+    REQUIRE_FALSE(routes_large<double>(262144, 1));   //  4 MiB, below the f64 line
+    REQUIRE(routes_large<double>(524288, 1));         //  8 MiB, above it
+
+    // f32 is a WINDOW, closed above by kLargeRouteSerialF32MaxBytes, so it rejects on both sides.
+    REQUIRE_FALSE(routes_large<float>(1048576, 1));   //  8 MiB, below the f32 line
+    REQUIRE(routes_large<float>(4194304, 1));         // 32 MiB, inside the window
+    REQUIRE_FALSE(routes_large<float>(8388608, 1));   // 64 MiB, past the cap
+}

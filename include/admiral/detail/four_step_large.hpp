@@ -366,7 +366,7 @@ using large_split = four_step_split;
 inline constexpr std::size_t kLargeRouteThreadedByteBudget = std::size_t{2} << 20;
 inline constexpr std::size_t kLargeRouteThreadedFloorBytes = std::size_t{512} << 10;
 
-inline constexpr std::size_t kLargeRouteSerialF64Bytes = std::size_t{12} << 20;
+inline constexpr std::size_t kLargeRouteSerialF64Bytes = std::size_t{6} << 20;
 inline constexpr std::size_t kLargeRouteSerialF32Bytes = (std::size_t{16} << 20) - 1;
 
 inline constexpr std::size_t kLargeRouteSerialF32MaxBytes = std::size_t{32} << 20;

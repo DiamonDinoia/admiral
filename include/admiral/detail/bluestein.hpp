@@ -21,9 +21,13 @@
 namespace admiral {
 namespace detail {
 
+// The inner transform's crossover was read against a chirp that the pointwise multiply
+// leaves resident, so it is not the plain serial 1-D line and does not move with it.
+inline constexpr std::size_t kBluesteinInnerSixStepF64Bytes = std::size_t{12} << 20;
+
 template<typename T>
 [[nodiscard]] constexpr bool bluestein_inner_six_step_admits(std::size_t pad) {
-    constexpr std::size_t line = sizeof(T) == 8 ? kLargeRouteSerialF64Bytes
+    constexpr std::size_t line = sizeof(T) == 8 ? kBluesteinInnerSixStepF64Bytes
                                                 : std::numeric_limits<std::size_t>::max();
     return four_step_large_supported(pad, sizeof(std::complex<T>), line) &&
            four_step_large_fused_shape<T>(pad);

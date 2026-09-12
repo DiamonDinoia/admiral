@@ -460,6 +460,7 @@ inline constexpr std::size_t kMeasureReps = 5;
 inline constexpr std::size_t kMeasureMaxCandidates = 4;
 inline constexpr std::chrono::nanoseconds::rep kMeasureMinNs = 50;
 inline constexpr std::chrono::nanoseconds::rep kMeasureSampleNs = 4000;
+inline constexpr std::chrono::nanoseconds::rep kMeasureLongNs = 2'000'000;
 [[nodiscard]] constexpr std::size_t measure_batch(std::chrono::nanoseconds::rep one_ns) {
     if (one_ns >= kMeasureSampleNs) return 1;
     return std::size_t(kMeasureSampleNs / (std::max)(one_ns, std::chrono::nanoseconds::rep{1})) + 1;
@@ -492,9 +493,24 @@ plan_impl<T>::measure_route(std::size_t size, bool is_forward, std::size_t nthre
             offer(route_kind::four_step_batched);
     }
 
-    if (size > BASE_MODEL_NMAX && nthreads > 1) {
+    // Past the cost model's domain the hand-fit kLargeRoute* lines are the only thing that
+    // elects, and one line cannot hold three hosts: at 16 mod 64 the f64 DIF chain beats
+    // four_step_large on rome by 8-31% above 64 MiB and loses to it by 14-42% on icelake and
+    // genoa, and the f32 cap is a loss on rome and icelake at every rung past it. The race is
+    // the only key that reads the host it runs on, so serial elects by measurement too. The
+    // shape predicate is the one the elected plan would carry: fused serially, n1 | n2 threaded.
+    if (size > BASE_MODEL_NMAX) {
         const large_split sp = choose_large_split(size);
-        if (sp.valid() && sp.n2 % sp.n1 == 0) {
+        const bool shape_ok = nthreads > 1 ? sp.n2 % sp.n1 == 0
+                                           : four_step_large_fused_shape<T>(size);
+        // Serially the line GATES and the race DECIDES. Below the line the two routes are not in
+        // contention, and racing there would only charge the DIF arm its per-call scratch faults:
+        // at 2^16 f64 that reads it 3.7x slow and elects four_step_large where the chain wins by
+        // 1.33x. Above it, what the line cannot express is which side of the crossover a host is
+        // on, and only the race can read that.
+        const bool in_band =
+            nthreads > 1 || size * sizeof(std::complex<T>) > large_route_bytes(1);
+        if (sp.valid() && shape_ok && in_band) {
             offer(fallback);
             offer(fallback == route_kind::four_step_large ? route_kind::iterative_dif
                                                          : route_kind::four_step_large);
@@ -520,15 +536,23 @@ plan_impl<T>::measure_route(std::size_t size, bool is_forward, std::size_t nthre
     double best_ns = kMeasureInf;
     const auto time_plan = [&](plan_impl<T>& trial) {
         trial.execute(in.data(), out.data());
-        trial.execute(in.data(), out.data());
-        const std::size_t inner = [&] {
+        const auto probe = [&] {
             const auto a = clock::now();
             trial.execute(in.data(), out.data());
-            return measure_batch(std::chrono::nanoseconds(clock::now() - a).count());
-        }();
+            return std::chrono::nanoseconds(clock::now() - a).count();
+        };
+        // One execute past the cost model's domain costs milliseconds, so a warm-up plus five
+        // reps is seconds of plan time per candidate at 2^24. Past kMeasureLongNs the probe IS
+        // the sample: the routes there differ by more than their own spread. Below it the
+        // executed sequence is unchanged, one warm-up and one probe before the rep loop.
+        auto one_ns = probe();
+        const bool cheap = one_ns < kMeasureLongNs;
+        if (cheap) one_ns = probe();
+        const std::size_t inner = measure_batch(one_ns);
         const double u = unit;
-        double best = kMeasureInf;
-        for (std::size_t r = 0; r < kMeasureReps; ++r) {
+        double best = cheap ? kMeasureInf : double((std::max)(one_ns, kMeasureMinNs));
+        unit = (std::min)(unit, best);
+        for (std::size_t r = 0; cheap && r < kMeasureReps; ++r) {
             const auto a = clock::now();
             for (std::size_t k = 0; k < inner; ++k) trial.execute(in.data(), out.data());
             const auto span = std::chrono::nanoseconds(clock::now() - a).count();

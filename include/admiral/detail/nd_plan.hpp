@@ -15,6 +15,8 @@
 
 #include <admiral/errors.hpp>
 
+#include <admiral/detail/api.h>
+
 #include "simd.hpp"
 
 #include "simd_swizzle.hpp"
@@ -531,6 +533,21 @@ void nd_apply_axis(std::complex<T>* data, std::size_t total, std::size_t len,
                                total, [len, inner](std::size_t r) { return r * (len * inner); });
 }
 
+#define ADM_HAS_FAST2D 1
+// PROTOTYPE (scratch, uncommitted): rank-2 in-place fast path.
+// The gate is decided once in the constructor; execute() only tests the flag.
+// nd_fast2d_disable() is read ONLY at construction, so one binary can build a fast-path plan
+// and a general-path plan over the same shape and compare their bits.
+[[nodiscard]] ADM_VISIBILITY inline bool& nd_fast2d_disable() {
+    static bool off = false;
+    return off;
+}
+#ifdef ADM_FAST2D_COUNT
+// Route assertion. Not compiled into the timing binary.
+[[nodiscard]] inline unsigned long& nd_fast2d_hits() { static unsigned long n = 0; return n; }
+[[nodiscard]] inline unsigned long& nd_slow2d_hits() { static unsigned long n = 0; return n; }
+#endif
+
 template<typename T>
 class nd_runtime_plan {
     struct M {
@@ -540,6 +557,7 @@ class nd_runtime_plan {
         std::vector<nd_axis_state<T>> axes;
         std::unique_ptr<thread_pool> pool;
         bool fuse_planes = false;
+        bool fast2d = false;
     } m;
 
 public:
@@ -551,8 +569,29 @@ public:
                  const exec_options<T>& opts = {}) const;
 
     [[nodiscard]] std::size_t size() const noexcept { return m.total; }
+    [[nodiscard]] bool uses_fast2d() const noexcept { return m.fast2d; }
 
 private:
+    // Rank-2 in-place fast path: the two axis bodies, called directly. No scale_plan, no
+    // per-axis loop, no apply_lines_* , no parallel_for, no line-plan resolve.
+    ADM_ALWAYS_INLINE void execute_fast2d(std::complex<T>* data, std::optional<T> fct) const {
+#ifdef ADM_FAST2D_COUNT
+        ++nd_fast2d_hits();
+#endif
+        const std::size_t n0 = m.shape[0];
+        const std::size_t n1 = m.shape[1];
+        const T def = m.is_forward ? T(1) : T(1) / static_cast<T>(m.total);
+        const T f = fct.value_or(def);
+        // make_scale_plan puts a custom factor on the innermost axis of extent > 1, which under
+        // this gate is axis 1; the default factor is the product 1/n1 * 1/n0 the two axes apply.
+        const bool custom = f != def;
+        const T rowf = custom ? f : (m.is_forward ? T(1) : T(1) / static_cast<T>(n1));
+        const T colf = custom ? T(1) : (m.is_forward ? T(1) : T(1) / static_cast<T>(n0));
+        if (m.is_forward) codelet_dispatch_many<T, true >(data, n0, n1, n1, rowf);
+        else              codelet_dispatch_many<T, false>(data, n0, n1, n1, rowf);
+        col_codelet_dispatch<T>(m.is_forward, data, n1, data, n1, n1, n0, colf);
+    }
+
     ADM_NOINLINE void execute_nd(std::complex<T>* data, const exec_options<T>& opts) const;
     ADM_NOINLINE void execute_nd(const std::complex<T>* src, std::complex<T>* dst,
                                  const exec_options<T>& opts) const;
@@ -674,10 +713,23 @@ nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forwa
         }
         inner *= m.shape[d];
     }
+    // ADMISSION PREDICATE of the rank-2 fast path. Every term is a property the general path
+    // would have recomputed on every execute(): rank 2, serial, both extents > 1, the row axis
+    // reaching codelet_dispatch_many through plan_impl::execute_many, and the col axis reaching
+    // col_codelet_dispatch as ONE tile of one run. Anything else keeps the general path.
+    if (m.shape.size() == 2 && m.pool == nullptr && !m.fuse_planes && m.shape[0] > 1 &&
+        m.shape[1] > 1 && !nd_fast2d_disable()) {
+        const nd_axis_state<T>& row = m.axes[1];
+        const nd_axis_state<T>& col = m.axes[0];
+        m.fast2d = row.plan && is_codelet_catalog(m.shape[1]) && row.plan_nruns == m.shape[0] &&
+                   col.col_codelet && col.route_cached && col.route == line_route::col_dif &&
+                   col.units == 1 && col.plan_nruns == 1;
+    }
 }
 
 template<typename T>
 void nd_runtime_plan<T>::execute(std::complex<T>* data, const exec_options<T>& opts) const {
+    if (m.fast2d && opts.debug == 0) { execute_fast2d(data, opts.fct); return; }
     const std::size_t ndim = m.shape.size();
     if (ndim == 1) {
         const nd_axis_state<T>& ax0 = m.axes[0];
@@ -693,6 +745,9 @@ void nd_runtime_plan<T>::execute(std::complex<T>* data, const exec_options<T>& o
 
 template<typename T>
 void nd_runtime_plan<T>::execute_nd(std::complex<T>* data, const exec_options<T>& opts) const {
+#ifdef ADM_FAST2D_COUNT
+    ++nd_slow2d_hits();
+#endif
     const std::size_t ndim = m.shape.size();
     if (opts.debug >= dbg_route) ADM_UNLIKELY trace(opts.debug, "in-place");
     const scale_plan sp = make_scale_plan(opts.fct);

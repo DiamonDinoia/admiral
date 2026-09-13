@@ -12,7 +12,9 @@
 #include <complex>
 #include <cmath>
 #include <cstddef>
+#include <cstring>
 #include <limits>
+#include <optional>
 #include <random>
 #include <vector>
 
@@ -314,6 +316,61 @@ TEMPLATE_TEST_CASE("Runtime nd_execute matches compile-time nd_plan", "[nd][disp
     run({16, 16}, 61);
     run({12, 20}, 62);
     run({31, 8}, 63);
+}
+
+// The rank-2 fast path is an admission-gated restructuring of execute(): bit-identical output
+// is the whole contract, so the comparison is memcmp, not a tolerance. The REQUIRED route
+// assertions are the case's own preconditions: uses_fast2d() proves each arm actually ran, and
+// the memcmp proves the bits match; each must be able to fail on its own.
+TEMPLATE_TEST_CASE("fast2d rank-2 path is bit-identical to the general nd_execute",
+                   "[nd][dispatch]", float, double) {
+    using T = TestType;
+    auto check_2d = [](std::array<std::size_t, 2> shape, unsigned seed, bool forward,
+                       std::optional<T> fct = std::nullopt) {
+        const std::size_t n = shape[0] * shape[1];
+        const auto in = make_input<T>(n, seed);
+
+        // nd_fast2d_disable() is read only at plan construction, so one binary runs both
+        // routes over the same shape. Restore the flag as soon as both plans are built.
+        admiral::detail::nd_fast2d_disable() = false;
+        admiral::detail::nd_runtime_plan<T> fast(
+            admiral::span<const std::size_t>(shape.data(), 2), forward);
+        admiral::detail::nd_fast2d_disable() = true;
+        admiral::detail::nd_runtime_plan<T> general(
+            admiral::span<const std::size_t>(shape.data(), 2), forward);
+        admiral::detail::nd_fast2d_disable() = false;
+        REQUIRE(fast.uses_fast2d());
+        REQUIRE_FALSE(general.uses_fast2d());
+
+        admiral::detail::exec_options<T> opts{};
+        opts.fct = fct;
+        auto a = in;
+        fast.execute(a.data(), opts);
+        auto b = in;
+        general.execute(b.data(), opts);
+        REQUIRE(std::memcmp(a.data(), b.data(), n * sizeof(std::complex<T>)) == 0);
+    };
+    for (const bool forward : {true, false}) {
+        check_2d({16, 16}, 91, forward);
+        check_2d({12, 20}, 92, forward);
+        check_2d({8, 15}, 93, forward);
+    }
+    // A custom factor rides the innermost axis through make_scale_plan; the fast path must
+    // reproduce that split exactly.
+    check_2d({12, 20}, 94, true, T(2));
+
+    // Rank guard: the gate is rank == 2, so a rank-3 plan takes the general path regardless
+    // of the disable flag.
+    const std::array<std::size_t, 3> shape3{4, 6, 8};
+    admiral::detail::nd_fast2d_disable() = false;
+    admiral::detail::nd_runtime_plan<T> f3(
+        admiral::span<const std::size_t>(shape3.data(), 3), true);
+    admiral::detail::nd_fast2d_disable() = true;
+    admiral::detail::nd_runtime_plan<T> g3(
+        admiral::span<const std::size_t>(shape3.data(), 3), true);
+    admiral::detail::nd_fast2d_disable() = false;
+    REQUIRE_FALSE(f3.uses_fast2d());
+    REQUIRE_FALSE(g3.uses_fast2d());
 }
 
 TEMPLATE_TEST_CASE("Unified plan<T> handles N-D via runtime shape", "[nd][plan]",

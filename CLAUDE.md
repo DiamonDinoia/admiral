@@ -79,7 +79,7 @@ a row; the pow2 quantization stays load-bearing (off-divisor counts load-imbalan
 passes' static chunks by 2-4x). `nthreads=0` timing on 2P nodes is bistable at 1-D
 2^15-2^18 through the `effort::measure` race — do not fit to a single run there.
 
-## Alignment hazard that's already handled
+## Alignment hazard: one barrier holds it, and no sanitizer sits under it
 
 codelet.hpp's cofactor `Wc == r` fast arm reinterprets scalar pointers as aligned batch
 arrays behind a runtime check. Reading a misaligned-reinterpreted `V*` is UB the moment
@@ -93,6 +93,20 @@ a 14.2-only check cannot see this. Re-verify on 13.3 before touching that arm. T
 barrier is not free: it constrains scheduling around the test, which grows
 `codelet_apply<16u, float, true>` from 625 to 700 bytes and moves every codelet object
 by 1-2% at v3/gcc 14.2.
+
+**ubsan will not catch it if the barrier goes.** `-fsanitize=undefined`'s `alignment` check does
+not instrument the arm's `kernel_batched<...>::apply(reinterpret_cast<const V*>(xre), ...)` shape at
+all: a misaligned `const V a = p[0];` through a `const V*` parameter segfaults with no diagnostic,
+and `objdump -d --disassemble=` finds ZERO `__ubsan_handle_type_mismatch` sites in that function
+against 6 in the same binary's `main`. The check is live in that same build, which is what makes the
+negative mean something: a misaligned `double` load reports `load of misaligned address`, and
+`const V& r = *reinterpret_cast<const V*>(p);` reports `reference binding to misaligned address`.
+ubsan instruments scalar loads and reference binding, not a whole-object copy of a trivially
+copyable class through a dereferenced pointer. Measured clang 20.1.8, `-O1 -march=x86-64-v3`,
+`-fsanitize=address,undefined`, worker6082, 2026-09-13.
+
+So a green `validate.sh sanitize` says nothing about this arm. The barrier is the guard and a
+segfault is the detector. Gate a change here on gcc 13.3 at v3, not on a sanitizer run.
 
 ## Bitwise stability of the column engine
 

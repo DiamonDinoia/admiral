@@ -105,15 +105,62 @@ is in `src/CMakeLists.txt`, on the four `inst_col_*` TUs only: `-ffp-contract=on
 unknown `-f` name is a hard error on clang. The 1-D engine runs one clone per length and
 needs nothing.
 
-`test/transforms/test_strides.cpp`'s "bit-identical across alignment classes" case IS the
-check, and it is a real one: strip the pin and it fails. Release/x86-64-v4, gcc 14.2 fails
-at len 20 offset 1 (2 of 320 elements at f32, 38 of 320 at f64); clang 19 needs len 60
-(159 of 960 at f32). Both fail through `axis_plan`, so the defect is on master and
-predates the `strides_plan` branch; `strides_plan` only reaches the same col chain.
-Since col axes at len <= `e2_len_cap()` (32 below 2 MiB of L3 per core, 64 above) route the
-col codelet, the case's dif-chain coverage sits at len 96/192/256 (the lens 20/60 measure the
-codelet's own layout invariance).
-Every other test in the tree compares against a tolerance and passes either way.
+`test/transforms/test_strides.cpp`'s "bit-identical across alignment classes" case IS the check,
+and it is a real one: strip the pin and it fails. WHICH length it fails at is set by
+`e2_len_cap()`, so the case's evidence is cap-conditional, and the cap is a property of the host
+rather than of the build.
+
+A col axis runs the col codelet at `len <= e2_len_cap()` and the col DIF chain above it
+(`nd_plan.hpp:133`). `e2_len_cap()` is 32 below 2 MiB of L3 per PHYSICAL core and 64 above, so 45
+MiB over 16 physical cores reads 64 while the same silicon counted by logical cpu reads 32. Raising
+the cap moves 16 lengths from the chain to the codelet: 33 35 36 40 42 44 45 48 49 50 54 55 56 60
+63 64. The case tries seven lengths, {20, 60, 81, 96, 192, 256, 1024}, and exactly one of them, 60,
+is in that set.
+
+So the case measures the codelet's layout invariance at the lengths at or below the cap and the col
+chain above it, and 60 changes sides. Measured on SPR (ccmlin075, gcc 14.2 and clang 19.1.7,
+Release, at both `x86-64-v4` and `native`) with the pin stripped and nothing else changed, routes
+confirmed by breakpoint counts on `col_codelet_body<N,T>`:
+
+    cap  compiler  lowest detecting length   first length THIS case detects at
+    32   gcc       33                        60   (chain), then 81
+    32   clang     35 f32 / 33 f64           60   (chain), then 81
+    64   gcc       66                        81   (chain; 20 and 60 both pass)
+    64   clang     66                        81   -- and 81 is the ONLY one it has
+
+The lowest detecting length is always the first one ABOVE that build's cap: 33 at cap 32, 66 at cap
+64, measured over eleven pin-stripped builds spanning two compilers, two caps, two ISAs and
+pristine `09cb3d2`. Nothing at or below the cap ever detects, so the pin protects the col pass and
+not the leaf codelet, which is why `admiral_codelets` needs no pin of its own.
+
+Length 20 does NOT detect a stripped pin on this host. It detects in none of those eleven builds,
+at either cap, either ISA or either precision, including pristine `09cb3d2` at gcc/x86-64-v4. An
+earlier version of this paragraph recorded gcc failing at len 20 offset 1; that datum is not
+reproducible here and should not be relied on. 1024 detects nowhere either, and 96, 192 and 256
+detect under gcc only. Every failure goes through `axis_plan`, so the defect is on master and
+predates the `strides_plan` branch; `strides_plan` only reaches the same col chain. Every other
+test in the tree compares against a tolerance and passes either way.
+
+Len 81 is what makes this case able to fail at cap 64, and it is load-bearing: without it, a clang
+host with 2 MiB or more of L3 per physical core runs this gate with nothing behind it, because 60
+has moved to the codelet and 96/192/256 detect under gcc only. 81 is not in `CODELET_CATALOG_SIZES`
+and exceeds `kFourStepLeafMax`, so no value of the cap can ever route it to the codelet; it cannot
+change sides the way 60 did. 96, the obvious-looking choice, does not detect under clang at any cap
+or ISA. Twelve other lengths qualify equally (90 99 108 110 126 135 162 180 189 216 243 252); 81 is
+the cheapest. Nothing in the tree asserts which side of the cap a host sits on, so 81 is the only
+thing standing between a clang CI host and a gate that cannot fail.
+
+OPEN, and out of this pin's scope: a few lengths still change bits with the alignment class with
+the pin ON, every one of them carrying a prime factor above 11 (191, 226, 247, 257, 289, 291, 292,
+293 across the sweeps run). None of them reaches the pinned code. `make_nd_axis_state` sets
+`st.dif` only where `is_codelet_supported` holds, which is 11-smooth lengths, so those axes never
+enter the col chain at all: a breakpoint on `col_dif_execute_ws<T,Forward>`, the sole instantiation
+the four pinned TUs export, counts ZERO hits at every one of them at both caps, against 128 hits at
+len 81 and len 96 on the same binary. They run the 1-D engine line by line, Bluestein at all of
+them except 257, which runs Rader. Which lengths show up also moves with the sweep window, so the
+set is not a fixed property of a length. Bluestein and Rader alignment sensitivity is unexamined
+here and no test in the tree looks at it; an agent that rediscovers it should know it was measured
+and routed, not overlooked, and that it is a different engine from the one this pin covers.
 
 Both flags are load-bearing and the pair is minimal. The 2x2 at v4/gcc 14.2 on that same
 test: no pin fails, `-fno-associative-math` alone fails, `-ffp-contract=on` alone fails,

@@ -125,6 +125,32 @@ TEMPLATE_TEST_CASE("column codelet route admission and narrow width",
     CHECK(e2_len_cap_by_l3(std::size_t{4} << 20) == 64);
     CHECK(e2_len_cap_by_l3(std::size_t{5} << 20) == 64);
     CHECK(e2_len_cap_by_l3(0) == 32);
+
+    // The cap prices L3 per PHYSICAL core. These views are synthetic, so no host value reaches the
+    // assertions and they fire the same on every machine: an SMT host whose L3 clears 2 MiB per
+    // core but not per thread must still cap at 64, and that is the case a logical divisor gets
+    // wrong. Fields are {l2, l3, l3_cores, l3_phys_cores, l1d}.
+    using admiral::detail::cache_bytes;
+    using admiral::detail::e2_len_cap_of;
+    constexpr std::size_t kMiB = std::size_t{1} << 20;
+    CHECK(e2_len_cap_of({kMiB, 45 * kMiB, 32, 16, kMiB}) == 64);  // SMT, 2.81 MiB per core
+    CHECK(e2_len_cap_of({kMiB, 45 * kMiB, 32, 32, kMiB}) == 32);  // no SMT, 1.41 MiB per core
+    CHECK(e2_len_cap_of({kMiB, 64 * kMiB, 64, 32, kMiB}) == 64);  // SMT, exactly 2 MiB: the boundary
+    CHECK(e2_len_cap_of({kMiB, 64 * kMiB, 64, 64, kMiB}) == 32);  // no SMT, 1 MiB per core
+    CHECK(e2_len_cap_of({kMiB, 0, 32, 16, kMiB}) == 32);          // unprobed L3
+    CHECK(e2_len_cap_of({kMiB, 45 * kMiB, 0, 0, kMiB}) == 32);    // unprobed topology
+
+    // Wiring on the live host. Meaningful only where the two counts differ, that is under SMT; on
+    // an SMT-off host both sides are the same expression and it proves nothing. The synthetic
+    // cases above are the regression test, this one catches a mis-probed count on an SMT host.
+    const cache_bytes& cc = admiral::detail::cpu_cache();
+    CHECK(cc.l3_phys_cores <= cc.l3_cores);
+    CHECK((cc.l3_cores == 0) == (cc.l3_phys_cores == 0));
+    if (cc.l3_phys_cores != cc.l3_cores) {
+        INFO("SMT host: l3_cores " << cc.l3_cores << " l3_phys_cores " << cc.l3_phys_cores);
+        CHECK(e2_len_cap() == e2_len_cap_by_l3(cc.l3 / cc.l3_phys_cores));
+    }
+
     CHECK(admiral::detail::make_nd_axis_state<T>(64, 17, true, false).col_codelet ==
           (e2_len_cap() == 64 && admiral::detail::is_codelet_catalog(64)));
 }
@@ -323,8 +349,14 @@ TEMPLATE_TEST_CASE("strides_plan bits do not depend on the output layout",
 TEMPLATE_TEST_CASE("column engine is bit-identical across alignment classes",
                    "[transforms][strides][numerics]", float, double) {
     using T = TestType;
-    for (const std::size_t len : {std::size_t{20}, std::size_t{60}, std::size_t{96},
-                                  std::size_t{192}, std::size_t{256}, std::size_t{1024}})
+    // e2_len_cap() decides which length detects a stripped pin. 60 detects only at cap 32; at
+    // cap 64 it routes the col codelet, which is bit-stable unpinned. At cap 64 gcc still detects
+    // at 96 but clang detects nowhere else here, so 81 is what keeps this case able to fail under
+    // clang on a host with >= 2 MiB of L3 per physical core. 81 is not in CODELET_CATALOG_SIZES
+    // and exceeds kFourStepLeafMax, so no cap can route it to the codelet.
+    for (const std::size_t len : {std::size_t{20}, std::size_t{60}, std::size_t{81},
+                                  std::size_t{96}, std::size_t{192}, std::size_t{256},
+                                  std::size_t{1024}})
         for (const bool forward : {true, false})
             for (const bool axis : {true, false})
                 for (const std::size_t nbatch :

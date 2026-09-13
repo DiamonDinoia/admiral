@@ -94,11 +94,19 @@ inline constexpr std::size_t kE2Len64MinL3PerCoreBytes = std::size_t{2} << 20;
     return l3_per_core_bytes >= kE2Len64MinL3PerCoreBytes ? std::size_t{64} : std::size_t{32};
 }
 
-[[nodiscard]] inline std::size_t e2_len_cap() {
-    const cache_bytes& cc = cpu_cache();
-    if (cc.l3_cores == 0 || cc.l3 == 0) return 32;
-    return e2_len_cap_by_l3(cc.l3 / cc.l3_cores);
+// Per PHYSICAL core, not per logical cpu. The threshold above was read off a knob A/B on three
+// SMT-off hosts (ice 48 MiB/32c, rome 16 MiB/4c, genoa 32 MiB/6c, 2026-08-31), where the two counts
+// coincide, so it has always been a per-physical-core quantity. Dividing by SMT siblings halves the
+// slice and caps an SMT host at 32 against its own measurement.
+// Takes the whole probed view rather than a bytes-per-core number the caller already divided:
+// WHICH count is the divisor is the decision under test, and no test can pin that on a machine
+// whose own two counts are equal unless it can hand this function a synthetic SMT topology.
+[[nodiscard]] constexpr std::size_t e2_len_cap_of(const cache_bytes& cc) {
+    if (cc.l3_phys_cores == 0 || cc.l3 == 0) return 32;
+    return e2_len_cap_by_l3(cc.l3 / cc.l3_phys_cores);
 }
+
+[[nodiscard]] inline std::size_t e2_len_cap() { return e2_len_cap_of(cpu_cache()); }
 
 template<typename T>
 [[nodiscard]] inline nd_axis_state<T> make_nd_axis_state(std::size_t length, std::size_t inner,

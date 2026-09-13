@@ -48,6 +48,7 @@ namespace {
 // operator new counter cannot: snmalloc does not go through it.
 std::atomic<long> g_scratch_allocs{0};
 
+#ifndef ADM_SCRATCH_SYSTEM_ALLOC
 // The line is glibc's own ceiling. glibc caps its dynamic mmap threshold at
 // DEFAULT_MMAP_THRESHOLD_MAX, 32 MiB on 64-bit, and clamps an application's M_MMAP_THRESHOLD to the
 // same value, so 32 MiB is the largest block glibc can ever recycle. At or above it every request
@@ -65,7 +66,6 @@ std::atomic<long> g_scratch_allocs{0};
 // cell passes.
 inline constexpr std::size_t kSnmallocMinBytes = std::size_t{32} << 20;
 
-#ifndef ADM_SCRATCH_SYSTEM_ALLOC
 // valgrind grants no single mapping past 32 GiB (measured, valgrind 3.26.0, Linux 5.14), and
 // snmalloc's pagemap reservation is larger, so snmalloc's init calls abort() and takes the whole
 // process with it at the first large transform. memcheck does not intercept snmalloc's mappings

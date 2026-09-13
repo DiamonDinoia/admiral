@@ -93,10 +93,15 @@ TEMPLATE_TEST_CASE("column codelet route admission and narrow width",
     CHECK(admiral::detail::make_nd_axis_state<T>(8, 17, true, false).col_codelet);
     CHECK(!admiral::detail::make_nd_axis_state<T>(96, 17, true, false).col_codelet);
     // Below 8 the col body must be able to vectorise the block: admitted at a whole number of the
-    // narrowest sized batch and a power-of-two length, declined otherwise.
+    // narrowest sized batch, and only at length 2, 3 or 4. EVERY length below 8 is asserted here, so
+    // a predicate that admits or declines one length more than it should cannot pass unnoticed.
+    CHECK(admiral::detail::make_nd_axis_state<T>(2, 4 * Wmin, true, false).col_codelet);
+    CHECK(admiral::detail::make_nd_axis_state<T>(3, 4 * Wmin, true, false).col_codelet);
     CHECK(admiral::detail::make_nd_axis_state<T>(4, 4 * Wmin, true, false).col_codelet);
-    CHECK(!admiral::detail::make_nd_axis_state<T>(4, 4 * Wmin + 1, true, false).col_codelet);
+    CHECK(!admiral::detail::make_nd_axis_state<T>(5, 4 * Wmin, true, false).col_codelet);
     CHECK(!admiral::detail::make_nd_axis_state<T>(6, 4 * Wmin, true, false).col_codelet);
+    CHECK(!admiral::detail::make_nd_axis_state<T>(7, 4 * Wmin, true, false).col_codelet);
+    CHECK(!admiral::detail::make_nd_axis_state<T>(4, 4 * Wmin + 1, true, false).col_codelet);
 
     // A block the native batch fills keeps the native batch; an odd block has no sized divisor.
     CHECK(narrow_col_width<T>(W) == 0);

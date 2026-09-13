@@ -118,8 +118,10 @@ template<typename T>
         const std::size_t e2_cap = std::min(e2_len_cap(), kFourStepLeafMax);
         // A col length below 8 pays only when the col body can vectorise the block: with the narrow
         // arm that needs a sized batch dividing it, the narrowest being min_sized_tail_width<T>().
-        const bool len_ok = length >= 8 ||
-                            (inner % min_sized_tail_width<T>() == 0 && detail::has_single_bit(length));
+        // Below 8 the lengths that pay are 2, 3 and 4. Lengths 5, 6 and 7 were measured on retired
+        // instructions at three vector widths and none of them pays: 6 wins at AVX-512 and loses at
+        // every narrower width, so its sign is set by W and no fixed predicate can admit it.
+        const bool len_ok = length >= 8 || (inner % min_sized_tail_width<T>() == 0 && length <= 4);
         st.col_codelet = len_ok && length <= e2_cap &&
                          is_codelet_catalog(length) && inner <= 64;
         dif_factor_plan r4;

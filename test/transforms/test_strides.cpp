@@ -80,13 +80,39 @@ TEMPLATE_TEST_CASE("strides_plan matches per-line plan", "[transforms][strides]"
     }
 }
 
-TEMPLATE_TEST_CASE("column codelet lens <= 64 match per-line plan, tails included",
-                   "[transforms][strides][numerics]", float, double) {
+// Route pins. Every assertion here is a CHECK: a route that stops being taken must report itself
+// without aborting the case, and the numerical coverage lives in its own case for the same reason.
+TEMPLATE_TEST_CASE("column codelet route admission and narrow width",
+                   "[transforms][strides][route]", float, double) {
     using T = TestType;
-    REQUIRE(admiral::detail::make_nd_axis_state<T>(16, 17, true, false).col_codelet);
-    REQUIRE(admiral::detail::make_nd_axis_state<T>(8, 17, true, false).col_codelet);
-    REQUIRE(!admiral::detail::make_nd_axis_state<T>(4, 17, true, false).col_codelet);
-    REQUIRE(!admiral::detail::make_nd_axis_state<T>(96, 17, true, false).col_codelet);
+    using admiral::detail::narrow_col_width;
+    constexpr std::size_t W = xsimd::batch<T>::size;
+    constexpr std::size_t Wmin = admiral::detail::min_sized_tail_width<T>();
+
+    CHECK(admiral::detail::make_nd_axis_state<T>(16, 17, true, false).col_codelet);
+    CHECK(admiral::detail::make_nd_axis_state<T>(8, 17, true, false).col_codelet);
+    CHECK(!admiral::detail::make_nd_axis_state<T>(96, 17, true, false).col_codelet);
+    // Below 8 the col body must be able to vectorise the block: admitted at a whole number of the
+    // narrowest sized batch and a power-of-two length, declined otherwise.
+    CHECK(admiral::detail::make_nd_axis_state<T>(4, 4 * Wmin, true, false).col_codelet);
+    CHECK(!admiral::detail::make_nd_axis_state<T>(4, 4 * Wmin + 1, true, false).col_codelet);
+    CHECK(!admiral::detail::make_nd_axis_state<T>(6, 4 * Wmin, true, false).col_codelet);
+
+    // A block the native batch fills keeps the native batch; an odd block has no sized divisor.
+    CHECK(narrow_col_width<T>(W) == 0);
+    CHECK(narrow_col_width<T>(4 * W) == 0);
+    CHECK(narrow_col_width<T>(W + 1) == 0);
+    CHECK(narrow_col_width<T>(1) == 0);
+    if constexpr (Wmin < W) {
+        // Widest sized batch that divides the block, never wider than the block itself.
+        CHECK(narrow_col_width<T>(W / 2) == W / 2);
+        CHECK(narrow_col_width<T>(W + W / 2) == W / 2);
+        CHECK(narrow_col_width<T>(Wmin) == Wmin);
+        CHECK(narrow_col_width<T>(W + Wmin) == Wmin);
+    } else {
+        // No sized batch is narrower than the native one, so the arm is inert at this ISA level.
+        CHECK(narrow_col_width<T>(W + W / 2) == 0);
+    }
 
     using admiral::detail::e2_len_cap;
     using admiral::detail::e2_len_cap_by_l3;
@@ -96,8 +122,19 @@ TEMPLATE_TEST_CASE("column codelet lens <= 64 match per-line plan, tails include
     CHECK(e2_len_cap_by_l3(0) == 32);
     CHECK(admiral::detail::make_nd_axis_state<T>(64, 17, true, false).col_codelet ==
           (e2_len_cap() == 64 && admiral::detail::is_codelet_catalog(64)));
+}
+
+TEMPLATE_TEST_CASE("column codelet lens <= 64 match per-line plan, tails included",
+                   "[transforms][strides][numerics]", float, double) {
+    using T = TestType;
+    constexpr std::size_t W = xsimd::batch<T>::size;
+    // W/2 and W + W/2 are the widths that enter the narrow body; the odd counts keep the
+    // scalar-staged tail covered. CHECK, not REQUIRE: losing the route must not skip the numbers.
+    if constexpr (admiral::detail::min_sized_tail_width<T>() < W)
+        CHECK(admiral::detail::narrow_col_width<T>(W + W / 2) != 0);
     for (const bool forward : {true, false})
-        for (const std::size_t nbatch : {std::size_t{3}, std::size_t{7}, std::size_t{17}}) {
+        for (const std::size_t nbatch : {std::size_t{3}, std::size_t{7}, std::size_t{17},
+                                         W / 2, W + W / 2}) {
             for (const std::size_t len :
                  {std::size_t{2}, std::size_t{4}, std::size_t{8}, std::size_t{16},
                   std::size_t{20}, std::size_t{32}, std::size_t{33}, std::size_t{60},
@@ -285,5 +322,7 @@ TEMPLATE_TEST_CASE("column engine is bit-identical across alignment classes",
                                   std::size_t{192}, std::size_t{256}, std::size_t{1024}})
         for (const bool forward : {true, false})
             for (const bool axis : {true, false})
-                require_align_stable<T>(len, 16, forward, axis);
+                for (const std::size_t nbatch :
+                     {std::size_t{16}, xsimd::batch<T>::size + xsimd::batch<T>::size / 2})
+                    require_align_stable<T>(len, nbatch, forward, axis);
 }

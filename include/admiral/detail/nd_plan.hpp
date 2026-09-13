@@ -116,7 +116,11 @@ template<typename T>
     if (!innermost && is_codelet_supported(length)) {
         st.dif = true;
         const std::size_t e2_cap = std::min(e2_len_cap(), kFourStepLeafMax);
-        st.col_codelet = length >= 8 && length <= e2_cap &&
+        // A col length below 8 pays only when the col body can vectorise the block: with the narrow
+        // arm that needs a sized batch dividing it, the narrowest being min_sized_tail_width<T>().
+        const bool len_ok = length >= 8 ||
+                            (inner % min_sized_tail_width<T>() == 0 && detail::has_single_bit(length));
+        st.col_codelet = len_ok && length <= e2_cap &&
                          is_codelet_catalog(length) && inner <= 64;
         dif_factor_plan r4;
         const dif_factor_plan* ov = nullptr;

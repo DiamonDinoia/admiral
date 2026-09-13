@@ -102,6 +102,23 @@ template<typename T, std::size_t Wt = 2>
     else return min_sized_tail_width<T, Wt * 2>();
 }
 
+// Batch width the column codelet serves a block of `ncols` columns with, or 0 for the native batch:
+// the widest sized batch below the native one that DIVIDES the block. Without it a block the native
+// batch does not fill sends its whole remainder down the scalar-staged tail. This is the ONLY route
+// decision the narrow arm makes, so pinning this function pins the route.
+template<typename T>
+[[nodiscard]] inline std::size_t narrow_col_width(std::size_t ncols) {
+    constexpr std::size_t W = xsimd::batch<T>::size;
+    if (ncols % W == 0) return 0;
+    std::size_t w = 0;
+    poet::static_for<1, bit_width(W)>([&](auto S) {
+        constexpr std::size_t Wt = W >> S;
+        if constexpr (Wt >= 2 && !std::is_void_v<xsimd::make_sized_batch_t<T, Wt>>)
+            if (w == 0 && ncols % Wt == 0) w = Wt;
+    });
+    return w;
+}
+
 // Block count from which the batched codelet leaves roll their block loop instead of emitting one
 // copy per block (src/codelet_apply.hpp). Measured on retired instructions per call, gcc 14.2
 // x86-64-v3, against a byte-identical control arm reading 1.002: N/W of 7, 8, 15 and 16 cost

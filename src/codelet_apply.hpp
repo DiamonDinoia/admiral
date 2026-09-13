@@ -446,6 +446,30 @@ ADM_NOINLINE void col_codelet_tail(const std::complex<T>* in, std::size_t in_inn
 inline constexpr std::size_t kColUnroll =
     poet::vector_register_count() >= 4 ? poet::vector_register_count() / 4 : 1;
 
+// Serve a column block the native batch does not fill with the widest sized batch that DIVIDES it,
+// instead of sending the whole block down the scalar-staged tail. Same body, narrower V.
+template<unsigned N, typename T, std::size_t Wv>
+ADM_NOINLINE void col_codelet_narrow(const std::complex<T>* in, std::size_t in_inner,
+                                     std::complex<T>* out, std::size_t out_inner,
+                                     std::size_t ncols, T scale, bool fwd) {
+    using V = xsimd::make_sized_batch_t<T, Wv>;
+    const V sc(scale);
+    V xre[N], xim[N], yre[N], yim[N];
+    const V gi(fwd ? T(1) : T(-1));
+    const V si(fwd ? scale : -scale);
+    for (std::size_t c = 0; c + Wv <= ncols; c += Wv) {
+        poet::dynamic_for<kColUnroll>(std::size_t(N), [&](std::size_t p) ADM_LAMBDA_ALWAYS_INLINE {
+            aos_deinterleave<T, V>(reinterpret_cast<const T*>(in + p * in_inner + c), xre[p], xim[p]);
+            xim[p] *= gi;
+        });
+        kernel_batched<N, T, true, V>::apply(xre, xim, 1, yre, yim);
+        poet::dynamic_for<kColUnroll>(std::size_t(N), [&](std::size_t p) ADM_LAMBDA_ALWAYS_INLINE {
+            aos_interleave<T, V>(reinterpret_cast<T*>(out + p * out_inner + c),
+                                 yre[p] * sc, yim[p] * si);
+        });
+    }
+}
+
 // ADM_NOINLINE is load-bearing: `fwd` arrives as a constant from each leaf wrapper, so a compiler
 // free to inline this body would fold it and re-specialise, putting back the copy the merge cut.
 template<unsigned N, typename T>
@@ -454,6 +478,15 @@ ADM_NOINLINE void col_codelet_body(const std::complex<T>* in, std::size_t in_inn
                                    std::size_t ncols, T scale, bool fwd) {
     using V = xsimd::batch<T>;
     constexpr std::size_t W = V::size;
+    if (const std::size_t wn = narrow_col_width<T>(ncols)) {
+        poet::static_for<1, bit_width(W)>([&](auto S) {
+            constexpr std::size_t Wv = W >> S;
+            if constexpr (Wv >= 2 && !std::is_void_v<xsimd::make_sized_batch_t<T, Wv>>)
+                if (Wv == wn) col_codelet_narrow<N, T, Wv>(in, in_inner, out, out_inner, ncols,
+                                                           scale, fwd);
+        });
+        return;
+    }
     const V sc(scale);
     V xre[N], xim[N], yre[N], yim[N];
     // Carry the direction on the data, not on four runtime-selected pointers: feed the

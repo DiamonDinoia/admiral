@@ -283,6 +283,100 @@ ADM_NOINLINE void codelet_many_body(const std::complex<T>* in, std::complex<T>* 
     }
 }
 
+// Widths the narrow ladder below can serve: the three V-generic arms of codelet_many_block. The
+// split-gather fallback is NOT one of them -- it reaches aos_ct_masks / aos_deinterleave_masked,
+// both written against xsimd::batch<T> with no Batch parameter -- so an (N, width) pair that lands
+// there keeps the scalar residual instead. At x86-64-v4 that is exactly N > 16 (kManyXpose is
+// 2 * Wv * ceil(N / Wv) <= 32, which caps N at 16 at every width the ladder walks).
+template<unsigned N, typename V>
+inline constexpr bool kManyNarrow = kFlatTiny<N, V> || kFlatRow<N, V> || kManyXpose<N, V>;
+// `&&` short-circuits the VALUE, never the instantiation: naming kManyNarrow<N, void> from the
+// ladder's condition instantiates its initializer even behind a false is_void_v guard, and every
+// arm predicate then asks void for ::size. The specialisation is what makes the guard work.
+template<unsigned N>
+inline constexpr bool kManyNarrow<N, void> = false;
+
+// One block of V::size lines. V-generic so a batch narrower than the native one serves it with the
+// same text: every helper it calls takes its width from V::size, not from xsimd::batch<T>::size.
+template<unsigned N, typename T, bool Forward, typename V>
+ADM_ALWAYS_INLINE void codelet_many_block(const T* ibase, T* obase, std::size_t in_stride,
+                                          std::size_t out_stride, V fr, V fi) {
+    constexpr std::size_t W = V::size;
+    constexpr std::size_t kBlocks = (N + W - 1) / W;
+    V re[N], im[N], yr[N], yi[N];
+
+    if constexpr (kFlatTiny<N, V>) {
+        if constexpr (4u * N == W) {
+            poet::static_for<0, W / 2>([&](auto L) {
+                flat_tiny2_apply<N, T, V, Forward>(
+                    ibase + L * 4 * in_stride, obase + L * 4 * out_stride,
+                    2 * in_stride, 2 * out_stride, fr);
+            });
+        } else {
+            poet::static_for<0, W>([&](auto L) {
+                flat_tiny_apply<N, T, V, Forward>(
+                    ibase + L * 2 * in_stride, obase + L * 2 * out_stride, fr);
+            });
+        }
+    } else
+    if constexpr (kFlatRow<N, V>) {
+        poet::static_for<0, W>([&](auto L) {
+            flat_row_apply<N, T, V, Forward>(
+                ibase + L * 2 * in_stride, obase + L * 2 * out_stride, fr);
+        });
+    } else
+    if constexpr (kManyXpose<N, V>) {
+        poet::static_for<0, kBlocks>([&](auto B) {
+            constexpr std::size_t j0 = B * W;
+            constexpr std::size_t cols = (N - j0 < W) ? N - j0 : W;
+            many_gather_x<cols, !Forward, T, V>(ibase, in_stride, j0, re, im);
+        });
+
+        kernel_batched<N, T, true, V>::apply(re, im, 1, yr, yi);
+
+        poet::static_for<0, kBlocks>([&](auto B) {
+            constexpr std::size_t j0 = B * W;
+            constexpr std::size_t cols = (N - j0 < W) ? N - j0 : W;
+            many_scatter_x<cols, T, V>(obase, out_stride, j0, yr, yi, fr, fi);
+        });
+    } else {
+        poet::static_for<0, kBlocks>([&](auto B) {
+            constexpr std::size_t j0 = B * W;
+            constexpr std::size_t cols = (N - j0 < W) ? N - j0 : W;
+            V rb[W], ib[W];
+            for (std::size_t l = 0; l < W; ++l)
+                aos_deinterleave_masked<(2 * cols > W), T>(
+                    ibase + l * 2 * in_stride + 2 * j0, rb[l], ib[l],
+                    aos_ct_masks<cols, T>{});
+            xsimd::transpose(rb, rb + W);
+            xsimd::transpose(ib, ib + W);
+            poet::static_for<0, cols>([&](auto J) {
+                re[j0 + J] = rb[J];
+                im[j0 + J] = Forward ? ib[J] : -ib[J];
+            });
+        });
+
+        kernel_batched<N, T, true, V>::apply(re, im, 1, yr, yi);
+
+        poet::static_for<0, kBlocks>([&](auto B) {
+            constexpr std::size_t j0 = B * W;
+            constexpr std::size_t cols = (N - j0 < W) ? N - j0 : W;
+            V tr[W], ti[W];
+            poet::static_for<0, W>([&](auto J) {
+                constexpr std::size_t j = J;
+                constexpr std::size_t k = (j < cols) ? j0 + j : 0;
+                tr[J] = yr[k] * fr;
+                ti[J] = yi[k] * fi;
+            });
+            xsimd::transpose(tr, tr + W);
+            xsimd::transpose(ti, ti + W);
+            for (std::size_t l = 0; l < W; ++l)
+                aos_interleave_prefix<cols, T, V>(obase + l * 2 * out_stride + 2 * j0,
+                                                  tr[l], ti[l]);
+        });
+    }
+}
+
 // The static form of the same blocks: compile-time width, the direction back on the template head
 // and folded into the sign of the imaginary gather rather than into a pointer swap.
 template<unsigned N, typename T, bool Forward>
@@ -291,88 +385,92 @@ void codelet_many_static(const std::complex<T>* in, std::complex<T>* out,
                          std::size_t out_stride, T fct) {
     using V = xsimd::batch<T>;
     constexpr std::size_t W = V::size;
-    constexpr std::size_t kBlocks = (N + W - 1) / W;
 
     std::size_t r = 0;
     if constexpr (kManyBlocked<N, V>) {
         const V fr(fct), fi(Forward ? fct : -fct);
-        for (; r + W <= nlines; r += W) {
+        for (; r + W <= nlines; r += W)
+            codelet_many_block<N, T, Forward, V>(
+                reinterpret_cast<const T*>(in + r * in_stride),
+                reinterpret_cast<T*>(out + r * out_stride), in_stride, out_stride, fr, fi);
+    }
+    // Lines the native batch cannot fill used to fall to the per-line residual, which is SCALAR at
+    // the lengths whose codelet does not map onto lanes: a 2-D n^2 with n < W ran every one of its
+    // n rows through it. Serve the remainder with the descending sized-batch ladder codelet_apply
+    // already uses for its own N tail. One step per width is exactly the binary expansion of a
+    // remainder below W, so W/2 + W/4 + ... + Wmin covers it down to nlines % Wmin lines.
+    // Inert where no sized batch is narrower than the native one (min_sized_tail_width<T>() == W).
+    // Only where the NATIVE width already runs a blocked arm. Where it does not, a narrow rung
+    // introduces an arm family the native path lacks: at N=32 f32 the native arm is split-gather
+    // while W/2 reaches kFlatRow, and instantiating it moves gcc's inline budget over the whole TU
+    // (the native block body outlines into .isra clones), costing 8.6% at 32^2 -- a cell where the
+    // ladder cannot execute. f32 N=32 is the only pair this excludes at v4.
+    poet::static_for<1, bit_width(W)>([&](auto S) {
+        constexpr std::size_t Wv = W >> S;
+        using Vt = xsimd::make_sized_batch_t<T, Wv>;
+        if constexpr (kManyNarrow<N, V> && Wv >= 2 && !std::is_void_v<Vt> && kManyNarrow<N, Vt>) {
+            if (r + Wv <= nlines) {
+                codelet_many_block<N, T, Forward, Vt>(
+                    reinterpret_cast<const T*>(in + r * in_stride),
+                    reinterpret_cast<T*>(out + r * out_stride), in_stride, out_stride,
+                    Vt(fct), Vt(Forward ? fct : -fct));
+                r += Wv;
+            }
+        }
+    });
+    // Where the native arm is split-gather the ladder above is inert: aos_ct_masks and
+    // aos_deinterleave_masked take no Batch parameter, so no narrower width reaches them. One
+    // native-width block with a runtime line bound does, because the width never changes. The
+    // block costs kBlocks column blocks of W lanes whatever the line count, so it needs both a
+    // remainder of half a block and a block cost of two column blocks to pay: at 20^2 f32 (4 lines
+    // left of 16) it loses 1.14x, at 24/28/30^2 f32 (kBlocks 2) it wins 1.24/1.12/1.34x, and at
+    // 20^2 and 24^2 f64 (kBlocks 3) it loses 1.10x and 1.02x.
+    if constexpr (kManyBlocked<N, V> && !kManyNarrow<N, V> && (N + W - 1) / W == 2) {
+        constexpr std::size_t kBlocks = (N + W - 1) / W;
+        if (r < nlines && 2 * (nlines - r) >= W) {
+            const std::size_t lines = nlines - r;
+            const V fr(fct), fi(Forward ? fct : -fct);
             const T* ibase = reinterpret_cast<const T*>(in + r * in_stride);
             T* obase = reinterpret_cast<T*>(out + r * out_stride);
             V re[N], im[N], yr[N], yi[N];
-
-            if constexpr (kFlatTiny<N, V>) {
-                const V f(fct);
-                if constexpr (4u * N == V::size) {
-                    poet::static_for<0, W / 2>([&](auto L) {
-                        flat_tiny2_apply<N, T, V, Forward>(
-                            ibase + L * 4 * in_stride, obase + L * 4 * out_stride,
-                            2 * in_stride, 2 * out_stride, f);
-                    });
-                } else {
-                    poet::static_for<0, W>([&](auto L) {
-                        flat_tiny_apply<N, T, V, Forward>(
-                            ibase + L * 2 * in_stride, obase + L * 2 * out_stride, f);
-                    });
+            poet::static_for<0, kBlocks>([&](auto B) {
+                constexpr std::size_t j0 = B * W;
+                constexpr std::size_t cols = (N - j0 < W) ? N - j0 : W;
+                V rb[W], ib[W];
+                // Lanes past the line count repeat the last live line, never uninitialised memory
+                // and never an out-of-range read: the transpose puts the line index in the lane
+                // index, so those lanes carry real finite input whose results are never stored.
+                for (std::size_t l = 0; l < W; ++l) {
+                    const std::size_t ll = l < lines ? l : lines - 1;
+                    aos_deinterleave_masked<(2 * cols > W), T>(
+                        ibase + ll * 2 * in_stride + 2 * j0, rb[l], ib[l],
+                        aos_ct_masks<cols, T>{});
                 }
-            } else
-            if constexpr (kFlatRow<N, V>) {
-                const V f(fct);
-                poet::static_for<0, W>([&](auto L) {
-                    flat_row_apply<N, T, V, Forward>(
-                        ibase + L * 2 * in_stride, obase + L * 2 * out_stride, f);
+                xsimd::transpose(rb, rb + W);
+                xsimd::transpose(ib, ib + W);
+                poet::static_for<0, cols>([&](auto J) {
+                    re[j0 + J] = rb[J];
+                    im[j0 + J] = Forward ? ib[J] : -ib[J];
                 });
-            } else
-            if constexpr (kManyXpose<N, V>) {
-                poet::static_for<0, kBlocks>([&](auto B) {
-                    constexpr std::size_t j0 = B * W;
-                    constexpr std::size_t cols = (N - j0 < W) ? N - j0 : W;
-                    many_gather_x<cols, !Forward, T, V>(ibase, in_stride, j0, re, im);
+            });
+            kernel_batched<N, T, true, V>::apply(re, im, 1, yr, yi);
+            poet::static_for<0, kBlocks>([&](auto B) {
+                constexpr std::size_t j0 = B * W;
+                constexpr std::size_t cols = (N - j0 < W) ? N - j0 : W;
+                V tr[W], ti[W];
+                poet::static_for<0, W>([&](auto J) {
+                    constexpr std::size_t j = J;
+                    constexpr std::size_t k = (j < cols) ? j0 + j : 0;
+                    tr[J] = yr[k] * fr;
+                    ti[J] = yi[k] * fi;
                 });
-
-                kernel_batched<N, T, true, V>::apply(re, im, 1, yr, yi);
-
-                poet::static_for<0, kBlocks>([&](auto B) {
-                    constexpr std::size_t j0 = B * W;
-                    constexpr std::size_t cols = (N - j0 < W) ? N - j0 : W;
-                    many_scatter_x<cols, T, V>(obase, out_stride, j0, yr, yi, fr, fi);
-                });
-            } else {
-                poet::static_for<0, kBlocks>([&](auto B) {
-                    constexpr std::size_t j0 = B * W;
-                    constexpr std::size_t cols = (N - j0 < W) ? N - j0 : W;
-                    V rb[W], ib[W];
-                    for (std::size_t l = 0; l < W; ++l)
-                        aos_deinterleave_masked<(2 * cols > W), T>(
-                            ibase + l * 2 * in_stride + 2 * j0, rb[l], ib[l],
-                            aos_ct_masks<cols, T>{});
-                    xsimd::transpose(rb, rb + W);
-                    xsimd::transpose(ib, ib + W);
-                    poet::static_for<0, cols>([&](auto J) {
-                        re[j0 + J] = rb[J];
-                        im[j0 + J] = Forward ? ib[J] : -ib[J];
-                    });
-                });
-
-                kernel_batched<N, T, true, V>::apply(re, im, 1, yr, yi);
-
-                poet::static_for<0, kBlocks>([&](auto B) {
-                    constexpr std::size_t j0 = B * W;
-                    constexpr std::size_t cols = (N - j0 < W) ? N - j0 : W;
-                    V tr[W], ti[W];
-                    poet::static_for<0, W>([&](auto J) {
-                        constexpr std::size_t j = J;
-                        constexpr std::size_t k = (j < cols) ? j0 + j : 0;
-                        tr[J] = yr[k] * fr;
-                        ti[J] = yi[k] * fi;
-                    });
-                    xsimd::transpose(tr, tr + W);
-                    xsimd::transpose(ti, ti + W);
-                    for (std::size_t l = 0; l < W; ++l)
-                        aos_interleave_prefix<cols, T>(obase + l * 2 * out_stride + 2 * j0,
-                                                       tr[l], ti[l]);
-                });
-            }
+                xsimd::transpose(tr, tr + W);
+                xsimd::transpose(ti, ti + W);
+                for (std::size_t l = 0; l < lines; ++l)
+                    aos_interleave_prefix<cols, T, V>(obase + l * 2 * out_stride + 2 * j0,
+                                                      tr[l], ti[l]);
+            });
+            r = nlines;
         }
     }
     const bool unit = (fct == T(1));

@@ -122,16 +122,17 @@ ADM_ALWAYS_INLINE void many_gather_block(const T* ibase, std::size_t in_stride, 
     });
 }
 
-template<std::size_t Cols, typename T, typename V>
+template<std::size_t Cols, bool Scaled, typename T, typename V>
 ADM_ALWAYS_INLINE void many_scatter_block(T* obase, std::size_t out_stride, std::size_t j0,
-                                          const V* yr, const V* yi, V f) {
+                                          const V* yr, const V* yi, [[maybe_unused]] V f) {
     constexpr std::size_t W = V::size;
     V tr[W], ti[W];
     poet::static_for<0, W>([&](auto J) {
         constexpr std::size_t j = J;
         const std::size_t k = (j < Cols) ? j0 + j : 0;
-        tr[J] = yr[k] * f;
-        ti[J] = yi[k] * f;
+        // The unit-scale arm carries no multiply: *1 is IEEE-exact (NaN/Inf included).
+        tr[J] = Scaled ? yr[k] * f : yr[k];
+        ti[J] = Scaled ? yi[k] * f : yi[k];
     });
     xsimd::transpose(tr, tr + W);
     xsimd::transpose(ti, ti + W);
@@ -170,9 +171,10 @@ ADM_ALWAYS_INLINE void many_gather_x(const T* ibase, std::size_t in_stride, std:
     });
 }
 
-template<std::size_t Cols, typename T, typename V>
+template<std::size_t Cols, bool Scaled, typename T, typename V>
 ADM_ALWAYS_INLINE void many_scatter_x(T* obase, std::size_t out_stride, std::size_t j0,
-                                      const V* yr, const V* yi, V fr, V fi) {
+                                      const V* yr, const V* yi, [[maybe_unused]] V fr,
+                                      [[maybe_unused]] V fi) {
     constexpr std::size_t W = V::size;
     constexpr std::size_t G = W / 2;
     constexpr std::size_t H = (Cols + G - 1) / G;
@@ -187,8 +189,8 @@ ADM_ALWAYS_INLINE void many_scatter_x(T* obase, std::size_t out_stride, std::siz
         poet::static_for<0, G>([&](auto K) {
             constexpr std::size_t j = hb + K;
             constexpr std::size_t k = j < Cols ? j : 0;
-            t[h][2 * K] = yr[j0 + k] * fr;
-            t[h][2 * K + 1] = yi[j0 + k] * fi;
+            t[h][2 * K] = Scaled ? yr[j0 + k] * fr : yr[j0 + k];
+            t[h][2 * K + 1] = Scaled ? yi[j0 + k] * fi : yi[j0 + k];
         });
         xsimd::transpose(t[h], t[h] + W);
     });
@@ -242,6 +244,9 @@ ADM_NOINLINE void codelet_many_body(const std::complex<T>* in, std::complex<T>* 
     constexpr std::size_t kUnroll = kManyUnroll<V>;
 
     std::size_t r = 0;
+    // fr == fi here (direction rides the plane swap), so unit scale is elidable in both
+    // directions: one runtime branch per block, hoisted out by the compiler.
+    const bool unit = (fct == T(1));
     if constexpr (kManyBlocked<N, V>) {
         const V f(fct);
         V re[N], im[N], yr[N], yi[N];
@@ -259,11 +264,21 @@ ADM_NOINLINE void codelet_many_body(const std::complex<T>* in, std::complex<T>* 
 
                 dir.apply();
 
-                poet::dynamic_for<kUnroll>(kFull, [&](std::size_t b) ADM_LAMBDA_ALWAYS_INLINE {
-                    many_scatter_x<W, T, V>(obase, out_stride, b * W, yr, yi, f, f);
-                });
-                if constexpr (kRem != 0)
-                    many_scatter_x<kRem, T, V>(obase, out_stride, kFull * W, yr, yi, f, f);
+                if (unit) {
+                    poet::dynamic_for<kUnroll>(kFull, [&](std::size_t b) ADM_LAMBDA_ALWAYS_INLINE {
+                        many_scatter_x<W, false, T, V>(obase, out_stride, b * W, yr, yi, f, f);
+                    });
+                    if constexpr (kRem != 0)
+                        many_scatter_x<kRem, false, T, V>(obase, out_stride, kFull * W, yr, yi,
+                                                          f, f);
+                } else {
+                    poet::dynamic_for<kUnroll>(kFull, [&](std::size_t b) ADM_LAMBDA_ALWAYS_INLINE {
+                        many_scatter_x<W, true, T, V>(obase, out_stride, b * W, yr, yi, f, f);
+                    });
+                    if constexpr (kRem != 0)
+                        many_scatter_x<kRem, true, T, V>(obase, out_stride, kFull * W, yr, yi,
+                                                         f, f);
+                }
             } else {
                 poet::dynamic_for<kUnroll>(kFull, [&](std::size_t b) ADM_LAMBDA_ALWAYS_INLINE {
                     many_gather_block<W, T, V>(ibase, in_stride, b * W, re, im);
@@ -273,15 +288,24 @@ ADM_NOINLINE void codelet_many_body(const std::complex<T>* in, std::complex<T>* 
 
                 dir.apply();
 
-                poet::dynamic_for<kUnroll>(kFull, [&](std::size_t b) ADM_LAMBDA_ALWAYS_INLINE {
-                    many_scatter_block<W, T, V>(obase, out_stride, b * W, yr, yi, f);
-                });
-                if constexpr (kRem != 0)
-                    many_scatter_block<kRem, T, V>(obase, out_stride, kFull * W, yr, yi, f);
+                if (unit) {
+                    poet::dynamic_for<kUnroll>(kFull, [&](std::size_t b) ADM_LAMBDA_ALWAYS_INLINE {
+                        many_scatter_block<W, false, T, V>(obase, out_stride, b * W, yr, yi, f);
+                    });
+                    if constexpr (kRem != 0)
+                        many_scatter_block<kRem, false, T, V>(obase, out_stride, kFull * W, yr,
+                                                              yi, f);
+                } else {
+                    poet::dynamic_for<kUnroll>(kFull, [&](std::size_t b) ADM_LAMBDA_ALWAYS_INLINE {
+                        many_scatter_block<W, true, T, V>(obase, out_stride, b * W, yr, yi, f);
+                    });
+                    if constexpr (kRem != 0)
+                        many_scatter_block<kRem, true, T, V>(obase, out_stride, kFull * W, yr,
+                                                             yi, f);
+                }
             }
         }
     }
-    const bool unit = (fct == T(1));
     for (; r < nlines; ++r) {
         if (fwd) codelet_apply<N, T, true>(in + r * in_stride, out + r * out_stride);
         else     codelet_apply<N, T, false>(in + r * in_stride, out + r * out_stride);
@@ -304,7 +328,9 @@ inline constexpr bool kManyNarrow<N, void> = false;
 
 // One block of V::size lines. V-generic so a batch narrower than the native one serves it with the
 // same text: every helper it calls takes its width from V::size, not from xsimd::batch<T>::size.
-template<unsigned N, typename T, bool Forward, typename V>
+// Scaled folds the unit-scale multiply out of the scatter; at inverse the fi = -fct plane cannot
+// be elided, so the static arm's predicate is Forward && fct == 1.
+template<unsigned N, typename T, bool Forward, bool Scaled, typename V>
 ADM_ALWAYS_INLINE void codelet_many_block(const T* ibase, T* obase, std::size_t in_stride,
                                           std::size_t out_stride, V fr, V fi) {
     constexpr std::size_t W = V::size;
@@ -343,7 +369,7 @@ ADM_ALWAYS_INLINE void codelet_many_block(const T* ibase, T* obase, std::size_t 
         poet::static_for<0, kBlocks>([&](auto B) {
             constexpr std::size_t j0 = B * W;
             constexpr std::size_t cols = (N - j0 < W) ? N - j0 : W;
-            many_scatter_x<cols, T, V>(obase, out_stride, j0, yr, yi, fr, fi);
+            many_scatter_x<cols, Scaled, T, V>(obase, out_stride, j0, yr, yi, fr, fi);
         });
     } else {
         poet::static_for<0, kBlocks>([&](auto B) {
@@ -371,8 +397,8 @@ ADM_ALWAYS_INLINE void codelet_many_block(const T* ibase, T* obase, std::size_t 
             poet::static_for<0, W>([&](auto J) {
                 constexpr std::size_t j = J;
                 constexpr std::size_t k = (j < cols) ? j0 + j : 0;
-                tr[J] = yr[k] * fr;
-                ti[J] = yi[k] * fi;
+                tr[J] = Scaled ? yr[k] * fr : yr[k];
+                ti[J] = Scaled ? yi[k] * fi : yi[k];
             });
             xsimd::transpose(tr, tr + W);
             xsimd::transpose(ti, ti + W);
@@ -393,12 +419,22 @@ void codelet_many_static(const std::complex<T>* in, std::complex<T>* out,
     constexpr std::size_t W = V::size;
 
     std::size_t r = 0;
+    // The inverse's fi = -fct cannot be a plain skip (a negate hides in it), so the elision
+    // predicate is Forward && fct == 1 and the branch sits one level above the block loops.
+    const bool unit_elide = Forward && (fct == T(1));
     if constexpr (kManyBlocked<N, V>) {
         const V fr(fct), fi(Forward ? fct : -fct);
-        for (; r + W <= nlines; r += W)
-            codelet_many_block<N, T, Forward, V>(
-                reinterpret_cast<const T*>(in + r * in_stride),
-                reinterpret_cast<T*>(out + r * out_stride), in_stride, out_stride, fr, fi);
+        if (unit_elide) {
+            for (; r + W <= nlines; r += W)
+                codelet_many_block<N, T, Forward, false, V>(
+                    reinterpret_cast<const T*>(in + r * in_stride),
+                    reinterpret_cast<T*>(out + r * out_stride), in_stride, out_stride, fr, fi);
+        } else {
+            for (; r + W <= nlines; r += W)
+                codelet_many_block<N, T, Forward, true, V>(
+                    reinterpret_cast<const T*>(in + r * in_stride),
+                    reinterpret_cast<T*>(out + r * out_stride), in_stride, out_stride, fr, fi);
+        }
     }
     // Lines the native batch cannot fill used to fall to the per-line residual, which is SCALAR at
     // the lengths whose codelet does not map onto lanes: a 2-D n^2 with n < W ran every one of its
@@ -416,10 +452,17 @@ void codelet_many_static(const std::complex<T>* in, std::complex<T>* out,
         using Vt = xsimd::make_sized_batch_t<T, Wv>;
         if constexpr (kManyNarrow<N, V> && Wv >= 2 && !std::is_void_v<Vt> && kManyNarrow<N, Vt>) {
             if (r + Wv <= nlines) {
-                codelet_many_block<N, T, Forward, Vt>(
-                    reinterpret_cast<const T*>(in + r * in_stride),
-                    reinterpret_cast<T*>(out + r * out_stride), in_stride, out_stride,
-                    Vt(fct), Vt(Forward ? fct : -fct));
+                if (unit_elide) {
+                    codelet_many_block<N, T, Forward, false, Vt>(
+                        reinterpret_cast<const T*>(in + r * in_stride),
+                        reinterpret_cast<T*>(out + r * out_stride), in_stride, out_stride,
+                        Vt(fct), Vt(Forward ? fct : -fct));
+                } else {
+                    codelet_many_block<N, T, Forward, true, Vt>(
+                        reinterpret_cast<const T*>(in + r * in_stride),
+                        reinterpret_cast<T*>(out + r * out_stride), in_stride, out_stride,
+                        Vt(fct), Vt(Forward ? fct : -fct));
+                }
                 r += Wv;
             }
         }
@@ -529,6 +572,7 @@ ADM_NOINLINE void col_codelet_tail(const std::complex<T>* in, std::size_t in_inn
     // (xre, gi*xim), gi = fwd ? 1 : -1, and unfold the output conjugation in the scale.
     const V gi(fwd ? T(1) : T(-1));
     const T si = fwd ? scale : -scale;
+    const bool unit = fwd && (scale == T(1));
     for (std::size_t p = 0; p < N; ++p) {
         for (std::size_t l = 0; l < bc; ++l) {
             sre[l] = in[p * in_inner + c + l].real();
@@ -543,7 +587,9 @@ ADM_NOINLINE void col_codelet_tail(const std::complex<T>* in, std::size_t in_inn
         yre[p].store_aligned(sre);
         yim[p].store_aligned(sim);
         for (std::size_t l = 0; l < bc; ++l)
-            out[p * out_inner + c + l] = std::complex<T>(sre[l] * scale, sim[l] * si);
+            // At inverse the scatter sign is folded into si, so only forward unit elides.
+            out[p * out_inner + c + l] = unit ? std::complex<T>(sre[l], sim[l])
+                                              : std::complex<T>(sre[l] * scale, sim[l] * si);
     }
 }
 
@@ -567,6 +613,7 @@ ADM_NOINLINE void col_codelet_narrow(const std::complex<T>* in, std::size_t in_i
     V xre[N], xim[N], yre[N], yim[N];
     const V gi(fwd ? T(1) : T(-1));
     const V si(fwd ? scale : -scale);
+    const bool unit = fwd && (scale == T(1));
     for (std::size_t c = 0; c + Wv <= ncols; c += Wv) {
         poet::dynamic_for<kColUnroll>(std::size_t(N), [&](std::size_t p) ADM_LAMBDA_ALWAYS_INLINE {
             aos_deinterleave<T, V>(reinterpret_cast<const T*>(in + p * in_inner + c), xre[p], xim[p]);
@@ -574,8 +621,12 @@ ADM_NOINLINE void col_codelet_narrow(const std::complex<T>* in, std::size_t in_i
         });
         kernel_batched<N, T, true, V>::apply(xre, xim, 1, yre, yim);
         poet::dynamic_for<kColUnroll>(std::size_t(N), [&](std::size_t p) ADM_LAMBDA_ALWAYS_INLINE {
-            aos_interleave<T, V>(reinterpret_cast<T*>(out + p * out_inner + c),
-                                 yre[p] * sc, yim[p] * si);
+            if (unit)
+                aos_interleave<T, V>(reinterpret_cast<T*>(out + p * out_inner + c),
+                                     yre[p], yim[p]);
+            else
+                aos_interleave<T, V>(reinterpret_cast<T*>(out + p * out_inner + c),
+                                     yre[p] * sc, yim[p] * si);
         });
     }
 }
@@ -605,6 +656,7 @@ ADM_NOINLINE void col_codelet_body(const std::complex<T>* in, std::size_t in_inn
     // unconditionally, so SRA can promote them and kernel_batched<N>::apply can inline.
     const V gi(fwd ? T(1) : T(-1));
     const V si(fwd ? scale : -scale);
+    const bool unit = fwd && (scale == T(1));
     std::size_t c = 0;
     for (; c + W <= ncols; c += W) {
         poet::dynamic_for<kColUnroll>(std::size_t(N), [&](std::size_t p) ADM_LAMBDA_ALWAYS_INLINE {
@@ -613,8 +665,12 @@ ADM_NOINLINE void col_codelet_body(const std::complex<T>* in, std::size_t in_inn
         });
         kernel_batched<N, T, true, V>::apply(xre, xim, 1, yre, yim);
         poet::dynamic_for<kColUnroll>(std::size_t(N), [&](std::size_t p) ADM_LAMBDA_ALWAYS_INLINE {
-            aos_interleave<T, V>(reinterpret_cast<T*>(out + p * out_inner + c),
-                                 yre[p] * sc, yim[p] * si);
+            if (unit)
+                aos_interleave<T, V>(reinterpret_cast<T*>(out + p * out_inner + c),
+                                     yre[p], yim[p]);
+            else
+                aos_interleave<T, V>(reinterpret_cast<T*>(out + p * out_inner + c),
+                                     yre[p] * sc, yim[p] * si);
         });
     }
     if (c < ncols)

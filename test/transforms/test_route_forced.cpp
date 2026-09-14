@@ -338,7 +338,9 @@ TEST_CASE("serial four_step_large admission matches the measured crossovers",
     // for any value of them, and the line and the A/B crossover it was read from are one
     // artifact: moving either without re-deriving the other is the defect this guards.
     REQUIRE_FALSE(routes_large<double>(262144, 1));   //  4 MiB, below the f64 line
-    REQUIRE(routes_large<double>(524288, 1));         //  8 MiB, above it
+    // 8 MiB, now below the f64 line again: the 6 MiB crossover was read off a kernel that
+    // never shipped and does not reproduce with the shipped kernels (2^19 f64, genoa).
+    REQUIRE_FALSE(routes_large<double>(524288, 1));
 
     // f32 is a WINDOW, closed above by kLargeRouteSerialF32MaxBytes, so it rejects on both sides.
     REQUIRE_FALSE(routes_large<float>(1048576, 1));   //  8 MiB, below the f32 line

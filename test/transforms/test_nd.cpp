@@ -352,12 +352,18 @@ TEMPLATE_TEST_CASE("fast2d rank-2 path is bit-identical to the general nd_execut
     };
     for (const bool forward : {true, false}) {
         check_2d({16, 16}, 91, forward);
-        check_2d({12, 20}, 92, forward);
+        // A sanitizer build trims the codelet catalog at 16, and a row extent outside the
+        // catalog has no codelet_dispatch_many run, which fast2d admission requires.
+        if constexpr (admiral::detail::is_codelet_catalog(20)) {
+            check_2d({12, 20}, 92, forward);
+        }
         check_2d({8, 15}, 93, forward);
     }
     // A custom factor rides the innermost axis through make_scale_plan; the fast path must
     // reproduce that split exactly.
-    check_2d({12, 20}, 94, true, T(2));
+    if constexpr (admiral::detail::is_codelet_catalog(20)) {
+        check_2d({12, 20}, 94, true, T(2));
+    }
 
     // Rank guard: the gate is rank == 2, so a rank-3 plan takes the general path regardless
     // of the disable flag.

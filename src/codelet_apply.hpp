@@ -9,6 +9,12 @@
 #include "admiral/detail/flat_row.hpp"
 #include "admiral/detail/flat_tiny.hpp"
 #include "admiral/detail/simd_swizzle.hpp"
+
+// granule_apply.hpp brings its own balanced macros/undef pair; it must be included
+// before this file's macros.hpp line, and its drivers instantiate only inside the two
+// choke points below (the granule_*_admit_v gates).
+#include "granule_apply.hpp"
+
 #include "admiral/detail/macros.hpp"
 
 namespace admiral {
@@ -484,6 +490,12 @@ template<unsigned N, typename T, bool Forward>
 void codelet_apply_many_oop(const std::complex<T>* in, std::complex<T>* out,
                             std::size_t nlines, std::size_t in_stride,
                             std::size_t out_stride, T fct) {
+    // The AoS-granule dialect serves its (measured, closed-list) admission set and
+    // leaves; every other (N, T, ISA) falls through to the unchanged SoA arms.
+    if constexpr (granule_rows_admit_v<N, T>) {
+        granule_apply_rows_oop<N, T, Forward>(in, out, nlines, in_stride, out_stride, fct);
+        return;
+    }
     if constexpr (N / xsimd::batch<T>::size >= kManyRollMinBlocks)
         codelet_many_body<N, T>(in, out, nlines, in_stride, out_stride, fct, Forward);
     else
@@ -613,6 +625,10 @@ template<unsigned N, typename T, bool Forward>
 void col_codelet_apply(const std::complex<T>* in, std::size_t in_inner,
                        std::complex<T>* out, std::size_t out_inner, std::size_t ncols,
                        T scale) {
+    if constexpr (granule_cols_admit_v<N, T>) {
+        granule_col_apply<N, T, Forward>(in, in_inner, out, out_inner, ncols, scale);
+        return;  // the granule driver hands leftover columns back to col_codelet_body
+    }
     col_codelet_body<N, T>(in, in_inner, out, out_inner, ncols, scale, Forward);
 }
 

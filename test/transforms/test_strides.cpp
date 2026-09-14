@@ -343,6 +343,11 @@ TEMPLATE_TEST_CASE("strides_plan bits do not depend on the output layout",
         require_output_layout_stable<T>(60, 2, 2, 1, forward);
         require_output_layout_stable<T>(64, 2, 8192, 1, forward);
         require_output_layout_stable<T>(64, 8, 1, 64, forward);
+        // Granule-covered lengths: the dialect engages inside the col arm, and its
+        // admission reads only (N, T, ISA, counts) -- never a stride -- so a strides
+        // case at N = 12/24 pins the output-layout invariance under the dialect.
+        require_output_layout_stable<T>(12, 4, 4, 1, forward);
+        require_output_layout_stable<T>(24, 2, 2, 1, forward);
     }
 }
 

@@ -154,6 +154,29 @@ std::vector<std::complex<Out>> reference_dft(const std::vector<std::complex<T>>&
     return out;
 }
 
+// Separable N^3 reference: reference_dft composed along each axis of an NxNxN block
+// (innermost first). Unnormalized, matching reference_dft: admiral's inverse divides by
+// the total, so callers scale. Out = long double keeps the whole composition in long
+// double for a pointwise (max_ulps) compare.
+template<typename T, typename Out = T>
+std::vector<std::complex<Out>> reference_cube3d(const std::vector<std::complex<T>>& x,
+                                                std::size_t N, bool forward) {
+    std::vector<std::complex<Out>> v(x.begin(), x.end());
+    for (std::size_t stride : {std::size_t{1}, N, N * N}) {
+        std::vector<std::complex<Out>> out = v;
+        const std::size_t block = N * stride;
+        for (std::size_t base = 0; base < v.size(); base += block)
+            for (std::size_t off = 0; off < stride; ++off) {
+                std::vector<std::complex<Out>> line(N);
+                for (std::size_t p = 0; p < N; ++p) line[p] = v[base + p * stride + off];
+                line = reference_dft(line, forward);
+                for (std::size_t p = 0; p < N; ++p) out[base + p * stride + off] = line[p];
+            }
+        v = std::move(out);
+    }
+    return v;
+}
+
 template<typename T>
 std::vector<std::complex<T>> make_signal(std::size_t N) {
     std::vector<std::complex<T>> v(N);

@@ -10,6 +10,8 @@
 #include <limits>
 #include <chrono>
 #include <random>
+#include <string>
+#include <utility>
 
 using namespace Catch::Matchers;
 using admiral::span;
@@ -503,4 +505,43 @@ TEMPLATE_TEST_CASE("effort::measure reaches the auto-thread route election", "[p
         SKIP("measurement never overrides the cost model at nthreads=1 on this host, so the "
              "auto path cannot be distinguished from it");
     REQUIRE(overrides(0) > 0);
+}
+
+// Past BASE_MODEL_NMAX the serial path elects from the probed large-route line, and
+// measure_route races the four_step_large / iterative_dif pair above it. The case pins
+// the FALLBACK line through the override seam for the whole case: the elected route is
+// host-dependent by construction (this host's probe answer governs an unpinned plan), and
+// a route-name assertion would otherwise pin one host's measurement. With the fallback
+// pinned, the probe itself never runs here.
+//
+// The observable is plan-construction TIME. The size is chosen so nothing ELSE races
+// there: above the line estimate already elects four_step_large, so measure_route builds
+// no DIF chain candidate list, and with the pair withheld it returns before allocating
+// anything. With the race on, effort::measure runs one warm-up and one probe per
+// candidate. meas/est on ccmlin075 (SPR, Release, gcc 14.2): 0.24 (f64) and 0.58 (f32)
+// with the race gated off, 325x and 1361x with it on.
+TEMPLATE_TEST_CASE("effort::measure races the large route serially past the cost model",
+                   "[plan][measure][four_step_large]", float, double) {
+    using T = TestType;
+    const admiral::detail::large_route_serial_override_scope pin(
+        sizeof(T) == 8 ? std::size_t{12} << 20 : 0,
+        sizeof(T) == 4 ? (std::size_t{16} << 20) - 1 : 0);
+    // 16 MiB at f64 and 32 MiB at f32: above each precision's fallback line, so
+    // effort::estimate elects four_step_large in both.
+    constexpr std::size_t n = sizeof(T) == 8 ? (std::size_t{1} << 20) : (std::size_t{1} << 22);
+    using clock = std::chrono::steady_clock;
+
+    const auto build = [](admiral::effort eff) {
+        const auto a = clock::now();
+        const admiral::detail::plan_impl<T> p(n, true, 1, nullptr, eff);
+        const auto span = std::chrono::duration<double, std::nano>(clock::now() - a).count();
+        return std::pair{span, std::string(p.route_name())};
+    };
+
+    const auto [est_ns, est_route] = build(admiral::effort::estimate);
+    const auto [meas_ns, meas_route] = build(admiral::effort::measure);
+    CAPTURE(est_ns, est_route, meas_ns, meas_route);
+
+    REQUIRE(est_route == "four_step_large");  // the regime the case is about
+    REQUIRE(meas_ns > 10.0 * est_ns);
 }

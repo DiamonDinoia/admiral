@@ -439,7 +439,7 @@ private:
 public:
     [[nodiscard]] std::size_t size() const noexcept { return plan.size(); }
     void run(bool is_forward, std::complex<T>* data, const T* fct) const {
-        const T s = fct ? *fct : (is_forward ? T(1) : T(1) / static_cast<T>(plan.size()));
+        const T s = fct ? *fct : default_transform_fct<T>(is_forward, plan.size());
         if (is_forward) plan.template execute<true>(data, s, pool_.get());
         else plan.template execute<false>(data, s, pool_.get());
     }

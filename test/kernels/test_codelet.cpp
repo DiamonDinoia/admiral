@@ -355,10 +355,15 @@ void check_many_sizes() {
         ++(N / W >= kGate ? rolled : statik);
         for (const bool forward : {true, false})
             for (const T fct : {T(1), T(0.5)})
-                // Under, at and over the batch width, and counts that leave a partial block, so the
-                // block loop, the remainder block and the fewer-than-width residual loop all run.
+                // Under, at and over the batch width, and counts that leave a partial block, so
+                // the block loop, the narrow ladder, the remainder block and the fewer-than-width
+                // residual loop all run. W - 1 is the ladder's worst case, where every rung fires;
+                // 10, 12, 14 and 15 are the 2-D n^2 row counts the ladder was written for, and the
+                // odd ones keep the scalar residual covered behind it.
                 for (const std::size_t nlines : {std::size_t{1}, std::size_t{3}, std::size_t{9},
-                                                 std::size_t{17}})
+                                                 std::size_t{10}, std::size_t{12}, std::size_t{14},
+                                                 std::size_t{15}, std::size_t{17},
+                                                 W - 1, W, W + 1, 2 * W - 1, 2 * W + 1})
                     for (const std::size_t stride : {N, N + 3}) {
                         if (forward) check_many<T, true>(N, nlines, stride, fct);
                         else         check_many<T, false>(N, nlines, stride, fct);

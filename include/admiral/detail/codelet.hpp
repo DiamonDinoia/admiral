@@ -87,7 +87,7 @@ ADM_ALWAYS_INLINE void bfly_chunk_scalar_ct(const T* yre, const T* yim,
             tr[0] = ar;
             ti[0] = ai;
         } else {
-            const auto [wr, wi] = apply_stage_twiddle<T, N, decltype(q)::value * J, T>(ar, ai);
+            const auto [wr, wi] = apply_stage_twiddle<T, N, q * J, T>(ar, ai);
             tr[q] = wr;
             ti[q] = wi;
         }
@@ -100,6 +100,23 @@ template<typename T, std::size_t Wt = 2>
 [[nodiscard]] ADM_CONSTEVAL std::size_t min_sized_tail_width() {
     if constexpr (!std::is_void_v<xsimd::make_sized_batch_t<T, Wt>>) return Wt;
     else return min_sized_tail_width<T, Wt * 2>();
+}
+
+// Batch width the column codelet serves a block of `ncols` columns with, or 0 for the native batch:
+// the widest sized batch below the native one that DIVIDES the block. Without it a block the native
+// batch does not fill sends its whole remainder down the scalar-staged tail. This is the ONLY route
+// decision the narrow arm makes, so pinning this function pins the route.
+template<typename T>
+[[nodiscard]] inline std::size_t narrow_col_width(std::size_t ncols) {
+    constexpr std::size_t W = xsimd::batch<T>::size;
+    if (ncols % W == 0) return 0;
+    std::size_t w = 0;
+    poet::static_for<1, bit_width(W)>([&](auto S) {
+        constexpr std::size_t Wt = W >> S;
+        if constexpr (Wt >= 2 && !std::is_void_v<xsimd::make_sized_batch_t<T, Wt>>)
+            if (w == 0 && ncols % Wt == 0) w = Wt;
+    });
+    return w;
 }
 
 // Block count from which the batched codelet leaves roll their block loop instead of emitting one
@@ -145,7 +162,7 @@ ADM_ALWAYS_INLINE void radix_butterfly_ct(T* ADM_RESTRICT yre, T* ADM_RESTRICT y
     constexpr std::size_t nscal = rem & smask;
     constexpr std::size_t jscal = nfull * W + (rem & ~smask);
     poet::static_for<0, nscal>([&](auto I) {
-        bfly_chunk_scalar_ct<R, N, jscal + decltype(I)::value, T>(yre, yim, sink);
+        bfly_chunk_scalar_ct<R, N, jscal + I, T>(yre, yim, sink);
     });
 }
 
@@ -201,7 +218,7 @@ ADM_ALWAYS_INLINE void bfly_chunk_batched_ct(const V* yre, const V* yim,
             tr[0] = ar;
             ti[0] = ai;
         } else {
-            const auto [wr, wi] = apply_stage_twiddle<T, N, decltype(q)::value * J, V>(ar, ai);
+            const auto [wr, wi] = apply_stage_twiddle<T, N, q * J, V>(ar, ai);
             tr[q] = wr;
             ti[q] = wi;
         }
@@ -216,7 +233,7 @@ ADM_ALWAYS_INLINE void radix_butterfly_batched_ct(const V* ADM_RESTRICT yre,
                                                   Sink&& sink) {
     constexpr std::size_t M = N / R;
     poet::static_for<0, M>([&](auto J) {
-        bfly_chunk_batched_ct<R, N, decltype(J)::value, T, V>(yre, yim, sink);
+        bfly_chunk_batched_ct<R, N, J, T, V>(yre, yim, sink);
     });
 }
 
@@ -246,27 +263,57 @@ struct kernel_batched {
                                  ? poet::vector_register_count()
                                  : usable_vector_regs(poet::vector_register_count()));
 
-    static void apply(const V* xre, const V* xim, std::size_t xstride, V* yre, V* yim) {
+    // dif_butterfly_terminal only READS its two arrays, so tr/ti is a stride-normalising gather,
+    // not mutable storage. At xstride == 1 it is a pure copy that keeps 2N vector registers live
+    // for nothing. The two arms are separate functions so the unit-stride callers -- every
+    // non-recursive one -- get a body carrying neither the gather nor the branch.
+    static void apply_unit(const V* xre, const V* xim, V* yre, V* yim) {
+        dif_butterfly_terminal<T, N, V>(reinterpret_cast<const V (&)[N]>(*xre),
+                                        reinterpret_cast<const V (&)[N]>(*xim),
+                                        [&](auto K, V re, V im) {
+            yre[K] = re;
+            yim[K] = im;
+        });
+    }
+
+    static void apply_gathered(const V* xre, const V* xim, std::size_t xstride, V* yre, V* yim) {
+        V tr[N], ti[N];
+        poet::static_for<0, N>([&](auto J) {
+            tr[J] = xre[J * xstride];
+            ti[J] = xim[J * xstride];
+        });
+        dif_butterfly_terminal<T, N, V>(tr, ti, [&](auto K, V re, V im) {
+            yre[K] = re;
+            yim[K] = im;
+        });
+    }
+
+    // The recursion multiplies the stride by r >= 2, so a sub-call can never carry xstride == 1.
+    // apply_strided is that recursive body and it never tests the stride: every recursive call
+    // site keeps the unpatched shape, and only the top-level entry pays for the test.
+    static void apply_strided(const V* xre, const V* xim, std::size_t xstride, V* yre, V* yim) {
         if constexpr (is_rader_prime(N)) {
             rader_apply_batched<N, T, V>(xre, xim, xstride, yre, yim);
             return;
         } else if constexpr (flat_leaf) {
-            V tr[N], ti[N];
-            poet::static_for<0, N>([&](auto J) {
-                tr[J] = xre[J * xstride];
-                ti[J] = xim[J * xstride];
-            });
-            dif_butterfly_terminal<T, N, V>(tr, ti, [&](auto K, V re, V im) {
-                yre[K] = re;
-                yim[K] = im;
-            });
+            apply_gathered(xre, xim, xstride, yre, yim);
         } else {
             poet::static_for<0, r>([&](const auto q) {
-                kernel_batched<M, T, true, V>::apply(xre + q * xstride, xim + q * xstride,
+                kernel_batched<M, T, true, V>::apply_strided(xre + q * xstride, xim + q * xstride,
                                                          xstride * r, yre + q * M, yim + q * M);
             });
             radix_butterfly_batched_ct<r, N, T, V>(yre, yim, batch_sink<V>{yre, yim});
         }
+    }
+
+    static void apply(const V* xre, const V* xim, std::size_t xstride, V* yre, V* yim) {
+        if constexpr (!is_rader_prime(N) && flat_leaf) {
+            if (xstride == 1) {
+                apply_unit(xre, xim, yre, yim);
+                return;
+            }
+        }
+        apply_strided(xre, xim, xstride, yre, yim);
     }
 
     template<typename Sink>
@@ -276,16 +323,22 @@ struct kernel_batched {
             rader_apply_batched<N, T, V>(xre, xim, xstride, yre, yim);
             poet::static_for<0, N>([&](auto P) { sink(P, yre[P], yim[P]); });
         } else if constexpr (flat_leaf) {
-            V tr[N], ti[N];
-            poet::static_for<0, N>([&](auto J) {
-                tr[J] = xre[J * xstride];
-                ti[J] = xim[J * xstride];
-            });
-            dif_butterfly_terminal<T, N, V>(tr, ti,
-                [&](auto K, V re, V im) { sink(K, re, im); });
+            if (xstride == 1) {
+                dif_butterfly_terminal<T, N, V>(reinterpret_cast<const V (&)[N]>(*xre),
+                                                reinterpret_cast<const V (&)[N]>(*xim),
+                    [&](auto K, V re, V im) { sink(K, re, im); });
+            } else {
+                V tr[N], ti[N];
+                poet::static_for<0, N>([&](auto J) {
+                    tr[J] = xre[J * xstride];
+                    ti[J] = xim[J * xstride];
+                });
+                dif_butterfly_terminal<T, N, V>(tr, ti,
+                    [&](auto K, V re, V im) { sink(K, re, im); });
+            }
         } else {
             poet::static_for<0, r>([&](const auto q) {
-                kernel_batched<M, T, true, V>::apply(xre + q * xstride, xim + q * xstride,
+                kernel_batched<M, T, true, V>::apply_strided(xre + q * xstride, xim + q * xstride,
                                                          xstride * r, yre + q * M, yim + q * M);
             });
             radix_butterfly_batched_ct<r, N, T, V>(yre, yim, sink);
@@ -298,6 +351,9 @@ struct kernel_batched<1, T, true, V> {
     static void apply(const V* xre, const V* xim, std::size_t , V* yre, V* yim) {
         yre[0] = xre[0];
         yim[0] = xim[0];
+    }
+    static void apply_strided(const V* xre, const V* xim, std::size_t xstride, V* yre, V* yim) {
+        apply(xre, xim, xstride, yre, yim);
     }
 };
 
@@ -441,7 +497,7 @@ struct kernel {
                 static constexpr auto twim = make_twiddle_table<N, r, T, true>();
                 if constexpr (nft > 0) {
                     poet::static_for<0, nft>([&](auto Tt) {
-                        constexpr std::size_t k0 = decltype(Tt)::value * Wc;
+                        constexpr std::size_t k0 = Tt * Wc;
                         xsimd::transpose(&ovr[k0], &ovr[k0] + Wc);
                         xsimd::transpose(&ovi[k0], &ovi[k0] + Wc);
                         V tr[r], ti[r];
@@ -494,7 +550,7 @@ struct kernel {
                 constexpr std::size_t smask = min_sized_tail_width<T>() - 1;
                 constexpr std::size_t nscal = C & smask;
                 poet::static_for<0, nscal>([&](auto I) {
-                    constexpr std::size_t J = nft * Wc + (C & ~smask) + decltype(I)::value;
+                    constexpr std::size_t J = nft * Wc + (C & ~smask) + I;
                     bfly_chunk_scalar_ct<r, N, J, T>(yre, yim, sink);
                 });
                 return;

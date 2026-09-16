@@ -33,7 +33,8 @@ namespace bench {
 // target reports the one unit that is exact and comparable across shapes: retired instructions
 // per p.forward() call. Cycles ride along for cross-reference against wall-clock claims.
 template<typename T>
-bool bench_execute_overhead(const std::vector<std::size_t>& shape, int reps, long inner) {
+bool bench_execute_overhead(const std::vector<std::size_t>& shape, int reps, long inner,
+                           admiral::effort eff) {
     std::size_t Ntot = 1;
     for (auto e : shape) Ntot *= e;
     std::vector<std::complex<T>> in(Ntot), out(Ntot), ref(Ntot);
@@ -41,7 +42,7 @@ bool bench_execute_overhead(const std::vector<std::size_t>& shape, int reps, lon
         in[i] = std::complex<T>(std::sin(T(i) * T(0.1)), std::cos(T(i) * T(0.1)));
 
     const admiral::plan<T> p(admiral::span<const std::size_t>(shape.data(), shape.size()),
-                             {.nthreads = 1, .eff = admiral::effort::measure});
+                             {.nthreads = 1, .eff = eff});
 
     volatile T sink = T(0);
     const auto call_once = [&]() {
@@ -93,7 +94,9 @@ bool bench_execute_overhead(const std::vector<std::size_t>& shape, int reps, lon
     return correct;
 }
 
-template bool bench_execute_overhead<float>(const std::vector<std::size_t>&, int, long);
-template bool bench_execute_overhead<double>(const std::vector<std::size_t>&, int, long);
+template bool bench_execute_overhead<float>(const std::vector<std::size_t>&, int, long,
+                                           admiral::effort);
+template bool bench_execute_overhead<double>(const std::vector<std::size_t>&, int, long,
+                                            admiral::effort);
 
 }

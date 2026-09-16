@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <complex>
 #include <cstddef>
 #include <limits>
@@ -75,7 +76,7 @@ public:
         case route_kind::rader:             return rader_supported(size);
         case route_kind::bluestein:         return true;
         }
-        return false;
+        ADM_UNREACHABLE();
     }
 
 private:
@@ -279,7 +280,7 @@ public:
         case route_kind::rader:             return "rader";
         case route_kind::bluestein:         return "bluestein";
         }
-        return "?";
+        ADM_UNREACHABLE();
     }
     [[nodiscard]] four_step_split four_step_split_used() const noexcept {
         const auto* fs = std::get_if<four_step_state>(&m.st);
@@ -302,30 +303,67 @@ private:
 
     static measured_choice measure_route(std::size_t size, bool is_forward, std::size_t nthreads);
 
+    template<typename TimePlan>
+    static void race_dif_chains(std::size_t size, bool is_forward, std::size_t nthreads,
+                                const dif_chain_list& chain_cands, measured_choice& pick,
+                                TimePlan& time_plan, std::size_t& raced);
+
     static measured_choice measured_route(std::size_t size, [[maybe_unused]] bool is_forward,
                                           std::size_t nthreads) {
         if constexpr (adm_measure) return measure_route(size, is_forward, nthreads);
         else return measured_choice{select_route(size, nthreads), {}};
     }
 
-    static constexpr std::size_t large_route_bytes(std::size_t nthreads) {
-        if (nthreads > 1) return large_route_threaded_bytes(nthreads);
-        if constexpr (sizeof(T) == 8) return kLargeRouteSerialF64Bytes;
-        else return kLargeRouteSerialF32Bytes;
+    // The serial line is measured, not constant: large_route_serial_bytes resolves the
+    // injected override (tests), then the cached probe answer, running the probe once per
+    // process on first consultation. The probe makes this nt-variant and admits-variant
+    // non-constexpr; route_available never consults the line, so no constant-evaluated
+    // call site moves.
+    static std::size_t large_route_serial_bytes() {
+        constexpr std::size_t elem = sizeof(std::complex<T>);
+        if (const std::size_t ov = detail::large_route_serial_override(elem)) return ov;
+        static const std::size_t line =
+            detail::large_route_probe_disabled()
+                ? detail::large_route_serial_fallback(elem)
+                : probe_large_route_serial();
+        return line;
     }
 
-    static constexpr bool large_route_admits(std::size_t size, std::size_t nthreads) {
-        if (!four_step_large_supported(size, sizeof(std::complex<T>),
-                                       large_route_bytes(nthreads)))
+    static std::size_t large_route_bytes(std::size_t nthreads) {
+        if (nthreads > 1) {
+            // The threaded law reads the pool width once, cached: a topology probe, not a
+            // host key (thread_pool.hpp's own resolve statics work the same way).
+            static const std::size_t pool = resolve_nthreads(0);
+            return large_route_threaded_bytes(sizeof(std::complex<T>), nthreads, pool);
+        }
+        return large_route_serial_bytes();
+    }
+
+    static bool large_route_admits(std::size_t size, std::size_t nthreads) {
+        constexpr std::size_t elem = sizeof(std::complex<T>);
+        // Below the probe floor no line value admits, so never consult the probe there:
+        // the digest (largest case 192 KiB, >= 3 octaves under the floor) and every small
+        // plan stay probe-free by construction.
+        if (nthreads <= 1 &&
+            !four_step_large_supported(size, elem,
+                                       detail::large_route_serial_min_bytes(elem)))
+            return false;
+        if (!four_step_large_supported(size, elem, large_route_bytes(nthreads)))
             return false;
         if (nthreads > 1) {
             const large_split sp = choose_large_split(size);
             return sp.n2 % sp.n1 == 0;
         }
-        if constexpr (sizeof(T) == 4)
-            if (size * sizeof(std::complex<T>) > kLargeRouteSerialF32MaxBytes) return false;
         return four_step_large_fused_shape<T>(size);
     }
+
+    // Runs the serial dif-vs-four_step_large ladder on this host; ~60-190 ms on the
+    // reference classes, bounded by construction (3 rungs, <= 4 timed rounds per arm per
+    // rung, one warmup each). Public as the probe's test entry point; the lazy path goes
+    // through large_route_serial_bytes. Any build/allocation failure yields the fallback.
+public:
+    static std::size_t probe_large_route_serial();
+private:
 
     [[nodiscard]] static bool dif_chain_supported(std::size_t size) {
         if (detail::has_single_bit(size) || is_codelet_supported(size)) return true;
@@ -460,6 +498,7 @@ inline constexpr std::size_t kMeasureReps = 5;
 inline constexpr std::size_t kMeasureMaxCandidates = 4;
 inline constexpr std::chrono::nanoseconds::rep kMeasureMinNs = 50;
 inline constexpr std::chrono::nanoseconds::rep kMeasureSampleNs = 4000;
+inline constexpr std::chrono::nanoseconds::rep kMeasureLongNs = 2'000'000;
 [[nodiscard]] constexpr std::size_t measure_batch(std::chrono::nanoseconds::rep one_ns) {
     if (one_ns >= kMeasureSampleNs) return 1;
     return std::size_t(kMeasureSampleNs / (std::max)(one_ns, std::chrono::nanoseconds::rep{1})) + 1;
@@ -492,9 +531,29 @@ plan_impl<T>::measure_route(std::size_t size, bool is_forward, std::size_t nthre
             offer(route_kind::four_step_batched);
     }
 
-    if (size > BASE_MODEL_NMAX && nthreads > 1) {
+    // Past the cost model's domain the kLargeRoute* lines are the only thing that elects.
+    // The serial line below is itself measured on this host by the lazy probe
+    // (large_route_serial_bytes), so the admission question the line cannot answer --
+    // which side of the crossover TODAY's kernels sit on at this exact size -- is again
+    // decision-shaped: the line only gates, and the race beyond it is the re-check. The
+    // 32 MiB f32 cap that once closed a window here is deleted: the WI-2c sweep measured
+    // four_step winning at every rung past it on every class. The shape predicate is the
+    // one the elected plan would carry: fused serially, n1 | n2 threaded.
+    if (size > BASE_MODEL_NMAX) {
         const large_split sp = choose_large_split(size);
-        if (sp.valid() && sp.n2 % sp.n1 == 0) {
+        const bool shape_ok = nthreads > 1 ? sp.n2 % sp.n1 == 0
+                                           : four_step_large_fused_shape<T>(size);
+        // Serially the line GATES and the race DECIDES. Below the line the two routes are not in
+        // contention, and racing there would only charge the DIF arm its per-call scratch faults:
+        // at 2^16 f64 that reads it 3.7x slow and elects four_step_large where the chain wins by
+        // 1.33x. The same probe gate as large_route_admits keeps racing (and the probe itself)
+        // unreachable under the probe floor.
+        const std::size_t bytes = size * sizeof(std::complex<T>);
+        const bool in_band =
+            nthreads > 1 ||
+            (bytes > detail::large_route_serial_min_bytes(sizeof(std::complex<T>)) &&
+             bytes > large_route_bytes(1));
+        if (sp.valid() && shape_ok && in_band) {
             offer(fallback);
             offer(fallback == route_kind::four_step_large ? route_kind::iterative_dif
                                                          : route_kind::four_step_large);
@@ -520,15 +579,23 @@ plan_impl<T>::measure_route(std::size_t size, bool is_forward, std::size_t nthre
     double best_ns = kMeasureInf;
     const auto time_plan = [&](plan_impl<T>& trial) {
         trial.execute(in.data(), out.data());
-        trial.execute(in.data(), out.data());
-        const std::size_t inner = [&] {
+        const auto probe = [&] {
             const auto a = clock::now();
             trial.execute(in.data(), out.data());
-            return measure_batch(std::chrono::nanoseconds(clock::now() - a).count());
-        }();
+            return std::chrono::nanoseconds(clock::now() - a).count();
+        };
+        // One execute past the cost model's domain costs milliseconds, so a warm-up plus five
+        // reps is seconds of plan time per candidate at 2^24. Past kMeasureLongNs the probe IS
+        // the sample: the routes there differ by more than their own spread. Below it the
+        // executed sequence is unchanged, one warm-up and one probe before the rep loop.
+        auto one_ns = probe();
+        const bool cheap = one_ns < kMeasureLongNs;
+        if (cheap) one_ns = probe();
+        const std::size_t inner = measure_batch(one_ns);
         const double u = unit;
-        double best = kMeasureInf;
-        for (std::size_t r = 0; r < kMeasureReps; ++r) {
+        double best = cheap ? kMeasureInf : double((std::max)(one_ns, kMeasureMinNs));
+        unit = (std::min)(unit, best);
+        for (std::size_t r = 0; cheap && r < kMeasureReps; ++r) {
             const auto a = clock::now();
             for (std::size_t k = 0; k < inner; ++k) trial.execute(in.data(), out.data());
             const auto span = std::chrono::nanoseconds(clock::now() - a).count();
@@ -546,37 +613,126 @@ plan_impl<T>::measure_route(std::size_t size, bool is_forward, std::size_t nthre
         if (ns < best_ns) { best_ns = ns; pick.route = cands[c]; }
     }
 
-    if (pick.route == route_kind::iterative_dif && race_chains) {
-        raced = 0;
-        double chain_best = kMeasureInf;
-        const auto race = [&](const dif_factor_plan& chain) {
-            if (!detail::dif_chain_shape_ok<T>(size, chain)) return;
-            plan_impl<T> trial(size, is_forward, nthreads, nullptr,
-                               measured_choice{route_kind::iterative_dif, chain});
-            const double ns = time_plan(trial);
-            if (ns < chain_best) {
-                chain_best = ns;
-                pick.dif_chain = chain;
-            }
-        };
-        for (std::size_t i = 0; i < chain_cands.count && have_budget(); ++i)
-            race(chain_cands[i]);
-        raced = 0;
-        dif_factor_plan perm = pick.dif_chain;
-        for (std::size_t s = 1; s < perm.count && have_budget(); ++s) {
-            std::rotate(perm.radices.begin(), perm.radices.begin() + 1,
-                        perm.radices.begin() + static_cast<std::ptrdiff_t>(perm.count));
-            race(perm);
-        }
-        std::sort(perm.radices.begin(),
-                  perm.radices.begin() + static_cast<std::ptrdiff_t>(perm.count));
-        while (have_budget() &&
-               std::next_permutation(
-                   perm.radices.begin(),
-                   perm.radices.begin() + static_cast<std::ptrdiff_t>(perm.count)))
-            race(perm);
-    }
+    if (pick.route == route_kind::iterative_dif && race_chains)
+        race_dif_chains(size, is_forward, nthreads, chain_cands, pick, time_plan, raced);
     return pick;
+}
+
+// The dif-chain race past the route race: candidates, rotations, permutations of
+// pick.dif_chain, each timed through the same probe/budget protocol as the route race.
+template<typename T>
+template<typename TimePlan>
+ADM_ALWAYS_INLINE void plan_impl<T>::race_dif_chains(std::size_t size, bool is_forward, std::size_t nthreads,
+                                   const dif_chain_list& chain_cands, measured_choice& pick,
+                                   TimePlan& time_plan, std::size_t& raced) {
+    const auto have_budget = [&] { return raced < kMeasureCandidates; };
+    raced = 0;
+    double chain_best = kMeasureInf;
+    const auto race = [&](const dif_factor_plan& chain) {
+        if (!detail::dif_chain_shape_ok<T>(size, chain)) return;
+        plan_impl<T> trial(size, is_forward, nthreads, nullptr,
+                           measured_choice{route_kind::iterative_dif, chain});
+        const double ns = time_plan(trial);
+        if (ns < chain_best) {
+            chain_best = ns;
+            pick.dif_chain = chain;
+        }
+    };
+    for (std::size_t i = 0; i < chain_cands.count && have_budget(); ++i)
+        race(chain_cands[i]);
+    raced = 0;
+    dif_factor_plan perm = pick.dif_chain;
+    for (std::size_t s = 1; s < perm.count && have_budget(); ++s) {
+        std::rotate(perm.radices.begin(), perm.radices.begin() + 1,
+                    perm.radices.begin() + static_cast<std::ptrdiff_t>(perm.count));
+        race(perm);
+    }
+    std::sort(perm.radices.begin(),
+              perm.radices.begin() + static_cast<std::ptrdiff_t>(perm.count));
+    while (have_budget() &&
+           std::next_permutation(
+               perm.radices.begin(),
+               perm.radices.begin() + static_cast<std::ptrdiff_t>(perm.count)))
+        race(perm);
+}
+
+// The serial-line probe. It walks the ladder from the rung nearest the prior (log2, ties
+// lower): dif-side at the start walks UP, four_step-side walks DOWN, stopping at the
+// first side flip or the ladder edge, so it visits two rungs on every measured class
+// (three on an all-one-side host). Per rung: build both forced plans once, one untimed
+// warmup per arm, then interleaved timed rounds with min per arm -- 3 rounds at or below
+// 8 MiB (~12 ms per arm-pair), 1 above (single executes run 10-160 ms there) -- plus one
+// re-sample round when the ratio lands inside 1 +- kLargeRouteProbeAmbigTol. Every arm
+// failure (allocation, route construction) is answered with the fallback constants.
+template<typename T>
+std::size_t plan_impl<T>::probe_large_route_serial() {
+    constexpr std::size_t elem = sizeof(std::complex<T>);
+    constexpr const std::size_t* const ladder =
+        elem == 16 ? detail::kLargeRouteProbeLadderF64 : detail::kLargeRouteProbeLadderF32;
+    constexpr std::size_t count = detail::kLargeRouteProbeLadderCount;
+    const std::size_t top_n = ladder[count - 1] / elem;
+    try {
+        using clock = std::chrono::steady_clock;
+        std::vector<std::complex<T>> buf(top_n);  // value-init pays the pages once, up front
+        for (std::size_t i = 0; i < top_n; ++i)
+            buf[i] = {T(0.5 * int(i % 7) - 1), T(0.25 * int(i % 5) - 0.5)};
+
+        const auto sample = [&](std::size_t i) {
+            const std::size_t n = ladder[i] / elem;
+            plan_impl<T> dif(n, true, route_kind::iterative_dif, 1);
+            plan_impl<T> fs(n, true, route_kind::four_step_large, 1);
+            dif.execute(buf.data(), buf.data());  // one untimed warmup per arm
+            fs.execute(buf.data(), buf.data());
+            double bd = kMeasureInf, bf = kMeasureInf;
+            const std::size_t base_rounds = ladder[i] <= (std::size_t{8} << 20) ? 3 : 1;
+            double ratio = 1.0;
+            for (std::size_t round = 0, total = base_rounds; round < total; ++round) {
+                const auto a = clock::now();
+                dif.execute(buf.data(), buf.data());
+                const double d =
+                    std::chrono::duration<double, std::nano>(clock::now() - a).count();
+                const auto b = clock::now();
+                fs.execute(buf.data(), buf.data());
+                const double f =
+                    std::chrono::duration<double, std::nano>(clock::now() - b).count();
+                bd = (std::min)(bd, d);
+                bf = (std::min)(bf, f);
+                ratio = bf / bd;
+                if (round + 1 == total && total == base_rounds &&
+                    std::abs(ratio - 1.0) <= detail::kLargeRouteProbeAmbigTol)
+                    ++total;  // ONE re-sample round, min-accumulated, then decide
+            }
+            return ratio;
+        };
+        // start: rung nearest the prior in log2, ties lower (strict < keeps the first)
+        std::size_t start = 0;
+        double best = 1e300;
+        const double prior = double(detail::large_route_serial_fallback(elem));
+        for (std::size_t i = 0; i < count; ++i) {
+            const double d = std::abs(std::log2(double(ladder[i]) / prior));
+            if (d < best) { best = d; start = i; }
+        }
+        bool dif_side[count] = {};
+        const bool start_dif = detail::large_route_rung_dif_side(sample(start));
+        dif_side[start] = start_dif;
+        std::size_t lo = start, hi = start;
+        if (start_dif) {
+            for (std::size_t i = start + 1; i < count; ++i) {  // bracket [i-1, i] or top
+                hi = i;
+                dif_side[i] = detail::large_route_rung_dif_side(sample(i));
+                if (!dif_side[i]) break;
+            }
+        } else {
+            for (std::size_t i = start; i-- > 0;) {  // bracket [i, i+1] or bottom
+                lo = i;
+                dif_side[i] = detail::large_route_rung_dif_side(sample(i));
+                if (dif_side[i]) break;
+            }
+        }
+        return large_route_serial_from_ladder(ladder + lo, dif_side + lo, hi - lo + 1);
+    } catch (...) {
+        return detail::large_route_serial_fallback(elem);
+    }
 }
 
 template<typename T>
@@ -590,7 +746,7 @@ void plan_impl<T>::execute(span<std::complex<T>> data, const exec_options<T>& op
 template<typename T>
 void plan_impl<T>::execute(const std::complex<T>* src, std::complex<T>* dst,
                            const exec_options<T>& opts) const {
-    const T fct = opts.fct.value_or(m.is_forward ? T(1) : T(1) / T(m.size));
+    const T fct = opts.fct.value_or(default_transform_fct<T>(m.is_forward, m.size));
     if (opts.debug >= dbg_route) ADM_UNLIKELY
         trace(opts.debug, src == dst ? "in-place" : "oop", fct);
     if (m.size == 1) ADM_UNLIKELY { *dst = *src * fct; return; }
@@ -601,7 +757,7 @@ void plan_impl<T>::execute(const std::complex<T>* src, std::complex<T>* dst,
 template<typename T>
 void plan_impl<T>::execute_many(std::complex<T>* data, std::size_t n, std::size_t stride,
                                 const exec_options<T>& opts) const {
-    const T fct = opts.fct.value_or(m.is_forward ? T(1) : T(1) / T(m.size));
+    const T fct = opts.fct.value_or(default_transform_fct<T>(m.is_forward, m.size));
     if (opts.debug >= dbg_route) ADM_UNLIKELY trace(opts.debug, "many", fct, n, stride);
     if (m.size == 1) ADM_UNLIKELY {
         for (std::size_t r = 0; r < n; ++r) data[r * stride] *= fct;

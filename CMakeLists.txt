@@ -33,6 +33,11 @@ endif()
 
 option(ADM_USE_FAST_MATH "Enable -ffast-math for relaxed floating-point math" ON)
 
+# Compile-time admission of the AoS-granule leaf kernels into the codelet routes. OFF
+# stamps ADM_GRANULE_ADMIT_OFF everywhere granule_codelet.hpp is reachable and the
+# granule arms drop out at compile time (if constexpr); the SoA fallback runs.
+option(ADM_GRANULE_ADMIT "Admit the AoS-granule leaf kernels into the codelet routes" ON)
+
 set(ADM_TARGET_ARCH "native" CACHE STRING
     "Target microarchitecture: native, none, or an arch/CPU name (x86-64-v3, armv8-a, power8). CompilerOptions.cmake picks -march= or -mcpu= from CMAKE_SYSTEM_PROCESSOR")
 
@@ -83,6 +88,7 @@ message(STATUS "  Benchmarks:   ${ADM_BUILD_BENCHMARKS}")
 message(STATUS "  Threads:      ${ADM_ENABLE_THREADS}")
 message(STATUS "  Sanitizer:    ${ADM_SANITIZER}")
 message(STATUS "  Fast math:    ${ADM_USE_FAST_MATH}")
+message(STATUS "  Granule admit:${ADM_GRANULE_ADMIT}")
 message(STATUS "  Measure:      ${ADM_MEASURE}")
 message(STATUS "  Pin estimate: ${ADM_PIN_PLAN_ESTIMATE}")
 message(STATUS "  Target arch:  ${ADM_TARGET_ARCH}")

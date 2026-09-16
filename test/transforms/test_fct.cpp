@@ -6,6 +6,7 @@
 #include "utils/reference.hpp"
 
 #include <admiral/admiral.hpp>
+#include <admiral/detail/four_step_large.hpp>
 #include <vector>
 
 TEMPLATE_TEST_CASE("fct: default value equals nullopt path", "[fct]", float, double) {
@@ -141,6 +142,9 @@ TEMPLATE_TEST_CASE("plan_r2c survives a move", "[r2c]", float, double) {
 }
 
 TEST_CASE("fct: scale folding through four_step_large (double)", "[fct][fourstep]") {
+    // Four_step election at 16 MiB f64 rides the probed serial line; pin the fallback so
+    // the case measures fct folding on four_step_large, not on one host's probe read.
+    const admiral::detail::large_route_serial_override_scope pin(12 << 20, 0);
     constexpr std::size_t N = 1048576;
     const auto in = make_signal<double>(N);
     admiral::plan<double> p(N);

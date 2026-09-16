@@ -79,7 +79,7 @@ a row; the pow2 quantization stays load-bearing (off-divisor counts load-imbalan
 passes' static chunks by 2-4x). `nthreads=0` timing on 2P nodes is bistable at 1-D
 2^15-2^18 through the `effort::measure` race — do not fit to a single run there.
 
-## Alignment hazard that's already handled
+## Alignment hazard: one barrier holds it, and no sanitizer sits under it
 
 codelet.hpp's cofactor `Wc == r` fast arm reinterprets scalar pointers as aligned batch
 arrays behind a runtime check. Reading a misaligned-reinterpreted `V*` is UB the moment
@@ -94,6 +94,20 @@ barrier is not free: it constrains scheduling around the test, which grows
 `codelet_apply<16u, float, true>` from 625 to 700 bytes and moves every codelet object
 by 1-2% at v3/gcc 14.2.
 
+**ubsan will not catch it if the barrier goes.** `-fsanitize=undefined`'s `alignment` check does
+not instrument the arm's `kernel_batched<...>::apply(reinterpret_cast<const V*>(xre), ...)` shape at
+all: a misaligned `const V a = p[0];` through a `const V*` parameter segfaults with no diagnostic,
+and `objdump -d --disassemble=` finds ZERO `__ubsan_handle_type_mismatch` sites in that function
+against 6 in the same binary's `main`. The check is live in that same build, which is what makes the
+negative mean something: a misaligned `double` load reports `load of misaligned address`, and
+`const V& r = *reinterpret_cast<const V*>(p);` reports `reference binding to misaligned address`.
+ubsan instruments scalar loads and reference binding, not a whole-object copy of a trivially
+copyable class through a dereferenced pointer. Measured clang 20.1.8, `-O1 -march=x86-64-v3`,
+`-fsanitize=address,undefined`, worker6082, 2026-09-13.
+
+So a green `validate.sh sanitize` says nothing about this arm. The barrier is the guard and a
+segfault is the detector. Gate a change here on gcc 13.3 at v3, not on a sanitizer run.
+
 ## Bitwise stability of the column engine
 
 The col chain clones its store-policy lambdas per inline context (bulk/prefix/suffix in
@@ -105,15 +119,62 @@ is in `src/CMakeLists.txt`, on the four `inst_col_*` TUs only: `-ffp-contract=on
 unknown `-f` name is a hard error on clang. The 1-D engine runs one clone per length and
 needs nothing.
 
-`test/transforms/test_strides.cpp`'s "bit-identical across alignment classes" case IS the
-check, and it is a real one: strip the pin and it fails. Release/x86-64-v4, gcc 14.2 fails
-at len 20 offset 1 (2 of 320 elements at f32, 38 of 320 at f64); clang 19 needs len 60
-(159 of 960 at f32). Both fail through `axis_plan`, so the defect is on master and
-predates the `strides_plan` branch; `strides_plan` only reaches the same col chain.
-Since col axes at len <= `e2_len_cap()` (32 below 2 MiB of L3 per core, 64 above) route the
-col codelet, the case's dif-chain coverage sits at len 96/192/256 (the lens 20/60 measure the
-codelet's own layout invariance).
-Every other test in the tree compares against a tolerance and passes either way.
+`test/transforms/test_strides.cpp`'s "bit-identical across alignment classes" case IS the check,
+and it is a real one: strip the pin and it fails. WHICH length it fails at is set by
+`e2_len_cap()`, so the case's evidence is cap-conditional, and the cap is a property of the host
+rather than of the build.
+
+A col axis runs the col codelet at `len <= e2_len_cap()` and the col DIF chain above it
+(`nd_plan.hpp:133`). `e2_len_cap()` is 32 below 2 MiB of L3 per PHYSICAL core and 64 above, so 45
+MiB over 16 physical cores reads 64 while the same silicon counted by logical cpu reads 32. Raising
+the cap moves 16 lengths from the chain to the codelet: 33 35 36 40 42 44 45 48 49 50 54 55 56 60
+63 64. The case tries seven lengths, {20, 60, 81, 96, 192, 256, 1024}, and exactly one of them, 60,
+is in that set.
+
+So the case measures the codelet's layout invariance at the lengths at or below the cap and the col
+chain above it, and 60 changes sides. Measured on SPR (ccmlin075, gcc 14.2 and clang 19.1.7,
+Release, at both `x86-64-v4` and `native`) with the pin stripped and nothing else changed, routes
+confirmed by breakpoint counts on `col_codelet_body<N,T>`:
+
+    cap  compiler  lowest detecting length   first length THIS case detects at
+    32   gcc       33                        60   (chain), then 81
+    32   clang     35 f32 / 33 f64           60   (chain), then 81
+    64   gcc       66                        81   (chain; 20 and 60 both pass)
+    64   clang     66                        81   -- and 81 is the ONLY one it has
+
+The lowest detecting length is always the first one ABOVE that build's cap: 33 at cap 32, 66 at cap
+64, measured over eleven pin-stripped builds spanning two compilers, two caps, two ISAs and
+pristine `09cb3d2`. Nothing at or below the cap ever detects, so the pin protects the col pass and
+not the leaf codelet, which is why `admiral_codelets` needs no pin of its own.
+
+Length 20 does NOT detect a stripped pin on this host. It detects in none of those eleven builds,
+at either cap, either ISA or either precision, including pristine `09cb3d2` at gcc/x86-64-v4. An
+earlier version of this paragraph recorded gcc failing at len 20 offset 1; that datum is not
+reproducible here and should not be relied on. 1024 detects nowhere either, and 96, 192 and 256
+detect under gcc only. Every failure goes through `axis_plan`, so the defect is on master and
+predates the `strides_plan` branch; `strides_plan` only reaches the same col chain. Every other
+test in the tree compares against a tolerance and passes either way.
+
+Len 81 is what makes this case able to fail at cap 64, and it is load-bearing: without it, a clang
+host with 2 MiB or more of L3 per physical core runs this gate with nothing behind it, because 60
+has moved to the codelet and 96/192/256 detect under gcc only. 81 is not in `CODELET_CATALOG_SIZES`
+and exceeds `kFourStepLeafMax`, so no value of the cap can ever route it to the codelet; it cannot
+change sides the way 60 did. 96, the obvious-looking choice, does not detect under clang at any cap
+or ISA. Twelve other lengths qualify equally (90 99 108 110 126 135 162 180 189 216 243 252); 81 is
+the cheapest. Nothing in the tree asserts which side of the cap a host sits on, so 81 is the only
+thing standing between a clang CI host and a gate that cannot fail.
+
+OPEN, and out of this pin's scope: a few lengths still change bits with the alignment class with
+the pin ON, every one of them carrying a prime factor above 11 (191, 226, 247, 257, 289, 291, 292,
+293 across the sweeps run). None of them reaches the pinned code. `make_nd_axis_state` sets
+`st.dif` only where `is_codelet_supported` holds, which is 11-smooth lengths, so those axes never
+enter the col chain at all: a breakpoint on `col_dif_execute_ws<T,Forward>`, the sole instantiation
+the four pinned TUs export, counts ZERO hits at every one of them at both caps, against 128 hits at
+len 81 and len 96 on the same binary. They run the 1-D engine line by line, Bluestein at all of
+them except 257, which runs Rader. Which lengths show up also moves with the sweep window, so the
+set is not a fixed property of a length. Bluestein and Rader alignment sensitivity is unexamined
+here and no test in the tree looks at it; an agent that rediscovers it should know it was measured
+and routed, not overlooked, and that it is a different engine from the one this pin covers.
 
 Both flags are load-bearing and the pair is minimal. The 2x2 at v4/gcc 14.2 on that same
 test: no pin fails, `-fno-associative-math` alone fails, `-ffp-contract=on` alone fails,
@@ -185,7 +246,7 @@ layout" case in `test_strides.cpp` then fails at len 64 nbatch 2 out (8192, 1), 
   already does it.
 - Seven usable presets over a shared `base`: `debug`, `asan`, `tsan`, `coverage`,
   `dev`, `release`, `relwithdebinfo`. Benchmark only `release`.
-- `scripts/validate.sh [isa|compilers|catalog|cxx17|sanitize|valgrind|tidy|cppcheck]` is
+- `scripts/validate.sh [isa|compilers|catalog|digest|cxx17|sanitize|valgrind|tidy|cppcheck|receipt-coupling|granule-admission]` is
   the one entry point for "does it build clean and pass everywhere". Every arm asserts against
   `compile_commands.json` that the flags it asked for actually arrived. CMake accepts
   an unknown `-D` name in silence, which is how a previous sweep ran four "sanitizer"
@@ -397,22 +458,37 @@ Refresh protocol, after a kernel change re-prices a leaf:
 `gate_leaf_cyc_ref` STAYS FROZEN. It is the reference the compile-time `N > 512` gates
 were fitted against, and refreshing it de-calibrated that band by 1.63 geomean once.
 
-### The four_step_large admission lines are hand-fit, and they are measured crossovers
+### The four_step_large admission lines are probed at runtime, never keyed to a host class
 
-The `kLargeRoute*` constants in `include/admiral/detail/four_step_large.hpp` are one of
-two families of hand-fit numbers the cost model does not cover: the model's domain stops
-below this band, so these lines are read off crossovers instead of fitted (the second
-family is the E2 col-batch gate, `kE2Len64MinL3PerCoreBytes` in
-`include/admiral/detail/nd_plan.hpp` — node knob A/B, not a crossover; re-derive by
-sweeping len-64 col cells with the arm off vs on per host class instead). A threshold and
-the quantity it was fitted against are one artifact. Change either and BOTH have to be
-re-derived, together, in the same run.
+Past the cost model's domain, admission is decided by the `kLargeRoute*` machinery in
+`include/admiral/detail/four_step_large.hpp` (one of two such families of constants; the
+other is the E2 col-batch gate `kE2Len64MinL3PerCoreBytes` in
+`include/admiral/detail/nd_plan.hpp` — node knob A/B, re-derived per host class by
+sweeping len-64 col cells with the arm off vs on). Receipt:
+`admiral/beat-standings/wi2c-large1d.md`, 2026-09-15 campaign.
 
-Re-derive by A/B-ing `four_step_large` against the serial DIF chain across the byte range,
-one arm per route, and reading the crossover, not by nudging a constant until a cell
-passes. The serial f32 line is a WINDOW (the DIF chain wins again from 64 MiB), so a sweep
-that stops at 32 MiB reads only its lower edge. The threaded line is a budget over
-`nthreads` clamped by a floor, so it needs a thread sweep and not a single thread count;
-its floor is where the DIF stream stops being L2-resident per pass, which moves with the
-host's L2. `test/` pins the threaded line against `large_route_threaded_bytes`, so a
-re-derivation updates the test in the same commit.
+Serial f64/f32 lower edges are MEASURED on the running host: a lazy
+once-per-process-per-precision probe (`plan_impl<T>::probe_large_route_serial`) races
+forced dif vs forced four_step_large serial plans on a 3-rung ladder around the prior
+and caches the crossover. It engages only above the probe floor (2 MiB f64 / 4 MiB f32),
+so the digest (largest case 192 KiB) and small plans never see it. The shipped constants
+are the ladder's prior and the full fallback (`ADM_LARGE_ROUTE_PROBE=0`, or any probe
+exception). A new host class needs NOTHING — the probe reads it, and its answers have
+drifted inside the measured band (ties resolve dif-side); the fallback constants move
+only via the receipted wave process. Tests never see probe output:
+`set_large_route_serial_override` and its RAII scope inject the line, route-name pins
+assert the fallback, and the seam's storage sits in `src/large_route_probe.cpp` — a
+header-local static splits into one copy per module across the engine DSO and a hidden-
+visibility test binary.
+
+The f32 serial window cap is deleted: four_step wins at every rung past it on every
+class through 256 MiB; past the ladder top `choose_large_split` and the stream arm bound
+the shape structurally (f64 never carried a cap). The threaded line (unreachable at
+nt=1, `nthreads > 1` guard in `plan.hpp`) is an element-keyed floor
+(`kLargeRouteThreadFloorF64Bytes` / `...F32Bytes`) flat to the knees
+(`kLargeRouteThreadKneeF64Nt` 32 / `...F32Nt` 8), then a linear rise to the shared
+`kLargeRouteThreadCapBytes` anchored at the pool width P, and nt=2 f32 at the cap
+outright. Named exceptions the law accepts and effort::measure/automatic's race
+recovers: genoa's non-monotone nt=8 f32 notch and the icelake interpolation/cap
+compromise rungs. `test/` pins the constants, the law's shape with injected pool widths,
+and the seam.

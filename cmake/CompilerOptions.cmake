@@ -28,6 +28,18 @@ else()
     message(STATUS "Fast math: DISABLED (enable with -DADM_USE_FAST_MATH=ON)")
 endif()
 
+# Unlike fast math, this knob must be consistent in every TU that can see
+# granule_codelet.hpp, consumers included: adm_apply_build_profile carries it to the
+# library targets (the fast-math channel) and admiral_internal forwards it PUBLIC
+# (the ADM_STATIC_DEFINE channel), which is what tests and benchmarks link.
+add_library(admiral_granule_admit_flags INTERFACE)
+if(ADM_GRANULE_ADMIT)
+    message(STATUS "Granule admission: ENABLED (default; no definition emitted)")
+else()
+    target_compile_definitions(admiral_granule_admit_flags INTERFACE ADM_GRANULE_ADMIT_OFF)
+    message(STATUS "Granule admission: DISABLED (-DADM_GRANULE_ADMIT_OFF on every granule TU)")
+endif()
+
 if(ADM_TARGET_ARCH STREQUAL "none")
     message(STATUS "Target arch: none (compiler default)")
 elseif(CMAKE_CROSSCOMPILING AND ADM_TARGET_ARCH STREQUAL "native")

@@ -80,13 +80,44 @@ TEMPLATE_TEST_CASE("strides_plan matches per-line plan", "[transforms][strides]"
     }
 }
 
-TEMPLATE_TEST_CASE("column codelet lens <= 64 match per-line plan, tails included",
-                   "[transforms][strides][numerics]", float, double) {
+// Route pins. Every assertion here is a CHECK: a route that stops being taken must report itself
+// without aborting the case, and the numerical coverage lives in its own case for the same reason.
+TEMPLATE_TEST_CASE("column codelet route admission and narrow width",
+                   "[transforms][strides][route]", float, double) {
     using T = TestType;
-    REQUIRE(admiral::detail::make_nd_axis_state<T>(16, 17, true, false).col_codelet);
-    REQUIRE(admiral::detail::make_nd_axis_state<T>(8, 17, true, false).col_codelet);
-    REQUIRE(!admiral::detail::make_nd_axis_state<T>(4, 17, true, false).col_codelet);
-    REQUIRE(!admiral::detail::make_nd_axis_state<T>(96, 17, true, false).col_codelet);
+    using admiral::detail::narrow_col_width;
+    constexpr std::size_t W = xsimd::batch<T>::size;
+    constexpr std::size_t Wmin = admiral::detail::min_sized_tail_width<T>();
+
+    CHECK(admiral::detail::make_nd_axis_state<T>(16, 17, true, false).col_codelet);
+    CHECK(admiral::detail::make_nd_axis_state<T>(8, 17, true, false).col_codelet);
+    CHECK(!admiral::detail::make_nd_axis_state<T>(96, 17, true, false).col_codelet);
+    // Below 8 the col body must be able to vectorise the block: admitted at a whole number of the
+    // narrowest sized batch, and only at length 2, 3 or 4. EVERY length below 8 is asserted here, so
+    // a predicate that admits or declines one length more than it should cannot pass unnoticed.
+    CHECK(admiral::detail::make_nd_axis_state<T>(2, 4 * Wmin, true, false).col_codelet);
+    CHECK(admiral::detail::make_nd_axis_state<T>(3, 4 * Wmin, true, false).col_codelet);
+    CHECK(admiral::detail::make_nd_axis_state<T>(4, 4 * Wmin, true, false).col_codelet);
+    CHECK(!admiral::detail::make_nd_axis_state<T>(5, 4 * Wmin, true, false).col_codelet);
+    CHECK(!admiral::detail::make_nd_axis_state<T>(6, 4 * Wmin, true, false).col_codelet);
+    CHECK(!admiral::detail::make_nd_axis_state<T>(7, 4 * Wmin, true, false).col_codelet);
+    CHECK(!admiral::detail::make_nd_axis_state<T>(4, 4 * Wmin + 1, true, false).col_codelet);
+
+    // A block the native batch fills keeps the native batch; an odd block has no sized divisor.
+    CHECK(narrow_col_width<T>(W) == 0);
+    CHECK(narrow_col_width<T>(4 * W) == 0);
+    CHECK(narrow_col_width<T>(W + 1) == 0);
+    CHECK(narrow_col_width<T>(1) == 0);
+    if constexpr (Wmin < W) {
+        // Widest sized batch that divides the block, never wider than the block itself.
+        CHECK(narrow_col_width<T>(W / 2) == W / 2);
+        CHECK(narrow_col_width<T>(W + W / 2) == W / 2);
+        CHECK(narrow_col_width<T>(Wmin) == Wmin);
+        CHECK(narrow_col_width<T>(W + Wmin) == Wmin);
+    } else {
+        // No sized batch is narrower than the native one, so the arm is inert at this ISA level.
+        CHECK(narrow_col_width<T>(W + W / 2) == 0);
+    }
 
     using admiral::detail::e2_len_cap;
     using admiral::detail::e2_len_cap_by_l3;
@@ -94,10 +125,47 @@ TEMPLATE_TEST_CASE("column codelet lens <= 64 match per-line plan, tails include
     CHECK(e2_len_cap_by_l3(std::size_t{4} << 20) == 64);
     CHECK(e2_len_cap_by_l3(std::size_t{5} << 20) == 64);
     CHECK(e2_len_cap_by_l3(0) == 32);
+
+    // The cap prices L3 per PHYSICAL core. These views are synthetic, so no host value reaches the
+    // assertions and they fire the same on every machine: an SMT host whose L3 clears 2 MiB per
+    // core but not per thread must still cap at 64, and that is the case a logical divisor gets
+    // wrong. Fields are {l2, l3, l3_cores, l3_phys_cores, l1d}.
+    using admiral::detail::cache_bytes;
+    using admiral::detail::e2_len_cap_of;
+    constexpr std::size_t kMiB = std::size_t{1} << 20;
+    CHECK(e2_len_cap_of({kMiB, 45 * kMiB, 32, 16, kMiB}) == 64);  // SMT, 2.81 MiB per core
+    CHECK(e2_len_cap_of({kMiB, 45 * kMiB, 32, 32, kMiB}) == 32);  // no SMT, 1.41 MiB per core
+    CHECK(e2_len_cap_of({kMiB, 64 * kMiB, 64, 32, kMiB}) == 64);  // SMT, exactly 2 MiB: the boundary
+    CHECK(e2_len_cap_of({kMiB, 64 * kMiB, 64, 64, kMiB}) == 32);  // no SMT, 1 MiB per core
+    CHECK(e2_len_cap_of({kMiB, 0, 32, 16, kMiB}) == 32);          // unprobed L3
+    CHECK(e2_len_cap_of({kMiB, 45 * kMiB, 0, 0, kMiB}) == 32);    // unprobed topology
+
+    // Wiring on the live host. Meaningful only where the two counts differ, that is under SMT; on
+    // an SMT-off host both sides are the same expression and it proves nothing. The synthetic
+    // cases above are the regression test, this one catches a mis-probed count on an SMT host.
+    const cache_bytes& cc = admiral::detail::cpu_cache();
+    CHECK(cc.l3_phys_cores <= cc.l3_cores);
+    CHECK((cc.l3_cores == 0) == (cc.l3_phys_cores == 0));
+    if (cc.l3_phys_cores != cc.l3_cores) {
+        INFO("SMT host: l3_cores " << cc.l3_cores << " l3_phys_cores " << cc.l3_phys_cores);
+        CHECK(e2_len_cap() == e2_len_cap_by_l3(cc.l3 / cc.l3_phys_cores));
+    }
+
     CHECK(admiral::detail::make_nd_axis_state<T>(64, 17, true, false).col_codelet ==
           (e2_len_cap() == 64 && admiral::detail::is_codelet_catalog(64)));
+}
+
+TEMPLATE_TEST_CASE("column codelet lens <= 64 match per-line plan, tails included",
+                   "[transforms][strides][numerics]", float, double) {
+    using T = TestType;
+    constexpr std::size_t W = xsimd::batch<T>::size;
+    // W/2 and W + W/2 are the widths that enter the narrow body; the odd counts keep the
+    // scalar-staged tail covered. CHECK, not REQUIRE: losing the route must not skip the numbers.
+    if constexpr (admiral::detail::min_sized_tail_width<T>() < W)
+        CHECK(admiral::detail::narrow_col_width<T>(W + W / 2) != 0);
     for (const bool forward : {true, false})
-        for (const std::size_t nbatch : {std::size_t{3}, std::size_t{7}, std::size_t{17}}) {
+        for (const std::size_t nbatch : {std::size_t{3}, std::size_t{7}, std::size_t{17},
+                                         W / 2, W + W / 2}) {
             for (const std::size_t len :
                  {std::size_t{2}, std::size_t{4}, std::size_t{8}, std::size_t{16},
                   std::size_t{20}, std::size_t{32}, std::size_t{33}, std::size_t{60},
@@ -275,15 +343,28 @@ TEMPLATE_TEST_CASE("strides_plan bits do not depend on the output layout",
         require_output_layout_stable<T>(60, 2, 2, 1, forward);
         require_output_layout_stable<T>(64, 2, 8192, 1, forward);
         require_output_layout_stable<T>(64, 8, 1, 64, forward);
+        // Granule-covered lengths: the dialect engages inside the col arm, and its
+        // admission reads only (N, T, ISA, counts) -- never a stride -- so a strides
+        // case at N = 12/24 pins the output-layout invariance under the dialect.
+        require_output_layout_stable<T>(12, 4, 4, 1, forward);
+        require_output_layout_stable<T>(24, 2, 2, 1, forward);
     }
 }
 
 TEMPLATE_TEST_CASE("column engine is bit-identical across alignment classes",
                    "[transforms][strides][numerics]", float, double) {
     using T = TestType;
-    for (const std::size_t len : {std::size_t{20}, std::size_t{60}, std::size_t{96},
-                                  std::size_t{192}, std::size_t{256}, std::size_t{1024}})
+    // e2_len_cap() decides which length detects a stripped pin. 60 detects only at cap 32; at
+    // cap 64 it routes the col codelet, which is bit-stable unpinned. At cap 64 gcc still detects
+    // at 96 but clang detects nowhere else here, so 81 is what keeps this case able to fail under
+    // clang on a host with >= 2 MiB of L3 per physical core. 81 is not in CODELET_CATALOG_SIZES
+    // and exceeds kFourStepLeafMax, so no cap can route it to the codelet.
+    for (const std::size_t len : {std::size_t{20}, std::size_t{60}, std::size_t{81},
+                                  std::size_t{96}, std::size_t{192}, std::size_t{256},
+                                  std::size_t{1024}})
         for (const bool forward : {true, false})
             for (const bool axis : {true, false})
-                require_align_stable<T>(len, 16, forward, axis);
+                for (const std::size_t nbatch :
+                     {std::size_t{16}, xsimd::batch<T>::size + xsimd::batch<T>::size / 2})
+                    require_align_stable<T>(len, nbatch, forward, axis);
 }

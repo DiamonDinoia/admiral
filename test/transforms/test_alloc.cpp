@@ -7,10 +7,12 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <admiral/admiral.hpp>
+#include <admiral/detail/scratch.hpp>
 
 #include <atomic>
 #include <complex>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <new>
 #include <stdexcept>
@@ -85,6 +87,12 @@ void operator delete[](void* p, std::size_t, std::align_val_t) noexcept {
 
 // Execute a plan<long double> at n <= SBO_MAX must not heap-allocate scratch;
 // at n > SBO_MAX the soa_scratch heap path must fire.
+//
+// The two directions need two counters. The global replacements above see every allocation the
+// process makes, which is what "small n allocates nothing at all" needs. They do NOT see the
+// scratch itself: it goes through admiral::detail::scratch_alloc, which allocates from snmalloc
+// and never calls operator new. So the large-n direction, the one that makes this a check rather
+// than a tautology, reads the seam's own counter.
 // plan<long double> routes exclusively through scalar_nd_c2c<long double>, which
 // uses soa_scratch<std::complex<long double>, 1> in every execute path.
 TEST_CASE("soa_scratch: small-n execute uses zero heap allocations; large-n uses nonzero",
@@ -96,9 +104,11 @@ TEST_CASE("soa_scratch: small-n execute uses zero heap allocations; large-n uses
         std::vector<std::complex<long double>> v(64, {1, 0});
         p.forward(v.data());  // warmup: flushes any lazy init
         const long before = g_alloc_count.load(std::memory_order_relaxed);
+        const long before_scratch = admiral::detail::scratch_alloc_count();
         p.forward(v.data());
         const long after = g_alloc_count.load(std::memory_order_relaxed);
         REQUIRE(after == before);
+        REQUIRE(admiral::detail::scratch_alloc_count() == before_scratch);
     }
     // Large: n=8192 > SBO_MAX=4096 — soa_scratch falls back to heap.
     {
@@ -106,9 +116,45 @@ TEST_CASE("soa_scratch: small-n execute uses zero heap allocations; large-n uses
         admiral::plan<long double> p({8192});
         std::vector<std::complex<long double>> v(8192, {1, 0});
         p.forward(v.data());  // warmup
-        const long before = g_alloc_count.load(std::memory_order_relaxed);
+        const long before = admiral::detail::scratch_alloc_count();
         p.forward(v.data());
-        const long after = g_alloc_count.load(std::memory_order_relaxed);
+        const long after = admiral::detail::scratch_alloc_count();
         REQUIRE(after > before);
+    }
+}
+
+// The seam picks its allocator by request size, and `scratch_free` has to reach the same one for
+// a block on either side of the line. A mispaired free is what this catches: glibc `free` aborts
+// on a snmalloc block ("invalid pointer") and snmalloc aborts on a glibc one, so the case fails
+// loudly in an ordinary build. The sanitizer arms cannot stand in for it -- asan compiles the
+// snmalloc branch out through ADM_SCRATCH_SYSTEM_ALLOC and valgrind takes the same fallback at
+// runtime, so under both of them every size here goes to ::operator new[] and the line is never
+// crossed. This case has to run in a normal Release and Debug build to prove anything.
+//
+// Freeing the SMALLEST block first is load-bearing: snmalloc builds its pagemap on its first
+// allocation, so a `scratch_free` that consults it before any snmalloc allocation has happened
+// reads uninitialised state. That segfaulted during the gate's development.
+//
+// The sizes bracket the line rather than naming it, because the line lives in an anonymous
+// namespace in the .cpp and a test that hardcoded one value would stop covering the far side
+// the moment the constant moved. A block under it must round-trip, and so must one over it,
+// wherever it sits.
+TEST_CASE("scratch seam pairs alloc and free across the allocator line", "[alloc][scratch]") {
+    constexpr std::size_t kAlign = admiral::detail::span_align<double>;
+    for (std::size_t bytes : {std::size_t{1} << 20, std::size_t{8} << 20, std::size_t{32} << 20,
+                              std::size_t{64} << 20, std::size_t{128} << 20}) {
+        INFO("bytes=" << bytes);
+        const long before = admiral::detail::scratch_alloc_count();
+        void* p = admiral::detail::scratch_alloc(bytes, kAlign);
+        REQUIRE(p != nullptr);
+        REQUIRE(admiral::detail::scratch_alloc_count() == before + 1);
+        REQUIRE(reinterpret_cast<std::uintptr_t>(p) % kAlign == 0);
+        // Touch both ends: a gate that hands back a short block fails here and not in a kernel.
+        auto* b = static_cast<unsigned char*>(p);
+        b[0] = 0x5a;
+        b[bytes - 1] = 0xa5;
+        REQUIRE(b[0] == 0x5a);
+        REQUIRE(b[bytes - 1] == 0xa5);
+        admiral::detail::scratch_free(p, kAlign);
     }
 }

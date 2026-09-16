@@ -1396,6 +1396,7 @@ int main(int argc, char** argv) {
     {
         bool overhead = false;
         std::string ov_prec = "f64";
+        admiral::effort ov_eff = admiral::effort::estimate;
         int reps = 9;
         long inner = 0;
         std::vector<std::vector<std::size_t>> shapes;
@@ -1406,6 +1407,19 @@ int main(int argc, char** argv) {
             else if (arg.rfind("--reps=", 0) == 0) reps = std::stoi(arg.substr(7));
             else if (arg.rfind("--inner=", 0) == 0) inner = std::stol(arg.substr(8));
             else if (arg.rfind("--shapes=", 0) == 0) shapes = parse_nd_shape_list(arg.substr(9));
+            else if (arg.rfind("--effort=", 0) == 0) {
+                // Rejected rather than ignored like the flags above it: every other unknown value
+                // here shows up as missing output, while an unparsed effort silently falls back to
+                // the default and prints a full, plausible table taken under the wrong route policy.
+                const std::string v = arg.substr(9);
+                if (v == "measure") ov_eff = admiral::effort::measure;
+                else if (v == "auto" || v == "automatic") ov_eff = admiral::effort::automatic;
+                else if (v == "estimate") ov_eff = admiral::effort::estimate;
+                else {
+                    std::cerr << "admiral_benchmark: unknown --effort=" << v << "\n";
+                    return 1;
+                }
+            }
         }
         if (overhead) {
             if (shapes.empty())
@@ -1414,7 +1428,7 @@ int main(int argc, char** argv) {
             auto run = [&](auto tag) {
                 using T = decltype(tag);
                 for (const auto& shape : shapes)
-                    ok = bench_execute_overhead<T>(shape, reps, inner) && ok;
+                    ok = bench_execute_overhead<T>(shape, reps, inner, ov_eff) && ok;
             };
             if (ov_prec == "f64" || ov_prec == "both") run(double{});
             if (ov_prec == "f32" || ov_prec == "both") run(float{});

@@ -13,6 +13,8 @@
 #include <string>
 #include <vector>
 
+#include <admiral/admiral.hpp>
+
 #include <nanobench.h>
 
 #ifdef ADM_BENCH_FFTW
@@ -165,7 +167,8 @@ bool compare_nd_r2c_robust(const std::vector<std::size_t>& shape, int rounds, in
 // reported in retired instructions (exact, comparable across shapes) alongside cycles, plus
 // a same-binary control and a ducc0 correctness check. See bench_execute_overhead.cpp.
 template<typename T>
-bool bench_execute_overhead(const std::vector<std::size_t>& shape, int reps, long inner);
+bool bench_execute_overhead(const std::vector<std::size_t>& shape, int reps, long inner,
+                            admiral::effort eff = admiral::effort::estimate);
 
 extern template bool compare_nd<float>(const std::vector<std::size_t>&, int, long, int);
 extern template bool compare_nd<double>(const std::vector<std::size_t>&, int, long, int);
@@ -178,8 +181,10 @@ extern template bool compare_nd_r2c_robust<float>(const std::vector<std::size_t>
                                                   int);
 extern template bool compare_nd_r2c_robust<double>(const std::vector<std::size_t>&, int, int, long,
                                                    int);
-extern template bool bench_execute_overhead<float>(const std::vector<std::size_t>&, int, long);
-extern template bool bench_execute_overhead<double>(const std::vector<std::size_t>&, int, long);
+extern template bool bench_execute_overhead<float>(const std::vector<std::size_t>&, int, long,
+                                                  admiral::effort);
+extern template bool bench_execute_overhead<double>(const std::vector<std::size_t>&, int, long,
+                                                   admiral::effort);
 
 #ifdef ADM_BENCH_FFTW
 inline unsigned fftw_plan_flag() {

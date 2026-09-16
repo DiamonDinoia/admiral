@@ -3,6 +3,7 @@
 #include "utils/reference.hpp"
 
 #include <admiral/admiral.hpp>
+#include <admiral/detail/four_step_large.hpp>
 #include <admiral/detail/plan.hpp>
 #include <admiral/detail/thread_pool.hpp>
 
@@ -41,6 +42,9 @@ double forecast_tol(std::size_t N) {
 TEMPLATE_TEST_CASE("c2c N-D nthreads=1 vs 4 agrees within the FFT rounding floor",
                    "[threads]", float, double) {
     using T = TestType;
+    // The serial arm's 16/32 MiB f64 and 32 MiB f32 rungs reach the probed serial line;
+    // pin the fallback so the elected serial routes are constant across runs and hosts.
+    const admiral::detail::large_route_serial_override_scope pin(12 << 20, (16 << 20) - 1);
     const std::vector<std::vector<std::size_t>> shapes = {
         {4096},
         {1 << 20},
@@ -165,6 +169,9 @@ TEST_CASE("threaded unfused four_step_large agrees across nthreads (double)",
 
 TEST_CASE("threaded out-of-place four_step_large matches serial (double)",
           "[threads][fourstep]") {
+    // The case's premise is the serial arm electing four_step_large; pin the fallback
+    // line so that premise cannot ride on a probe run.
+    const admiral::detail::large_route_serial_override_scope pin(12 << 20, 0);
     constexpr std::size_t N = 2097152;
     const auto in = make_input<double>(N, 77u);
     admiral::plan<double> p1({N}), p4({N}, {4});
@@ -307,6 +314,8 @@ TEMPLATE_TEST_CASE("concurrent execute on one plan: correctness at nthreads=1 an
                    "[threads][concurrent]", float, double) {
     // ---- 1-D c2c (four_step_large at nt=4) ----
     {
+        const admiral::detail::large_route_serial_override_scope pin(12 << 20,
+                                                                     (16 << 20) - 1);
         constexpr std::size_t N = 1u << 20;
         const auto in0 = make_input<TestType>(N, 0xAAAAu);
         const auto in1 = make_input<TestType>(N, 0xBBBBu);

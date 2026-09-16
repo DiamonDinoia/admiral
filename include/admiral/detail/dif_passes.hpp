@@ -147,9 +147,9 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                     });
                     dif_butterfly<T, IP>(tr, ti_arr, [&](const auto k, batch sr, batch si) {
                         if constexpr (k > 0u) {
-                            (owr[k - 1] * sr - owi[k - 1] * si)
+                            piece_fnma(owi[k - 1], si, owr[k - 1] * sr)
                                 .store_unaligned(chre + (aa * eso + idz * (b + l1 * k)));
-                            (owr[k - 1] * si + owi[k - 1] * sr)
+                            piece_fma(owr[k - 1], si, owi[k - 1] * sr)
                                 .store_unaligned(chim + (aa * eso + idz * (b + l1 * k)));
                         } else {
                             sr.store_unaligned(chre + (aa * eso + idz * (b + l1 * k)));
@@ -189,8 +189,10 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                                              ADM_LAMBDA_ALWAYS_INLINE {
                         const std::size_t off = o0 + idi * k;
                         if constexpr (k > 0u) {
-                            (owr[k - 1u] * sr - owi[k - 1u] * si).store_unaligned(re + off);
-                            (owr[k - 1u] * si + owi[k - 1u] * sr).store_unaligned(im + off);
+                            piece_fnma(owi[k - 1u], si, owr[k - 1u] * sr)
+                                .store_unaligned(re + off);
+                            piece_fma(owr[k - 1u], si, owi[k - 1u] * sr)
+                                .store_unaligned(im + off);
                         } else {
                             sr.store_unaligned(re + off);
                             si.store_unaligned(im + off);
@@ -218,8 +220,8 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                     if constexpr (k > 0u) {
                         const batch owr = batch::load_unaligned(twre + ((k - 1u) * ido + aa));
                         const batch owi = batch::load_unaligned(twim + ((k - 1u) * ido + aa));
-                        (owr * sr - owi * si).store_unaligned(chre + off);
-                        (owr * si + owi * sr).store_unaligned(chim + off);
+                        piece_fnma(owi, si, owr * sr).store_unaligned(chre + off);
+                        piece_fma(owr, si, owi * sr).store_unaligned(chim + off);
                     } else {
                         sr.store_unaligned(chre + off);
                         si.store_unaligned(chim + off);
@@ -241,8 +243,8 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                     if constexpr (k > 0u) {
                         const batch owr = batch::load_unaligned(twre + ((k - 1u) * ido + aa));
                         const batch owi = batch::load_unaligned(twim + ((k - 1u) * ido + aa));
-                        (owr * sr - owi * si).store_unaligned(chre + off);
-                        (owr * si + owi * sr).store_unaligned(chim + off);
+                        piece_fnma(owi, si, owr * sr).store_unaligned(chre + off);
+                        piece_fma(owr, si, owi * sr).store_unaligned(chim + off);
                     } else {
                         sr.store_unaligned(chre + off);
                         si.store_unaligned(chim + off);
@@ -315,8 +317,8 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                         if constexpr (k > 0u) {
                             const batch owr = batch::load_unaligned(twre + ((k - 1u) * ido + aa));
                             const batch owi = batch::load_unaligned(twim + ((k - 1u) * ido + aa));
-                            (owr * yr - owi * yi).store_unaligned(chre + off);
-                            (owr * yi + owi * yr).store_unaligned(chim + off);
+                            piece_fnma(owi, yi, owr * yr).store_unaligned(chre + off);
+                            piece_fma(owr, yi, owi * yr).store_unaligned(chim + off);
                         } else {
                             yr.store_unaligned(chre + off);
                             yi.store_unaligned(chim + off);
@@ -362,8 +364,8 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                                         batch::load(twre + ((k - 1u) * ido + a), m, um);
                                     const batch owi =
                                         batch::load(twim + ((k - 1u) * ido + a), m, um);
-                                    (owr * sr - owi * si).store(chre + off, m, um);
-                                    (owr * si + owi * sr).store(chim + off, m, um);
+                                    piece_fnma(owi, si, owr * sr).store(chre + off, m, um);
+                                    piece_fma(owr, si, owi * sr).store(chim + off, m, um);
                                 } else {
                                     sr.store(chre + off, m, um);
                                     si.store(chim + off, m, um);
@@ -389,8 +391,8 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                         if constexpr (k > 0u) {
                             const T owr = twre[(k - 1u) * ido + a];
                             const T owi = twim[(k - 1u) * ido + a];
-                            chre[obase + a * eso + kstride * k] = owr * sr - owi * si;
-                            chim[obase + a * eso + kstride * k] = owr * si + owi * sr;
+                            chre[obase + a * eso + kstride * k] = piece_fnma(owi, si, owr * sr);
+                            chim[obase + a * eso + kstride * k] = piece_fma(owr, si, owi * sr);
                         } else {
                             chre[obase + a * eso + kstride * k] = sr;
                             chim[obase + a * eso + kstride * k] = si;
@@ -466,13 +468,13 @@ ADM_NOINLINE void dif_pass_prime_chip(const T* ccre, const T* ccim,
                         if constexpr (full) {
                             const batch owr = batch::load_unaligned(twr);
                             const batch owi = batch::load_unaligned(twi);
-                            (owr * sr - owi * si).store_unaligned(chre + off);
-                            (owr * si + owi * sr).store_unaligned(chim + off);
+                            piece_fnma(owi, si, owr * sr).store_unaligned(chre + off);
+                            piece_fma(owr, si, owi * sr).store_unaligned(chim + off);
                         } else {
                             const batch owr = batch::load(twr, m, um);
                             const batch owi = batch::load(twi, m, um);
-                            (owr * sr - owi * si).store(chre + off, m, um);
-                            (owr * si + owi * sr).store(chim + off, m, um);
+                            piece_fnma(owi, si, owr * sr).store(chre + off, m, um);
+                            piece_fma(owr, si, owi * sr).store(chim + off, m, um);
                         }
                     } else {
                         if constexpr (full) {
@@ -528,8 +530,8 @@ void dif_pass_fused2(const T* ccre, const T* ccim,
                         if constexpr (k > 0u) {
                             const batch owr = batch::load_unaligned(ptw1_cur + (k - 1u) * 2u * W);
                             const batch owi = batch::load_unaligned(ptw1_cur + (k - 1u) * 2u * W + W);
-                            (owr * sr - owi * si).store_aligned(lr);
-                            (owr * si + owi * sr).store_aligned(li);
+                            piece_fnma(owi, si, owr * sr).store_aligned(lr);
+                            piece_fma(owr, si, owi * sr).store_aligned(li);
                         } else {
                             sr.store_aligned(lr);
                             si.store_aligned(li);
@@ -554,8 +556,10 @@ void dif_pass_fused2(const T* ccre, const T* ccim,
                         if constexpr (k2 > 0u) {
                             const batch owr = batch::load_unaligned(ptw2_cur + (k2 - 1u) * 2u * W);
                             const batch owi = batch::load_unaligned(ptw2_cur + (k2 - 1u) * 2u * W + W);
-                            (owr * sr - owi * si).store_unaligned(chre + (a2 + ido2 * (bp + l12 * k2)));
-                            (owr * si + owi * sr).store_unaligned(chim + (a2 + ido2 * (bp + l12 * k2)));
+                            piece_fnma(owi, si, owr * sr)
+                                .store_unaligned(chre + (a2 + ido2 * (bp + l12 * k2)));
+                            piece_fma(owr, si, owi * sr)
+                                .store_unaligned(chim + (a2 + ido2 * (bp + l12 * k2)));
                         } else {
                             sr.store_unaligned(chre + (a2 + ido2 * (bp + l12 * k2)));
                             si.store_unaligned(chim + (a2 + ido2 * (bp + l12 * k2)));
@@ -610,8 +614,8 @@ void dif_pass_fused3(const T* ccre, const T* ccim,
                             if constexpr (Kc > 0u) {
                                 const batch owr = batch::load_unaligned(tw1re + ((Kc - 1u) * ido + a));
                                 const batch owi = batch::load_unaligned(tw1im + ((Kc - 1u) * ido + a));
-                                (owr * sr - owi * si).store_aligned(lr);
-                                (owr * si + owi * sr).store_aligned(li);
+                                piece_fnma(owi, si, owr * sr).store_aligned(lr);
+                                piece_fma(owr, si, owi * sr).store_aligned(li);
                             } else {
                                 sr.store_aligned(lr);
                                 si.store_aligned(li);
@@ -636,8 +640,8 @@ void dif_pass_fused3(const T* ccre, const T* ccim,
                             if constexpr (Kc > 0u) {
                                 const batch owr = batch::load_unaligned(tw2re + ((Kc - 1u) * ido2 + a1));
                                 const batch owi = batch::load_unaligned(tw2im + ((Kc - 1u) * ido2 + a1));
-                                (owr * sr - owi * si).store_aligned(lr);
-                                (owr * si + owi * sr).store_aligned(li);
+                                piece_fnma(owi, si, owr * sr).store_aligned(lr);
+                                piece_fma(owr, si, owi * sr).store_aligned(li);
                             } else {
                                 sr.store_aligned(lr);
                                 si.store_aligned(li);
@@ -661,8 +665,10 @@ void dif_pass_fused3(const T* ccre, const T* ccim,
                             if constexpr (Kc > 0u) {
                                 const batch owr = batch::load_unaligned(tw3re + ((Kc - 1u) * ido3 + a3));
                                 const batch owi = batch::load_unaligned(tw3im + ((Kc - 1u) * ido3 + a3));
-                                (owr * sr - owi * si).store_unaligned(chre + (a3 + ido3 * (bp2 + l123 * Kc)));
-                                (owr * si + owi * sr).store_unaligned(chim + (a3 + ido3 * (bp2 + l123 * Kc)));
+                                piece_fnma(owi, si, owr * sr)
+                                    .store_unaligned(chre + (a3 + ido3 * (bp2 + l123 * Kc)));
+                                piece_fma(owr, si, owi * sr)
+                                    .store_unaligned(chim + (a3 + ido3 * (bp2 + l123 * Kc)));
                             } else {
                                 sr.store_unaligned(chre + (a3 + ido3 * (bp2 + l123 * Kc)));
                                 si.store_unaligned(chim + (a3 + ido3 * (bp2 + l123 * Kc)));
@@ -750,10 +756,7 @@ void dif_pass_first_impl(const std::complex<T>* data,
         }
         return;
     }
-#define ADM_F4_ES eso
-#define ADM_F4_SRE chre
-#define ADM_F4_SIM chim
-    const std::size_t idz = ido * ADM_F4_ES;
+    const std::size_t idz = ido * eso;
     std::size_t bsh = 0, nb = 0;
     const T* are = nullptr;
     const T* aim = nullptr;
@@ -764,14 +767,12 @@ void dif_pass_first_impl(const std::complex<T>* data,
         aim = twim + (IP - 1) * blk;
     }
 
-    // fix3: two columns per iteration share one set of output stream pointers, and the outputs
+    // Two columns per iteration share one set of output stream pointers, and the outputs
     // cannot alias the input or the twiddle table, so the twiddle loads may cross the stores.
     T* const ore = chre;
     T* const oim = chim;
     for (std::size_t b = 0; b < l1; ++b) {
-        constexpr std::size_t U0 = dif_pass_unroll<IP>();
-        constexpr std::size_t U1 = U0;
-        constexpr std::size_t U = U1;
+        constexpr std::size_t U = dif_pass_unroll<IP>();
         auto do_batch = [&](std::size_t aa) ADM_LAMBDA_ALWAYS_INLINE {
             const std::size_t a0 = Split ? (aa & (blk - 1u)) : aa;
             const std::size_t a1 = Split ? (aa >> bsh) : 0u;
@@ -789,12 +790,12 @@ void dif_pass_first_impl(const std::complex<T>* data,
                         owi = batch_t::load_unaligned(twim + ((k - 1u) * ido + aa));
                     }
                     (owr * sr - owi * si)
-                        .store_unaligned(ore + (aa * ADM_F4_ES + idz * (b + l1 * k)));
+                        .store_unaligned(ore + (aa * eso + idz * (b + l1 * k)));
                     (owr * si + owi * sr)
-                        .store_unaligned(oim + (aa * ADM_F4_ES + idz * (b + l1 * k)));
+                        .store_unaligned(oim + (aa * eso + idz * (b + l1 * k)));
                 } else {
-                    sr.store_unaligned(ore + (aa * ADM_F4_ES + idz * (b + l1 * k)));
-                    si.store_unaligned(oim + (aa * ADM_F4_ES + idz * (b + l1 * k)));
+                    sr.store_unaligned(ore + (aa * eso + idz * (b + l1 * k)));
+                    si.store_unaligned(oim + (aa * eso + idz * (b + l1 * k)));
                 }
             };
             if constexpr (dif_staged_radix<IP>) {
@@ -847,19 +848,16 @@ void dif_pass_first_impl(const std::complex<T>* data,
                         owr = twre[(k - 1u) * ido + a];
                         owi = twim[(k - 1u) * ido + a];
                     }
-                    ADM_F4_SRE[a * ADM_F4_ES + idz * (b + l1 * k)] = owr * sr - owi * si;
-                    ADM_F4_SIM[a * ADM_F4_ES + idz * (b + l1 * k)] = owr * si + owi * sr;
+                    chre[a * eso + idz * (b + l1 * k)] = owr * sr - owi * si;
+                    chim[a * eso + idz * (b + l1 * k)] = owr * si + owi * sr;
                 } else {
-                    ADM_F4_SRE[a * ADM_F4_ES + idz * (b + l1 * k)] = sr;
-                    ADM_F4_SIM[a * ADM_F4_ES + idz * (b + l1 * k)] = si;
+                    chre[a * eso + idz * (b + l1 * k)] = sr;
+                    chim[a * eso + idz * (b + l1 * k)] = si;
                 }
             });
         }
     }
 }
-#undef ADM_F4_ES
-#undef ADM_F4_SRE
-#undef ADM_F4_SIM
 
 template<typename T, bool Forward, std::size_t IP, bool Split, std::size_t Eso, std::size_t L1,
          typename... A>
@@ -917,35 +915,24 @@ template<typename T, std::size_t IP, std::size_t R, typename V>
             lane_stage_twiddle<T, IP, R, V::size, true>();
         const V wr = V::load_aligned(twr.data()) * sv;
         const V wi = V::load_aligned(twi.data()) * sv;
-        return {yr * wr - yi * wi, yi * wr + yr * wi};
+        return {piece_fnma(wi, yi, wr * yr), piece_fma(wr, yi, wi * yr)};
     }
 }
 
-// Physical offset of logical element `a` in an es == 2 plane. The producer writes W real values
-// then W imaginary values per W-column block, so one block costs 2W slots and the real slot of `a`
-// sits at 2a less the offset of `a` inside its own block. A W-aligned `a` reduces to 2a, which is
-// the only form the vector paths below use.
-template<std::size_t Esi, std::size_t W>
-[[nodiscard]] ADM_ALWAYS_INLINE constexpr std::size_t es_block_off(std::size_t a) {
-    return Esi == 1u ? a : 2u * a - a % W;
-}
-
-template<typename T, bool Forward, std::size_t IP, std::size_t Esi = 1u>
+template<typename T, bool Forward, std::size_t IP>
 ADM_COLD ADM_NOINLINE void dif_pass_last_scalar_rows(const T* ccre,
                                             const T* ccim,
                                             std::complex<T>* data,
                                             std::size_t l1, std::size_t b, T scale_val,
                                             const std::uint32_t* rowperm) {
-    constexpr std::size_t Wv = xsimd::batch<T>::size;
-#define ADM_F4_CIM ccim
     for (; b < l1; ++b) {
         const std::size_t rb = rowperm ? std::size_t(rowperm[b]) : b;
-        const std::size_t o0 = Esi * IP * rb;
+        const std::size_t o0 = IP * rb;
         T tr[IP], ti[IP];
         for (std::size_t j = 0; j < IP; ++j) {
-            const std::size_t off = o0 + es_block_off<Esi, Wv>(j);
+            const std::size_t off = o0 + j;
             tr[j] = ccre[off];
-            ti[j] = ADM_F4_CIM[off];
+            ti[j] = ccim[off];
         }
         dif_butterfly_terminal<T, IP>(tr, ti, [&](const auto k, T sr, T si) {
             const auto [xr, xi] = plane_vals<Forward>(sr * scale_val, si * scale_val);
@@ -954,7 +941,6 @@ ADM_COLD ADM_NOINLINE void dif_pass_last_scalar_rows(const T* ccre,
     }
 }
 
-#undef ADM_F4_CIM
 
 template<typename T, std::size_t IP>
 struct dif_last_batch {
@@ -964,7 +950,7 @@ struct dif_last_batch {
     using type = std::conditional_t<std::is_void_v<sized_t>, xsimd::batch<T>, sized_t>;
 };
 
-template<typename T, bool Forward, std::size_t IP, std::size_t Rows, std::size_t Esi = 1u>
+template<typename T, bool Forward, std::size_t IP, std::size_t Rows>
 ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
                                            const T* ccim,
                                            std::complex<T>* data,
@@ -973,7 +959,6 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
                                            const std::uint32_t* rowperm) {
     using batch_t = typename dif_last_batch<T, IP>::type;
     constexpr std::size_t W = batch_t::size;
-#define ADM_F4_CIM ccim
     const auto row = [&](std::size_t i) ADM_LAMBDA_ALWAYS_INLINE -> std::size_t {
         return rowperm ? std::size_t(rowperm[i]) : i;
     };
@@ -989,8 +974,8 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
             const auto stage = [&](std::size_t bb, std::size_t r) ADM_LAMBDA_ALWAYS_INLINE {
                 batch_t rr[G], ri[G];
                 poet::static_for<0, G>([&](const auto t) {
-                    rr[t] = batch_t::load_unaligned(ccre + Esi * (IP * r + t * W));
-                    ri[t] = batch_t::load_unaligned(ADM_F4_CIM + Esi * (IP * r + t * W));
+                    rr[t] = batch_t::load_unaligned(ccre + (IP * r + t * W));
+                    ri[t] = batch_t::load_unaligned(ccim + (IP * r + t * W));
                 });
                 // Stage A: one radix-G over the vector index, then the lane twiddle with the
                 // pass scale folded in.
@@ -1030,9 +1015,9 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
                 batch_t rr[W], ri[W];
                 poet::static_for<0, W>([&](const auto bb) {
                     if constexpr (detail::cmp_less(bb.value, Rows)) {
-                        rr[bb] = batch_t::load_unaligned(ccre + Esi * (IP * row(b + bb) + off));
+                        rr[bb] = batch_t::load_unaligned(ccre + (IP * row(b + bb) + off));
                         ri[bb] =
-                            batch_t::load_unaligned(ADM_F4_CIM + Esi * (IP * row(b + bb) + off));
+                            batch_t::load_unaligned(ccim + (IP * row(b + bb) + off));
                     } else {
                         rr[bb] = batch_t(T(0));
                         ri[bb] = batch_t(T(0));
@@ -1041,7 +1026,7 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
                 xsimd::transpose(rr, rr + W);
                 xsimd::transpose(ri, ri + W);
                 poet::static_for<0, W>([&](const auto a) {
-                    if constexpr (std::decay_t<decltype(off)>::value + a < IP) {
+                    if constexpr (off + a < IP) {
                         btr[off + a] = rr[a];
                         bti[off + a] = ri[a];
                     }
@@ -1059,9 +1044,9 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
             batch_t rr[W], ri[W];
             poet::static_for<0, W>([&](const auto bb) {
                 if constexpr (detail::cmp_less(bb.value, Rows)) {
-                    rr[bb] = batch_t::load(ccre + Esi * IP * row(b + bb), mask,
+                    rr[bb] = batch_t::load(ccre + IP * row(b + bb), mask,
                                            xsimd::unaligned_mode{});
-                    ri[bb] = batch_t::load(ADM_F4_CIM + Esi * IP * row(b + bb), mask,
+                    ri[bb] = batch_t::load(ccim + IP * row(b + bb), mask,
                                            xsimd::unaligned_mode{});
                 } else {
                     rr[bb] = batch_t(T(0));
@@ -1085,22 +1070,21 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
     }
 }
 
-#undef ADM_F4_CIM
 
-template<typename T, bool Forward, std::size_t IP, std::size_t Esi = 1u>
+template<typename T, bool Forward, std::size_t IP>
 struct dif_last_tail_invoke_t {
     template<std::size_t Rows>
     void operator()(const T* ccre, const T* ccim,
                     std::complex<T>* data, std::size_t l1, std::size_t b, T scale_val,
                     const std::uint32_t* rowperm) const {
-        dif_pass_last_block<T, Forward, IP, Rows, Esi>(ccre, ccim, data, l1, b, scale_val,
-                                                       rowperm);
+        dif_pass_last_block<T, Forward, IP, Rows>(ccre, ccim, data, l1, b, scale_val,
+                                                  rowperm);
     }
 };
-template<typename T, bool Forward, std::size_t IP, std::size_t Esi = 1u>
-inline constexpr dif_last_tail_invoke_t<T, Forward, IP, Esi> dif_last_tail_invoke{};
+template<typename T, bool Forward, std::size_t IP>
+inline constexpr dif_last_tail_invoke_t<T, Forward, IP> dif_last_tail_invoke{};
 
-template<typename T, bool Forward, std::size_t IP, std::size_t Esi = 1u>
+template<typename T, bool Forward, std::size_t IP>
 void dif_pass_last(const T* ccre, const T* ccim,
                    std::complex<T>* data,
                    std::size_t l1, [[maybe_unused]] std::size_t ido,
@@ -1114,30 +1098,30 @@ void dif_pass_last(const T* ccre, const T* ccim,
     std::size_t b = 0;
     if (const std::size_t peel = aos_store_align_peel<T, W>(data, l1, l1);
         peel != 0 && l1 >= peel + W) {
-        poet::dispatch(dif_last_tail_invoke<T, Forward, IP, Esi>,
+        poet::dispatch(dif_last_tail_invoke<T, Forward, IP>,
                        poet::dispatch_param<dif_last_tail_seq<W>>{peel},
                        ccre, ccim, data, l1, std::size_t{0}, scale_val, rowperm);
         for (b = peel; b + W <= l1; b += W)
-            dif_pass_last_block<T, Forward, IP, W, Esi>(ccre, ccim, data, l1, b, scale_val,
-                                                       rowperm);
+            dif_pass_last_block<T, Forward, IP, W>(ccre, ccim, data, l1, b, scale_val,
+                                                  rowperm);
     } else {
         for (; b + W <= l1; b += W)
-            dif_pass_last_block<T, Forward, IP, W, Esi>(ccre, ccim, data, l1, b, scale_val,
-                                                       rowperm);
+            dif_pass_last_block<T, Forward, IP, W>(ccre, ccim, data, l1, b, scale_val,
+                                                  rowperm);
     }
     if (b == l1) return;
     if (l1 < W) {
-        poet::dispatch(dif_last_tail_invoke<T, Forward, IP, Esi>,
+        poet::dispatch(dif_last_tail_invoke<T, Forward, IP>,
                        poet::dispatch_param<dif_last_tail_seq<W>>{l1},
                        ccre, ccim, data, l1, std::size_t{0}, scale_val, rowperm);
         return;
     }
     if (2 * (l1 - b) >= W) {
-        dif_pass_last_block<T, Forward, IP, W, Esi>(ccre, ccim, data, l1, l1 - W,
-                                                     scale_val, rowperm);
+        dif_pass_last_block<T, Forward, IP, W>(ccre, ccim, data, l1, l1 - W,
+                                               scale_val, rowperm);
         return;
     }
-    dif_pass_last_scalar_rows<T, Forward, IP, Esi>(ccre, ccim, data, l1, b, scale_val, rowperm);
+    dif_pass_last_scalar_rows<T, Forward, IP>(ccre, ccim, data, l1, b, scale_val, rowperm);
 }
 
 }

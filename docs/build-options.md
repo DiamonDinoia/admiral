@@ -20,6 +20,7 @@ configure line packagers want.
 | `ADM_MEASURE` | Compiles in plan-time route measurement (`effort::automatic`/`measure`, and FFTW's non-`ESTIMATE` flags). `OFF` leaves them accepted but inert: every plan routes by the cost model, so plans become bitwise reproducible across runs | `ON` |
 | `ADM_TARGET_ARCH` | The one `-march` the whole build uses. `native` is fastest on the build machine but the binaries may not run elsewhere; use `x86-64-v3` for portable binaries, `none` for the compiler baseline. Also the build-memory knob: one engine TU peaks near 12 GB at AVX-512 `native` versus ~2 GB at `x86-64-v2`. Do not also pass `-march` in `CMAKE_CXX_FLAGS` | `native` |
 | `ADM_USE_FAST_MATH` | Adds `-ffast-math`: faster transforms, but relaxed IEEE (reassociation, flushed denormals, no errno). Turn off when strict IEEE semantics matter | `ON` |
+| `ADM_GRANULE_ADMIT` | Admits the AoS-granule leaf kernels into the codelet routes. `OFF` removes the granule arms at compile time (`if constexpr`), so the SoA fallback runs; the default build is byte-identical to a pre-knob tree | `ON` |
 | `ADM_BENCH_FFTW` | Adds an FFTW reference arm to `admiral_benchmark`. Needs system `fftw3` and `fftw3f`, found through pkg-config | `OFF` |
 | `ADM_BENCH_THREADS` | Threads the benchmark reference libraries too (ducc0's pool, FFTW's `fftw3_threads` companions) | `OFF` |
 

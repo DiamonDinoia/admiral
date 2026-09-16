@@ -26,6 +26,13 @@ void scale_inplace(std::complex<T>* p, std::size_t n, T s) noexcept {
     for (std::size_t i = 0; i < n; ++i) p[i] *= s;
 }
 
+// The API's default scale contract for a full transform: identity forward, 1/total inverse.
+// Row/col and predicate split forms are different quantities and keep their local spellings.
+template<typename T>
+[[nodiscard]] constexpr T default_transform_fct(bool is_forward, std::size_t total) {
+    return is_forward ? T(1) : T(1) / static_cast<T>(total);
+}
+
 [[nodiscard]] constexpr bool is_codelet_catalog(std::size_t N) {
     for (const std::size_t n : CODELET_CATALOG_SIZES) {
         if (N == n) return true;
@@ -297,6 +304,13 @@ void col_codelet_dispatch(bool forward, const std::complex<T>* in, std::size_t i
 
 extern template void col_codelet_dispatch<float>(bool, const std::complex<float>*,  std::size_t, std::complex<float>*,  std::size_t, std::size_t, std::size_t, float);
 extern template void col_codelet_dispatch<double>(bool, const std::complex<double>*, std::size_t, std::complex<double>*, std::size_t, std::size_t, std::size_t, double);
+
+// Granule cube driver (one N^3 block as three granule passes; definition lives in
+// src/granule_cube.hpp, instantiated by the inst_nd TUs). No extern templates: the
+// only non-test caller is nd_runtime_plan's fast3d seat in those same TUs, so an
+// implicit weak instantiation is what every consumer links.
+template<unsigned N, typename T, bool Forward>
+void granule_cube_apply(const std::complex<T>* in, std::complex<T>* out, T fct);
 
 }
 }

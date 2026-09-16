@@ -210,7 +210,7 @@ ADM_NOINLINE void good_thomas_execute(const std::complex<T>* in,
     std::array<Batch, NS> re_src, im_src;
     const T* ip = reinterpret_cast<const T*>(in);
     auto load_tail = [&](auto o_ic) {
-        constexpr std::size_t O = std::decay_t<decltype(o_ic)>::value;
+        constexpr std::size_t O = o_ic;
         if constexpr (O + W <= 2 * N) {
             return Batch::load_unaligned(ip + O);
         } else if constexpr (O >= 2 * N) {
@@ -273,7 +273,7 @@ ADM_NOINLINE void good_thomas_execute(const std::complex<T>* in,
 
     T* op = reinterpret_cast<T*>(out);
     auto store_tail = [&](auto o_ic, const Batch& v) {
-        constexpr std::size_t O = std::decay_t<decltype(o_ic)>::value;
+        constexpr std::size_t O = o_ic;
         if constexpr (O + W <= 2 * N) {
             v.store_unaligned(op + O);
         } else if constexpr (O < 2 * N) {

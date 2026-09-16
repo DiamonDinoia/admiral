@@ -5,6 +5,7 @@
 
 #include <admiral/admiral.hpp>
 #include <admiral/detail/bluestein.hpp>
+#include <admiral/detail/four_step_large.hpp>
 #include <admiral/detail/plan.hpp>
 #include <admiral/detail/rader.hpp>
 
@@ -132,6 +133,9 @@ TEST_CASE("Bluestein pad on the six-step delegate", "[coverage][large][bluestein
 
 TEST_CASE("Public large gate requires a cycle-free split", "[coverage][large]") {
     using admiral::detail::plan_impl;
+    // The route-name assertions read the fallback serial lines; the probed line is process
+    // state this case must not see (W=16 f32 and SPR-class f64 probes can reject 32 MiB).
+    const admiral::detail::large_route_serial_override_scope pin(12 << 20, (16 << 20) - 1);
     REQUIRE(std::string(plan_impl<double>(787500, true).route_name()) == "iterative_dif");
     REQUIRE(std::string(plan_impl<double>(802816, true).route_name()) == "four_step_large");
     REQUIRE(std::string(plan_impl<double>(787500, true, 16).route_name()) == "iterative_dif");

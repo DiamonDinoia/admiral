@@ -8,6 +8,7 @@ set(ADM_TEST_SOURCES
     accuracy/test_sweeps.cpp
     transforms/test_route_forced.cpp
     kernels/test_codelet.cpp
+    kernels/test_granule.cpp
     api/test_api_cxx.cpp
     api/test_api_c.cpp
     api/test_api_c_errors.cpp
@@ -40,12 +41,20 @@ set(ADM_TEST_EXTRA_LIBS_test_api_c          admiral_c_objects)
 set(ADM_TEST_EXTRA_LIBS_test_api_c_errors   admiral_c_objects)
 set(ADM_TEST_EXTRA_LIBS_test_api_fftw       admiral_fftw_objects)
 
+# The granule dialect's drivers are src-private; the test reaches them by the same path
+# the engine does. The poison twin compiles the same source with one deliberately
+# lane-flipped radix-3 pool entry and must fail its direct-DFT gates: it is the suite's
+# committed positive control on the dialect's constant folding.
+set(ADM_TEST_EXTRA_INCLUDES_test_granule        ${PROJECT_SOURCE_DIR}/src)
+set(ADM_TEST_EXTRA_INCLUDES_test_granule_poison ${PROJECT_SOURCE_DIR}/src)
+
 foreach(test_src IN LISTS ADM_TEST_SOURCES)
     get_filename_component(test_name ${test_src} NAME_WE)
 
     add_executable(${test_name} ${test_src})
 
-    target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+        ${ADM_TEST_EXTRA_INCLUDES_${test_name}})
 
     target_link_libraries(${test_name}
         PRIVATE
@@ -67,6 +76,47 @@ foreach(test_src IN LISTS ADM_TEST_SOURCES)
 
     catch_discover_tests(${test_name})
 endforeach()
+
+# Bit-identity digest driver (test/digest). scripts/validate.sh's `digest` arm builds
+# this target in two builds -- shipped and ADM_USE_FAST_MATH=OFF -- and diffs both
+# against the committed goldens in test/digest/golden. It registers NO ctest test: the
+# gate is the two-build comparison the arm performs, and a ctest entry has no second
+# build to compare against. Public API only, so it links the shipped surface.
+add_executable(admiral_digest digest/digest.cpp)
+target_link_libraries(admiral_digest PRIVATE admiral::admiral)
+if(TARGET project_warnings)
+    target_link_libraries(admiral_digest PRIVATE project_warnings)
+endif()
+if(TARGET project_sanitizers)
+    target_link_libraries(admiral_digest PRIVATE project_sanitizers)
+endif()
+
+# Positive control for the granule constant folding. Under ADM_GRANULE_TEST_POISON every
+# check that routes a radix-3 stage (N in {9, 12, 15, 24}) fails its direct-DFT gate, so
+# the binary exits nonzero; WILL_FAIL makes that the asserted outcome. A poison build
+# that PASSES would prove the folding cannot fail and this control would go red.
+add_executable(test_granule_poison kernels/test_granule.cpp)
+target_include_directories(test_granule_poison PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+    ${ADM_TEST_EXTRA_INCLUDES_test_granule_poison})
+target_compile_definitions(test_granule_poison PRIVATE ADM_GRANULE_TEST_POISON=1)
+target_link_libraries(test_granule_poison
+    PRIVATE admiral_internal $<BUILD_INTERFACE:Catch2::Catch2WithMain>)
+if(CATCH2_INCLUDE_DIRS)
+    target_include_directories(test_granule_poison SYSTEM PRIVATE ${CATCH2_INCLUDE_DIRS})
+endif()
+if(TARGET project_warnings)
+    target_link_libraries(test_granule_poison PRIVATE project_warnings)
+endif()
+if(TARGET project_sanitizers)
+    target_link_libraries(test_granule_poison PRIVATE project_sanitizers)
+endif()
+# The control exists only where the dialect does: at v2-and-below the family compiles
+# out and this binary's checks are all skipped, so a WILL_FAIL entry would mis-assert on
+# a healthy build. The arch string is the configure-time proxy for kGranuleFmaddsub.
+if(ADM_TARGET_ARCH MATCHES "^(native|x86-64-v3|x86-64-v4)$")
+    add_test(NAME test_granule_poison COMMAND test_granule_poison)
+    set_tests_properties(test_granule_poison PROPERTIES WILL_FAIL TRUE)
+endif()
 
 # ELF only: `nm -D` reads a dynamic symbol table, which a PE DLL does not have, and the
 # patterns below are Itanium mangling. On Windows llvm-nm reports

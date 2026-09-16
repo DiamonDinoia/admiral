@@ -11,6 +11,7 @@
 #include "cxx_compat.hpp"
 
 #include "ct_math.hpp"
+#include "simd_swizzle.hpp"
 
 #include "macros.hpp"
 
@@ -45,11 +46,11 @@ ADM_ALWAYS_INLINE void radix_sym_dft(const V (&xr)[IP],
         poet::static_for<1, H + 1>([&](const auto m) {
             constexpr auto w =
                 ct_sincos_turns<ct_real_t<T>>(
-                    false, (m * std::decay_t<decltype(k)>::value) % IP, IP);
-            PR = PR + V(static_cast<T>(w.c)) * ar[m];
-            PI = PI + V(static_cast<T>(w.c)) * ai[m];
-            QR = QR + V(static_cast<T>(w.s)) * di[m];
-            QI = QI + V(static_cast<T>(w.s)) * dr[m];
+                    false, (m * k) % IP, IP);
+            PR = piece_fma(V(static_cast<T>(w.c)), ar[m], PR);
+            PI = piece_fma(V(static_cast<T>(w.c)), ai[m], PI);
+            QR = piece_fma(V(static_cast<T>(w.s)), di[m], QR);
+            QI = piece_fma(V(static_cast<T>(w.s)), dr[m], QI);
         });
         emit(std::integral_constant<std::size_t, k>{}, PR + QR, PI - QI);
         emit(std::integral_constant<std::size_t, IP - k>{}, PR - QR, PI + QI);
@@ -85,7 +86,7 @@ ADM_ALWAYS_INLINE void pfa_dif_butterfly(const V (&tr)[N1 * N2],
     poet::static_for<0, N2>([&](const auto n2) {
         V br[N1], bi[N1];
         poet::static_for<0, N1>([&](const auto n1) {
-            constexpr std::size_t src = (n1 * N2 + std::decay_t<decltype(n2)>::value * N1) % IP;
+            constexpr std::size_t src = (n1 * N2 + n2 * N1) % IP;
             br[n1] = tr[src];
             bi[n1] = ti[src];
         });
@@ -230,11 +231,11 @@ ADM_ALWAYS_INLINE void dif_butterfly(const V (&tr)[IP],
             V sr = tr[0], si = ti[0];
             poet::static_for<1, IP>([&](const auto jj) {
                 constexpr auto w = ct_sincos_turns<ct_real_t<T>>(
-                    true, jj * std::decay_t<decltype(k)>::value, IP);
-                sr = sr + V(static_cast<T>(w.c)) * tr[jj]
-                        - V(static_cast<T>(w.s)) * ti[jj];
-                si = si + V(static_cast<T>(w.c)) * ti[jj]
-                        + V(static_cast<T>(w.s)) * tr[jj];
+                    true, jj * k, IP);
+                sr = piece_fnma(V(static_cast<T>(w.s)), ti[jj],
+                                piece_fma(V(static_cast<T>(w.c)), tr[jj], sr));
+                si = piece_fma(V(static_cast<T>(w.s)), tr[jj],
+                               piece_fma(V(static_cast<T>(w.c)), ti[jj], si));
             });
             emit(std::integral_constant<std::size_t, k>{}, sr, si);
         });

@@ -10,10 +10,13 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 #include "cxx_compat.hpp"
 
 #include <admiral/errors.hpp>
+
+#include <admiral/detail/api.h>
 
 #include "simd.hpp"
 
@@ -21,6 +24,7 @@
 
 #include "dif_col_driver.hpp"
 #include "cache.hpp"
+#include "granule_codelet.hpp"
 #include "math.hpp"
 #include "plan.hpp"
 #include "scratch.hpp"
@@ -94,11 +98,19 @@ inline constexpr std::size_t kE2Len64MinL3PerCoreBytes = std::size_t{2} << 20;
     return l3_per_core_bytes >= kE2Len64MinL3PerCoreBytes ? std::size_t{64} : std::size_t{32};
 }
 
-[[nodiscard]] inline std::size_t e2_len_cap() {
-    const cache_bytes& cc = cpu_cache();
-    if (cc.l3_cores == 0 || cc.l3 == 0) return 32;
-    return e2_len_cap_by_l3(cc.l3 / cc.l3_cores);
+// Per PHYSICAL core, not per logical cpu. The threshold above was read off a knob A/B on three
+// SMT-off hosts (ice 48 MiB/32c, rome 16 MiB/4c, genoa 32 MiB/6c, 2026-08-31), where the two counts
+// coincide, so it has always been a per-physical-core quantity. Dividing by SMT siblings halves the
+// slice and caps an SMT host at 32 against its own measurement.
+// Takes the whole probed view rather than a bytes-per-core number the caller already divided:
+// WHICH count is the divisor is the decision under test, and no test can pin that on a machine
+// whose own two counts are equal unless it can hand this function a synthetic SMT topology.
+[[nodiscard]] constexpr std::size_t e2_len_cap_of(const cache_bytes& cc) {
+    if (cc.l3_phys_cores == 0 || cc.l3 == 0) return 32;
+    return e2_len_cap_by_l3(cc.l3 / cc.l3_phys_cores);
 }
+
+[[nodiscard]] inline std::size_t e2_len_cap() { return e2_len_cap_of(cpu_cache()); }
 
 template<typename T>
 [[nodiscard]] inline nd_axis_state<T> make_nd_axis_state(std::size_t length, std::size_t inner,
@@ -116,7 +128,13 @@ template<typename T>
     if (!innermost && is_codelet_supported(length)) {
         st.dif = true;
         const std::size_t e2_cap = std::min(e2_len_cap(), kFourStepLeafMax);
-        st.col_codelet = length >= 8 && length <= e2_cap &&
+        // A col length below 8 pays only when the col body can vectorise the block: with the narrow
+        // arm that needs a sized batch dividing it, the narrowest being min_sized_tail_width<T>().
+        // Below 8 the lengths that pay are 2, 3 and 4. Lengths 5, 6 and 7 were measured on retired
+        // instructions at three vector widths and none of them pays: 6 wins at AVX-512 and loses at
+        // every narrower width, so its sign is set by W and no fixed predicate can admit it.
+        const bool len_ok = length >= 8 || (inner % min_sized_tail_width<T>() == 0 && length <= 4);
+        st.col_codelet = len_ok && length <= e2_cap &&
                          is_codelet_catalog(length) && inner <= 64;
         dif_factor_plan r4;
         const dif_factor_plan* ov = nullptr;
@@ -248,6 +266,16 @@ template<typename T>
 // and any gw % W != 0 group keep the scalar loops. Measured at the 2d_8192 geometry
 // (SPR, gcc 14.2): tile arm 0.467x of the scalar mover's cycles (w5-report.md).
 template<bool Gather, typename T>
+void move_run_scalar(std::complex<T>* line, std::size_t inner, std::size_t p_lo, std::size_t len,
+                     std::size_t gw, std::complex<T>* buf, std::size_t pitch) {
+    for (std::size_t p = p_lo; p < len; ++p)
+        for (std::size_t g = 0; g < gw; ++g) {
+            if constexpr (Gather) buf[g * pitch + p] = line[p * inner + g];
+            else line[p * inner + g] = buf[g * pitch + p];
+        }
+}
+
+template<bool Gather, typename T>
 void move_run_tiled(std::complex<T>* line, std::size_t inner, std::size_t len, std::size_t gw,
                     std::complex<T>* buf, std::size_t pitch) {
     using V = xsimd::batch<T>;
@@ -278,11 +306,7 @@ void move_run_tiled(std::complex<T>* line, std::size_t inner, std::size_t len, s
             }
         }
     }
-    for (std::size_t p = pfull; p < len; ++p)
-        for (std::size_t g = 0; g < gw; ++g) {
-            if constexpr (Gather) buf[g * pitch + p] = line[p * inner + g];
-            else line[p * inner + g] = buf[g * pitch + p];
-        }
+    move_run_scalar<Gather>(line, inner, pfull, len, gw, buf, pitch);
 }
 
 template<bool Gather, typename T>
@@ -294,11 +318,26 @@ void move_run(std::complex<T>* line, std::size_t inner, std::size_t len, std::si
         move_run_tiled<Gather>(line, inner, len, gw, buf, pitch);
         return;
     }
-    for (std::size_t p = 0; p < len; ++p)
-        for (std::size_t g = 0; g < gw; ++g) {
-            if constexpr (Gather) buf[g * pitch + p] = line[p * inner + g];
-            else line[p * inner + g] = buf[g * pitch + p];
-        }
+    move_run_scalar<Gather>(line, inner, 0, len, gw, buf, pitch);
+}
+
+// The col_dif tile pair (Bt, ntiles): nd_col_block_geo re-prices Bt from the row period
+// under ADM_COLDIF_GEO; the default build keeps the line plan's own (tile, units).
+template<typename T>
+[[nodiscard]] ADM_ALWAYS_INLINE std::pair<std::size_t, std::size_t>
+resolve_col_tiles([[maybe_unused]] const line_plan& lp, [[maybe_unused]] std::size_t len,
+                  [[maybe_unused]] std::size_t run_len,
+                  [[maybe_unused]] std::size_t row_period_bytes,
+                  [[maybe_unused]] std::size_t nthreads, [[maybe_unused]] std::size_t nruns) {
+#if ADM_COLDIF_GEO
+    const std::size_t Bt =
+        nd_col_block_geo<T>(len, run_len, row_period_bytes, nthreads, nruns);
+    const std::size_t ntiles = (run_len + Bt - 1) / Bt;
+#else
+    const std::size_t Bt = lp.tile;
+    const std::size_t ntiles = lp.units;
+#endif
+    return {Bt, ntiles};
 }
 
 template<typename T, typename LineBase>
@@ -312,8 +351,9 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
     const line_plan lp = resolve_line_plan<T>(st, len, inner, run_len, nruns, nthreads,
                                               pool != nullptr);
     if (lp.route == line_route::col_dif) {
-        const std::size_t Bt = lp.tile;
-        const std::size_t ntiles = lp.units;
+        const auto [Bt, ntiles] =
+            resolve_col_tiles<T>(lp, len, run_len, inner * sizeof(std::complex<T>), nthreads,
+                                 nruns);
         const std::size_t nunits = nruns * ntiles;
         const T scale = fct.value_or(forward ? T(1) : T(1) / static_cast<T>(len));
         // nd_col_block caps Bt at run_len, so ntiles == 1 means the tile covers the whole run and
@@ -390,8 +430,9 @@ apply_lines_strided_oop(const std::complex<T>* src, std::size_t src_line,
     const line_plan lp = resolve_line_plan<T>(st, len, src_line, run_len, nruns, nthreads,
                                               pool != nullptr, batch_ok);
     if (lp.route == line_route::col_dif) {
-        const std::size_t Bt = lp.tile;
-        const std::size_t ntiles = lp.units;
+        const auto [Bt, ntiles] =
+            resolve_col_tiles<T>(lp, len, run_len, dst_line * sizeof(std::complex<T>),
+                                 nthreads, nruns);
         const std::size_t nunits = nruns * ntiles;
         const T scale = fct.value_or(forward ? T(1) : T(1) / static_cast<T>(len));
         parallel_for(pool, nunits, total_elems, [&](std::size_t b, std::size_t e, std::size_t) {
@@ -517,6 +558,25 @@ void nd_apply_axis(std::complex<T>* data, std::size_t total, std::size_t len,
                                total, [len, inner](std::size_t r) { return r * (len * inner); });
 }
 
+#define ADM_HAS_FAST2D 1
+// PROTOTYPE (scratch, uncommitted): rank-2 in-place fast path.
+// The gate is decided once in the constructor; execute() only tests the flag.
+// nd_fast2d_disable() is read ONLY at construction, so one binary can build a fast-path plan
+// and a general-path plan over the same shape and compare their bits.
+[[nodiscard]] ADM_VISIBILITY inline bool& nd_fast2d_disable() {
+    static bool off = false;
+    return off;
+}
+#ifdef ADM_FAST2D_COUNT
+// Route assertion. Not compiled into the timing binary.
+[[nodiscard]] inline unsigned long& nd_fast2d_hits() { static unsigned long n = 0; return n; }
+[[nodiscard]] inline unsigned long& nd_slow2d_hits() { static unsigned long n = 0; return n; }
+#endif
+#ifdef ADM_FAST3D_COUNT
+// Route assertion twin for the cube seat. Not compiled into the timing binary.
+[[nodiscard]] inline unsigned long& nd_fast3d_hits() { static unsigned long n = 0; return n; }
+#endif
+
 template<typename T>
 class nd_runtime_plan {
     struct M {
@@ -526,6 +586,8 @@ class nd_runtime_plan {
         std::vector<nd_axis_state<T>> axes;
         std::unique_ptr<thread_pool> pool;
         bool fuse_planes = false;
+        bool fast2d = false;
+        bool fast3d = false;
     } m;
 
 public:
@@ -537,8 +599,56 @@ public:
                  const exec_options<T>& opts = {}) const;
 
     [[nodiscard]] std::size_t size() const noexcept { return m.total; }
+    [[nodiscard]] bool uses_fast2d() const noexcept { return m.fast2d; }
+    [[nodiscard]] bool uses_fast3d() const noexcept { return m.fast3d; }
 
 private:
+    // Rank-2 in-place fast path: the two axis bodies, called directly. No scale_plan, no
+    // per-axis loop, no apply_lines_* , no parallel_for, no line-plan resolve.
+    ADM_ALWAYS_INLINE void execute_fast2d(std::complex<T>* data, std::optional<T> fct) const {
+#ifdef ADM_FAST2D_COUNT
+        ++nd_fast2d_hits();
+#endif
+        const std::size_t n0 = m.shape[0];
+        const std::size_t n1 = m.shape[1];
+        const T def = default_transform_fct<T>(m.is_forward, m.total);
+        const T f = fct.value_or(def);
+        // make_scale_plan puts a custom factor on the innermost axis of extent > 1, which under
+        // this gate is axis 1; the default factor is the product 1/n1 * 1/n0 the two axes apply.
+        const bool custom = f != def;
+        const T rowf = custom ? f : (m.is_forward ? T(1) : T(1) / static_cast<T>(n1));
+        const T colf = custom ? T(1) : (m.is_forward ? T(1) : T(1) / static_cast<T>(n0));
+        if (m.is_forward) codelet_dispatch_many<T, true >(data, n0, n1, n1, rowf);
+        else              codelet_dispatch_many<T, false>(data, n0, n1, n1, rowf);
+        col_codelet_dispatch<T>(m.is_forward, data, n1, data, n1, n1, n0, colf);
+    }
+
+    // Rank-3 cube fast path: the admission gate runs once in the constructor and
+    // execute() only tests the flag. One driver call covers all three axes
+    // (src/granule_cube.hpp), with the whole factor folded into the driver's innermost
+    // pass. Below the granule dialect's ISA the admit predicate is compile-time false,
+    // the cube templates never instantiate here, and this TU's text is master's.
+    template<unsigned N>
+    ADM_ALWAYS_INLINE void fast3d_n(const std::complex<T>* src, std::complex<T>* dst,
+                                    T f) const {
+        if constexpr (granule_cube_admit_v<N, T> && is_codelet_catalog(N)) {
+            if (m.is_forward) granule_cube_apply<N, T, true >(src, dst, f);
+            else              granule_cube_apply<N, T, false>(src, dst, f);
+        } else ADM_UNREACHABLE();
+    }
+
+    ADM_ALWAYS_INLINE void execute_fast3d(const std::complex<T>* src, std::complex<T>* dst,
+                                          std::optional<T> fct) const {
+#ifdef ADM_FAST3D_COUNT
+        ++nd_fast3d_hits();
+#endif
+        const T def = default_transform_fct<T>(m.is_forward, m.total);
+        const T f = fct.value_or(def);
+        // m.fast3d implies shape[0] in {4, 8}: the gate proves what the dispatch assumes.
+        if (m.shape[0] == 4) fast3d_n<4>(src, dst, f);
+        else               fast3d_n<8>(src, dst, f);
+    }
+
     ADM_NOINLINE void execute_nd(std::complex<T>* data, const exec_options<T>& opts) const;
     ADM_NOINLINE void execute_nd(const std::complex<T>* src, std::complex<T>* dst,
                                  const exec_options<T>& opts) const;
@@ -561,7 +671,7 @@ private:
         std::size_t scale_axis;
     };
     [[nodiscard]] scale_plan make_scale_plan(std::optional<T> fct) const {
-        const T def = m.is_forward ? T(1) : T(1) / static_cast<T>(m.total);
+        const T def = default_transform_fct<T>(m.is_forward, m.total);
         const T f = fct.value_or(def);
         std::size_t axis = m.shape.size();
         if (f != def)
@@ -660,10 +770,38 @@ nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forwa
         }
         inner *= m.shape[d];
     }
+    // ADMISSION PREDICATE of the rank-2 fast path. Every term is a property the general path
+    // would have recomputed on every execute(): rank 2, serial, both extents > 1, the row axis
+    // reaching codelet_dispatch_many through plan_impl::execute_many, and the col axis reaching
+    // col_codelet_dispatch as ONE tile of one run. Anything else keeps the general path.
+    if (m.shape.size() == 2 && m.pool == nullptr && !m.fuse_planes && m.shape[0] > 1 &&
+        m.shape[1] > 1 && !nd_fast2d_disable()) {
+        const nd_axis_state<T>& row = m.axes[1];
+        const nd_axis_state<T>& col = m.axes[0];
+        m.fast2d = row.plan && is_codelet_catalog(m.shape[1]) && row.plan_nruns == m.shape[0] &&
+                   col.col_codelet && col.route_cached && col.route == line_route::col_dif &&
+                   col.units == 1 && col.plan_nruns == 1;
+    }
+    // ADMISSION PREDICATE of the rank-3 cube fast path (the granule-cube seat). Every
+    // term is a property the general path would recompute on every execute(): rank 3,
+    // serial, unfused, equal extents in the decoupled cube admission set
+    // (granule_cube_admit_v, which folds the ADM_GRANULE_ADMIT knob), with the leaf the
+    // driver can actually reach (a catalog that drops 4 or 8 keeps the general path).
+    if constexpr (kGranuleFmaddsub) {
+        if (m.shape.size() == 3 && m.pool == nullptr && !m.fuse_planes) {
+            const std::size_t n = m.shape[0];
+            const bool admit4 = n == 4 && granule_cube_admit_v<4, T> && is_codelet_catalog(4);
+            const bool admit8 = n == 8 && granule_cube_admit_v<8, T> && is_codelet_catalog(8);
+            m.fast3d = (admit4 || admit8) && m.shape[1] == n && m.shape[2] == n;
+        }
+    }
 }
 
 template<typename T>
 void nd_runtime_plan<T>::execute(std::complex<T>* data, const exec_options<T>& opts) const {
+    if (m.fast2d && opts.debug == 0) { execute_fast2d(data, opts.fct); return; }
+    if constexpr (kGranuleFmaddsub)
+        if (m.fast3d && opts.debug == 0) { execute_fast3d(data, data, opts.fct); return; }
     const std::size_t ndim = m.shape.size();
     if (ndim == 1) {
         const nd_axis_state<T>& ax0 = m.axes[0];
@@ -679,6 +817,9 @@ void nd_runtime_plan<T>::execute(std::complex<T>* data, const exec_options<T>& o
 
 template<typename T>
 void nd_runtime_plan<T>::execute_nd(std::complex<T>* data, const exec_options<T>& opts) const {
+#ifdef ADM_FAST2D_COUNT
+    ++nd_slow2d_hits();
+#endif
     const std::size_t ndim = m.shape.size();
     if (opts.debug >= dbg_route) ADM_UNLIKELY trace(opts.debug, "in-place");
     const scale_plan sp = make_scale_plan(opts.fct);
@@ -710,6 +851,8 @@ template<typename T>
 void nd_runtime_plan<T>::execute(const std::complex<T>* src, std::complex<T>* dst,
                                  const exec_options<T>& opts) const {
     if (src == dst) { execute(dst, opts); return; }
+    if constexpr (kGranuleFmaddsub)
+        if (m.fast3d && opts.debug == 0) { execute_fast3d(src, dst, opts.fct); return; }
     if (m.shape.empty()) {
         const scale_plan sp = make_scale_plan(opts.fct);
         *dst = sp.custom ? *src * sp.fct : *src;
@@ -745,7 +888,7 @@ void nd_runtime_plan<T>::execute_nd(const std::complex<T>* src, std::complex<T>*
                      [&](std::size_t b, std::size_t e, std::size_t) {
             if (len <= 32 && is_codelet_catalog(len)) {
                 const T fct =
-                    row_opts.fct.value_or(m.is_forward ? T(1) : T(1) / static_cast<T>(len));
+                    row_opts.fct.value_or(default_transform_fct<T>(m.is_forward, len));
                 if (m.is_forward)
                     codelet_dispatch_many_oop<T, true >(ps + b * len, pd + b * len, e - b,
                                                         len, len, len, fct);

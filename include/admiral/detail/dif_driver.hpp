@@ -81,11 +81,11 @@ void dif_tape_step_f3(const T* sr, const T* si, T* dr, T* di,
                                 t1.second.data(), t2.first.data(), t2.second.data());
 }
 
-template<typename T, bool Forward, std::size_t IP, std::size_t Esi = 1u>
+template<typename T, bool Forward, std::size_t IP>
 void dif_tape_step_last(const T* sr, const T* si, T*, T*,
                         const dif_step<T>& s, const dif_rt<T>& rt) {
     const auto& tw = rt.dtw->passes[s.p];
-    dif_pass_last<T, Forward, IP, Esi>(sr, si, rt.out, s.l1, 1, tw.first.data(), tw.second.data(),
+    dif_pass_last<T, Forward, IP>(sr, si, rt.out, s.l1, 1, tw.first.data(), tw.second.data(),
                                   rt.scale, (s.es & 4u) ? rt.dtw->rowperm.data() : nullptr);
 }
 
@@ -125,14 +125,11 @@ struct dif_tape_fill_first {
     void operator()(dif_step<T>& s) const noexcept { s.fn = &dif_tape_step_first<T, Forward, IP>; }
 };
 
-template<typename T, bool Forward, bool Es2 = false>
+template<typename T, bool Forward>
 struct dif_tape_fill_last {
     template<std::size_t IP>
     void operator()(dif_step<T>& s) const noexcept {
-        // Es2 needs every row of the last pass to start on a W boundary. dif_build_tape sets the
-        // bit only when IP % W == 0; this fold keeps the other radices out of the Esi = 2 tree.
-        constexpr std::size_t Esi = (Es2 && IP % xsimd::batch<T>::size == 0u) ? 2u : 1u;
-        s.fn = &dif_tape_step_last<T, Forward, IP, Esi>;
+        s.fn = &dif_tape_step_last<T, Forward, IP>;
     }
 };
 
@@ -179,9 +176,57 @@ auto dif_thunk<T>::fused3() -> fn_t {
 extern template struct dif_thunk<float>;
 extern template struct dif_thunk<double>;
 
+// es == 2 plane bits for the blocked variant: a pass may run es2 only when its ido stays
+// a multiple of W; the last pass never qualifies (ido == 1). The fixpoint clears es2 on
+// every in-place pass boundary, since an in-place pass rewrites its own plane layout.
+template<typename T>
+[[nodiscard]] ADM_ALWAYS_INLINE std::uint64_t compute_dif_es2(const dif_twiddle_set<T>& dtw, std::size_t N,
+                                            std::size_t n_passes) {
+    constexpr std::size_t W = xsimd::batch<T>::size;
+    std::uint64_t es2 = 0;
+    std::uint64_t blk = 0;
+    std::size_t lb = 1;
+    for (std::size_t p = 0; p < n_passes; ++p) {
+        const std::size_t ip = dtw.radices[p], idop = N / (lb * ip);
+        lb *= ip;
+        if (dtw.sched[p] != dif_fuse::plain) continue;
+        // A non-last pass walks the column axis in W-wide chunks, so its ido must be a
+        // multiple of W. The last pass has ido == 1 and instead reads IP contiguous
+        // elements per row, so W has to divide IP there.
+        const bool ok = p + 1 < n_passes && idop % W == 0;
+        if (ok) blk |= std::uint64_t{1} << p;
+    }
+    for (std::size_t p = 0; p + 1 < n_passes; ++p)
+        if ((blk >> p & 1u) && (blk >> (p + 1) & 1u)) es2 |= std::uint64_t{1} << p;
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (std::size_t p = 1; p < n_passes; ++p)
+            if ((dtw.ip_mask >> p & 1u) && ((es2 >> p ^ es2 >> (p - 1)) & 1u)) {
+                es2 &= ~((std::uint64_t{1} << p) | (std::uint64_t{1} << (p - 1)));
+                changed = true;
+            }
+    }
+    return es2;
+}
+
+// The last pass of a tape variant: reads the live plane, writes the transform's output.
+template<typename T, bool Forward>
+ADM_ALWAYS_INLINE void dif_tape_push_last(std::vector<dif_step<T>>& tv, const dif_twiddle_set<T>& dtw,
+                        std::size_t l1, bool ping) {
+    const std::size_t p = dtw.radices.size() - 1;
+    dif_step<T> st{};
+    st.p = p;
+    st.l1 = l1;
+    st.src = static_cast<std::uint8_t>(ping);
+    st.es = dtw.rowperm.empty() ? std::uint8_t{0} : std::uint8_t{4};
+    st.sim = static_cast<std::uint8_t>(ping);
+    poet::dispatch(poet::throw_on_no_match, dif_tape_fill_last<T, Forward>{},
+                   poet::dispatch_param<dif_radix_set>{dtw.radices[p]}, st);
+    tv.push_back(st);
+}
+
 template<typename T, bool Forward>
 void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
-    constexpr std::size_t W = xsimd::batch<T>::size;
     const std::size_t n_passes = dtw.radices.size();
     if (n_passes == 0) return;
     auto& tp = dtw.tape[Forward ? 0 : 1];
@@ -190,32 +235,8 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
         std::vector<dif_step<T>>& tv = variant == 0 ? tp.blk : tp.flat;
         tv.reserve(n_passes + 1);
 
-        std::uint64_t es2 = 0;
-        if (variant == 0) {
-            std::uint64_t blk = 0;
-            std::size_t lb = 1;
-            for (std::size_t p = 0; p < n_passes; ++p) {
-                const std::size_t ip = dtw.radices[p], idop = N / (lb * ip);
-                lb *= ip;
-                if (dtw.sched[p] != dif_fuse::plain) continue;
-                // A non-last pass walks the column axis in W-wide chunks, so its ido must be a
-                // multiple of W. The last pass has ido == 1 and instead reads IP contiguous
-                // elements per row, so W has to divide IP there.
-                const bool ok = p + 1 < n_passes ? idop % W == 0
-                                                 : false;
-                if (ok) blk |= std::uint64_t{1} << p;
-            }
-            for (std::size_t p = 0; p + 1 < n_passes; ++p)
-                if ((blk >> p & 1u) && (blk >> (p + 1) & 1u)) es2 |= std::uint64_t{1} << p;
-            for (bool changed = true; changed;) {
-                changed = false;
-                for (std::size_t p = 1; p < n_passes; ++p)
-                    if ((dtw.ip_mask >> p & 1u) && ((es2 >> p ^ es2 >> (p - 1)) & 1u)) {
-                        es2 &= ~((std::uint64_t{1} << p) | (std::uint64_t{1} << (p - 1)));
-                        changed = true;
-                    }
-            }
-        }
+        const std::uint64_t es2 =
+            variant == 0 ? compute_dif_es2(dtw, N, n_passes) : std::uint64_t{0};
         const auto es_bit = [&](std::size_t p) { return static_cast<unsigned>(es2 >> p & 1u); };
         const auto b8 = [](bool b) { return static_cast<std::uint8_t>(b); };
 
@@ -292,23 +313,7 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
             ping = !ping;
         }
 
-        {
-            const std::size_t p = n_passes - 1;
-            dif_step<T> st{};
-            st.p = p;
-            st.l1 = l1;
-            st.src = b8(ping);
-            st.es = dtw.rowperm.empty() ? std::uint8_t{0} : std::uint8_t{4};
-            const auto fill = [&](auto es2c) {
-                constexpr bool E2 = decltype(es2c)::value;
-                st.sim = E2 ? std::uint8_t{2} : b8(ping);
-                st.es = static_cast<std::uint8_t>(st.es | (E2 ? 1u : 0u));
-                poet::dispatch(poet::throw_on_no_match, dif_tape_fill_last<T, Forward, E2>{},
-                               poet::dispatch_param<dif_radix_set>{dtw.radices[p]}, st);
-            };
-            fill(std::bool_constant<false>{});
-            tv.push_back(st);
-        }
+        dif_tape_push_last<T, Forward>(tv, dtw, l1, ping);
     }
 }
 

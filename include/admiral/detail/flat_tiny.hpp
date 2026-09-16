@@ -2,9 +2,9 @@
 
 // Flat tiny row codelets: the flat_row shape pushed below N = 16. A whole
 // N <= 8 complex row is 2N fp lanes, so at the campaign widths it sits in K = 2N/W in
-// {1, 2, 4, 8} registers, or HALF a register at N = 4, W = 16 where one register braids two
-// rows. The batched incumbent (many_gather_x + kernel_batched + many_scatter_x) pays two
-// W x W lane transposes per W-row block; here the inter-register DIF stages are
+// {1, 2, 4, 8} registers. The batched incumbent (many_gather_x + kernel_batched +
+// many_scatter_x) pays two W x W lane transposes per W-row block; here the inter-register DIF
+// stages are
 // shuffle-free butterflies (reused fr_stages), the intra-register stages are one lane
 // exchange plus one two-source merge per register per stage, and the bit-reversed output
 // order resolves to whole-register store relabeling (C == 1), one lane permutation (K == 1),
@@ -37,8 +37,8 @@ namespace detail {
 //     (reroll-icelake.md:14 / reroll-genoa.md:14, dir-consistent both instruments) —
 //     same (N, W, T), opposite sign, no geometry key separates them; 3d_4 at-best-noise
 //     both hosts (ice +2.0% / genoa -0.9%, under the 2% lottery tolerance).
-//   EXCLUDED W = 16 f32 (v4 braid) and all remaining f32: never reached a beyond-floor
-//     wave measurement; static-only wins stay off by default.
+//   EXCLUDED all f32: never reached a beyond-floor wave measurement; static-only wins stay
+//     off by default.
 //   Census losers excluded at that stage: N4 W8 f32 (48 = 48 sh per block, +15% instr),
 //   N8 W16 (sh 64 -> 96 UP).
 template<unsigned N, typename V>
@@ -68,8 +68,8 @@ inline constexpr bool kFlatTiny =
 }
 
 // Stage-M intra partner map, in fp lanes: complex lane c exchanges with c ^ M (partner
-// distance M complexes); each fp lane follows its complex lane. For the braided layout the
-// map stays row-local because 2M <= N.
+// distance M complexes); each fp lane follows its complex lane; the map stays row-local
+// because 2M <= N.
 template<std::size_t M>
 struct ft_xor {
     static constexpr std::size_t get(std::size_t i, std::size_t) {
@@ -101,22 +101,6 @@ template<std::size_t M, bool Conj, typename T, std::size_t W>
     return a;
 }
 
-// Braid assembly: row 0 lands in fp lanes [0, 2N), row 1 in [2N, 4N), sourced from the two
-// masked loads. And the inverse: pull row 1 down to the low 2N lanes for its masked store
-// (the upper lanes are junk, never stored).
-template<unsigned N>
-struct ft_braid_ld {
-    static constexpr std::size_t get(std::size_t i, std::size_t size) {
-        return i < 2u * N ? i : size + (i - 2u * N);
-    }
-};
-template<unsigned N>
-struct ft_braid_hi {
-    static constexpr std::size_t get(std::size_t i, std::size_t) {
-        return i < 2u * N ? i + 2u * N : i;
-    }
-};
-
 // Bit-reversed complex lane permutation of a C-complex register (the K == 1 output order).
 // The reverse is spelled out rather than routed through ft_rev: inside a make_batch_constant
 // expansion MSVC's evaluator rejects a consteval call whose argument reads get()'s
@@ -130,14 +114,6 @@ struct ft_rev_lane {
                            : C == 8u ? ((c & 1u) << 2u) | (c & 2u) | (c >> 2u)
                                      : c) +
                (i % 2u);
-    }
-};
-// Braided two-row analogue: reverse the two low bits of each four-complex-lane half.
-struct ft_rev_lane2 {
-    static constexpr std::size_t get(std::size_t i, std::size_t) {
-        const std::size_t c = i / 2u;
-        const std::size_t b = c % 4u;
-        return 2u * ((c / 4u) * 4u + (b % 2u) * 2u + b / 2u) + (i % 2u);
     }
 };
 
@@ -242,28 +218,6 @@ ADM_ALWAYS_INLINE void flat_tiny_apply(const T* ADM_RESTRICT srcp, T* ADM_RESTRI
             (m * f).store_unaligned(dstp + o * W);
         });
     }
-}
-
-// Two rows braided in one register (4N == W): masked half loads and one merge in, the same
-// intra network (the maps are row-local), then rev2-within-half, one store of each half
-// with the scale folded. Strides are fp elements between the two braided rows.
-template<unsigned N, typename T, typename V, bool Forward>
-ADM_ALWAYS_INLINE void flat_tiny2_apply(const T* ADM_RESTRICT srcp, T* ADM_RESTRICT dstp,
-                                        std::size_t in_fp, std::size_t out_fp, V f) {
-    constexpr std::size_t W = V::size;
-    static_assert(4u * N == W, "braid: one register holds exactly two rows");
-    static_assert(N == 4, "braid derived for N = 4 (two per-row intra stages)");
-    using index = xsimd::as_unsigned_integer_t<T>;
-    using arch = typename V::arch_type;
-    const auto m = xsimd::make_batch_bool_constant<T, lane_lt<2u * N>, arch>();
-    const V a = V::load(srcp, m, xsimd::unaligned_mode{});
-    const V b = V::load(srcp + in_fp, m, xsimd::unaligned_mode{});
-    V d = xsimd::shuffle(a, b, xsimd::make_batch_constant<index, ft_braid_ld<N>, arch>());
-    ft_intra_all<N / 2, 1, Forward, T, V>(&d);
-    d = xsimd::swizzle(d, xsimd::make_batch_constant<index, ft_rev_lane2, arch>()) * f;
-    d.store(dstp, m, xsimd::unaligned_mode{});
-    const V h = xsimd::swizzle(d, xsimd::make_batch_constant<index, ft_braid_hi<N>, arch>());
-    h.store(dstp + out_fp, m, xsimd::unaligned_mode{});
 }
 
 }

@@ -516,6 +516,7 @@ plan_impl<T>::measure_route(std::size_t size, bool is_forward, std::size_t nthre
 
     route_kind cands[kMeasureMaxCandidates];
     std::size_t nc = 0;
+    bool tail_race = false;  // set only by the size > BASE_MODEL_NMAX block below
     const auto offer = [&](route_kind rk) {
         if (nc >= kMeasureMaxCandidates || !route_available(rk, size)) return;
         for (std::size_t i = 0; i < nc; ++i)
@@ -543,7 +544,9 @@ plan_impl<T>::measure_route(std::size_t size, bool is_forward, std::size_t nthre
         const large_split sp = choose_large_split(size);
         const bool shape_ok = nthreads > 1 ? sp.n2 % sp.n1 == 0
                                            : four_step_large_fused_shape<T>(size);
-        // Serially the line GATES and the race DECIDES. Below the line the two routes are not in
+        // Serially the line GATES and the race RE-CHECKS (the selection loop's
+        // kMeasureRejectRatio bar below — one noisy dif sample cannot flip the line).
+        // Below the line the two routes are not in
         // contention, and racing there would only charge the DIF arm its per-call scratch faults:
         // at 2^16 f64 that reads it 3.7x slow and elects four_step_large where the chain wins by
         // 1.33x. The same probe gate as large_route_admits keeps racing (and the probe itself)
@@ -557,6 +560,7 @@ plan_impl<T>::measure_route(std::size_t size, bool is_forward, std::size_t nthre
             offer(fallback);
             offer(fallback == route_kind::four_step_large ? route_kind::iterative_dif
                                                          : route_kind::four_step_large);
+            tail_race = true;
         }
     }
 
@@ -610,7 +614,13 @@ plan_impl<T>::measure_route(std::size_t size, bool is_forward, std::size_t nthre
     for (std::size_t c = 0; c < nc && have_budget(); ++c) {
         plan_impl<T> trial(size, is_forward, cands[c], nthreads);
         const double ns = time_plan(trial);
-        if (ns < best_ns) { best_ns = ns; pick.route = cands[c]; }
+        // The tail race re-checks the probed line; it does not re-open the election. The
+        // challenger takes the line's answer only by kMeasureRejectRatio, the bar the rep
+        // loop's early break already uses: a bare argmin flipped to the dif arm on one noisy
+        // sample past the serial line, reading 7+ sweep cells at dif times where the forced
+        // ladder had four_step 1.2-2.05x ahead (fi/wi3d large-1-D tail, 2026-09-15/16).
+        const bool better = tail_race ? ns * kMeasureRejectRatio < best_ns : ns < best_ns;
+        if (better) { best_ns = ns; pick.route = cands[c]; }
     }
 
     if (pick.route == route_kind::iterative_dif && race_chains)

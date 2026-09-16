@@ -490,5 +490,8 @@ nt=1, `nthreads > 1` guard in `plan.hpp`) is an element-keyed floor
 `kLargeRouteThreadCapBytes` anchored at the pool width P, and nt=2 f32 at the cap
 outright. Named exceptions the law accepts and effort::measure/automatic's race
 recovers: genoa's non-monotone nt=8 f32 notch and the icelake interpolation/cap
-compromise rungs. `test/` pins the constants, the law's shape with injected pool widths,
-and the seam.
+compromise rungs — but past the cost model's domain the race re-checks the line behind
+kMeasureRejectRatio (1.25), so only the sub-set of those rungs whose wrongness clears the
+bar still recovers (the notch's 1.756x and the 1.35x interpolation rung do; the 1.06-1.20x
+compromise rungs no longer do — the price of one-noisy-sample flip immunity there, wi3e).
+`test/` pins the constants, the law's shape with injected pool widths, and the seam.

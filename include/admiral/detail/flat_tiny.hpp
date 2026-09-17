@@ -91,14 +91,7 @@ struct ft_sel {
 // [u, v] pair form as fr_tw.
 template<std::size_t M, bool Conj, typename T, std::size_t W>
 [[nodiscard]] ADM_CONSTEVAL std::array<T, W> ft_tw(bool swapped) {
-    constexpr std::size_t C = W / 2;
-    std::array<T, W> a{};
-    for (std::size_t c = 0; c < C; ++c) {
-        const ct_sincos_t w = ct_sincos_turns(Conj, c % M, 2 * M);
-        a[2 * c] = swapped ? -static_cast<T>(w.s) : static_cast<T>(w.c);
-        a[2 * c + 1] = swapped ? static_cast<T>(w.s) : static_cast<T>(w.c);
-    }
-    return a;
+    return flat_tw_row<2 * M, Conj, T, W, tw_num_mod<M>>(swapped);
 }
 
 // Bit-reversed complex lane permutation of a C-complex register (the K == 1 output order).

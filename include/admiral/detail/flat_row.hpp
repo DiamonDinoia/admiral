@@ -79,31 +79,46 @@ struct fr_merge_hi {
     }
 };
 
-// Stage twiddle for DIF sub-length 2M, diff-register I: complex lanes j = I*C + c get
-// w_{2M}^j. The AoS multiply needs u = [wr, wr] per pair and v = [-wi, +wi].
-template<unsigned M, std::size_t I, bool Conj, typename T, std::size_t W>
-[[nodiscard]] ADM_CONSTEVAL std::array<T, W> fr_tw(bool swapped) {
+// Per-lane twiddle numerators for flat_tw_row: the complex lane c of a W-wide register
+// gets the factor w_Den^get(c, C) with C = W/2 complex lanes.
+template<std::size_t I>
+struct tw_num_stage {  // diff-register I of a stage of sub-length 2M: j = I*C + c
+    static constexpr std::size_t get(std::size_t c, std::size_t C) { return I * C + c; }
+};
+template<std::size_t M>
+struct tw_num_mod {  // intra stage: c mod M (the register index cancels; C multiple of 2M)
+    static constexpr std::size_t get(std::size_t c, std::size_t) { return c % M; }
+};
+template<std::size_t Num>
+struct tw_num_const {  // broadcast: every complex lane shares the one factor w_Den^Num
+    static constexpr std::size_t get(std::size_t, std::size_t) { return Num; }
+};
+
+// One AoS twiddle-pair row: u = [wr, wr] per pair, v = [-wi, +wi] (sign-flipped when
+// swapped); serves fr_tw, fr_splat and flat_tiny's ft_tw.
+template<std::size_t Den, bool Conj, typename T, std::size_t W, typename Num>
+[[nodiscard]] ADM_CONSTEVAL std::array<T, W> flat_tw_row(bool swapped) {
     constexpr std::size_t C = W / 2;
     std::array<T, W> a{};
     for (std::size_t c = 0; c < C; ++c) {
-        const ct_sincos_t w = ct_sincos_turns(Conj, I * C + c, 2 * M);
+        const ct_sincos_t w = ct_sincos_turns(Conj, Num::get(c, C), Den);
         a[2 * c] = swapped ? -static_cast<T>(w.s) : static_cast<T>(w.c);
         a[2 * c + 1] = swapped ? static_cast<T>(w.s) : static_cast<T>(w.c);
     }
     return a;
 }
 
+// Stage twiddle for DIF sub-length 2M, diff-register I: complex lanes j = I*C + c get
+// w_{2M}^j. The AoS multiply needs u = [wr, wr] per pair and v = [-wi, +wi].
+template<unsigned M, std::size_t I, bool Conj, typename T, std::size_t W>
+[[nodiscard]] ADM_CONSTEVAL std::array<T, W> fr_tw(bool swapped) {
+    return flat_tw_row<2 * M, Conj, T, W, tw_num_stage<I>>(swapped);
+}
+
 // Broadcast twiddle w_Den^Num: every complex lane of the lifted cell shares one factor.
 template<std::size_t Num, std::size_t Den, bool Conj, typename T, std::size_t W>
 [[nodiscard]] ADM_CONSTEVAL std::array<T, W> fr_splat(bool swapped) {
-    constexpr std::size_t C = W / 2;
-    const ct_sincos_t w = ct_sincos_turns(Conj, Num, Den);
-    std::array<T, W> a{};
-    for (std::size_t c = 0; c < C; ++c) {
-        a[2 * c] = swapped ? -static_cast<T>(w.s) : static_cast<T>(w.c);
-        a[2 * c + 1] = swapped ? static_cast<T>(w.s) : static_cast<T>(w.c);
-    }
-    return a;
+    return flat_tw_row<Den, Conj, T, W, tw_num_const<Num>>(swapped);
 }
 
 // out = d * u + swap_reim(d) * v, the AoS complex product against the table pair.

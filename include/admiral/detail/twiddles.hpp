@@ -55,6 +55,14 @@ using dif_radix_set = std::conditional_t<
     std::integer_sequence<std::size_t, 2, 3, 4, 5, 7, 8, 11, 16, 32, 9, 15, 25, 10>,
     std::integer_sequence<std::size_t, 2, 3, 4, 5, 7, 8, 11>>;
 
+// The one spelling for a throw-on-miss poet dispatch over dif_radix_set: dif_driver and
+// dif_col_driver route every radix probe through it.
+template<typename Maker, typename... Args>
+decltype(auto) dispatch_dif_radix(std::size_t ip, Maker&& maker, Args&&... args) {
+    return poet::dispatch(poet::throw_on_no_match, std::forward<Maker>(maker),
+                          poet::dispatch_param<dif_radix_set>{ip}, std::forward<Args>(args)...);
+}
+
 template<std::size_t... Rs>
 constexpr auto radix_seq_to_array(std::integer_sequence<std::size_t, Rs...>) {
     return std::array{Rs...};

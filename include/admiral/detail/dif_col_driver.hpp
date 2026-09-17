@@ -136,10 +136,9 @@ void col_dif_execute_ws(std::complex<T>* data,
                     data[i * axis_stride + j] = first_src[i * first_src_stride + j];
         const std::size_t ip = dtw.radices[0];
         const std::size_t ido = N / ip;
-        poet::dispatch(poet::throw_on_no_match, dif_col_pass_fused_staged_invoke<T, Forward>,
-                       poet::dispatch_param<dif_radix_set>{ip},
-                       data, axis_stride, std::size_t{1}, ido, B,
-                       dtw.passes[0].first.data(), dtw.passes[0].second.data(), scale_val);
+        dispatch_dif_radix(ip, dif_col_pass_fused_staged_invoke<T, Forward>, data, axis_stride,
+                           std::size_t{1}, ido, B, dtw.passes[0].first.data(),
+                           dtw.passes[0].second.data(), scale_val);
         return;
     }
 
@@ -149,17 +148,14 @@ void col_dif_execute_ws(std::complex<T>* data,
         const std::size_t ip = dtw.radices[0];
         const std::size_t ido = N / ip;
         if (N >= kColdifFirstMinLen) {
-            poet::dispatch(poet::throw_on_no_match,
-                           dif_col_pass_first_staged_invoke<T, Forward>,
-                           poet::dispatch_param<dif_radix_set>{ip},
-                           rd, rd_stride, cc0re, cc0im, std::size_t{1}, ido, B,
-                           dtw.passes[0].first.data(), dtw.passes[0].second.data());
+            dispatch_dif_radix(ip, dif_col_pass_first_staged_invoke<T, Forward>, rd, rd_stride,
+                               cc0re, cc0im, std::size_t{1}, ido, B,
+                               dtw.passes[0].first.data(), dtw.passes[0].second.data());
         } else
         {
-            poet::dispatch(poet::throw_on_no_match, dif_col_pass_first_invoke<T, Forward>,
-                           poet::dispatch_param<dif_radix_set>{ip},
-                           rd, rd_stride, cc0re, cc0im, std::size_t{1}, ido, B,
-                           dtw.passes[0].first.data(), dtw.passes[0].second.data());
+            dispatch_dif_radix(ip, dif_col_pass_first_invoke<T, Forward>, rd, rd_stride, cc0re,
+                               cc0im, std::size_t{1}, ido, B, dtw.passes[0].first.data(),
+                               dtw.passes[0].second.data());
         }
     }
 
@@ -174,10 +170,8 @@ void col_dif_execute_ws(std::complex<T>* data,
         T* dst_re = ping ? cc0re : cc1re;
         T* dst_im = ping ? cc0im : cc1im;
 
-        poet::dispatch(poet::throw_on_no_match, dif_col_pass_invoke<T>,
-                       poet::dispatch_param<dif_radix_set>{ip},
-                       src_re, src_im, dst_re, dst_im, l1, ido, B,
-                       dtw.passes[p].first.data(), dtw.passes[p].second.data());
+        dispatch_dif_radix(ip, dif_col_pass_invoke<T>, src_re, src_im, dst_re, dst_im, l1, ido,
+                           B, dtw.passes[p].first.data(), dtw.passes[p].second.data());
 
         l1 *= ip;
         ping = !ping;
@@ -191,16 +185,14 @@ void col_dif_execute_ws(std::complex<T>* data,
         const T* src_im = ping ? cc1im : cc0im;
 
         if (N >= kColdifDietMinLen) {
-            poet::dispatch(poet::throw_on_no_match, dif_col_pass_last_staged_invoke<T, Forward>,
-                           poet::dispatch_param<dif_radix_set>{ip},
-                           src_re, src_im, data, axis_stride, l1, ido, B,
-                           dtw.passes[p].first.data(), dtw.passes[p].second.data(), scale_val);
+            dispatch_dif_radix(ip, dif_col_pass_last_staged_invoke<T, Forward>, src_re, src_im,
+                               data, axis_stride, l1, ido, B, dtw.passes[p].first.data(),
+                               dtw.passes[p].second.data(), scale_val);
             return;
         }
-        poet::dispatch(poet::throw_on_no_match, dif_col_pass_last_invoke<T, Forward>,
-                       poet::dispatch_param<dif_radix_set>{ip},
-                       src_re, src_im, data, axis_stride, l1, ido, B,
-                       dtw.passes[p].first.data(), dtw.passes[p].second.data(), scale_val);
+        dispatch_dif_radix(ip, dif_col_pass_last_invoke<T, Forward>, src_re, src_im, data,
+                           axis_stride, l1, ido, B, dtw.passes[p].first.data(),
+                           dtw.passes[p].second.data(), scale_val);
     }
 }
 

@@ -145,8 +145,7 @@ struct dif_thunk {
 
 template<typename T>
 auto dif_thunk<T>::body(std::size_t ip) -> fn_t {
-    return poet::dispatch(poet::throw_on_no_match, dif_thunk_body_maker<T, false>{},
-                          poet::dispatch_param<dif_radix_set>{ip});
+    return dispatch_dif_radix(ip, dif_thunk_body_maker<T, false>{});
 }
 
 template<typename T>
@@ -220,8 +219,7 @@ ADM_ALWAYS_INLINE void dif_tape_push_last(std::vector<dif_step<T>>& tv, const di
     st.src = static_cast<std::uint8_t>(ping);
     st.es = dtw.rowperm.empty() ? std::uint8_t{0} : std::uint8_t{4};
     st.sim = static_cast<std::uint8_t>(ping);
-    poet::dispatch(poet::throw_on_no_match, dif_tape_fill_last<T, Forward>{},
-                   poet::dispatch_param<dif_radix_set>{dtw.radices[p]}, st);
+    dispatch_dif_radix(dtw.radices[p], dif_tape_fill_last<T, Forward>{}, st);
     tv.push_back(st);
 }
 
@@ -246,8 +244,7 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
             st.dim = static_cast<std::uint8_t>(es_bit(0) ? 2 : 0);
             st.es = static_cast<std::uint8_t>(es_bit(0) << 1);
             st.ido = N / dtw.radices[0];
-            poet::dispatch(poet::throw_on_no_match, dif_tape_fill_first<T, Forward>{},
-                           poet::dispatch_param<dif_radix_set>{dtw.radices[0]}, st);
+            dispatch_dif_radix(dtw.radices[0], dif_tape_fill_first<T, Forward>{}, st);
             tv.push_back(st);
         }
 

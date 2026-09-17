@@ -214,6 +214,48 @@ struct line_plan {
     }
 };
 
+// Reusable per-thread scratch slice for the strided-line arms, held thread-locally the way the
+// snmalloc cache holds its blocks: without it a 3d_128 execute allocated and freed heap scratch
+// 129 times (128 fused per-plane col dispatches plus the outermost axis). One slice per thread
+// suffices -- a parallel body's tid identifies a worker THREAD, and the axis dispatches of an
+// execute are sequential, so no thread ever needs two live slices. Grown on demand, never shrunk
+// until thread exit; concurrent executes of one plan stay safe because distinct threads hold
+// distinct slices. The slice an axis needs follows from its cached route: 0 for a stack-covered
+// or uncached (axis_plan/live-resolved) dispatch, which keeps those paths on master's per-body
+// allocation byte for byte. The soa_scratch external-view constructor still validates coverage
+// at run time, so the ADM_COLDIF_GEO probe arm (Bt re-priced past the cached tile) falls back
+// to a per-body allocation silently.
+template<typename T>
+struct nd_ws_slot {
+    aligned_buffer<T> buf;
+    std::size_t elems = 0;
+};
+
+// Elements the axis's per-body soa_scratch takes from the heap arm, per the cached route;
+// 0 when its scratch stays on the stack or the route is not plan-cached.
+template<typename T>
+[[nodiscard]] inline std::size_t nd_ws_need(const nd_axis_state<T>& st) noexcept {
+    if (!st.route_cached) return 0;
+    std::size_t n;
+    if (st.route == line_route::col_dif) {
+        if (st.col_codelet) return 0;
+        n = st.length * st.tile;
+        return n > SBO_MAX ? soa_scratch<T, 4>::heap_elems(n) : 0;
+    }
+    n = 2 * st.pitch * st.tile;
+    return n > SBO_MAX ? soa_scratch<T, 1>::heap_elems(n) : 0;
+}
+
+template<typename T>
+[[nodiscard]] inline T* nd_ws_slice(std::size_t need) {
+    static thread_local nd_ws_slot<T> slot;
+    if (slot.elems < need) {
+        slot.buf = make_aligned_buffer<T>(need);
+        slot.elems = need;
+    }
+    return slot.buf.get();
+}
+
 // The live route/tile/unit-count decision, from the dispatch's own (len, inner, run_len, nruns,
 // nthreads). resolve_line_plan() below is what callers use.
 template<typename T>
@@ -361,6 +403,7 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
         // already spills its induction variables around the non-inlined kernel call.
         const bool one_tile = ntiles == 1;
         assert(!one_tile || Bt == run_len);
+        const std::size_t ws_elems = nd_ws_need(st);
         parallel_for(pool, nunits, total_elems, [&](std::size_t b, std::size_t e, std::size_t) {
             std::size_t run = b / ntiles, tile = b % ntiles;
             auto* line = data + line_base(run);
@@ -380,7 +423,8 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
                 }
                 return;
             }
-            soa_scratch<T, 4> sc(len * Bt);
+            soa_scratch<T, 4> sc(len * Bt, ws_elems ? nd_ws_slice<T>(ws_elems) : nullptr,
+                                 ws_elems);
             if (one_tile) {
                 for (std::size_t r = b; r < e; ++r)
                     col_dif_dispatch<T>(forward, data + line_base(r), len, inner, run_len,
@@ -403,8 +447,10 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
     const std::size_t nunits = nruns * ngroups;
     const exec_options<T> opts{fct};
     const std::size_t pitch = st.pitch;
+    const std::size_t ws_elems = nd_ws_need(st);
     parallel_for(pool, nunits, total_elems, [&](std::size_t b, std::size_t e, std::size_t) {
-        soa_scratch<T, 1> scratch(2 * pitch * group);
+        soa_scratch<T, 1> scratch(2 * pitch * group,
+                                  ws_elems ? nd_ws_slice<T>(ws_elems) : nullptr, ws_elems);
         auto* const buf = reinterpret_cast<std::complex<T>*>(scratch.buf(0));
         for (std::size_t u = b; u < e; ++u) {
             const std::size_t c0 = (u % ngroups) * group;

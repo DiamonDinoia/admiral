@@ -139,6 +139,33 @@ TEST_CASE("soa_scratch: small-n execute uses zero heap allocations; large-n uses
 // namespace in the .cpp and a test that hardcoded one value would stop covering the far side
 // the moment the constant moved. A block under it must round-trip, and so must one over it,
 // wherever it sits.
+// The N-D engine's axes back their per-body scratch from a plan-owned arena, so a warm nd
+// plan allocates nothing through the seam no matter how big the per-axis scratch is. The
+// shapes below each exceed the SBO on at least one col_dif axis on every supported host
+// (3d_128 read 129 heap allocs per execute, 3d_32 and 2d_128 one each, before the arena
+// existed -- see the wi3b-diag-d5 receipt). The positive control is the 1-D case above,
+// which proves the counter fires on this build.
+TEST_CASE("nd plans reach zero steady-state scratch allocations", "[alloc][scratch]") {
+    for (std::vector<std::size_t> shape :
+         {std::vector<std::size_t>{64, 64, 64}, std::vector<std::size_t>{128, 128},
+          std::vector<std::size_t>{128, 128, 128}}) {
+        for (std::size_t nt : {std::size_t{1}, std::size_t{2}, std::size_t{4}}) {
+            INFO("shape=" << shape.size() << "d^" << shape[0] << " nt=" << nt);
+            admiral::plan<double> p(shape, {nt});
+            std::size_t n = 1;
+            for (const auto e : shape) n *= e;
+            std::vector<std::complex<double>> in(n, {1, 0}), out(n);
+            std::vector<std::complex<double>> d = in;
+            p.forward(in.data(), out.data());
+            p.forward(d.data());  // warm the in-place overload through the same arena
+            const long before = admiral::detail::scratch_alloc_count();
+            p.forward(in.data(), out.data());
+            p.forward(d.data());
+            REQUIRE(admiral::detail::scratch_alloc_count() == before);
+        }
+    }
+}
+
 TEST_CASE("scratch seam pairs alloc and free across the allocator line", "[alloc][scratch]") {
     constexpr std::size_t kAlign = admiral::detail::span_align<double>;
     for (std::size_t bytes : {std::size_t{1} << 20, std::size_t{8} << 20, std::size_t{32} << 20,

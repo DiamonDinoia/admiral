@@ -48,10 +48,22 @@ template<typename T, std::size_t K>
 struct soa_scratch {
     static_assert(K > 0, "K must be positive");
 
-    explicit soa_scratch(std::size_t n) : m{} {
+    explicit soa_scratch(std::size_t n) : soa_scratch(n, nullptr, 0) {}
+
+    // Elements the heap arm owns for `n` (K arms of one padded stride): the slice a plan-owned
+    // arena must provide to back this scratch externally.
+    [[nodiscard]] static std::size_t heap_elems(std::size_t n) noexcept {
+        return K * span_stride(n);
+    }
+
+    // As the plain ctor, but views `ext` instead of touching the heap when the request is
+    // heap-sized and `ext` covers it. An undersized or absent `ext` keeps the old behavior.
+    soa_scratch(std::size_t n, T* ext, std::size_t ext_elems) : m{} {
         m.stride = span_stride(n);
         if (n <= SBO_MAX) {
             m.ptr = m.stack_buf;
+        } else if (ext != nullptr && ext_elems >= heap_elems(n)) {
+            m.ptr = ext;
         } else {
             m.heap = make_aligned_buffer<T>(K * m.stride);
             m.ptr = m.heap.get();

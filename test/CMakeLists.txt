@@ -15,6 +15,7 @@ set(ADM_TEST_SOURCES
     api/test_api_fftw.cpp
     kernels/test_ct_math.cpp
     kernels/test_ct_root.cpp
+    kernels/test_dag_census.cpp
     kernels/test_factor_plan.cpp
     kernels/test_cost_model.cpp
     kernels/test_cxx_compat.cpp
@@ -139,6 +140,27 @@ if(TARGET project_sanitizers)
 endif()
 add_test(NAME test_ct_root_poison COMMAND test_ct_root_poison)
 set_tests_properties(test_ct_root_poison PROPERTIES WILL_FAIL TRUE)
+
+# Positive control for the DAG census comparator. Under ADM_DAG_TEST_POISON the
+# expected-count helper returns its oracle biased by +1, so the census REQUIREs fail and
+# the binary exits nonzero; WILL_FAIL makes that the asserted outcome. No arch gate: the
+# sym dialect records nodes identically at every ISA, and the oracle bias is ISA-free.
+add_executable(test_dag_census_poison kernels/test_dag_census.cpp)
+target_include_directories(test_dag_census_poison PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(test_dag_census_poison PRIVATE ADM_DAG_TEST_POISON=1)
+target_link_libraries(test_dag_census_poison
+    PRIVATE admiral_internal $<BUILD_INTERFACE:Catch2::Catch2WithMain>)
+if(CATCH2_INCLUDE_DIRS)
+    target_include_directories(test_dag_census_poison SYSTEM PRIVATE ${CATCH2_INCLUDE_DIRS})
+endif()
+if(TARGET project_warnings)
+    target_link_libraries(test_dag_census_poison PRIVATE project_warnings)
+endif()
+if(TARGET project_sanitizers)
+    target_link_libraries(test_dag_census_poison PRIVATE project_sanitizers)
+endif()
+add_test(NAME test_dag_census_poison COMMAND test_dag_census_poison)
+set_tests_properties(test_dag_census_poison PROPERTIES WILL_FAIL TRUE)
 
 # ELF only: `nm -D` reads a dynamic symbol table, which a PE DLL does not have, and the
 # patterns below are Itanium mangling. On Windows llvm-nm reports

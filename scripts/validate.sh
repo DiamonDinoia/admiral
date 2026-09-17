@@ -190,6 +190,38 @@ arm_valgrind() {
         check_flags "$dir" "want:-march=x86-64-v2" "not:-march=native" "not:-ffast-math" &&
         cmake --build "$dir" -j "$jobs" >>"$log" 2>&1 || {
             echo "  FAILED: configure or build (see $log)"; failed+=("valgrind"); return; }
+    # WILL_FAIL binaries (the poison twins in test/CMakeLists.txt) exit nonzero by design,
+    # and this loop runs the binaries directly, where ctest's WILL_FAIL inversion never
+    # applies. The exclusion set must come from ctest's own test metadata.
+    local wf_json wf_names='' ok=1
+    wf_json=$(ctest --test-dir "$dir" --show-only=json-v1 2>>"$log") || ok=0
+    if ((ok == 1)); then
+        local wf_expr='.tests[] | select(any(.properties[]?; .name == "WILL_FAIL" and'
+        wf_expr+=' .value == true)) | .name'
+        if command -v jq >/dev/null; then
+            wf_names=$(jq -r "$wf_expr" <<<"$wf_json") || ok=0
+        elif command -v python3 >/dev/null; then
+            wf_names=$(python3 -c '
+import json, sys
+for t in json.load(sys.stdin)["tests"]:
+    if any(p.get("name") == "WILL_FAIL" and p.get("value") is True
+           for p in t.get("properties", [])):
+        print(t["name"])' <<<"$wf_json") || ok=0
+        else
+            echo "  no jq and no python3 on PATH for ctest test metadata" >>"$log"
+            ok=0
+        fi
+    fi
+    ((ok == 1)) || { echo "  FAILED: ctest WILL_FAIL metadata (see $log)"; failed+=("valgrind"); return; }
+    # A WILL_FAIL test's name is its binary's basename (add_test(NAME test_x COMMAND test_x)).
+    local -A wffail=()
+    local t
+    for t in $wf_names; do wffail[$t]=1; done
+    if ((${#wffail[@]} > 0)); then
+        local -a wf_sorted
+        mapfile -t wf_sorted < <(printf '%s\n' "${!wffail[@]}" | LC_ALL=C sort)
+        echo "  WILL_FAIL excluded (ctest metadata): ${wf_sorted[*]}" | tee -a "$log"
+    fi
     for bin in "$dir"/test/test_*; do
         [[ -x $bin && ! -d $bin ]] || continue
         [[ $(basename "$bin") == test_ulp ]] && continue
@@ -197,6 +229,8 @@ arm_valgrind() {
         # test_alloc replaces global operator new/delete; valgrind redirects the same symbols
         # and the counter misreads (6f130b4). CI's valgrind job skips it the same way.
         [[ $(basename "$bin") == test_alloc ]] && continue
+        [[ -n ${wffail[$(basename "$bin")]:-} ]] &&
+            { echo "  skip (WILL_FAIL): $(basename "$bin")" | tee -a "$log"; continue; }
         echo "--- $(basename "$bin")" >>"$log"
         # This loop walks the binaries directly, so ctest's --timeout never reaches them.
         # Valgrind serialises threads and costs 50-100x, so a deadlocked binary never returns.

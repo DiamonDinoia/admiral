@@ -23,6 +23,157 @@
 namespace admiral {
 namespace detail {
 
+// The butterfly emit closures as named stateless functors, the invoke-table idiom: one type
+// per (T [, Forward] [, PW]) instead of one closure type per enclosing pass instantiation.
+// The texts duplicated across passes (mid-pass twiddle stores : batch, piece and masked;
+// terminal scale+interleave : piece and masked) collapse to one functor per shape; every
+// capture is a call argument, never member state (2026-08-06 SRA rejection). The
+// piece_fma/piece_fnma spellings are the baseline's, token-wise: the inst_col_* numerics pin
+// blocks compiler contraction, so the source fixes the FMA form.
+template<typename T>
+struct col_emit_twiddle_t {
+    template<typename K, typename V>
+    void operator()(const K k, V sr, V si, std::size_t a, std::size_t ido,
+                    std::size_t b, std::size_t l1, std::size_t B, const T* twre,
+                    const T* twim, T* chre, T* chim, std::size_t c) const {
+        const std::size_t p = a + ido * (b + l1 * k);
+        if constexpr (k > 0u) {
+            const V owr(twre[(k - 1u) * ido + a]);
+            const V owi(twim[(k - 1u) * ido + a]);
+            (piece_fnma(owi, si, owr * sr)).store_unaligned(chre + p * B + c);
+            (piece_fma(owr, si, owi * sr)).store_unaligned(chim + p * B + c);
+        } else {
+            sr.store_unaligned(chre + p * B + c);
+            si.store_unaligned(chim + p * B + c);
+        }
+    }
+};
+template<typename T>
+inline constexpr col_emit_twiddle_t<T> col_emit_twiddle{};
+
+template<typename T, std::size_t PW>
+struct col_emit_twiddle_piece_t {
+    template<typename K, typename V>
+    void operator()(const K k, V sr, V si, std::size_t a, std::size_t ido,
+                    std::size_t b, std::size_t l1, std::size_t B, const T* twre,
+                    const T* twim, T* chre, T* chim, std::size_t c) const {
+        const std::size_t p = a + ido * (b + l1 * k);
+        if constexpr (k > 0u) {
+            const V owr(twre[(k - 1u) * ido + a]);
+            const V owi(twim[(k - 1u) * ido + a]);
+            store_piece<T, PW>(chre + p * B + c, piece_fnma(owi, si, owr * sr));
+            store_piece<T, PW>(chim + p * B + c, piece_fma(owr, si, owi * sr));
+        } else {
+            store_piece<T, PW>(chre + p * B + c, sr);
+            store_piece<T, PW>(chim + p * B + c, si);
+        }
+    }
+};
+template<typename T, std::size_t PW>
+inline constexpr col_emit_twiddle_piece_t<T, PW> col_emit_twiddle_piece{};
+
+template<typename T>
+struct col_emit_twiddle_masked_t {
+    template<typename K, typename V, typename Mask>
+    void operator()(const K k, V sr, V si, std::size_t a, std::size_t ido,
+                    std::size_t b, std::size_t l1, std::size_t B, const T* twre,
+                    const T* twim, T* chre, T* chim, std::size_t c, const Mask m) const {
+        const std::size_t p = a + ido * (b + l1 * k);
+        if constexpr (k > 0u) {
+            const V owr(twre[(k - 1u) * ido + a]);
+            const V owi(twim[(k - 1u) * ido + a]);
+            piece_fnma(owi, si, owr * sr).store(chre + p * B + c, m, xsimd::unaligned_mode{});
+            piece_fma(owr, si, owi * sr).store(chim + p * B + c, m, xsimd::unaligned_mode{});
+        } else {
+            sr.store(chre + p * B + c, m, xsimd::unaligned_mode{});
+            si.store(chim + p * B + c, m, xsimd::unaligned_mode{});
+        }
+    }
+};
+template<typename T>
+inline constexpr col_emit_twiddle_masked_t<T> col_emit_twiddle_masked{};
+
+template<typename T, bool Forward, std::size_t PW>
+struct col_emit_terminal_piece_t {
+    template<typename K, typename V>
+    void operator()(const K k, V sr, V si, std::complex<T>* data,
+                    std::size_t axis_stride, std::size_t l1, std::size_t b,
+                    std::size_t c, T scale_val) const {
+        T* dst = reinterpret_cast<T*>(data + (b + l1 * k) * axis_stride + c);
+        const V sv(scale_val);
+        const auto [xr, xi] = plane_vals<Forward>(sr * sv, si * sv);
+        aos_interleave_piece<T, PW>(dst, xr, xi);
+    }
+};
+template<typename T, bool Forward, std::size_t PW>
+inline constexpr col_emit_terminal_piece_t<T, Forward, PW> col_emit_terminal_piece{};
+
+template<typename T, bool Forward, bool HiHalf>
+struct col_emit_terminal_masked_t {
+    template<typename K, typename AMask>
+    void operator()(const K k, xsimd::batch<T> sr, xsimd::batch<T> si,
+                    std::complex<T>* data, std::size_t axis_stride, std::size_t l1,
+                    std::size_t b, std::size_t c, T scale_val, const AMask am) const {
+        using batch = xsimd::batch<T>;
+        T* dst = reinterpret_cast<T*>(data + (b + l1 * k) * axis_stride + c);
+        const batch sv(scale_val);
+        const auto [xr, xi] = plane_vals<Forward>(sr * sv, si * sv);
+        aos_interleave_masked<HiHalf, T>(dst, xr, xi, am);
+    }
+};
+template<typename T, bool Forward, bool HiHalf>
+inline constexpr col_emit_terminal_masked_t<T, Forward, HiHalf> col_emit_terminal_masked{};
+
+// Terminal scale+interleave through a store policy: dif_col_pass_last and
+// dif_col_pass_last_staged pass the c-walk policy (col_store_peel/full/suffix), the fused
+// passes pass col_store_full.
+template<typename T, bool Forward>
+struct col_emit_terminal_t {
+    template<typename K, typename V, typename Store>
+    void operator()(const K k, V sr, V si, std::complex<T>* data,
+                    std::size_t axis_stride, std::size_t l1, std::size_t b,
+                    std::size_t c, T scale_val, const Store store, std::size_t n) const {
+        T* dst = reinterpret_cast<T*>(data + (b + l1 * k) * axis_stride + c);
+        const V sv(scale_val);
+        const auto [xr, xi] = plane_vals<Forward>(sr * sv, si * sv);
+        store(dst, xr, xi, n);
+    }
+};
+template<typename T, bool Forward>
+inline constexpr col_emit_terminal_t<T, Forward> col_emit_terminal{};
+
+// The staged passes' load callbacks. col_load_planar reads the planar scratch (last_staged),
+// col_load_aos deinterleaves the complex array (first_staged and fused_staged; the fused arm
+// is the a == 0, ido == 1 case of the same addressing, so both ride the one functor).
+template<typename T>
+struct col_load_planar_t {
+    template<typename K, typename V>
+    void operator()(const K j, V& lr, V& li, const T* ccre, const T* ccim,
+                    std::size_t ipb, std::size_t B, std::size_t c) const {
+        using batch = xsimd::batch<T>;
+        const std::size_t p = j + ipb;
+        lr = batch::load_unaligned(ccre + p * B + c);
+        li = batch::load_unaligned(ccim + p * B + c);
+    }
+};
+template<typename T>
+inline constexpr col_load_planar_t<T> col_load_planar{};
+
+template<typename T, bool Forward>
+struct col_load_aos_t {
+    template<typename K, typename V>
+    void operator()(const K j, V& lr, V& li, const std::complex<T>* data,
+                    std::size_t axis_stride, std::size_t a, std::size_t ido,
+                    std::size_t ipb, std::size_t c) const {
+        const std::size_t p = a + ido * (j + ipb);
+        const T* src = reinterpret_cast<const T*>(data + p * axis_stride + c);
+        auto [dr, di] = plane_refs<Forward>(lr, li);
+        aos_deinterleave<T>(src, dr, di);
+    }
+};
+template<typename T, bool Forward>
+inline constexpr col_load_aos_t<T, Forward> col_load_aos{};
+
 template<typename T, std::size_t IP, std::size_t PW>
 ADM_ALWAYS_INLINE void dif_col_piece(const T* ccre, const T* ccim,
                                      T* chre, T* chim,
@@ -37,16 +188,7 @@ ADM_ALWAYS_INLINE void dif_col_piece(const T* ccre, const T* ccim,
         ti[j] = load_piece<T, PW>(ccim + p * B + c);
     }
     dif_butterfly<T, IP, V>(tr, ti, [&](const auto k, V sr, V si) {
-        const std::size_t p = a + ido * (b + l1 * k);
-        if constexpr (k > 0u) {
-            const V owr(twre[(k - 1u) * ido + a]);
-            const V owi(twim[(k - 1u) * ido + a]);
-            store_piece<T, PW>(chre + p * B + c, piece_fnma(owi, si, owr * sr));
-            store_piece<T, PW>(chim + p * B + c, piece_fma(owr, si, owi * sr));
-        } else {
-            store_piece<T, PW>(chre + p * B + c, sr);
-            store_piece<T, PW>(chim + p * B + c, si);
-        }
+        col_emit_twiddle_piece<T, PW>(k, sr, si, a, ido, b, l1, B, twre, twim, chre, chim, c);
     });
 }
 
@@ -76,16 +218,7 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_col_piece_masked(const T* ccre,
         ti[j] = batch::load(ccim + p * B + c, m, xsimd::unaligned_mode{});
     }
     dif_butterfly<T, IP>(tr, ti, [&](const auto k, batch sr, batch si) {
-        const std::size_t p = a + ido * (b + l1 * k);
-        if constexpr (k > 0u) {
-            const batch owr(twre[(k - 1u) * ido + a]);
-            const batch owi(twim[(k - 1u) * ido + a]);
-            piece_fnma(owi, si, owr * sr).store(chre + p * B + c, m, xsimd::unaligned_mode{});
-            piece_fma(owr, si, owi * sr).store(chim + p * B + c, m, xsimd::unaligned_mode{});
-        } else {
-            sr.store(chre + p * B + c, m, xsimd::unaligned_mode{});
-            si.store(chim + p * B + c, m, xsimd::unaligned_mode{});
-        }
+        col_emit_twiddle_masked<T>(k, sr, si, a, ido, b, l1, B, twre, twim, chre, chim, c, m);
     });
 }
 
@@ -106,16 +239,7 @@ ADM_ALWAYS_INLINE void dif_col_piece_first(const std::complex<T>* data,
                                       dr, di);
     }
     dif_butterfly<T, IP, V>(tr, ti, [&](const auto k, V sr, V si) {
-        const std::size_t p = a + ido * (b + l1 * k);
-        if constexpr (k > 0u) {
-            const V owr(twre[(k - 1u) * ido + a]);
-            const V owi(twim[(k - 1u) * ido + a]);
-            store_piece<T, PW>(chre + p * B + c, piece_fnma(owi, si, owr * sr));
-            store_piece<T, PW>(chim + p * B + c, piece_fma(owr, si, owi * sr));
-        } else {
-            store_piece<T, PW>(chre + p * B + c, sr);
-            store_piece<T, PW>(chim + p * B + c, si);
-        }
+        col_emit_twiddle_piece<T, PW>(k, sr, si, a, ido, b, l1, B, twre, twim, chre, chim, c);
     });
 }
 
@@ -134,16 +258,7 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_col_piece_first_masked(
                                            dr, di, am);
     }
     dif_butterfly<T, IP>(tr, ti, [&](const auto k, batch sr, batch si) {
-        const std::size_t p = a + ido * (b + l1 * k);
-        if constexpr (k > 0u) {
-            const batch owr(twre[(k - 1u) * ido + a]);
-            const batch owi(twim[(k - 1u) * ido + a]);
-            piece_fnma(owi, si, owr * sr).store(chre + p * B + c, m, xsimd::unaligned_mode{});
-            piece_fma(owr, si, owi * sr).store(chim + p * B + c, m, xsimd::unaligned_mode{});
-        } else {
-            sr.store(chre + p * B + c, m, xsimd::unaligned_mode{});
-            si.store(chim + p * B + c, m, xsimd::unaligned_mode{});
-        }
+        col_emit_twiddle_masked<T>(k, sr, si, a, ido, b, l1, B, twre, twim, chre, chim, c, m);
     });
 }
 
@@ -160,10 +275,8 @@ ADM_ALWAYS_INLINE void dif_col_piece_last(const T* ccre, const T* ccim,
         ti[j] = load_piece<T, PW>(ccim + p * B + c);
     }
     dif_butterfly_terminal<T, IP, V>(tr, ti, [&](const auto k, V sr, V si) {
-        T* dst = reinterpret_cast<T*>(data + (b + l1 * k) * axis_stride + c);
-        const V sv(scale_val);
-        const auto [xr, xi] = plane_vals<Forward>(sr * sv, si * sv);
-        aos_interleave_piece<T, PW>(dst, xr, xi);
+        col_emit_terminal_piece<T, Forward, PW>(k, sr, si, data, axis_stride, l1, b, c,
+                                                scale_val);
     });
 }
 
@@ -180,10 +293,8 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_col_piece_last_masked(
         ti[j] = batch::load(ccim + p * B + c, m, xsimd::unaligned_mode{});
     }
     dif_butterfly_terminal<T, IP>(tr, ti, [&](const auto k, batch sr, batch si) {
-        T* dst = reinterpret_cast<T*>(data + (b + l1 * k) * axis_stride + c);
-        const batch sv(scale_val);
-        const auto [xr, xi] = plane_vals<Forward>(sr * sv, si * sv);
-        aos_interleave_masked<HiHalf, T>(dst, xr, xi, am);
+        col_emit_terminal_masked<T, Forward, HiHalf>(k, sr, si, data, axis_stride, l1, b, c,
+                                                     scale_val, am);
     });
 }
 
@@ -199,10 +310,8 @@ ADM_ALWAYS_INLINE void dif_col_piece_fused(std::complex<T>* data,
             reinterpret_cast<const T*>(data + (j + IP * b) * axis_stride + c), dr, di);
     }
     dif_butterfly_terminal<T, IP, V>(tr, ti, [&](const auto k, V sr, V si) {
-        T* dst = reinterpret_cast<T*>(data + (b + l1 * k) * axis_stride + c);
-        const V sv(scale_val);
-        const auto [xr, xi] = plane_vals<Forward>(sr * sv, si * sv);
-        aos_interleave_piece<T, PW>(dst, xr, xi);
+        col_emit_terminal_piece<T, Forward, PW>(k, sr, si, data, axis_stride, l1, b, c,
+                                                scale_val);
     });
 }
 
@@ -491,16 +600,8 @@ void dif_col_pass(const T* ccre, const T* ccim,
                         ti[j] = batch::load_unaligned(ccim + p * B + c);
                     }
                     dif_butterfly<T, IP>(tr, ti, [&](const auto k, batch sr, batch si) {
-                        const std::size_t p = a + ido * (b + l1 * k);
-                        if constexpr (k > 0u) {
-                            const batch owr(twre[(k - 1u) * ido + a]);
-                            const batch owi(twim[(k - 1u) * ido + a]);
-                            (piece_fnma(owi, si, owr * sr)).store_unaligned(chre + p * B + c);
-                            (piece_fma(owr, si, owi * sr)).store_unaligned(chim + p * B + c);
-                        } else {
-                            sr.store_unaligned(chre + p * B + c);
-                            si.store_unaligned(chim + p * B + c);
-                        }
+                        col_emit_twiddle<T>(k, sr, si, a, ido, b, l1, B, twre, twim, chre,
+                                            chim, c);
                     });
                 }
             }
@@ -535,16 +636,8 @@ void dif_col_pass_first(const std::complex<T>* data, std::size_t axis_stride,
                         aos_deinterleave<T>(src, dr, di);
                     }
                     dif_butterfly<T, IP>(tr, ti, [&](const auto k, batch sr, batch si) {
-                        const std::size_t p = a + ido * (b + l1 * k);
-                        if constexpr (k > 0u) {
-                            const batch owr(twre[(k - 1u) * ido + a]);
-                            const batch owi(twim[(k - 1u) * ido + a]);
-                            (piece_fnma(owi, si, owr * sr)).store_unaligned(chre + p * B + c);
-                            (piece_fma(owr, si, owi * sr)).store_unaligned(chim + p * B + c);
-                        } else {
-                            sr.store_unaligned(chre + p * B + c);
-                            si.store_unaligned(chim + p * B + c);
-                        }
+                        col_emit_twiddle<T>(k, sr, si, a, ido, b, l1, B, twre, twim, chre,
+                                            chim, c);
                     });
                 }
             }
@@ -568,6 +661,40 @@ inline constexpr std::size_t kColdifDietMinLen = 1024;
 // pass's L3-resident regression class, while the first pass's wins sit at chains 128/256.
 inline constexpr std::size_t kColdifFirstMinLen = 128;
 
+// The last-pass store policies as named stateless functors, the invoke-table idiom: one type
+// per T instead of one closure type per pass instantiation (the trio was cloned in
+// dif_col_pass_last and dif_col_pass_last_staged). The peel/suffix count is a call argument,
+// never member state: value-carrying functor objects defeat gcc's SRA (2026-08-06 rejection).
+template<typename T>
+struct col_store_peel_t {
+    template<typename V>
+    void operator()(T* d, V r, V i, std::size_t n) const {
+        aos_interleave_prefix_n<T>(d, r, i, n);
+    }
+};
+template<typename T>
+inline constexpr col_store_peel_t<T> col_store_peel{};
+
+template<typename T>
+struct col_store_full_t {
+    template<typename V>
+    void operator()(T* d, V r, V i, std::size_t) const {
+        aos_interleave<T>(d, r, i);
+    }
+};
+template<typename T>
+inline constexpr col_store_full_t<T> col_store_full{};
+
+template<typename T>
+struct col_store_suffix_t {
+    template<typename V>
+    void operator()(T* d, V r, V i, std::size_t m0) const {
+        aos_interleave_suffix_n<T>(d, r, i, m0);
+    }
+};
+template<typename T>
+inline constexpr col_store_suffix_t<T> col_store_suffix{};
+
 template<typename T, bool Forward, std::size_t IP>
 void dif_col_pass_last(const T* ccre, const T* ccim,
                        std::complex<T>* data, std::size_t axis_stride,
@@ -587,7 +714,7 @@ void dif_col_pass_last(const T* ccre, const T* ccim,
     const std::size_t peel = aos_store_align_peel<T>(data, axis_stride, B);
 
     for (std::size_t b = 0; b < l1; ++b) {
-        const auto vec_block = [&](std::size_t c, auto store) {
+        const auto vec_block = [&](std::size_t c, auto store, std::size_t n) {
             batch tr[IP], ti[IP];
             for (std::size_t j = 0; j < IP; ++j) {
                 const std::size_t p = j + IP * b;
@@ -595,23 +722,19 @@ void dif_col_pass_last(const T* ccre, const T* ccim,
                 ti[j] = batch::load_unaligned(ccim + p * B + c);
             }
             dif_butterfly_terminal<T, IP>(tr, ti, [&](const auto k, batch sr, batch si) {
-                const std::size_t p = b + l1 * k;
-                T* dst = reinterpret_cast<T*>(data + p * axis_stride + c);
-                const batch sv(scale_val);
-                const auto [xr, xi] = plane_vals<Forward>(sr * sv, si * sv);
-                store(dst, xr, xi);
+                col_emit_terminal<T, Forward>(k, sr, si, data, axis_stride, l1, b, c,
+                                              scale_val, store, n);
             });
         };
         std::size_t c = 0;
         if (peel > 0) {
-            vec_block(0, [peel](T* d, batch r, batch i) { aos_interleave_prefix_n<T>(d, r, i, peel); });
+            vec_block(0, col_store_peel<T>, peel);
             c = peel;
         }
-        const auto full_store = [](T* d, batch r, batch i) { aos_interleave<T>(d, r, i); };
-        for (; c + W <= B; c += W) vec_block(c, full_store);
+        for (; c + W <= B; c += W) vec_block(c, col_store_full<T>, 0);
         if (c < B) {
             const std::size_t m0 = c - (B - W);
-            vec_block(B - W, [m0](T* d, batch r, batch i) { aos_interleave_suffix_n<T>(d, r, i, m0); });
+            vec_block(B - W, col_store_suffix<T>, m0);
         }
     }
 }
@@ -633,31 +756,25 @@ void dif_col_pass_last_staged(const T* ccre, const T* ccim,
     const std::size_t peel = aos_store_align_peel<T>(data, axis_stride, B);
 
     for (std::size_t b = 0; b < l1; ++b) {
-        const auto vec_block = [&](std::size_t c, auto store) {
+        const auto vec_block = [&](std::size_t c, auto store, std::size_t n) {
             const auto load_in = [&](const auto j, batch& lr, batch& li) {
-                const std::size_t p = j + IP * b;
-                lr = batch::load_unaligned(ccre + p * B + c);
-                li = batch::load_unaligned(ccim + p * B + c);
+                col_load_planar<T>(j, lr, li, ccre, ccim, IP * b, B, c);
             };
-            const batch sv(scale_val);
-            staged_dif_butterfly<T, IP, batch>(load_in,
-                                               [&](const auto k, batch sr, batch si) {
-                    T* dst =
-                        reinterpret_cast<T*>(data + (b + l1 * k) * axis_stride + c);
-                    const auto [xr, xi] = plane_vals<Forward>(sr * sv, si * sv);
-                    store(dst, xr, xi);
+            staged_dif_butterfly<T, IP, batch>(
+                load_in, [&](const auto k, batch sr, batch si) {
+                    col_emit_terminal<T, Forward>(k, sr, si, data, axis_stride, l1, b, c,
+                                                  scale_val, store, n);
                 });
         };
         std::size_t c = 0;
         if (peel > 0) {
-            vec_block(0, [peel](T* d, batch r, batch i) { aos_interleave_prefix_n<T>(d, r, i, peel); });
+            vec_block(0, col_store_peel<T>, peel);
             c = peel;
         }
-        const auto full_store = [](T* d, batch r, batch i) { aos_interleave<T>(d, r, i); };
-        for (; c + W <= B; c += W) vec_block(c, full_store);
+        for (; c + W <= B; c += W) vec_block(c, col_store_full<T>, 0);
         if (c < B) {
             const std::size_t m0 = c - (B - W);
-            vec_block(B - W, [m0](T* d, batch r, batch i) { aos_interleave_suffix_n<T>(d, r, i, m0); });
+            vec_block(B - W, col_store_suffix<T>, m0);
         }
     }
 }
@@ -683,11 +800,8 @@ void dif_col_pass_fused(std::complex<T>* data, std::size_t axis_stride,
                     aos_deinterleave<T>(src, dr, di);
                 }
                 dif_butterfly_terminal<T, IP>(tr, ti, [&](const auto k, batch sr, batch si) {
-                    const std::size_t p = b + l1 * k;
-                    T* dst = reinterpret_cast<T*>(data + p * axis_stride + c);
-                    const batch sv(scale_val);
-                    const auto [xr, xi] = plane_vals<Forward>(sr * sv, si * sv);
-                    aos_interleave<T>(dst, xr, xi);
+                    col_emit_terminal<T, Forward>(k, sr, si, data, axis_stride, l1, b, c,
+                                                  scale_val, col_store_full<T>, 0);
                 });
             }
         }
@@ -716,24 +830,13 @@ void dif_col_pass_first_staged(const std::complex<T>* data, std::size_t axis_str
             for (std::size_t a = 0; a < ido; ++a) {
                 for (std::size_t c = 0; c < cfull; c += W) {
                     const auto load_in = [&](const auto j, batch& lr, batch& li) {
-                        const std::size_t p = a + ido * (j + IP * b);
-                        const T* src =
-                            reinterpret_cast<const T*>(data + p * axis_stride + c);
-                        auto [dr, di] = plane_refs<Forward>(lr, li);
-                        aos_deinterleave<T>(src, dr, di);
+                        col_load_aos<T, Forward>(j, lr, li, data, axis_stride, a, ido, IP * b,
+                                                 c);
                     };
                     staged_dif_butterfly<T, IP, batch>(
                         load_in, [&](const auto k, batch sr, batch si) {
-                            const std::size_t p = a + ido * (b + l1 * k);
-                            if constexpr (k > 0u) {
-                                const batch owr(twre[(k - 1u) * ido + a]);
-                                const batch owi(twim[(k - 1u) * ido + a]);
-                                (piece_fnma(owi, si, owr * sr)).store_unaligned(chre + p * B + c);
-                                (piece_fma(owr, si, owi * sr)).store_unaligned(chim + p * B + c);
-                            } else {
-                                sr.store_unaligned(chre + p * B + c);
-                                si.store_unaligned(chim + p * B + c);
-                            }
+                            col_emit_twiddle<T>(k, sr, si, a, ido, b, l1, B, twre, twim,
+                                                chre, chim, c);
                         });
                 }
             }
@@ -763,17 +866,12 @@ void dif_col_pass_fused_staged(std::complex<T>* data, std::size_t axis_stride,
         for (std::size_t b = 0; b < l1; ++b) {
             for (std::size_t c = 0; c < cfull; c += W) {
                 const auto load_in = [&](const auto j, batch& lr, batch& li) {
-                    const T* src =
-                        reinterpret_cast<const T*>(data + (j + IP * b) * axis_stride + c);
-                    auto [dr, di] = plane_refs<Forward>(lr, li);
-                    aos_deinterleave<T>(src, dr, di);
+                    col_load_aos<T, Forward>(j, lr, li, data, axis_stride, 0, 1, IP * b, c);
                 };
                 staged_dif_butterfly<T, IP, batch>(load_in,
                                                    [&](const auto k, batch sr, batch si) {
-                    T* dst = reinterpret_cast<T*>(data + (b + l1 * k) * axis_stride + c);
-                    const batch sv(scale_val);
-                    const auto [xr, xi] = plane_vals<Forward>(sr * sv, si * sv);
-                    aos_interleave<T>(dst, xr, xi);
+                    col_emit_terminal<T, Forward>(k, sr, si, data, axis_stride, l1, b, c,
+                                                  scale_val, col_store_full<T>, 0);
                 });
             }
         }

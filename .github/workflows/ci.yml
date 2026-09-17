@@ -261,6 +261,24 @@ jobs:
       - name: Memcheck
         run: |
           ran=0
+          # WILL_FAIL binaries (the poison twins in test/CMakeLists.txt) exit nonzero by
+          # design, and this loop runs the binaries directly, where ctest's WILL_FAIL
+          # inversion never applies. The exclusion set comes from ctest's own metadata
+          # (same mechanism as scripts/validate.sh's valgrind arm, 37cd1c0); a metadata
+          # failure fails closed instead of running unfiltered.
+          wf_json=$(ctest --test-dir build --show-only=json-v1) || exit 1
+          # A WILL_FAIL test's name is its binary's basename (add_test(NAME test_x ...)).
+          wf_expr='.tests[] | select(any(.properties[]?; .name == "WILL_FAIL" and'
+          wf_expr+=' .value == true)) | .name'
+          if command -v jq >/dev/null; then
+            wf_names=$(jq -r "$wf_expr" <<<"$wf_json") || exit 1
+          elif command -v python3 >/dev/null; then
+            wf_names=$(python3 -c "import json,sys;[print(t['name']) for t in json.load(sys.stdin)['tests'] if any(p.get('name')=='WILL_FAIL' and p.get('value') is True for p in t.get('properties',[]))]" <<<"$wf_json") || exit 1
+          else
+            echo "no jq and no python3 on PATH for ctest test metadata"
+            exit 1
+          fi
+          wffail=" $(echo "$wf_names" | tr '\n' ' ')"
           for t in build/test/test_*; do
             [ -x "$t" ] || continue
             [ "$(basename "$t")" = test_ulp ] && continue
@@ -268,6 +286,10 @@ jobs:
             # test_alloc replaces global operator new/delete; valgrind redirects the same
             # symbols, so its counter and block families are meaningless under memcheck.
             [ "$(basename "$t")" = test_alloc ] && continue
+            case "$wffail" in *" $(basename "$t") "*)
+              echo "--- $t (skipped, WILL_FAIL)"
+              continue;;
+            esac
             echo "--- $t"
             # The loop walks the binaries directly, so no ctest --timeout reaches them, and a
             # deadlocked binary under valgrind never returns. Slowest measured binary is

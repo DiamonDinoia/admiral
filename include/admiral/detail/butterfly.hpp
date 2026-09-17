@@ -39,7 +39,7 @@ ADM_ALWAYS_INLINE void radix_sym_dft(const V (&xr)[IP],
             sr = sr + ar[m];
             si = si + ai[m];
         });
-        emit(std::integral_constant<std::size_t, 0>{}, sr, si);
+        emit(IC<0>{}, sr, si);
     }
     poet::static_for<1, H + 1>([&](const auto k) {
         V PR = xr[0], PI = xi[0], QR = V(T(0)), QI = V(T(0));
@@ -52,8 +52,8 @@ ADM_ALWAYS_INLINE void radix_sym_dft(const V (&xr)[IP],
             QR = piece_fma(V(static_cast<T>(w.s)), di[m], QR);
             QI = piece_fma(V(static_cast<T>(w.s)), dr[m], QI);
         });
-        emit(std::integral_constant<std::size_t, k>{}, PR + QR, PI - QI);
-        emit(std::integral_constant<std::size_t, IP - k>{}, PR - QR, PI + QI);
+        emit(IC<k>{}, PR + QR, PI - QI);
+        emit(IC<IP - k>{}, PR - QR, PI + QI);
     });
 }
 
@@ -100,7 +100,7 @@ ADM_ALWAYS_INLINE void pfa_dif_butterfly(const V (&tr)[N1 * N2],
         sub_dft<T, N2>(ar[k1], ai[k1], [&](const auto k2, V yr, V yi) {
             constexpr auto out = crt_index<N1, N2, k1, k2>;
             static_assert(out < IP, "CRT index must exist for coprime N1,N2");
-            emit(std::integral_constant<std::size_t, out>{}, yr, yi);
+            emit(IC<out>{}, yr, yi);
         });
     });
 }
@@ -150,8 +150,8 @@ ADM_ALWAYS_INLINE void pow2_dif_butterfly(const V (&xr)[IP],
                                           Emit&& emit) {
     static_assert(IP >= 2 && detail::has_single_bit(IP), "pow2_dif_butterfly: IP must be a power of two >= 2");
     if constexpr (IP == 2) {
-        emit(std::integral_constant<std::size_t, 0>{}, xr[0] + xr[1], xi[0] + xi[1]);
-        emit(std::integral_constant<std::size_t, 1>{}, xr[0] - xr[1], xi[0] - xi[1]);
+        emit(IC<0>{}, xr[0] + xr[1], xi[0] + xi[1]);
+        emit(IC<1>{}, xr[0] - xr[1], xi[0] - xi[1]);
     } else {
         constexpr std::size_t H = IP / 2;
         {
@@ -161,7 +161,7 @@ ADM_ALWAYS_INLINE void pow2_dif_butterfly(const V (&xr)[IP],
                 ei[n] = xi[n] + xi[n + H];
             });
             pow2_dif_butterfly<T, H, V>(er, ei, [&](auto Kc, V yr, V yi) {
-                emit(std::integral_constant<std::size_t, 2 * Kc>{}, yr, yi);
+                emit(IC<2 * Kc>{}, yr, yi);
             });
         }
         {
@@ -173,7 +173,7 @@ ADM_ALWAYS_INLINE void pow2_dif_butterfly(const V (&xr)[IP],
                 fi[n] = ti;
             });
             pow2_dif_butterfly<T, H, V>(fr, fi, [&](auto Kc, V yr, V yi) {
-                emit(std::integral_constant<std::size_t, 2 * Kc + 1>{}, yr, yi);
+                emit(IC<2 * Kc + 1>{}, yr, yi);
             });
         }
     }
@@ -203,7 +203,7 @@ ADM_ALWAYS_INLINE void ct_dif_butterfly(const V (&tr)[N1 * N2],
 
     poet::static_for<0, N1>([&](const auto r) {
         radix_sym_dft<T, N2>(ar[r], ai[r], [&](const auto k2, V yr, V yi) {
-            emit(std::integral_constant<std::size_t, k2 * N1 + r>{}, yr, yi);
+            emit(IC<k2 * N1 + r>{}, yr, yi);
         });
     });
 }
@@ -237,7 +237,7 @@ ADM_ALWAYS_INLINE void dif_butterfly(const V (&tr)[IP],
                 si = piece_fma(V(static_cast<T>(w.s)), tr[jj],
                                piece_fma(V(static_cast<T>(w.c)), ti[jj], si));
             });
-            emit(std::integral_constant<std::size_t, k>{}, sr, si);
+            emit(IC<k>{}, sr, si);
         });
     }
 }
@@ -288,7 +288,7 @@ ADM_ALWAYS_INLINE void staged_dif_butterfly(Load&& load, Emit&& emit) {
     poet::static_for<0, N2>([&](const auto n) ADM_LAMBDA_ALWAYS_INLINE {
         V br[N1], bi[N1];
         poet::static_for<0, N1>([&](const auto m) ADM_LAMBDA_ALWAYS_INLINE {
-            load(std::integral_constant<std::size_t, n + N2 * m>{}, br[m], bi[m]);
+            load(IC<n + N2 * m>{}, br[m], bi[m]);
         });
         sub_dft<T, N1, V>(br, bi, [&](const auto r, V yr, V yi) ADM_LAMBDA_ALWAYS_INLINE {
             constexpr std::size_t e = (r * n) % IP;
@@ -301,7 +301,7 @@ ADM_ALWAYS_INLINE void staged_dif_butterfly(Load&& load, Emit&& emit) {
         constexpr std::size_t off = r * N2 * W;
         staged_dif_stage_b<T, N2, 1u, V>(
             ar + off, ai + off, [&](const auto k2, V yr, V yi) ADM_LAMBDA_ALWAYS_INLINE {
-                emit(std::integral_constant<std::size_t, r + N1 * k2>{}, yr, yi);
+                emit(IC<r + N1 * k2>{}, yr, yi);
             });
     });
 }

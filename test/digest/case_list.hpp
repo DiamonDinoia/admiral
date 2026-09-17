@@ -14,7 +14,7 @@
 //      re-checked against the emitted count at run time;
 //   2. the driver fails unless case kUlpControlCase is still named kUlpControlName;
 //   3. check_digest.sh treats any id whose tag/name drifted as a structural error.
-// Growth budget: at most 5% of the list length per landing (<= 67 cases at 1344).
+// Growth budget: at most 5% of the list length per landing (<= 67 cases at 1348).
 // A catalog-structural landing may exceed it only with a `receipt:` trailer.
 // See test/digest/README.md.
 

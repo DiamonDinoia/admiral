@@ -280,7 +280,7 @@ template<typename T, typename F>
         constexpr std::size_t Rn{R.value};
         if constexpr (((kPieceWidths<T> >> Rn) & 1u) == 0u)
             if (!hit && Rn == rem) {
-                f(std::integral_constant<std::size_t, Rn>{});
+                f(IC<Rn>{});
                 hit = true;
             }
     });
@@ -296,7 +296,7 @@ template<typename T, typename F>
         constexpr std::size_t PW = std::size_t{1} << E.value;
         if constexpr (((kPieceWidths<T> >> PW) & 1u) != 0u) {
             if (!hit && rem == PW) {
-                f(std::integral_constant<std::size_t, PW>{});
+                f(IC<PW>{});
                 hit = true;
             }
         }

@@ -267,7 +267,7 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                     }
                 });
                 pow2_dif_butterfly<T, H, batch>(hr, hi, [&](auto Kc, batch yr, batch yi) {
-                    emit_h(std::integral_constant<std::size_t, 2 * Kc + ODD>{}, yr, yi);
+                    emit_h(IC<2 * Kc + ODD>{}, yr, yi);
                 });
             };
             std::size_t a = amain;
@@ -282,8 +282,8 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                     if (ido >= W && (ido - ah) * 2 >= W) { do_half(ido - W, ODD); ah = ido; }
                     return ah;
                 };
-                sweep(std::integral_constant<bool, false>{});
-                a = sweep(std::integral_constant<bool, true>{});
+                sweep(std::bool_constant<false>{});
+                a = sweep(std::bool_constant<true>{});
             } else if constexpr (kSplitCols) {
                 constexpr std::size_t H = IP / 2;
                 auto ip_combine = [&](std::size_t aa) ADM_LAMBDA_ALWAYS_INLINE {
@@ -332,9 +332,9 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                     const std::size_t hi = std::min(t + kTileCols, afull);
                     for (std::size_t ah = t; ah < hi; ah += W) ip_combine(ah);
                     for (std::size_t ah = t; ah < hi; ah += W)
-                        ip_half(ah, std::integral_constant<bool, false>{});
+                        ip_half(ah, std::bool_constant<false>{});
                     for (std::size_t ah = t; ah < hi; ah += W)
-                        ip_half(ah, std::integral_constant<bool, true>{});
+                        ip_half(ah, std::bool_constant<true>{});
                 }
                 a = afull;
             } else if constexpr (U > 1) {
@@ -1033,11 +1033,10 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
                 });
             };
             poet::static_for<0, IP / W>([&](auto Tc) {
-                load_tile(std::integral_constant<std::size_t,
-                          Tc * W>{});
+                load_tile(IC<Tc * W>{});
             });
             if constexpr (IP % W != 0)
-                load_tile(std::integral_constant<std::size_t, IP - W>{});
+                load_tile(IC<IP - W>{});
         } else {
             using arch = typename batch_t::arch_type;
             constexpr auto mask = xsimd::make_batch_bool_constant<T, lane_lt<IP>, arch>();

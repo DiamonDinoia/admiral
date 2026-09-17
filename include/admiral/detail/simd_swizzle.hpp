@@ -132,12 +132,12 @@ inline constexpr std::uint64_t kPieceWidths =
 
 template<typename T, std::size_t PW, bool Overlap, typename Emit>
 ADM_ALWAYS_INLINE void sized_cover(std::size_t i, std::size_t n, const Emit& emit) {
-    for (; i + PW <= n; i += PW) emit(std::integral_constant<std::size_t, PW>{}, i);
+    for (; i + PW <= n; i += PW) emit(IC<PW>{}, i);
     if constexpr (PW > 1) {
         if constexpr (Overlap) {
             const std::size_t rem = n - i;
             if (rem != 0 && n >= PW && 2 * rem >= PW && !((kPieceWidths<T> >> rem) & 1u)) {
-                emit(std::integral_constant<std::size_t, PW>{}, n - PW);
+                emit(IC<PW>{}, n - PW);
                 return;
             }
         }

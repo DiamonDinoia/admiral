@@ -224,8 +224,8 @@ ADM_NOINLINE void good_thomas_execute(const std::complex<T>* in,
         }
     };
     poet::static_for<0, NS>([&](const auto s) {
-        const Batch lo = load_tail(std::integral_constant<std::size_t, s * W * 2>{});
-        const Batch hi = load_tail(std::integral_constant<std::size_t, s * W * 2 + W>{});
+        const Batch lo = load_tail(IC<s * W * 2>{});
+        const Batch hi = load_tail(IC<s * W * 2 + W>{});
         re_src[s] = xsimd::shuffle(lo, hi, xsimd::make_batch_constant<U, aos_even_lane, Arch>());
         im_src[s] = xsimd::shuffle(lo, hi, xsimd::make_batch_constant<U, aos_odd_lane,  Arch>());
     });
@@ -285,8 +285,8 @@ ADM_NOINLINE void good_thomas_execute(const std::complex<T>* in,
         }
     };
     poet::static_for<0, NS>([&](const auto s) {
-        store_tail(std::integral_constant<std::size_t, s * W * 2>{}, xsimd::zip_lo(Or[s], Oi[s]));
-        store_tail(std::integral_constant<std::size_t, s * W * 2 + W>{}, xsimd::zip_hi(Or[s], Oi[s]));
+        store_tail(IC<s * W * 2>{}, xsimd::zip_lo(Or[s], Oi[s]));
+        store_tail(IC<s * W * 2 + W>{}, xsimd::zip_hi(Or[s], Oi[s]));
     });
 }
 

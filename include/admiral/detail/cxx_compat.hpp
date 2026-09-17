@@ -295,5 +295,8 @@ template <class It, class V>
     return first;
 }
 
+template <std::size_t N>
+using IC = std::integral_constant<std::size_t, N>;
+
 }
 }

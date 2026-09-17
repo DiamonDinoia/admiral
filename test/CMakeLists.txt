@@ -50,6 +50,18 @@ set(ADM_TEST_EXTRA_LIBS_test_api_fftw       admiral_fftw_objects)
 set(ADM_TEST_EXTRA_INCLUDES_test_granule        ${PROJECT_SOURCE_DIR}/src)
 set(ADM_TEST_EXTRA_INCLUDES_test_granule_poison ${PROJECT_SOURCE_DIR}/src)
 
+# clang's default constant-evaluation budgets cap library code, not whole-lattice test
+# sweeps: test_ct_root folds an 8-chunk 512-den lattice at namespace scope (clang 19:
+# "constexpr evaluation hit maximum step limit", default -fconstexpr-steps=1048576) and
+# test_dag_census folds a 405-argument push_turn comma chain ("use -fbracket-depth=N",
+# default 256). gcc's defaults cover the same TUs unaided. The sanitize arm already
+# passes -fconstexpr-steps to clang globally; carrying the two flags on the targets
+# covers every preset. 1024 is 2.5x the largest fold (dens<...> max 405).
+set(ADM_TEST_EXTRA_OPTIONS_test_ct_root
+    $<$<AND:$<CXX_COMPILER_ID:Clang,AppleClang>,$<NOT:$<PLATFORM_ID:Windows>>>:-fconstexpr-steps=100000000>)
+set(ADM_TEST_EXTRA_OPTIONS_test_dag_census
+    $<$<AND:$<CXX_COMPILER_ID:Clang,AppleClang>,$<NOT:$<PLATFORM_ID:Windows>>>:-fbracket-depth=1024>)
+
 foreach(test_src IN LISTS ADM_TEST_SOURCES)
     get_filename_component(test_name ${test_src} NAME_WE)
 
@@ -57,6 +69,7 @@ foreach(test_src IN LISTS ADM_TEST_SOURCES)
 
     target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
         ${ADM_TEST_EXTRA_INCLUDES_${test_name}})
+    target_compile_options(${test_name} PRIVATE ${ADM_TEST_EXTRA_OPTIONS_${test_name}})
 
     target_link_libraries(${test_name}
         PRIVATE
@@ -127,6 +140,7 @@ endif()
 add_executable(test_ct_root_poison kernels/test_ct_root.cpp)
 target_include_directories(test_ct_root_poison PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(test_ct_root_poison PRIVATE ADM_CT_ROOT_POISON=1)
+target_compile_options(test_ct_root_poison PRIVATE ${ADM_TEST_EXTRA_OPTIONS_test_ct_root})
 target_link_libraries(test_ct_root_poison
     PRIVATE admiral_internal $<BUILD_INTERFACE:Catch2::Catch2WithMain>)
 if(CATCH2_INCLUDE_DIRS)
@@ -148,6 +162,7 @@ set_tests_properties(test_ct_root_poison PROPERTIES WILL_FAIL TRUE)
 add_executable(test_dag_census_poison kernels/test_dag_census.cpp)
 target_include_directories(test_dag_census_poison PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(test_dag_census_poison PRIVATE ADM_DAG_TEST_POISON=1)
+target_compile_options(test_dag_census_poison PRIVATE ${ADM_TEST_EXTRA_OPTIONS_test_dag_census})
 target_link_libraries(test_dag_census_poison
     PRIVATE admiral_internal $<BUILD_INTERFACE:Catch2::Catch2WithMain>)
 if(CATCH2_INCLUDE_DIRS)

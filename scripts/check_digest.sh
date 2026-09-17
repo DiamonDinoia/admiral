@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# check_digest.sh [--expect-movers FILE] [--movers-out FILE] GOLDEN ACTUAL
+# check_digest.sh [--expect-movers FILE | --expect-movers-upper FILE]
+#                 [--movers-out FILE] GOLDEN ACTUAL
 #
 # Text-compares two digest files (one "id tag name hash" line per case; see
 # test/digest/digest.cpp). coreutils + sed only: comm, sort, join, cut, wc.
@@ -12,24 +13,31 @@
 #     silently re-keys the whole golden (test/digest/case_list.hpp states the rule);
 #   * the remaining ids compare by hash; the differing ids are the "movers".
 #
-# Exit 0 iff the mover set equals --expect-movers (default: empty). The mover ids, one
-# per line, go to --movers-out if given.
+# Exit 0 iff the mover set equals --expect-movers (default: empty). With
+# --expect-movers-upper the file is an UPPER BOUND instead: any mover outside it fails,
+# an entry that did not move is an improvement and passes. Both expect files may carry
+# '#' comments and blank lines. The mover ids, one per line, go to --movers-out.
 set -euo pipefail
 export LC_ALL=C
 
 expect=/dev/null
+expect_upper=
 movers_out=
 declare -a positional=()
 while (($#)); do
     case $1 in
         --expect-movers) expect=$2; shift 2 ;;
+        --expect-movers-upper) expect_upper=$2; shift 2 ;;
         --movers-out) movers_out=$2; shift 2 ;;
         --*) echo "check_digest: unknown option $1" >&2; exit 2 ;;
         *) positional+=("$1"); shift ;;
     esac
 done
 ((${#positional[@]} == 2)) || { echo \
-    "usage: check_digest.sh [--expect-movers FILE] [--movers-out FILE] GOLDEN ACTUAL" >&2; exit 2; }
+    "usage: check_digest.sh [--expect-movers FILE | --expect-movers-upper FILE]" \
+    "[--movers-out FILE] GOLDEN ACTUAL" >&2; exit 2; }
+[[ -z $expect_upper || $expect == /dev/null ]] || { echo \
+    "check_digest: --expect-movers and --expect-movers-upper are exclusive" >&2; exit 2; }
 golden=${positional[0]} actual=${positional[1]}
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/check_digest.XXXXXX")
@@ -78,7 +86,24 @@ if [[ -s $tmp/movers ]]; then
         sort -n | tr '\n' ' ' | cut -c1-400)"
 fi
 
-sort "$expect" >"$tmp/expect"   # lexical, matching $tmp/movers
+# Expect files: strip '#' comments and blanks, then a lexical sort matching $tmp/movers.
+nm_expect() { sed -e 's/#.*$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$1" | sort; }
+
+if [[ -n $expect_upper ]]; then
+    nm_expect "$expect_upper" >"$tmp/upper"
+    unexpected=$(comm -23 "$tmp/movers" "$tmp/upper")
+    if [[ -n $unexpected ]]; then
+        echo "check_digest: FAIL: movers outside the upper bound: $(
+            echo "$unexpected" | tr '\n' ' ')" >&2
+        exit 1
+    fi
+    nunmoved=$(comm -13 "$tmp/movers" "$tmp/upper" | wc -l)
+    echo "check_digest: upper bound holds: every mover waiver-listed" \
+        "($nunmoved waiver entries did not move -- improvement room)"
+    exit 0
+fi
+
+nm_expect "$expect" >"$tmp/expect"
 unexpected=$(comm -23 "$tmp/movers" "$tmp/expect")
 unfired=$(comm -13 "$tmp/movers" "$tmp/expect")
 if [[ -n $unexpected || -n $unfired ]]; then

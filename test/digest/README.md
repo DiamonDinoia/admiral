@@ -34,6 +34,22 @@ builds plus committed goldens, and a ctest entry sees only its own build. Buildi
    change, today, in this arm.
 6. `--dump <id> <file>` writes one case's raw output for mover forensics.
 
+## The shipped-arm waiver
+
+The shipped dialect keys vector-arm dispatch on pointer alignment under fast-math, so
+any change to the construction-time allocation sequence re-draws which
+address-sensitive cases move (the roulette class: 1-D prime-factor>11 lengths, the
+pow2-dif surface {96, 128, 160, 192, 256, 320}, and the N-D 96x96 line; see the
+`wi4a-nd-scratch-tls` and `phase7-plan-storage` receipts). `validate.sh digest`
+therefore holds the shipped arm against a banked **upper bound**,
+`golden/allowed-movers-wi4a-2026-09-17.txt`: a mover id outside the bank fails the
+arm, and a banked id that stops moving is an improvement, not a failure
+(`check_digest.sh --expect-movers-upper`). The strict arm and the `--ulp` control are
+exact-match always. When the underlying alignment sensitivity is fixed, shrink the
+bank to the ids that still move and delete it when it is empty; a landing that
+legitimately re-draws the class edits the bank in the same commit, quoting the new
+mover list.
+
 ## Case-list stability and growth budget
 
 Case ids are positional, and goldens plus the ulp control key on them, so numbering is

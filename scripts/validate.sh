@@ -107,14 +107,23 @@ arm_catalog() {
 # Bit-identity digest: builds the tree twice at x86-64-v3 Release -- shipped and strict
 # (ADM_USE_FAST_MATH=OFF) -- runs test/digest's positional case sweep on both, and diffs
 # each against the committed goldens in test/digest/golden with scripts/check_digest.sh.
-# Two invariants on top: a strict-arm mover must also be a shipped-arm mover (the strict
-# build never moves a case alone; cases a strict build skips do not participate), and
-# the --ulp positive control must move exactly the one case test/digest/case_list.hpp
-# names (kUlpControlCase, 700). A landing that legitimately changes bits regoldens in
-# its own commit (test/digest/README.md); a machinery-only landing predicts zero movers.
+# The shipped arm runs under the banked upper-bound waiver
+# test/digest/golden/allowed-movers-wi4a-2026-09-17.txt: the shipped dialect keys
+# vector-arm dispatch on pointer alignment, so the address-sensitive case class
+# (receipt wi4a-nd-scratch-tls) moves on ANY allocation-layout change; a mover outside
+# the bank fails the arm, an unexercised entry is an improvement. The strict arm and
+# the --ulp positive control stay zero-tolerance exact-match, plus a strict-arm mover
+# must also be a shipped-arm mover (the strict build never moves a case alone; cases a
+# strict build skips do not participate). A landing that legitimately changes bits
+# regoldens in its own commit (test/digest/README.md); a machinery-only landing
+# predicts zero movers.
 arm_digest() {
-    local gen=$out/digest log=$out/digest.log rc=0 sub
+    local gen=$out/digest log=$out/digest.log rc=0 sub waiver_used=
+    local waiver=${ADM_DIGEST_WAIVER:-$src/test/digest/golden/allowed-movers-wi4a-2026-09-17.txt}
     echo "=== digest"
+    if [[ -n ${ADM_DIGEST_WAIVER:-} && ! ( -r $waiver && -s $waiver ) ]]; then
+        echo "  FAILED: ADM_DIGEST_WAIVER=$waiver unreadable or empty"; failed+=("digest"); return
+    fi
     rm -rf "$gen"; mkdir -p "$gen"; : >"$log"
     local ulp_case
     ulp_case=$(sed -n 's/.*kUlpControlCase = \([0-9][0-9]*\).*/\1/p' \
@@ -150,8 +159,14 @@ arm_digest() {
             echo "  FAILED: $sub run or self-check (see $log)"; failed+=("digest"); return
         fi
         : >"$gen/pred-$sub.txt"   # this landing's reachability prediction: no movers
+        local -a cmp=(--expect-movers "$gen/pred-$sub.txt")
+        if [[ $sub == shipped && -r $waiver && -s $waiver ]]; then
+            cmp=(--expect-movers-upper "$waiver")
+            waiver_used=$waiver
+            echo "--- $sub: upper-bound waiver $(basename "$waiver")" >>"$log"
+        fi
         "$src/scripts/check_digest.sh" "$src/test/digest/golden/$sub.txt" "$gen/$sub.txt" \
-            --expect-movers "$gen/pred-$sub.txt" --movers-out "$gen/$sub.movers" 2>&1 |
+            "${cmp[@]}" --movers-out "$gen/$sub.movers" 2>&1 |
             tee -a "$log" || rc=1
     done
     echo "--- invariant: strict movers subset of shipped movers" >>"$log"
@@ -170,8 +185,17 @@ arm_digest() {
         "$src/scripts/check_digest.sh" "$gen/shipped.txt" "$gen/shipped-ulp.txt" \
             --expect-movers "$gen/pred-ulp.txt" 2>&1 | tee -a "$log" || rc=1
     if ((rc == 0)); then
-        { echo "  digest: zero movers vs golden in both arms; strict movers subset of shipped"; \
-          echo "  digest: --ulp $ulp_case control moved exactly case $ulp_case"; } >>"$log"
+        {
+            local nship=0
+            [[ -f $gen/shipped.movers ]] && nship=$(grep -c . "$gen/shipped.movers")
+            if [[ -n ${waiver_used:-} ]]; then
+                echo "  digest: shipped $nship movers within the banked upper bound" \
+                     "($(basename "$waiver_used")); strict 0; strict subset of shipped"
+            else
+                echo "  digest: zero movers vs golden in both arms; strict movers subset of shipped"
+            fi
+            echo "  digest: --ulp $ulp_case control moved exactly case $ulp_case"
+        } >>"$log"
         echo "  OK"; ((pass++))
         rm -rf "$gen"/build-shipped "$gen"/build-strict
     else

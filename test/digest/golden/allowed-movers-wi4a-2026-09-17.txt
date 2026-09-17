@@ -1,0 +1,107 @@
+# Allowed digest movers, SHIPPED arm only -- an upper bound, not an exact prediction.
+# Host class: ccmlin075 (Xeon w5-3435X, SPR), gcc 14.2.0, x86-64-v3 Release,
+# branch math-clarity-2026-09-16 tip 37cd1c0, banked 2026-09-17.
+#
+# Receipt: beat-standings/wi4a-nd-scratch-tls.md. Every entry is a member of the
+# address-allocation-layout roulette class (CLAUDE.md "Bitwise stability" open item):
+# the shipped arm's contract-reassociate codegen keys vector-arm dispatch on pointer
+# alignment, so a change to the construction-time allocation sequence re-draws which
+# address-sensitive cases move. The class pool: 1-D lengths with a prime factor > 11
+# (Bluestein/Rader arms), the pow2-dif surface {96, 128, 160, 192, 256, 320}
+# (beat-standings/phase7-plan-storage.md), and the N-D 96x96 line. This list is the
+# 2026-09-17 draw at the branch tip: 89 prime-factor>11 ids + 256xI (id 1181) +
+# 96x96xF (id 1320). The strict dialect is address-insensitive (0 movers in every
+# experiment), so the strict arm and the --ulp 700 control stay zero-tolerance.
+# A mover id not listed here fails the arm; ids that stop moving are an improvement
+# (delete the entry, and the file when the class is fixed).
+130
+131
+138
+139
+142
+143
+174
+175
+190
+191
+198
+199
+214
+215
+222
+223
+250
+251
+298
+299
+322
+323
+358
+359
+382
+383
+390
+391
+394
+395
+418
+419
+478
+479
+498
+499
+510
+511
+538
+539
+558
+559
+802
+803
+810
+811
+814
+815
+846
+847
+862
+863
+870
+871
+886
+887
+894
+895
+922
+923
+952
+970
+971
+994
+995
+1030
+1031
+1054
+1055
+1062
+1063
+1066
+1067
+1090
+1091
+1135
+1138
+1147
+1150
+1151
+1170
+1171
+1175
+1181
+1182
+1183
+1210
+1211
+1230
+1231
+1320

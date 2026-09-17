@@ -66,6 +66,61 @@ template<typename F = double>
     return {bs * r.c + bc * r.s, bc * r.c - bs * r.s};
 }
 
+// Exact root-of-unity classification of the stage-twiddle constants. Every twiddle the
+// butterfly and granule arms special-case is one of the eight octant constants (rem == 0:
+// the folded (s, c) is an exact {0, +-1, +-sqrt2/2} pair at every precision) or a generic
+// angle (rem != 0). ct_root_form recomputes ct_sincos_turns' (oct, rem) split on integers,
+// so the form is a pure function of the reduced (num, den); fold_form re-derives the same
+// form from the folded pair through the arms' own FP conditions, in the arms' own order, so
+// the two spellings agree on every root the fold can produce. test/kernels/test_ct_root.cpp
+// sweeps the lattice over every shipped denominator; the consumers key their arms on the
+// descriptor and carry no per-instantiation assert (a consumer-side static_assert pin was
+// measured to renumber gcc rodata, so the lattice test is the pin).
+enum class root_form { one, neg_one, neg_i, pos_i, diag, anti_diag, generic };
+
+[[nodiscard]] constexpr root_form ct_root_form(std::size_t num, std::size_t den, bool conj) {
+    num %= den;
+    if (conj && num != 0) num = den - num;
+    const std::size_t oct = (8 * num) / den;
+    const std::size_t rem = 8 * num - oct * den;
+    if (rem != 0) return root_form::generic;
+    root_form form = root_form::generic;
+    switch (oct) {
+        case 0: form = root_form::one; break;
+        case 1: form = root_form::diag; break;
+        case 2: form = root_form::pos_i; break;
+        case 3: form = root_form::anti_diag; break;
+        case 4: form = root_form::neg_one; break;
+        case 5: form = root_form::diag; break;
+        case 6: form = root_form::neg_i; break;
+        default: form = root_form::anti_diag; break;
+    }
+#ifdef ADM_CT_ROOT_POISON
+    // Positive-control seam for the WILL_FAIL twin (kernels/test_ct_root.cpp): swaps the two
+    // diagonal classes, so the lattice's fold-agreement check must fail. Never defined in a
+    // shipped build.
+    if (form == root_form::diag) return root_form::anti_diag;
+    if (form == root_form::anti_diag) return root_form::diag;
+#endif
+    return form;
+}
+
+template<std::size_t Num, std::size_t Den, bool Conj>
+[[nodiscard]] ADM_CONSTEVAL root_form ct_root() {
+    return ct_root_form(Num, Den, Conj);
+}
+
+template<typename F>
+[[nodiscard]] constexpr root_form fold_form(ct_sincos_v<F> w) {
+    if (w.s == 0 && w.c == 1) return root_form::one;
+    if (w.s == 0 && w.c == -1) return root_form::neg_one;
+    if (w.c == 0 && w.s == -1) return root_form::neg_i;
+    if (w.c == 0 && w.s == 1) return root_form::pos_i;
+    if (w.c == w.s) return root_form::diag;
+    if (w.c == -w.s) return root_form::anti_diag;
+    return root_form::generic;
+}
+
 [[nodiscard]] constexpr std::pair<std::size_t, std::size_t> coprime_split(std::size_t n) noexcept {
     for (std::size_t a = 2; a * a <= n; ++a)
         if (n % a == 0 && std::gcd(a, n / a) == 1) return {n / a, a};

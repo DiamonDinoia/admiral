@@ -14,6 +14,7 @@ set(ADM_TEST_SOURCES
     api/test_api_c_errors.cpp
     api/test_api_fftw.cpp
     kernels/test_ct_math.cpp
+    kernels/test_ct_root.cpp
     kernels/test_factor_plan.cpp
     kernels/test_cost_model.cpp
     kernels/test_cxx_compat.cpp
@@ -117,6 +118,27 @@ if(ADM_TARGET_ARCH MATCHES "^(native|x86-64-v3|x86-64-v4)$")
     add_test(NAME test_granule_poison COMMAND test_granule_poison)
     set_tests_properties(test_granule_poison PROPERTIES WILL_FAIL TRUE)
 endif()
+
+# Positive control for the root-form classifier. Under ADM_CT_ROOT_POISON the classifier
+# swaps the two diagonal classes, so the lattice's fold-agreement check fails and the binary
+# exits nonzero; WILL_FAIL makes that the asserted outcome. No arch gate: classification is
+# ISA-free integer arithmetic, so the dialect's v3+ gate above does not apply here.
+add_executable(test_ct_root_poison kernels/test_ct_root.cpp)
+target_include_directories(test_ct_root_poison PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(test_ct_root_poison PRIVATE ADM_CT_ROOT_POISON=1)
+target_link_libraries(test_ct_root_poison
+    PRIVATE admiral_internal $<BUILD_INTERFACE:Catch2::Catch2WithMain>)
+if(CATCH2_INCLUDE_DIRS)
+    target_include_directories(test_ct_root_poison SYSTEM PRIVATE ${CATCH2_INCLUDE_DIRS})
+endif()
+if(TARGET project_warnings)
+    target_link_libraries(test_ct_root_poison PRIVATE project_warnings)
+endif()
+if(TARGET project_sanitizers)
+    target_link_libraries(test_ct_root_poison PRIVATE project_sanitizers)
+endif()
+add_test(NAME test_ct_root_poison COMMAND test_ct_root_poison)
+set_tests_properties(test_ct_root_poison PROPERTIES WILL_FAIL TRUE)
 
 # ELF only: `nm -D` reads a dynamic symbol table, which a PE DLL does not have, and the
 # patterns below are Itanium mangling. On Windows llvm-nm reports

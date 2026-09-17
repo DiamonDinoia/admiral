@@ -174,15 +174,18 @@ template<typename T, std::size_t W, typename F>
 template<typename T, std::size_t IP, std::size_t N, typename V, bool Fwd>
 [[nodiscard]] ADM_ALWAYS_INLINE V granule_stage_twiddle(V u) {
     constexpr auto w = ct_sincos_turns<ct_real_t<T>>(Fwd, N, IP);
-    if constexpr (w.s == 0 && w.c == 1) {
+    // The arm is picked by the integer root-form descriptor, as in apply_stage_twiddle;
+    // the else arm still serves anti_diag and generic together.
+    constexpr root_form form = ct_root<N, IP, Fwd>();
+    if constexpr (form == root_form::one) {
         return u;
-    } else if constexpr (w.s == 0 && w.c == -1) {
+    } else if constexpr (form == root_form::neg_one) {
         return xsimd::neg(u);
-    } else if constexpr (w.c == 0 && w.s == -1) {
+    } else if constexpr (form == root_form::neg_i) {
         return granule_rot_neg_i(u);
-    } else if constexpr (w.c == 0 && w.s == 1) {
+    } else if constexpr (form == root_form::pos_i) {
         return granule_rot_pos_i(u);
-    } else if constexpr (w.c == w.s) {
+    } else if constexpr (form == root_form::diag) {
         // {c*(gr-gi), c*(gi+gr)}: pooled lanes {-c,+c} instead of {-s,+s}.
         static constexpr auto pool = [] {
             constexpr auto wv = ct_sincos_turns<ct_real_t<T>>(Fwd, N, IP);

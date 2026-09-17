@@ -901,12 +901,21 @@ template<typename T, std::size_t IP, std::size_t R, std::size_t W, bool Imag>
     return a;
 }
 
+// Whole row is the identity root in the shared stage-twiddle dialect: R*lane ≡ 0 for every
+// lane, which over the emitted range R < IP is exactly R == 0.
+template<std::size_t IP, std::size_t R, std::size_t W>
+[[nodiscard]] constexpr bool lane_row_is_one() {
+    for (std::size_t lane = 0; lane < W; ++lane)
+        if (ct_root_form(R * lane, IP, true) != root_form::one) return false;
+    return true;
+}
+
 // One stage-A output row of the last pass: R == 0 carries no twiddle, so its scale multiply
 // applies directly; every other row takes the scale prescaled into its twiddle pair, which
 // removes one multiply per output point of the pass.
 template<typename T, std::size_t IP, std::size_t R, typename V>
 [[nodiscard]] ADM_ALWAYS_INLINE std::pair<V, V> lane_stage_apply(V yr, V yi, V sv) {
-    if constexpr (R == 0u) {
+    if constexpr (lane_row_is_one<IP, R, V::size>()) {
         return {yr * sv, yi * sv};
     } else {
         alignas(V::arch_type::alignment()) static constexpr auto twr =

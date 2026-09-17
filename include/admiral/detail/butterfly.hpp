@@ -124,18 +124,21 @@ ADM_ALWAYS_INLINE void pfa_dif_butterfly(const V (&tr)[N1 * N2],
 template<typename T, std::size_t IP, std::size_t N, typename V>
 [[nodiscard]] ADM_ALWAYS_INLINE std::pair<V, V> apply_stage_twiddle(V fr, V fi) {
     constexpr auto w = ct_sincos_turns<ct_real_t<T>>(true, N, IP);
-    if constexpr (w.s == 0 && w.c == 1) {
+    // The arm is picked by the integer root-form descriptor, not by FP tests on the folded
+    // pair; the lattice (test_ct_root) proves the two agree on every shipped denominator.
+    constexpr root_form form = ct_root<N, IP, true>();
+    if constexpr (form == root_form::one) {
         return {fr, fi};
-    } else if constexpr (w.s == 0 && w.c == -1) {
+    } else if constexpr (form == root_form::neg_one) {
         return {-fr, -fi};
-    } else if constexpr (w.c == 0 && w.s == -1) {
+    } else if constexpr (form == root_form::neg_i) {
         return {fi, -fr};
-    } else if constexpr (w.c == 0 && w.s == 1) {
+    } else if constexpr (form == root_form::pos_i) {
         return {-fi, fr};
-    } else if constexpr (w.c == w.s) {
+    } else if constexpr (form == root_form::diag) {
         const V c(static_cast<T>(w.c));
         return {c * (fr - fi), c * (fi + fr)};
-    } else if constexpr (w.c == -w.s) {
+    } else if constexpr (form == root_form::anti_diag) {
         const V c(static_cast<T>(w.c));
         return {c * (fr + fi), c * (fi - fr)};
     } else {

@@ -10,7 +10,7 @@ add_library(admiral_engine OBJECT
     inst_nd_f.cpp inst_nd_d.cpp
     inst_real_f.cpp inst_real_d.cpp
     inst_api_f.cpp inst_api_d.cpp inst_api_ld.cpp
-    scratch_alloc.cpp large_route_probe.cpp)
+    scratch_alloc.cpp large_route_probe.cpp pool_pin.cpp)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set(_adm_col_numerics -ffp-contract=on -fno-associative-math)

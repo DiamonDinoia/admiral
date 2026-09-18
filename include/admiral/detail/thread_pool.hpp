@@ -120,6 +120,55 @@ inline constexpr std::size_t kAutoSerialElems = std::size_t{1} << 15;
 #endif
 }
 
+// --- ADM_POOL_PIN=1 (PROVISIONAL opt-in; the ship A/B settles any default): pool workers
+// pin one-per-physical-core over the ambient mask (ordering: pool_pin_list). Only spawned
+// threads pin; the caller is never moved (it runs chunk nt-1), so entry nthreads-1 stays
+// free for an app-side caller anchor. Fail-soft: short mask, unreadable topology or failed
+// pin => unpinned pool, one std::cerr note per process. Plans own pools: one active pool at
+// a time. Under MPI the launcher hands each rank a mask; composing is the launcher's job.
+struct pool_topo_row { // (socket, core) names one physical core; SMT siblings share it
+    std::size_t cpu;
+    long socket; // socket and core ids are opaque keys
+    long core;
+};
+
+// One pin per physical core: the lowest allowed cpu of each (socket, core) pair (siblings
+// collapse, pins stay inside the mask), ordered socket-major then cpu-ascending.
+[[nodiscard]] inline std::vector<std::size_t> pool_pin_list(span<const std::size_t> allowed,
+                                                            span<const pool_topo_row> rows) {
+    std::vector<pool_topo_row> cores;
+    for (const pool_topo_row& r : rows) {
+        if (std::find(allowed.begin(), allowed.end(), r.cpu) == allowed.end()) continue;
+        auto it = std::find_if(cores.begin(), cores.end(), [&](const pool_topo_row& c) {
+            return c.socket == r.socket && c.core == r.core;
+        });
+        if (it == cores.end())
+            cores.push_back(r);
+        else if (r.cpu < it->cpu)
+            it->cpu = r.cpu;
+    }
+    std::sort(cores.begin(), cores.end(), [](const pool_topo_row& a, const pool_topo_row& b) {
+        return a.socket != b.socket ? a.socket < b.socket : a.cpu < b.cpu;
+    });
+    std::vector<std::size_t> out;
+    out.reserve(cores.size());
+    for (const pool_topo_row& c : cores) out.push_back(c.cpu);
+    return out;
+}
+
+// Seam storage in src/pool_pin.cpp: one instance per process (the large_route_probe seam).
+// mask & physical cores, socket-major; nullptr when the knob is off or the mask is short.
+[[nodiscard]] const std::vector<std::size_t>* pool_pin_cpus(std::size_t nthreads);
+void pool_pin_worker(std::size_t tid, std::size_t nthreads) noexcept; // notes once on failure
+[[nodiscard]] bool pool_pin_disabled_noted() noexcept; // test-observable: the note fired
+void set_pool_pin_override(int v);                     // test seam: >0 on, <0 off, 0 env
+struct pool_pin_override_scope {
+    explicit pool_pin_override_scope(int v) { set_pool_pin_override(v); }
+    ~pool_pin_override_scope() { set_pool_pin_override(0); }
+    pool_pin_override_scope(const pool_pin_override_scope&) = delete;
+    pool_pin_override_scope& operator=(const pool_pin_override_scope&) = delete;
+};
+
 [[nodiscard]] inline double core_cyc_per_ns() {
     static const double cyc_per_ns = [] {
         using clock = std::chrono::steady_clock;
@@ -296,6 +345,7 @@ public:
             }
         };
 
+        // cppcheck-suppress danglingLifetime  // job_ is dereferenced only before the join
         job_ = std::cref(run_chunk);
         pending_.store(nt, std::memory_order_relaxed);
         epoch_.fetch_add(1, std::memory_order_release);
@@ -316,6 +366,7 @@ private:
     }
 
     void worker_loop(std::size_t tid) {
+        pool_pin_worker(tid, nthreads_);
         std::uint64_t seen = 0;
         for (;;) {
             std::uint32_t spins = 0;

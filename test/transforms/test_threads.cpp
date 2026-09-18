@@ -20,6 +20,9 @@
 #if ADM_THREADS
 
 #include <thread>
+    #if defined(__linux__)
+        #include <sched.h>
+    #endif
 
 namespace {
 
@@ -283,6 +286,66 @@ TEST_CASE("resolve_nthreads wake law: serial floor, knee, pocket, pow2, cap", "[
         REQUIRE(sq2_pick(13) == 64);
     }
 }
+TEST_CASE("pool pinning: mapping, and knob on pins spawned workers only", "[threads][poolpin]") {
+    using admiral::detail::pool_topo_row;
+    using V = std::vector<std::size_t>;
+    const auto map = [](const V& allowed, const std::vector<pool_topo_row>& t) {
+        return admiral::detail::pool_pin_list(allowed, t);
+    };
+    // Rows are (cpu, socket, core); cpus 16/17 sit behind cores 0/1 here.
+    const std::vector<pool_topo_row> s1 = {{0, 0, 0}, {1, 0, 1},  {2, 0, 2},
+                                           {3, 0, 3}, {16, 0, 0}, {17, 0, 1}};
+    CHECK(map({0, 1, 2, 3, 16, 17}, s1) == V{0, 1, 2, 3}); // SMT siblings collapse
+    CHECK(map({17, 3, 16, 1, 2, 0},
+              {{16, 0, 0}, {2, 0, 2}, {0, 0, 0}, {17, 0, 1}, {3, 0, 3}, {1, 0, 1}}) ==
+          V{0, 1, 2, 3}); // unsorted input
+    const std::vector<pool_topo_row> s2 = {{16, 1, 0}, {0, 0, 0}, {17, 1, 1},
+                                           {1, 0, 1},  {2, 0, 2}, {3, 0, 3}};
+    CHECK(map({0, 1, 2, 3, 16, 17}, s2) == V{0, 1, 2, 3, 16, 17}); // 2nd socket: no collapse
+    CHECK(map({1, 3, 17}, s2) == V{1, 3, 17});                     // sparse mask composes
+    CHECK(map({}, s2).empty());                                    // empty mask
+
+    #if defined(__linux__)
+    using admiral::detail::pool_pin_cpus;
+    using admiral::detail::pool_pin_disabled_noted;
+    using admiral::detail::pool_pin_override_scope;
+    using admiral::detail::thread_pool;
+    cpu_set_t ambient;
+    REQUIRE(sched_getaffinity(0, sizeof ambient, &ambient) == 0);
+    cpu_set_t rec[2];
+    int rc[2] = {0, 0};
+    const auto record = [&](std::size_t, std::size_t, std::size_t tid) {
+        rc[tid] = sched_getaffinity(0, sizeof rec[tid], &rec[tid]);  // per-tid slot: no race
+    };
+    { // A worker's pin attempt precedes any job it runs, so the note state has settled.
+        pool_pin_override_scope on(1);
+        thread_pool pool(2);
+        pool.parallel_for(2, record);
+        if (!pool_pin_disabled_noted()) {
+            const std::vector<std::size_t>* pins = pool_pin_cpus(2);  // oracle, knob on
+            REQUIRE(pins != nullptr);
+            cpu_set_t want;
+            CPU_ZERO(&want);
+            CPU_SET((*pins)[0], &want);
+            REQUIRE(CPU_EQUAL_S(sizeof rec[0], &rec[0], &want));    // worker 0 -> entry 0
+            REQUIRE(CPU_EQUAL_S(sizeof rec[1], &rec[1], &ambient));  // caller unmoved
+        }
+        // Else the DISABLED note fired and the pool ran unpinned: the fail-soft contract.
+    }
+    {
+        const bool noted0 = pool_pin_disabled_noted();
+        pool_pin_override_scope off(-1);
+        thread_pool pool(2);
+        pool.parallel_for(2, record);
+        // Knob off: workers keep the ambient mask and the pool adds no note.
+        REQUIRE(CPU_EQUAL_S(sizeof rec[0], &rec[0], &ambient));
+        REQUIRE(CPU_EQUAL_S(sizeof rec[1], &rec[1], &ambient));
+        REQUIRE(pool_pin_disabled_noted() == noted0);
+    }
+    REQUIRE((rc[0] | rc[1]) == 0);  // every sched_getaffinity above succeeded
+#endif  // __linux__
+}
+
 // ---------------------------------------------------------------------------
 // Concurrent-execute safety: two threads on ONE plan with separate buffers
 // must produce results identical to single-threaded execution.

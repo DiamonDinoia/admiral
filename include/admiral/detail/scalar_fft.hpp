@@ -427,14 +427,15 @@ template<typename T>
 
 template<typename T>
 struct scalar_plan_state {
-    scalar_plan_state(span<const std::size_t> shape, std::size_t nthreads)
-        : scalar_plan_state(shape, scalar_resolve<T>(shape, nthreads), resolved_tag{}) {}
+    scalar_plan_state(span<const std::size_t> shape, std::size_t nthreads, bool pin = false)
+        : scalar_plan_state(shape, scalar_resolve<T>(shape, nthreads), resolved_tag{}, pin) {}
 
 private:
     struct resolved_tag {};
-    scalar_plan_state(span<const std::size_t> shape, std::size_t nthreads, resolved_tag)
+    scalar_plan_state(span<const std::size_t> shape, std::size_t nthreads, resolved_tag,
+                      bool pin)
         : plan(shape, axis_count(shape), nthreads),
-          pool_(nthreads > 1 ? std::make_unique<thread_pool>(nthreads) : nullptr) {}
+          pool_(nthreads > 1 ? std::make_unique<thread_pool>(nthreads, pin) : nullptr) {}
 
 public:
     [[nodiscard]] std::size_t size() const noexcept { return plan.size(); }
@@ -483,18 +484,20 @@ template<typename T>
 
 template<typename T>
 struct scalar_real_state {
-    scalar_real_state(span<const std::size_t> shape, std::size_t nthreads)
-        : scalar_real_state(shape, scalar_real_resolve<T>(shape, nthreads), resolved_tag{}) {}
+    scalar_real_state(span<const std::size_t> shape, std::size_t nthreads, bool pin = false)
+        : scalar_real_state(shape, scalar_real_resolve<T>(shape, nthreads), resolved_tag{},
+                            pin) {}
 
 private:
     struct resolved_tag {};
-    scalar_real_state(span<const std::size_t> shape, std::size_t nthreads, resolved_tag)
+    scalar_real_state(span<const std::size_t> shape, std::size_t nthreads, resolved_tag,
+                      bool pin)
         : n_(last_extent(shape)),
           nh_(n_ / 2 + 1),
           rows_(outer_extent_product(shape)),
           inner_(n_, nthreads),
           outer_(half_spectrum_shape(shape, nh_), shape.size() - 1, nthreads),
-          pool_(nthreads > 1 ? std::make_unique<thread_pool>(nthreads) : nullptr) {}
+          pool_(nthreads > 1 ? std::make_unique<thread_pool>(nthreads, pin) : nullptr) {}
 
 public:
 

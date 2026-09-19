@@ -286,7 +286,8 @@ TEST_CASE("resolve_nthreads wake law: serial floor, knee, pocket, pow2, cap", "[
         REQUIRE(sq2_pick(13) == 64);
     }
 }
-TEST_CASE("pool pinning: mapping, and knob on pins spawned workers only", "[threads][poolpin]") {
+TEST_CASE("pool pinning: mapping, and the pin flag pins spawned workers only",
+          "[threads][poolpin]") {
     using admiral::detail::pool_topo_row;
     using V = std::vector<std::size_t>;
     const auto map = [](const V& allowed, const std::vector<pool_topo_row>& t) {
@@ -308,7 +309,6 @@ TEST_CASE("pool pinning: mapping, and knob on pins spawned workers only", "[thre
     #if defined(__linux__)
     using admiral::detail::pool_pin_cpus;
     using admiral::detail::pool_pin_disabled_noted;
-    using admiral::detail::pool_pin_override_scope;
     using admiral::detail::thread_pool;
     cpu_set_t ambient;
     REQUIRE(sched_getaffinity(0, sizeof ambient, &ambient) == 0);
@@ -318,11 +318,10 @@ TEST_CASE("pool pinning: mapping, and knob on pins spawned workers only", "[thre
         rc[tid] = sched_getaffinity(0, sizeof rec[tid], &rec[tid]);  // per-tid slot: no race
     };
     { // A worker's pin attempt precedes any job it runs, so the note state has settled.
-        pool_pin_override_scope on(1);
-        thread_pool pool(2);
+        thread_pool pool(2, true);
         pool.parallel_for(2, record);
         if (!pool_pin_disabled_noted()) {
-            const std::vector<std::size_t>* pins = pool_pin_cpus(2);  // oracle, knob on
+            const std::vector<std::size_t>* pins = pool_pin_cpus(2);  // oracle mapping
             REQUIRE(pins != nullptr);
             cpu_set_t want;
             CPU_ZERO(&want);
@@ -334,16 +333,29 @@ TEST_CASE("pool pinning: mapping, and knob on pins spawned workers only", "[thre
     }
     {
         const bool noted0 = pool_pin_disabled_noted();
-        pool_pin_override_scope off(-1);
-        thread_pool pool(2);
+        thread_pool pool(2, false);
         pool.parallel_for(2, record);
-        // Knob off: workers keep the ambient mask and the pool adds no note.
+        // Unpinned pool: workers keep the ambient mask and add no note.
         REQUIRE(CPU_EQUAL_S(sizeof rec[0], &rec[0], &ambient));
         REQUIRE(CPU_EQUAL_S(sizeof rec[1], &rec[1], &ambient));
         REQUIRE(pool_pin_disabled_noted() == noted0);
     }
     REQUIRE((rc[0] | rc[1]) == 0);  // every sched_getaffinity above succeeded
 #endif  // __linux__
+}
+
+TEST_CASE("options::pin_threads pinned plans reproduce unpinned bits", "[threads][poolpin]") {
+    // Pinning is scheduling only: a pinned transform must reproduce the unpinned bits. The
+    // batch shape guarantees a pool forms for nthreads=2, so the option-to-pool hop runs.
+    const std::vector<std::size_t> shape = {64, 512};
+    const auto in = make_input<double>(64 * 512, 0xB175u);
+    const admiral::options unpinned{2, admiral::effort::estimate, 0, false};
+    const admiral::options pinned{2, admiral::effort::estimate, 0, true};
+    auto a = in, b = in;
+    admiral::plan<double> pa(shape, unpinned), pb(shape, pinned);
+    pa.forward(a.data());
+    pb.forward(b.data());
+    REQUIRE(a == b);
 }
 
 // ---------------------------------------------------------------------------

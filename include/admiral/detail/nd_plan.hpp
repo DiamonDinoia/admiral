@@ -639,7 +639,7 @@ class nd_runtime_plan {
 public:
     nd_runtime_plan(span<const std::size_t> shape, bool is_forward,
                     std::size_t nthreads = 1,
-                    admiral::effort eff = admiral::effort::estimate);
+                    admiral::effort eff = admiral::effort::estimate, bool pin = false);
     void execute(std::complex<T>* data, const exec_options<T>& opts = {}) const;
     void execute(const std::complex<T>* src, std::complex<T>* dst,
                  const exec_options<T>& opts = {}) const;
@@ -735,7 +735,7 @@ private:
 
 template<typename T>
 nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forward,
-                                    std::size_t nthreads, admiral::effort eff) {
+                                    std::size_t nthreads, admiral::effort eff, bool pin) {
     m.shape.assign(shape.begin(), shape.end());
     m.is_forward = is_forward;
     const auto total = extent_product(m.shape);
@@ -759,7 +759,7 @@ nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forwa
         nthreads = resolve_nthreads(0, m.total, dispatches, work_cyc / core_cyc_per_ns(), cls);
     }
     if (nthreads > 1 && batch_threadable)
-        m.pool = std::make_unique<thread_pool>(nthreads);
+        m.pool = std::make_unique<thread_pool>(nthreads, pin);
     // Run the last two axes plane by plane when the plane fits L2 and the array does not: below
     // that the unfused chain is cache-resident end to end, above it the plane itself spills L2.
     if (m.shape.size() >= 3 && m.pool == nullptr) {

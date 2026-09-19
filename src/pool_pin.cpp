@@ -1,12 +1,10 @@
-// ADM_POOL_PIN storage, pin-list derivation and application; contract in
+// options::pin_threads storage, pin-list derivation and application; contract in
 // include/admiral/detail/thread_pool.hpp.
 #include <admiral/detail/thread_pool.hpp>
 
 #if ADM_THREADS
 
 #include <atomic>
-#include <cstdlib>
-#include <cstring>
 #include <iostream>
 
 #if defined(__linux__)
@@ -24,29 +22,18 @@ namespace detail {
 
 namespace {
 
-struct {
-    std::atomic<int> override_{0}; // >0 forces on, <0 off, 0 follows the env
-    std::atomic<bool> warned{false};
-} g_state;
-
 // One std::cerr line per process, whichever failure arrives first.
-[[maybe_unused]] void note_disabled(const char* reason) noexcept {
+std::atomic<bool> g_warned{false};
+
+void note_disabled(const char* reason) noexcept {
     bool expected = false;
-    if (g_state.warned.compare_exchange_strong(expected, true, std::memory_order_relaxed))
+    if (g_warned.compare_exchange_strong(expected, true, std::memory_order_relaxed))
         std::cerr << "admiral: " << reason << '\n';
 }
 
-bool knob_on() { // once per process, so the pins do not depend on construction order
-    if (const int v = g_state.override_.load(std::memory_order_relaxed)) return v > 0;
-    static const bool on = std::getenv("ADM_POOL_PIN") != nullptr &&
-                           std::strcmp(std::getenv("ADM_POOL_PIN"), "1") == 0;
-    return on;
-}
-
-} // namespace
+}  // namespace
 
 const std::vector<std::size_t>* pool_pin_cpus(std::size_t nthreads) {
-    if (!knob_on()) return nullptr;
     static const std::vector<std::size_t> pins = [] {
         std::vector<std::size_t> out;
 #if defined(__linux__)
@@ -75,7 +62,9 @@ const std::vector<std::size_t>* pool_pin_cpus(std::size_t nthreads) {
 }
 
 void pool_pin_worker([[maybe_unused]] std::size_t tid,
-                     [[maybe_unused]] std::size_t nthreads) noexcept {
+                     [[maybe_unused]] std::size_t nthreads,
+                     [[maybe_unused]] bool pin) noexcept {
+    if (!pin) return;
 #if defined(__linux__)
     if (const std::vector<std::size_t>* pins = pool_pin_cpus(nthreads)) {
         cpu_set_t one;
@@ -83,7 +72,7 @@ void pool_pin_worker([[maybe_unused]] std::size_t tid,
         CPU_SET((*pins)[tid], &one);
         if (sched_setaffinity(0, sizeof one, &one) != 0)
             note_disabled("pinpool: DISABLED sched_setaffinity failed");
-    } else if (knob_on()) {
+    } else {
         // The width-0 list prints the raw count (0 = unreadable topology).
         char why[96];
         std::snprintf(why, sizeof why, "pinpool: DISABLED mask holds %zu cores, nt=%zu",
@@ -91,21 +80,18 @@ void pool_pin_worker([[maybe_unused]] std::size_t tid,
         note_disabled(why);
     }
 #elif defined(__APPLE__)
-    if (!knob_on()) return;
     // Hw threads are not pinnable on macOS; a distinct tag per worker is the keep-apart hint.
     thread_affinity_policy_data_t tag = {static_cast<integer_t>(tid + 1)};
     thread_policy_set(pthread_mach_thread_np(pthread_self()), THREAD_AFFINITY_POLICY,
                       reinterpret_cast<thread_policy_t>(&tag), THREAD_AFFINITY_POLICY_COUNT);
 #else
-    if (knob_on() && tid == 0) note_disabled("pinpool: unsupported on this OS");
+    if (tid == 0) note_disabled("pinpool: unsupported on this OS");
 #endif
 }
 
-void set_pool_pin_override(int v) { g_state.override_.store(v, std::memory_order_relaxed); }
+bool pool_pin_disabled_noted() noexcept { return g_warned.load(std::memory_order_relaxed); }
 
-bool pool_pin_disabled_noted() noexcept { return g_state.warned.load(std::memory_order_relaxed); }
+}  // namespace detail
+}  // namespace admiral
 
-} // namespace detail
-} // namespace admiral
-
-#endif // ADM_THREADS
+#endif  // ADM_THREADS

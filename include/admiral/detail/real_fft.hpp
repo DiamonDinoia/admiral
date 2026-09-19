@@ -325,7 +325,7 @@ template<typename T>
 class nd_real_plan {
 public:
     explicit nd_real_plan(span<const std::size_t> shape, std::size_t nthreads = 1,
-                          admiral::effort eff = admiral::effort::estimate);
+                          admiral::effort eff = admiral::effort::estimate, bool pin = false);
 
     [[nodiscard]] std::size_t cplx_size() const noexcept { return m.total_c; }
     [[nodiscard]] std::size_t real_size() const noexcept { return m.rows * m.inner_len; }
@@ -376,7 +376,7 @@ private:
 
 template<typename T>
 nd_real_plan<T>::nd_real_plan(span<const std::size_t> shape, std::size_t nthreads,
-                              admiral::effort eff) {
+                              admiral::effort eff, bool pin) {
     m.shape.assign(shape.begin(), shape.end());
     const std::size_t n = m.shape.size();
     if (n == 0 || !extent_product(m.shape))
@@ -419,7 +419,7 @@ nd_real_plan<T>::nd_real_plan(span<const std::size_t> shape, std::size_t nthread
             nthreads = 1;
         }
     }
-    if (nthreads > 1) m.pool = std::make_unique<thread_pool>(nthreads);
+    if (nthreads > 1) m.pool = std::make_unique<thread_pool>(nthreads, pin);
 }
 
 template<typename T>

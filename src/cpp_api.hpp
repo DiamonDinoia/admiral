@@ -26,12 +26,12 @@ template<typename T>
 template<typename T>
 inline std::size_t split_batch_threads(std::size_t requested, std::size_t total,
                                        std::size_t lines, std::size_t len,
-                                       std::unique_ptr<thread_pool>& pool) {
+                                       std::unique_ptr<thread_pool>& pool, bool pin) {
     if (lines >= 2 && total >= kThreadMinElems) {
         const std::size_t nthreads =
             resolve_nthreads(requested, total, 1,
                              double(lines) * line_work_cyc<T>(len) / core_cyc_per_ns(), 1);
-        if (nthreads > 1) pool = std::make_unique<thread_pool>(nthreads);
+        if (nthreads > 1) pool = std::make_unique<thread_pool>(nthreads, pin);
         return 1;
     }
     return requested;
@@ -44,8 +44,8 @@ struct plan_state {
     unsigned debug;
 
     plan_state(span<const std::size_t> shape, const admiral::options& opts)
-        : fwd{shape, true, opts.nthreads, opts.eff},
-          inv{shape, false, opts.nthreads, opts.eff},
+        : fwd{shape, true, opts.nthreads, opts.eff, opts.pin_threads},
+          inv{shape, false, opts.nthreads, opts.eff, opts.pin_threads},
           debug(opts.debug) {}
 
     [[nodiscard]] std::size_t size() const noexcept { return fwd.size(); }
@@ -61,7 +61,7 @@ struct plan_state {
 template<>
 struct plan_state<long double> : scalar_plan_state<long double> {
     plan_state(span<const std::size_t> shape, const admiral::options& opts)
-        : scalar_plan_state(shape, opts.nthreads) {}
+        : scalar_plan_state(shape, opts.nthreads, opts.pin_threads) {}
 };
 
 template<typename T>
@@ -96,7 +96,7 @@ struct axis_state {
         st = make_nd_axis_state<T>(shape[axis], stride[axis], forward, innermost,
                                    split_batch_threads<T>(opts.nthreads, *total,
                                                           *total / shape[axis], shape[axis],
-                                                          pool),
+                                                          pool, opts.pin_threads),
                                    opts.eff);
     }
 };
@@ -119,7 +119,7 @@ struct strides_state {
         if (!total) throw size_error("strides_plan: len and nbatch must be > 0 and their"
                                      " product must fit");
         const std::size_t axis_threads =
-            split_batch_threads<T>(opts.nthreads, *total, n, len_, pool);
+            split_batch_threads<T>(opts.nthreads, *total, n, len_, pool, opts.pin_threads);
         fwd = make_nd_axis_state<T>(len_, istride, true, false,
                                     axis_threads, opts.eff);
         inv = make_nd_axis_state<T>(len_, istride, false, false,
@@ -130,7 +130,7 @@ struct strides_state {
             const std::size_t n1 =
                 resolve_nthreads(0, *total, 2,
                                  double(n) * line_work_cyc<T>(len_) / core_cyc_per_ns(), 1);
-            if (n1 > 1 && n1 != pool->size()) pool = std::make_unique<thread_pool>(n1);
+            if (n1 > 1 && n1 != pool->size()) pool = std::make_unique<thread_pool>(n1, opts.pin_threads);
         }
     }
 
@@ -202,7 +202,7 @@ struct real_state {
     unsigned debug;
 
     real_state(span<const std::size_t> shape, const admiral::options& opts)
-        : plan{shape, opts.nthreads, opts.eff}, debug(opts.debug) {}
+        : plan{shape, opts.nthreads, opts.eff, opts.pin_threads}, debug(opts.debug) {}
 
     void forward(const T* in, std::complex<T>* out, std::optional<T> fct) const {
         plan.forward(in, out, {fct, debug});
@@ -217,7 +217,7 @@ struct real_state {
 template<>
 struct real_state<long double> : scalar_real_state<long double> {
     real_state(span<const std::size_t> shape, const admiral::options& opts)
-        : scalar_real_state(shape, opts.nthreads) {}
+        : scalar_real_state(shape, opts.nthreads, opts.pin_threads) {}
 };
 
 template<typename T>
@@ -227,7 +227,8 @@ struct r2r_state {
     r2r_state(std::size_t N, r2r_kind kind, std::size_t rows, const admiral::options& opts)
         : plan{N, kind, rows, opts.eff,
                resolve_nthreads(opts.nthreads, sat_elems(N, rows), 1,
-                                double(rows) * line_work_cyc<T>(N) / core_cyc_per_ns(), 1)} {}
+                                double(rows) * line_work_cyc<T>(N) / core_cyc_per_ns(), 1),
+               opts.pin_threads} {}
 };
 
 }
@@ -246,7 +247,7 @@ void one_shot_1d(span<const std::complex<T>> input, span<std::complex<T>> output
             .run(is_forward, input.data(), output.data(), fct ? &*fct : nullptr);
     } else {
         detail::plan_impl<T>(output.size(), is_forward, opts.nthreads, nullptr,
-                             effort::estimate)
+                             effort::estimate, opts.pin_threads)
             .execute(input.data(), output.data(), {fct, opts.debug});
     }
 }
@@ -257,7 +258,8 @@ void one_shot_nd(std::complex<T>* data, span<const std::size_t> shape, bool is_f
     if constexpr (std::is_same_v<T, long double>) {
         detail::plan_state<T>(shape, opts).run(is_forward, data, fct ? &*fct : nullptr);
     } else {
-        detail::nd_runtime_plan<T>(shape, is_forward, opts.nthreads, effort::estimate)
+        detail::nd_runtime_plan<T>(shape, is_forward, opts.nthreads, effort::estimate,
+                                   opts.pin_threads)
             .execute(data, {fct, opts.debug});
     }
 }

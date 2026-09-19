@@ -41,10 +41,12 @@ typedef enum {
 
 // `nthreads` 0 auto-selects the width from the transform size, 1 forces serial, n forces n.
 // `eff` ADM_EFFORT_ESTIMATE routes from the cost model; the other two also time candidates.
+// `pin_threads` nonzero pins pool workers one-per-physical-core (Linux; macOS hint-only).
 typedef struct {
     size_t nthreads;
     adm_effort eff;
     unsigned debug;
+    int pin_threads;
 } adm_options;
 
 // Never returns NULL; an unrecognised `status` yields "Unknown error".

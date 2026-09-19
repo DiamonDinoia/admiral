@@ -102,25 +102,28 @@ private:
 
     [[nodiscard]] static std::unique_ptr<thread_pool> make_route_pool(std::size_t nthreads,
                                                                       std::size_t size,
-                                                                      route_kind rk) {
+                                                                      route_kind rk,
+                                                                      bool pin) {
         return (nthreads > 1 && size > 1 && rk == route_kind::four_step_large)
-                   ? std::make_unique<thread_pool>(nthreads)
+                   ? std::make_unique<thread_pool>(nthreads, pin)
                    : nullptr;
     }
 
 public:
 
-    plan_impl(std::size_t size, bool is_forward, route_kind forced, std::size_t nthreads = 1);
+    plan_impl(std::size_t size, bool is_forward, route_kind forced, std::size_t nthreads = 1,
+              bool pin = false);
 
     plan_impl(std::size_t size, bool is_forward, std::size_t nthreads = 1,
               const dif_factor_plan* dif_override = nullptr,
-              admiral::effort eff = admiral::effort::estimate);
+              admiral::effort eff = admiral::effort::estimate, bool pin = false);
 
 private:
     struct routed_plan {
         measured_choice ch;
         std::size_t nthreads;
         const dif_factor_plan* dif_override;
+        bool pin = false;
     };
 
     plan_impl(std::size_t size, bool is_forward, routed_plan rp);
@@ -138,29 +141,30 @@ private:
     }
 
     static routed_plan route_plan(std::size_t size, bool is_forward, std::size_t nthreads,
-                                  const dif_factor_plan* dif_override, admiral::effort eff) {
+                                  const dif_factor_plan* dif_override, admiral::effort eff,
+                                  bool pin) {
 #ifdef ADM_PIN_PLAN_ESTIMATE
         eff = admiral::effort::estimate;  // measurement knob: measure/automatic cannot race
 #endif
-        if (size == 0) ADM_UNLIKELY return {measured_choice{}, 1, dif_override};
-        if (dif_override) return {measured_choice{route_kind::iterative_dif, {}}, nthreads, dif_override};
+        if (size == 0) ADM_UNLIKELY return {measured_choice{}, 1, dif_override, pin};
+        if (dif_override) return {measured_choice{route_kind::iterative_dif, {}}, nthreads, dif_override, pin};
         const auto elect = [&](std::size_t nt) {
             return eff != admiral::effort::estimate
                        ? measured_route(size, is_forward, nt)
                        : measured_choice{select_route(size, nt), {}};
         };
-        if (nthreads != 0) return {elect(nthreads), nthreads, dif_override};
+        if (nthreads != 0) return {elect(nthreads), nthreads, dif_override, pin};
         const std::size_t P = resolve_nthreads(0);
         measured_choice route_est{select_route(size, P), {}};
         if (route_est.route != route_kind::four_step_large)
             // Auto resolved to serial, so elect at that width. Returning the P-wide estimate
             // would downgrade effort::measure to effort::estimate on every non-large route.
-            return {eff == admiral::effort::estimate ? route_est : elect(1), 1, dif_override};
+            return {eff == admiral::effort::estimate ? route_est : elect(1), 1, dif_override, pin};
         const std::size_t nt = resolve_nthreads(0, size, kLargeDispatches, large_work_ns(size), 0);
         measured_choice ch = elect(nt);
         if (ch.route != route_kind::four_step_large)
-            return {ch, 1, dif_override};
-        return {ch, nt, dif_override};
+            return {ch, 1, dif_override, pin};
+        return {ch, nt, dif_override, pin};
     }
 
     void emplace_route_state(std::size_t size, bool is_forward, const dif_factor_plan* dif_override) {
@@ -458,9 +462,9 @@ private:
 
 template<typename T>
 plan_impl<T>::plan_impl(std::size_t size, bool is_forward, route_kind forced,
-                        std::size_t nthreads)
+                        std::size_t nthreads, bool pin)
     : m{size, is_forward, forced, {},
-        make_route_pool(nthreads, size, forced)}
+        make_route_pool(nthreads, size, forced, pin)}
 {
     if (size == 0) ADM_UNLIKELY
         throw size_error("Plan size must be greater than 0");
@@ -471,15 +475,15 @@ plan_impl<T>::plan_impl(std::size_t size, bool is_forward, route_kind forced,
 
 template<typename T>
 plan_impl<T>::plan_impl(std::size_t size, bool is_forward, std::size_t nthreads,
-                        const dif_factor_plan* dif_override, admiral::effort eff)
-    : plan_impl(size, is_forward, route_plan(size, is_forward, nthreads, dif_override, eff)) {}
+                        const dif_factor_plan* dif_override, admiral::effort eff, bool pin)
+    : plan_impl(size, is_forward, route_plan(size, is_forward, nthreads, dif_override, eff, pin)) {}
 
 template<typename T>
 plan_impl<T>::plan_impl(std::size_t size, bool is_forward, routed_plan rp)
     : m{size, is_forward,
         rp.ch.route,
         {},
-        make_route_pool(rp.nthreads, size, rp.ch.route)}
+        make_route_pool(rp.nthreads, size, rp.ch.route, rp.pin)}
 {
     if (size == 0) ADM_UNLIKELY {
         throw size_error("Plan size must be greater than 0");

@@ -91,11 +91,14 @@ constexpr root_lattice_bad first_bad_chunk() {
     for (std::size_t den = Chunk * kLatticeChunk + 1; den <= (Chunk + 1) * kLatticeChunk;
          ++den)
         for (std::size_t num = 0; num < den; ++num)
-            for (const bool conj : {false, true})
+            // An int loop: MSVC's constexpr evaluator cannot read a range-for temp (C7595).
+            for (int ci = 0; ci != 2; ++ci) {
+                const bool conj = ci != 0;
                 if (lattice_swept<F>(den, num) &&
                     ct_root_form(num, den, conj) !=
                         fold_form(ct_sincos_turns<F>(conj, num, den)))
                     return {den, num, conj};
+            }
     return {};
 }
 

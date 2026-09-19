@@ -412,7 +412,7 @@ private:
 
 class thread_pool {
 public:
-    explicit thread_pool(std::size_t) {}
+    explicit thread_pool(std::size_t, bool = false) {}
     [[nodiscard]] std::size_t size() const noexcept { return 1; }
 #if ADM_CXX20
     template<ChunkBody F>

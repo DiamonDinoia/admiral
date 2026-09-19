@@ -274,7 +274,13 @@ ADM_ALWAYS_INLINE void granule_radix_sym(const V (&x)[IP], V (&y)[IP]) {
     poet::static_for<1, H + 1>([&](const auto k) ADM_LAMBDA_ALWAYS_INLINE {
         V P = x0, Q = V(T(0));
         poet::static_for<1, H + 1>([&](const auto m) ADM_LAMBDA_ALWAYS_INLINE {
+#if defined(_MSC_VER) && !defined(__clang__)
+            // Same MSVC C2131 class as butterfly.hpp's radix_sym_dft: the captured outer
+            // integral_constant is a closure read to its constant evaluator; name the value.
+            constexpr std::size_t mk = (m * decltype(k)::value) % IP;
+#else
             constexpr std::size_t mk = (m * k) % IP;
+#endif
             P = granule_sym_c_term<T, IP, Fwd, mk>(P, a[m]);
             Q = granule_sym_s_term<T, IP, Fwd, mk>(Q, ds[m]);
         });
@@ -516,7 +522,8 @@ ADM_ALWAYS_INLINE void granule_row_tile(const T* in, T* ADM_RESTRICT out,
     }
     poet::static_for<0, NF + (NR != 0 ? 1 : 0)>([&](auto qb_) ADM_LAMBDA_ALWAYS_INLINE {
         constexpr std::size_t qb = qb_;
-        constexpr std::size_t r = qb < NF ? GL : NR;
+        // [[maybe_unused]]: MSVC's C4189 misses the reference through the j lambda's capture.
+        [[maybe_unused]] constexpr std::size_t r = qb < NF ? GL : NR;
         B b[GL];
         poet::static_for<0, GL>([&](auto j) ADM_LAMBDA_ALWAYS_INLINE {
             if constexpr (j < r) {

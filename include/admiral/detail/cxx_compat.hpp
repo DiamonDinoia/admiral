@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <limits>
 #include <memory>
+#include <optional>
+#include <string>
 #include <type_traits>
 #include <utility>
 
@@ -34,6 +36,7 @@
 // changes.
 #if defined(_MSC_VER) && !defined(__clang__)
 #  include <atomic>
+#  include <stdlib.h>  // _dupenv_s lives here, not in <cstdlib>'s std::
 #  define ADM_COMPILER_BARRIER() std::atomic_signal_fence(std::memory_order_seq_cst)
 #else
 #  define ADM_COMPILER_BARRIER() __asm__ __volatile__("" ::: "memory")
@@ -293,6 +296,22 @@ template <class It, class V>
 [[nodiscard]] constexpr It const_find(It first, It last, const V& v) {
     while (first != last && !(*first == v)) ++first;
     return first;
+}
+
+// MSVC deprecates plain getenv (C4996, fatal under /WX) and names _dupenv_s the replacement;
+// it allocates, so this returns a copy. Empty optional = unset.
+[[nodiscard]] inline std::optional<std::string> env_dup(const char* name) {
+#if defined(_MSC_VER) && !defined(__clang__)
+    char* buf = nullptr;
+    std::size_t len = 0;
+    if (_dupenv_s(&buf, &len, name) != 0 || buf == nullptr) return std::nullopt;
+    std::optional<std::string> out{std::string(buf)};
+    std::free(buf);
+    return out;
+#else
+    if (const char* e = std::getenv(name)) return std::string{e};
+    return std::nullopt;
+#endif
 }
 
 template <std::size_t N>

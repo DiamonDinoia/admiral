@@ -44,9 +44,16 @@ ADM_ALWAYS_INLINE void radix_sym_dft(const V (&xr)[IP],
     poet::static_for<1, H + 1>([&](const auto k) {
         V PR = xr[0], PI = xi[0], QR = V(T(0)), QI = V(T(0));
         poet::static_for<1, H + 1>([&](const auto m) {
+#if defined(_MSC_VER) && !defined(__clang__)
+            // MSVC's constant evaluator counts the [&] capture of the outer lambda's
+            // integral_constant as a closure read and refuses the consteval call (C2131,
+            // "usage of this"); the type-level spelling names the value without the object.
             constexpr auto w =
-                ct_sincos_turns<ct_real_t<T>>(
-                    false, (m * k) % IP, IP);
+                ct_sincos_turns<ct_real_t<T>>(false, (m * decltype(k)::value) % IP, IP);
+#else
+            constexpr auto w =
+                ct_sincos_turns<ct_real_t<T>>(false, (m * k) % IP, IP);
+#endif
             PR = piece_fma(V(static_cast<T>(w.c)), ar[m], PR);
             PI = piece_fma(V(static_cast<T>(w.c)), ai[m], PI);
             QR = piece_fma(V(static_cast<T>(w.s)), di[m], QR);
@@ -86,7 +93,7 @@ ADM_ALWAYS_INLINE void pfa_dif_butterfly(const V (&tr)[N1 * N2],
     poet::static_for<0, N2>([&](const auto n2) {
         V br[N1], bi[N1];
         poet::static_for<0, N1>([&](const auto n1) {
-            constexpr std::size_t src = (n1 * N2 + n2 * N1) % IP;
+            const std::size_t src = (n1 * N2 + n2 * N1) % IP;
             br[n1] = tr[src];
             bi[n1] = ti[src];
         });
@@ -233,8 +240,15 @@ ADM_ALWAYS_INLINE void dif_butterfly(const V (&tr)[IP],
         poet::static_for<0, IP>([&](const auto k) {
             V sr = tr[0], si = ti[0];
             poet::static_for<1, IP>([&](const auto jj) {
+#if defined(_MSC_VER) && !defined(__clang__)
+                // See radix_sym_dft's comment above: MSVC rejects the captured IC in the
+                // consteval argument; name its value through the type instead.
+                constexpr auto w =
+                    ct_sincos_turns<ct_real_t<T>>(true, jj * decltype(k)::value, IP);
+#else
                 constexpr auto w = ct_sincos_turns<ct_real_t<T>>(
                     true, jj * k, IP);
+#endif
                 sr = piece_fnma(V(static_cast<T>(w.s)), ti[jj],
                                 piece_fma(V(static_cast<T>(w.c)), tr[jj], sr));
                 si = piece_fma(V(static_cast<T>(w.s)), tr[jj],
@@ -294,8 +308,14 @@ ADM_ALWAYS_INLINE void staged_dif_butterfly(Load&& load, Emit&& emit) {
             load(IC<n + N2 * m>{}, br[m], bi[m]);
         });
         sub_dft<T, N1, V>(br, bi, [&](const auto r, V yr, V yi) ADM_LAMBDA_ALWAYS_INLINE {
+#if defined(_MSC_VER) && !defined(__clang__)
+            // Same MSVC C2131 class as radix_sym_dft, routed the same way.
+            const auto [fr, fi] =
+                apply_stage_twiddle<T, IP, (r * decltype(n)::value) % IP, V>(yr, yi);
+#else
             constexpr std::size_t e = (r * n) % IP;
             const auto [fr, fi] = apply_stage_twiddle<T, IP, e, V>(yr, yi);
+#endif
             fr.store_aligned(ar + (r * N2 + n) * W);
             fi.store_aligned(ai + (r * N2 + n) * W);
         });

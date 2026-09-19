@@ -40,6 +40,8 @@
 #include <cstddef>
 #include <new>
 
+#include <admiral/detail/cxx_compat.hpp>
+
 namespace admiral {
 namespace detail {
 namespace {
@@ -75,8 +77,8 @@ inline constexpr std::size_t kSnmallocMinBytes = std::size_t{32} << 20;
 // without this check. validate.sh's valgrind arm is the gate: break the fallback and every test
 // aborts.
 bool running_on_valgrind() noexcept {
-    const char* preload = std::getenv("LD_PRELOAD");
-    return preload != nullptr && std::strstr(preload, "vgpreload") != nullptr;
+    const auto preload = env_dup("LD_PRELOAD");
+    return preload && std::strstr(preload->c_str(), "vgpreload") != nullptr;
 }
 
 bool use_system_alloc() noexcept {

@@ -28,8 +28,8 @@ void set_large_route_serial_override(std::size_t elem_bytes, std::size_t bytes) 
 
 bool large_route_probe_disabled() {
     static const bool off = [] {
-        const char* e = std::getenv("ADM_LARGE_ROUTE_PROBE");
-        return e != nullptr && e[0] == '0' && e[1] == '\0';
+        const auto e = env_dup("ADM_LARGE_ROUTE_PROBE");
+        return e && *e == "0";
     }();
     return off;
 }

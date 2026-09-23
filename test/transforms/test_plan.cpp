@@ -8,9 +8,11 @@
 #include <complex>
 #include <cmath>
 #include <limits>
+#include <array>
 #include <chrono>
 #include <random>
 #include <string>
+#include <thread>
 #include <utility>
 
 using namespace Catch::Matchers;
@@ -486,6 +488,27 @@ TEMPLATE_TEST_CASE("effort::measure elects twice the same route at one shape",
                 admiral::detail::plan_impl<T>(n, true, 0, nullptr, eff).route_name();
             REQUIRE(ra == rb);
         }
+    }
+}
+
+// Races the first election of a cold key (nthreads=4: earlier cases warm 0 and 1) through the
+// memo's lock. tsan is the detector; the REQUIRE alone does not reliably catch an unlocked map.
+TEMPLATE_TEST_CASE("effort::measure elects the same route under concurrent first election",
+                   "[plan][measure][threads]", float, double) {
+    using T = TestType;
+    constexpr std::size_t kRacers = 8;
+    for (const std::size_t n : {std::size_t{250}, std::size_t{500}, std::size_t{3720}}) {
+        CAPTURE(n);
+        std::array<std::string, kRacers> routes;
+        std::vector<std::thread> racers;
+        for (std::size_t i = 0; i < kRacers; ++i)
+            racers.emplace_back([&, i] {
+                routes[i] = admiral::detail::plan_impl<T>(n, true, 4, nullptr,
+                                                           admiral::effort::measure)
+                                .route_name();
+            });
+        for (auto& t : racers) t.join();
+        for (std::size_t i = 1; i < kRacers; ++i) REQUIRE(routes[i] == routes[0]);
     }
 }
 

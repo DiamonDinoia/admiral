@@ -426,6 +426,33 @@ TEST_CASE("serial four_step_large admission follows the injected line and the fa
     REQUIRE(large_route_serial_override(8) == 0);
 }
 
+// The memo's key must carry the serial-line override: without it a later scope at the same
+// plan parameters replays the first scope's answer. Asserted on the memo's size, not a route
+// name, because measure_route races and may legitimately disagree with estimate.
+TEST_CASE("measured_route's memo keys on the override, not just the plan parameters",
+          "[coverage][route][four_step_large][memo]") {
+    using namespace admiral::detail;
+    using P = admiral::detail::plan_impl<double>;
+    constexpr std::size_t mib = std::size_t{1} << 20;
+    constexpr std::size_t n = 524288;  // 8 MiB f64, past BASE_MODEL_NMAX, valid large split.
+
+    {
+        const large_route_serial_override_scope pin(20 * mib, 24 * mib);
+        const std::size_t m0 = P::measured_route_memo_size();
+        const std::string first = P(n, true, 1, nullptr, admiral::effort::measure).route_name();
+        REQUIRE(P::measured_route_memo_size() == m0 + 1);  // cold key: an election
+        REQUIRE(P(n, true, 1, nullptr, admiral::effort::measure).route_name() == first);
+        REQUIRE(P::measured_route_memo_size() == m0 + 1);  // same key: a hit
+    }
+    {
+        const large_route_serial_override_scope pin(6 * mib, 12 * mib);
+        const std::size_t m1 = P::measured_route_memo_size();
+        [[maybe_unused]] const std::string second =
+            P(n, true, 1, nullptr, admiral::effort::measure).route_name();
+        REQUIRE(P::measured_route_memo_size() == m1 + 1);  // only the override moved
+    }
+}
+
 TEST_CASE("large-route serial probe: side rule, geo-mid and ladder selection",
           "[route][four_step_large][gate]") {
     using namespace admiral::detail;

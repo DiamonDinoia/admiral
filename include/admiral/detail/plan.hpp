@@ -10,8 +10,11 @@
 #include <complex>
 #include <cstddef>
 #include <limits>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <tuple>
 #include <variant>
 #include <vector>
 #include "cxx_compat.hpp"
@@ -310,11 +313,18 @@ private:
                                 const dif_chain_list& chain_cands, measured_choice& pick,
                                 TimePlan& time_plan, std::size_t& raced);
 
-    static measured_choice measured_route(std::size_t size, [[maybe_unused]] bool is_forward,
-                                          std::size_t nthreads) {
-        if constexpr (adm_measure) return measure_route(size, is_forward, nthreads);
-        else return measured_choice{select_route(size, nthreads), {}};
-    }
+    // measure_route races host noise, so its answer is memoized once per process. Out of class
+    // so the one memo lives in the engine, not in each module that inlines this.
+    static measured_choice measured_route(std::size_t size, bool is_forward, std::size_t nthreads);
+
+    struct route_memo;
+    static route_memo& memo();
+
+public:
+    // Elections memoized so far; a test reads it to tell a memo hit from a miss.
+    static std::size_t measured_route_memo_size();
+
+private:
 
     // The serial line is measured, not constant: large_route_serial_bytes resolves the
     // injected override (tests), then the cached probe answer, running the probe once per
@@ -504,6 +514,44 @@ inline constexpr std::chrono::nanoseconds::rep kMeasureLongNs = 2'000'000;
 }
 inline constexpr double kMeasureRejectRatio = 1.25;
 inline constexpr double kMeasureInf = 1e300;
+
+// The key carries the test-only serial-line override, so a changed override scope re-elects
+// instead of replaying a stale answer. One lock over lookup, election and store: exactly one
+// caller per key elects. Every trial plan builds through the forced-route constructor, which
+// never reaches route_plan, so the lock cannot re-enter.
+template<typename T>
+struct plan_impl<T>::route_memo {
+    std::mutex mu;
+    std::map<std::tuple<std::size_t, std::size_t, bool, std::size_t>, measured_choice> map;
+};
+
+template<typename T>
+typename plan_impl<T>::route_memo& plan_impl<T>::memo() {
+    static route_memo m;
+    return m;
+}
+
+template<typename T>
+std::size_t plan_impl<T>::measured_route_memo_size() {
+    const std::lock_guard<std::mutex> lock(memo().mu);
+    return memo().map.size();
+}
+
+template<typename T>
+typename plan_impl<T>::measured_choice
+plan_impl<T>::measured_route(std::size_t size, [[maybe_unused]] bool is_forward,
+                             std::size_t nthreads) {
+    if constexpr (adm_measure) {
+        route_memo& m = memo();
+        const std::lock_guard<std::mutex> lock(m.mu);
+        const auto key = std::make_tuple(size, nthreads, is_forward,
+                                         large_route_serial_override(sizeof(std::complex<T>)));
+        auto it = m.map.find(key);
+        if (it == m.map.end())
+            it = m.map.emplace(key, measure_route(size, is_forward, nthreads)).first;
+        return it->second;
+    } else return measured_choice{select_route(size, nthreads), {}};
+}
 
 template<typename T>
 typename plan_impl<T>::measured_choice

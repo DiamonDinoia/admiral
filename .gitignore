@@ -99,3 +99,6 @@ __pycache__/
 
 # NFS/GPFS leaves these behind when a file is deleted while still open
 .nfs*
+
+# clang source-based coverage; catch_discover_tests drops one at the repo root
+*.profraw

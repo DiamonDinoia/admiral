@@ -562,9 +562,9 @@ TEMPLATE_TEST_CASE("effort::measure reaches the auto-thread route election", "[p
 // The observable is plan-construction TIME. The size is chosen so nothing ELSE races
 // there: above the line estimate already elects four_step_large, so measure_route builds
 // no DIF chain candidate list, and with the pair withheld it returns before allocating
-// anything. With the race on, effort::measure runs one warm-up and one probe per
-// candidate. meas/est on ccmlin075 (SPR, Release, gcc 14.2): 0.24 (f64) and 0.58 (f32)
-// with the race gated off, 325x and 1361x with it on.
+// anything. With the race on, effort::measure spends at least four transforms estimate does
+// not; the bar is one construction plus two transforms, priced on the spot rather than as a
+// ratio, since emulation slows the two by different factors. Gating the race off fails it.
 TEMPLATE_TEST_CASE("effort::measure races the large route serially past the cost model",
                    "[plan][measure][four_step_large]", float, double) {
     using T = TestType;
@@ -584,9 +584,20 @@ TEMPLATE_TEST_CASE("effort::measure races the large route serially past the cost
     };
 
     const auto [est_ns, est_route] = build(admiral::effort::estimate);
+
+    // One transform of the elected route, warmed, is the unit the race spends.
+    std::vector<std::complex<T>> in(n), out(n);
+    for (std::size_t i = 0; i < n; ++i)
+        in[i] = {T(0.5 * int(i % 7) - 1), T(0.25 * int(i % 5) - 0.5)};
+    const admiral::detail::plan_impl<T> ref(n, true, 1, nullptr, admiral::effort::estimate);
+    ref.execute(in.data(), out.data());
+    const auto e0 = clock::now();
+    ref.execute(in.data(), out.data());
+    const double exec_ns = std::chrono::duration<double, std::nano>(clock::now() - e0).count();
+
     const auto [meas_ns, meas_route] = build(admiral::effort::measure);
-    CAPTURE(est_ns, est_route, meas_ns, meas_route);
+    CAPTURE(est_ns, est_route, exec_ns, meas_ns, meas_route);
 
     REQUIRE(est_route == "four_step_large");  // the regime the case is about
-    REQUIRE(meas_ns > 10.0 * est_ns);
+    REQUIRE(meas_ns > est_ns + 2.0 * exec_ns);
 }

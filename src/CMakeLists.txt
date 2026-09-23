@@ -49,6 +49,10 @@ target_include_directories(admiral_engine PRIVATE
     ${ADM_GENERATED_INCLUDE_DIR})
 target_link_libraries(admiral_engine PRIVATE xsimd poet::poet snmalloc ${ADM_THREADS_LIB})
 target_compile_definitions(admiral_engine PRIVATE ADM_BUILDING)
+# scratch_alloc.cpp reads LD_PRELOAD via std::getenv; Windows CRT deprecates it under every driver.
+if(WIN32)
+    target_compile_definitions(admiral_engine PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
 # PRIVATE covers every route decision: plan_impl is extern-templated inside admiral_engine only.
 if(ADM_PIN_PLAN_ESTIMATE)
     target_compile_definitions(admiral_engine PRIVATE ADM_PIN_PLAN_ESTIMATE)

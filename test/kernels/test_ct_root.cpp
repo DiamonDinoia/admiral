@@ -86,8 +86,9 @@ static_assert(kLatticeDenMax % kLatticeChunk == 0);
 // First lattice point in dens (Chunk*kLatticeChunk, (Chunk+1)*kLatticeChunk] where the
 // integer (oct, rem) classification disagrees with the folded (s, c) pair's form through
 // the arms' own FP conditions; {0, 0, false} when none does.
+// Immediate, not constexpr: cl does not escalate a constexpr caller of ct_sincos_turns (P2564).
 template<typename F, std::size_t Chunk>
-constexpr root_lattice_bad first_bad_chunk() {
+ADM_CONSTEVAL root_lattice_bad first_bad_chunk() {
     for (std::size_t den = Chunk * kLatticeChunk + 1; den <= (Chunk + 1) * kLatticeChunk;
          ++den)
         for (std::size_t num = 0; num < den; ++num)

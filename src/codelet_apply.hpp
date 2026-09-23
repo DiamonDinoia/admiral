@@ -385,10 +385,12 @@ ADM_ALWAYS_INLINE void codelet_many_block(const T* ibase, T* obase, std::size_t 
         poet::static_for<0, kBlocks>([&](auto B) {
             constexpr std::size_t j0 = B * W;
             constexpr std::size_t cols = (N - j0 < W) ? N - j0 : W;
+            // A snapshot, not IC<>: IC<> here grows codelet_many_static<26|36, float, false>.
+            [[maybe_unused]] constexpr std::size_t j0c = j0;  // cl C4189s where the read folds away
             V tr[W], ti[W];
             poet::static_for<0, W>([&](auto J) {
                 constexpr std::size_t j = J;
-                constexpr std::size_t k = (j < cols) ? j0 + j : 0;
+                constexpr std::size_t k = (j < cols) ? j0c + j : 0;
                 tr[J] = Scaled ? yr[k] * fr : yr[k];
                 ti[J] = Scaled ? yi[k] * fi : yi[k];
             });
@@ -501,7 +503,7 @@ void codelet_many_static(const std::complex<T>* in, std::complex<T>* out,
                 V tr[W], ti[W];
                 poet::static_for<0, W>([&](auto J) {
                     constexpr std::size_t j = J;
-                    constexpr std::size_t k = (j < cols) ? j0 + j : 0;
+                    constexpr std::size_t k = (j < cols) ? IC<B * W>{} + j : 0;
                     tr[J] = yr[k] * fr;
                     ti[J] = yi[k] * fi;
                 });

@@ -274,7 +274,7 @@ ADM_ALWAYS_INLINE void granule_radix_sym(const V (&x)[IP], V (&y)[IP]) {
     poet::static_for<1, H + 1>([&](const auto k) ADM_LAMBDA_ALWAYS_INLINE {
         V P = x0, Q = V(T(0));
         poet::static_for<1, H + 1>([&](const auto m) ADM_LAMBDA_ALWAYS_INLINE {
-            constexpr std::size_t mk = (m * k) % IP;
+            constexpr std::size_t mk = IC<(m * k) % IP>{};
             P = granule_sym_c_term<T, IP, Fwd, mk>(P, a[m]);
             Q = granule_sym_s_term<T, IP, Fwd, mk>(Q, ds[m]);
         });
@@ -487,6 +487,8 @@ ADM_ALWAYS_INLINE void granule_row_tile(const T* in, T* ADM_RESTRICT out,
     using B = std::conditional_t<sizeof(T) == 4,
                                  xsimd::batch<double, typename V::arch_type>, V>;
     V g[N];
+    // A snapshot, not IC<>: it is also the narrowing, since poet's ptrdiff_t index makes
+    // qb_ < NF a -Wsign-compare.
     poet::static_for<0, NF + (NR != 0 ? 1 : 0)>([&](auto qb_) ADM_LAMBDA_ALWAYS_INLINE {
         constexpr std::size_t qb = qb_;
         constexpr std::size_t r = qb < NF ? GL : NR;
@@ -516,7 +518,8 @@ ADM_ALWAYS_INLINE void granule_row_tile(const T* in, T* ADM_RESTRICT out,
     }
     poet::static_for<0, NF + (NR != 0 ? 1 : 0)>([&](auto qb_) ADM_LAMBDA_ALWAYS_INLINE {
         constexpr std::size_t qb = qb_;
-        constexpr std::size_t r = qb < NF ? GL : NR;
+        // cl counts the use inside the nested if constexpr as no use at all (C4189).
+        [[maybe_unused]] constexpr std::size_t r = qb < NF ? GL : NR;
         B b[GL];
         poet::static_for<0, GL>([&](auto j) ADM_LAMBDA_ALWAYS_INLINE {
             if constexpr (j < r) {

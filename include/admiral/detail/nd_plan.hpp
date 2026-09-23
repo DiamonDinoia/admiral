@@ -393,9 +393,11 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
     const line_plan lp = resolve_line_plan<T>(st, len, inner, run_len, nruns, nthreads,
                                               pool != nullptr);
     if (lp.route == line_route::col_dif) {
-        const auto [Bt, ntiles] =
+        // Not a structured binding: capturing one is C++20-only.
+        const auto tiles =
             resolve_col_tiles<T>(lp, len, run_len, inner * sizeof(std::complex<T>), nthreads,
                                  nruns);
+        const std::size_t Bt = tiles.first, ntiles = tiles.second;
         const std::size_t nunits = nruns * ntiles;
         const T scale = fct.value_or(forward ? T(1) : inv_extent<T>(len));
         // nd_col_block caps Bt at run_len, so ntiles == 1 means the tile covers the whole run and
@@ -476,9 +478,11 @@ apply_lines_strided_oop(const std::complex<T>* src, std::size_t src_line,
     const line_plan lp = resolve_line_plan<T>(st, len, src_line, run_len, nruns, nthreads,
                                               pool != nullptr, batch_ok);
     if (lp.route == line_route::col_dif) {
-        const auto [Bt, ntiles] =
+        // Not a structured binding: capturing one is C++20-only.
+        const auto tiles =
             resolve_col_tiles<T>(lp, len, run_len, dst_line * sizeof(std::complex<T>),
                                  nthreads, nruns);
+        const std::size_t Bt = tiles.first, ntiles = tiles.second;
         const std::size_t nunits = nruns * ntiles;
         const T scale = fct.value_or(forward ? T(1) : inv_extent<T>(len));
         parallel_for(pool, nunits, total_elems, [&](std::size_t b, std::size_t e, std::size_t) {

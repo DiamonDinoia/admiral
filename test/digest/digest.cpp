@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <limits>
 #include <string>
 #include <vector>
@@ -41,8 +42,11 @@ static void emit(const char* tag, const std::string& name,
                                      std::numeric_limits<T>::max()), v[0].imag());
     if (g_case == digest_cases::kUlpControlCase) g_control_name = std::string(tag) + " " + name;
     if (g_case == g_dump && g_dumpfile) {
-        std::FILE* f = std::fopen(g_dumpfile, "wb");
-        if (f) { std::fwrite(v.data(), sizeof(std::complex<T>), n, f); std::fclose(f); }
+        // ofstream, not fopen: the Windows CRT deprecates fopen and clang-cl turns that
+        // into an error under -Werror. A failed open no-ops, as the fopen arm did.
+        std::ofstream f(g_dumpfile, std::ios::binary);
+        f.write(reinterpret_cast<const char*>(v.data()),
+                static_cast<std::streamsize>(n * sizeof(std::complex<T>)));
     }
     std::printf("%4zu %s %-28s %016llx\n", g_case, tag, name.c_str(),
                 static_cast<unsigned long long>(fnv(v.data(), n * sizeof(std::complex<T>))));

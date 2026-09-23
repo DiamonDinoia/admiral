@@ -31,7 +31,15 @@ form is also idiomatic C++20 and a second arm would only rot. A templated lambda
 a stateless struct with a member-template call operator, an `auto` parameter becomes a
 named template parameter, and Good-Thomas's gather keeps its masks compile-time through
 generator types keyed by integral NTTPs (class-type NTTPs and xsimd's array
-`make_batch_constant` are C++20-only).
+`make_batch_constant` are C++20-only). A nested lambda reads an OUTER `static_for` index
+through `IC<expr>{}`: cl evaluates the captured index's conversion operator inside a
+template argument but rejects it anywhere else in a constant expression (C2131,
+measured on cl 19.44 and 19.51), while a snapshot local swaps the captured entity from
+the index to that local and moves gcc 14.2's inliner and a bit under `-ffast-math`
+(digest case 107). A runtime read needs nothing -- name the index. Two sites still hold
+a snapshot and each says so in place: `codelet_many_block`, where `IC<B * W>{}` moves
+the inliner the other way, and `granule_row_tile`'s `qb`, where the snapshot is also the
+narrowing -- poet hands the index as `ptrdiff_t`, so `qb_ < NF` is `-Wsign-compare`.
 
 Verify a change to the seam with a per-object function-symbol diff: `nm --defined-only
 -S`, comparing the multiset of symbol sizes. Do NOT use `objcopy -O binary

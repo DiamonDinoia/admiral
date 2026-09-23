@@ -67,6 +67,11 @@ inline constexpr bool kFlatTiny =
     return r;
 }
 
+// ft_rev through template arguments: inside a lambda cl reads a constexpr-local argument as a
+// runtime value and rejects the immediate call (C7595).
+template<std::size_t X, std::size_t B>
+inline constexpr std::size_t ft_rev_v = ft_rev(X, B);
+
 // Stage-M intra partner map, in fp lanes: complex lane c exchanges with c ^ M (partner
 // distance M complexes); each fp lane follows its complex lane; the map stays row-local
 // because 2M <= N.
@@ -197,7 +202,7 @@ ADM_ALWAYS_INLINE void flat_tiny_apply(const T* ADM_RESTRICT srcp, T* ADM_RESTRI
     } else if constexpr (C == 1) {
         poet::static_for<0, K>([&](auto k) {
             constexpr std::size_t kk = k;
-            (d[k] * f).store_unaligned(dstp + ft_rev(kk, K) * W);
+            (d[k] * f).store_unaligned(dstp + ft_rev_v<kk, K> * W);
         });
     } else {
         static_assert(K <= 4 && C <= 4, "the two-source output merge set is (K, C) in "

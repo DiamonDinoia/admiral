@@ -677,7 +677,9 @@ ADM_ALWAYS_INLINE void plan_impl<T>::race_dif_chains(std::size_t size, bool is_f
 template<typename T>
 std::size_t plan_impl<T>::probe_large_route_serial() {
     constexpr std::size_t elem = sizeof(std::complex<T>);
-    constexpr const std::size_t* const ladder =
+    // Not constexpr: cl (C2326) denies the nested `sample` lambda a constexpr local read at a
+    // runtime index.
+    const std::size_t* const ladder =
         elem == 16 ? detail::kLargeRouteProbeLadderF64 : detail::kLargeRouteProbeLadderF32;
     constexpr std::size_t count = detail::kLargeRouteProbeLadderCount;
     const std::size_t top_n = ladder[count - 1] / elem;

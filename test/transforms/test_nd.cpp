@@ -590,6 +590,16 @@ reference_2d_columns_ld(const std::vector<std::complex<T>>& x, std::size_t rows,
     return ref;
 }
 
+// Doubles shape[0] until the array exceeds max(256 KiB, L2), keeping the shape inside
+// fuse_planes' window (plane <= l2 < total) at any reported L2.
+template<typename T>
+std::vector<std::size_t> grow_leading_dim(std::vector<std::size_t> shape) {
+    const std::size_t plane = shape[shape.size() - 1] * shape[shape.size() - 2];
+    const std::size_t max_l2 = std::max(std::size_t{262144}, admiral::detail::cpu_cache().l2);
+    while (shape[0] * plane * sizeof(std::complex<T>) <= max_l2) shape[0] *= 2;
+    return shape;
+}
+
 }
 
 // 128x64x64 and 256x64x32 run the plane-fused chain: the last two axes (4096 and 2048 complex
@@ -611,7 +621,8 @@ reference_2d_columns_ld(const std::vector<std::complex<T>>& x, std::size_t rows,
 TEMPLATE_TEST_CASE("3D plane-fused shapes match the separable reference pointwise",
                    "[nd][3d][fused]", float, double) {
     using T = TestType;
-    const std::vector<std::vector<std::size_t>> shapes{{128, 64, 64}, {256, 64, 32}};
+    const std::vector<std::vector<std::size_t>> shapes{
+        grow_leading_dim<T>({128, 64, 64}), grow_leading_dim<T>({256, 64, 32})};
     admiral::options serial;
     serial.nthreads = 1;
     for (const std::vector<std::size_t>& shape : shapes) {

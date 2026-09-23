@@ -16,6 +16,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# The workflow owns the compiler launcher; the tree does not pick one. CMake initializes
+# CMAKE_<LANG>_COMPILER_LAUNCHER from the environment variable of the same name, so a -D on a
+# configure line still overrides it. Every job that BUILDS must also install the launcher named
+# here, or ninja invokes a program that is not on PATH.
+env:
+  CMAKE_CXX_COMPILER_LAUNCHER: ccache
+  CMAKE_C_COMPILER_LAUNCHER: ccache
+
 jobs:
   # One cell per (toolchain, build type). The compiler axis is the point: gcc and clang disagree
   # about which diagnostics are errors, and a warning class only one of them raises is invisible
@@ -85,6 +93,9 @@ jobs:
             grep -qF -- '-Og' build/compile_commands.json
             ! grep -qF -- '-O0' build/compile_commands.json
           fi
+      # compile_commands.json omits the launcher under Ninja, so build.ninja is the only witness.
+      - name: Assert the compiler launcher arrived
+        run: grep -q 'LAUNCHER = ccache' build/build.ninja
       - run: cmake --build build
       - run: ctest --test-dir build --timeout 900 --output-on-failure --no-tests=error
       # The only cell that links a consumer against the DLL, which is what proves the headers
@@ -124,6 +135,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       CMAKE_GENERATOR: Ninja
+      CMAKE_CXX_COMPILER_LAUNCHER: sccache
+      CMAKE_C_COMPILER_LAUNCHER: sccache
     defaults:
       run:
         shell: bash
@@ -136,6 +149,11 @@ jobs:
           ninja: true
           vcvarsall: true
           cache-tools: true
+      # sccache, not ccache: ccache has no MSVC support.
+      - uses: hendrikmuhs/ccache-action@v1
+        with:
+          variant: sccache
+          key: ${{ matrix.os }}-${{ matrix.toolchain }}
       # cl.exe has no per-level arch switch, so CompilerOptions.cmake collapses every x86 target
       # to /arch:AVX2 and says so. Only the clang-cl cell honours the requested level.
       - name: Configure
@@ -144,6 +162,9 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DADM_TARGET_ARCH=x86-64-v3
           -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF -DADM_BUILD_EXAMPLES=OFF
+      # compile_commands.json omits the launcher under Ninja, so build.ninja is the only witness.
+      - name: Assert the compiler launcher arrived
+        run: grep -q 'LAUNCHER = sccache' build/build.ninja
       - run: cmake --build build
       - run: ctest --test-dir build --timeout 900 --output-on-failure --no-tests=error
       - name: Upload logs
@@ -167,6 +188,10 @@ jobs:
       - uses: actions/checkout@v7
       - uses: aminya/setup-cpp@v1
         with: {compiler: llvm-19, cmake: true, ninja: true, cache-tools: true}
+      # Configure-only, but the compiler ABI check try_compiles through the launcher.
+      - uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: presets-${{ matrix.preset }}
       - run: cmake --preset ${{ matrix.preset }}
 
   # clang-tidy and cppcheck run as compiler launchers, so a finding fails this build.
@@ -394,6 +419,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build
+      - uses: hendrikmuhs/ccache-action@v1
+        with: {key: v4-sde}
       - uses: petarpetrovt/setup-sde@6d2773bc0ef3005fd52e0ae0bb91782321793aec  # v6.0
       - name: SDE wrapper
         run: |

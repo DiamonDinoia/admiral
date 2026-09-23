@@ -4,6 +4,7 @@
 #include <cmath>
 #include <complex>
 #include <cstddef>
+#include <limits>
 #include <type_traits>
 #include <utility>
 
@@ -26,11 +27,21 @@ void scale_inplace(std::complex<T>* p, std::size_t n, T s) noexcept {
     for (std::size_t i = 0; i < n; ++i) p[i] *= s;
 }
 
+// 1/n, correctly rounded. Adjacent f32 divides SLP-vectorize into a packed divide that
+// -ffast-math turns into a reciprocal estimate (1/16 -> 0.0624999963); a double divide is exact.
+template<typename T>
+[[nodiscard]] constexpr T inv_extent(std::size_t n) {
+    if constexpr (std::numeric_limits<T>::digits > std::numeric_limits<double>::digits)
+        return T(1) / static_cast<T>(n);
+    else
+        return static_cast<T>(1.0 / static_cast<double>(n));
+}
+
 // The API's default scale contract for a full transform: identity forward, 1/total inverse.
 // Row/col and predicate split forms are different quantities and keep their local spellings.
 template<typename T>
 [[nodiscard]] constexpr T default_transform_fct(bool is_forward, std::size_t total) {
-    return is_forward ? T(1) : T(1) / static_cast<T>(total);
+    return is_forward ? T(1) : inv_extent<T>(total);
 }
 
 [[nodiscard]] constexpr bool is_codelet_catalog(std::size_t N) {

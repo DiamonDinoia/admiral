@@ -210,7 +210,7 @@ private:
         const V* Gre = G.first;
         const V* Gim = G.second;
 
-        const V invM(T(1) / static_cast<T>(M));
+        const V invM(inv_extent<T>(M));
         std::size_t j = 0;
         for (; j + H <= M; j += H) {
             V t[W];
@@ -440,7 +440,7 @@ void nd_real_plan<T>::inverse(std::complex<T>* spec, T* out, const exec_options<
     m.rp->c2r(spec, out, m.rows, m.pool.get());
     if (opts.fct) {
         const std::size_t Nr = real_size();
-        const T def = T(1) / static_cast<T>(Nr);
+        const T def = inv_extent<T>(Nr);
         if (*opts.fct != def) {
             const T s = *opts.fct * static_cast<T>(Nr);
             for (std::size_t i = 0; i < Nr; ++i) out[i] *= s;

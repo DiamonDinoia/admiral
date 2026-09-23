@@ -746,7 +746,7 @@ struct four_step_large_plan {
             four_step_transpose_remainder<T>(in, out, n1, n1, n2);
         }
 
-        const T p2_scale = (!is_forward && default_scale) ? T(1) / static_cast<T>(n2) : T(1);
+        const T p2_scale = (!is_forward && default_scale) ? inv_extent<T>(n2) : T(1);
         const bool defer_rot = (n2 % n1 == 0) && (n2 != n1);
         if (n2 % n1 == 0 && n1 % Wv == 0) {
             four_step_twist_dft_transpose_fused<T>(out, n1, n2, n2 / n1, is_forward,
@@ -769,7 +769,7 @@ struct four_step_large_plan {
             transpose_between_passes(out, n1, n2, defer_rot, pool);
         }
 
-        const T row_scale = default_scale ? (is_forward ? T(1) : T(1) / static_cast<T>(n1)) : fct;
+        const T row_scale = default_scale ? (is_forward ? T(1) : inv_extent<T>(n1)) : fct;
         if (n2 % n1 == 0 && n1 % Wv == 0) {
             four_step_dft_transpose_fused<T>(out, n1, n2, n2 / n1, is_forward, dtw_n1,
                                              row_scale, pool);
@@ -794,8 +794,8 @@ struct four_step_large_plan {
                     thread_pool* pool = nullptr) const {
         const std::size_t N = n1 * n2;
         const bool default_scale = (fct == default_transform_fct<T>(is_forward, N));
-        const T p2_scale = (!is_forward && default_scale) ? T(1) / static_cast<T>(n2) : T(1);
-        const T row_scale = default_scale ? (is_forward ? T(1) : T(1) / static_cast<T>(n1)) : fct;
+        const T p2_scale = (!is_forward && default_scale) ? inv_extent<T>(n2) : T(1);
+        const T row_scale = default_scale ? (is_forward ? T(1) : inv_extent<T>(n1)) : fct;
         auto ws_buf = make_aligned_buffer<std::complex<T>>(N);
         std::complex<T>* const ws = ws_buf.get();
         fsl_ws_s1<T>(in, ws, n1, n2, is_forward, dtw_n2, p2_scale, hitab.data(),

@@ -512,7 +512,7 @@ public:
     }
 
     void inverse(std::complex<T>* spec, T* out, std::optional<T> fct) const {
-        outer_.template execute<false>(spec, T(1) / static_cast<T>(rows_), pool_.get());
+        outer_.template execute<false>(spec, inv_extent<T>(rows_), pool_.get());
         const T s = fct ? *fct * static_cast<T>(real_size()) : T(1);
         admiral::detail::parallel_for(
             pool_.get(), rows_, real_size(),

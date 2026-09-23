@@ -397,7 +397,7 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
             resolve_col_tiles<T>(lp, len, run_len, inner * sizeof(std::complex<T>), nthreads,
                                  nruns);
         const std::size_t nunits = nruns * ntiles;
-        const T scale = fct.value_or(forward ? T(1) : T(1) / static_cast<T>(len));
+        const T scale = fct.value_or(forward ? T(1) : inv_extent<T>(len));
         // nd_col_block caps Bt at run_len, so ntiles == 1 means the tile covers the whole run and
         // tile/c0/bc are loop-invariant. Naming that case drops six live values from a loop that
         // already spills its induction variables around the non-inlined kernel call.
@@ -480,7 +480,7 @@ apply_lines_strided_oop(const std::complex<T>* src, std::size_t src_line,
             resolve_col_tiles<T>(lp, len, run_len, dst_line * sizeof(std::complex<T>),
                                  nthreads, nruns);
         const std::size_t nunits = nruns * ntiles;
-        const T scale = fct.value_or(forward ? T(1) : T(1) / static_cast<T>(len));
+        const T scale = fct.value_or(forward ? T(1) : inv_extent<T>(len));
         parallel_for(pool, nunits, total_elems, [&](std::size_t b, std::size_t e, std::size_t) {
             std::size_t run = b / ntiles, tile = b % ntiles;
             const std::complex<T>* sline = src + src_base(run);
@@ -563,7 +563,7 @@ void apply_bands_strided_packed(std::complex<T>* data, std::size_t len, std::siz
                                 thread_pool* pool, std::size_t nruns, std::size_t w0,
                                 std::size_t w1, std::size_t total_elems, LineBases line_bases) {
     const std::size_t Bp = w0 + w1;
-    const T scale = fct.value_or(forward ? T(1) : T(1) / static_cast<T>(len));
+    const T scale = fct.value_or(forward ? T(1) : inv_extent<T>(len));
     const auto cp0 = real_run_copy<T>::make(2 * w0);
     const auto cp1 = real_run_copy<T>::make(2 * w1);
     parallel_for(pool, nruns, total_elems, [&](std::size_t b, std::size_t e, std::size_t) {
@@ -662,8 +662,8 @@ private:
         // make_scale_plan puts a custom factor on the innermost axis of extent > 1, which under
         // this gate is axis 1; the default factor is the product 1/n1 * 1/n0 the two axes apply.
         const bool custom = f != def;
-        const T rowf = custom ? f : (m.is_forward ? T(1) : T(1) / static_cast<T>(n1));
-        const T colf = custom ? T(1) : (m.is_forward ? T(1) : T(1) / static_cast<T>(n0));
+        const T rowf = custom ? f : (m.is_forward ? T(1) : inv_extent<T>(n1));
+        const T colf = custom ? T(1) : (m.is_forward ? T(1) : inv_extent<T>(n0));
         if (m.is_forward) codelet_dispatch_many<T, true >(data, n0, n1, n1, rowf);
         else              codelet_dispatch_many<T, false>(data, n0, n1, n1, rowf);
         col_codelet_dispatch<T>(m.is_forward, data, n1, data, n1, n1, n0, colf);

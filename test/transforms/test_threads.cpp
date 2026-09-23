@@ -9,9 +9,12 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <complex>
 #include <cstddef>
+#include <cstdlib>
+#include <fstream>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -20,6 +23,10 @@
 #if ADM_THREADS
 
 #include <thread>
+#if defined(__linux__)
+#include <dirent.h>
+#include <sched.h>
+#endif
 
 namespace {
 
@@ -283,6 +290,139 @@ TEST_CASE("resolve_nthreads wake law: serial floor, knee, pocket, pow2, cap", "[
         REQUIRE(sq2_pick(13) == 64);
     }
 }
+
+TEST_CASE("pool pinning: mapping, and the pin flag pins spawned workers only",
+          "[threads][poolpin]") {
+    using admiral::detail::pool_topo_row;
+    using V = std::vector<std::size_t>;
+    using R = std::vector<pool_topo_row>;
+    const auto map = [](const R& t) { return admiral::detail::pool_pin_list(t); };
+    // Rows are (cpu, socket, core); cpus 16/17 sit behind cores 0/1 here.
+    CHECK(map({{0, 0, 0}, {1, 0, 1}, {2, 0, 2}, {3, 0, 3}, {16, 0, 0}, {17, 0, 1}}) ==
+          V{0, 1, 2, 3}); // SMT siblings collapse
+    CHECK(map({{16, 0, 0}, {2, 0, 2}, {0, 0, 0}, {17, 0, 1}, {3, 0, 3}, {1, 0, 1}}) ==
+          V{0, 1, 2, 3}); // unsorted input
+    CHECK(map({{16, 1, 0}, {0, 0, 0}, {17, 1, 1}, {1, 0, 1}, {2, 0, 2}, {3, 0, 3}}) ==
+          V{0, 1, 2, 3, 16, 17}); // 2nd socket: no collapse
+    CHECK(map({{1, 0, 1}, {3, 0, 3}, {17, 1, 1}}) == V{1, 3, 17}); // sparse mask composes
+    CHECK(map({}).empty());                                         // empty mask
+
+#if defined(__linux__)
+    using admiral::detail::pool_pin_cpus;
+    using admiral::detail::thread_pool;
+    cpu_set_t ambient;
+    REQUIRE(sched_getaffinity(0, sizeof ambient, &ambient) == 0);
+    cpu_set_t rec[2];
+    int rc[2] = {0, 0};
+    const auto record = [&](std::size_t, std::size_t, std::size_t tid) {
+        rc[tid] = sched_getaffinity(0, sizeof rec[tid], &rec[tid]);  // per-tid slot: no race
+    };
+    const std::vector<std::size_t>& pins = pool_pin_cpus();  // oracle mapping
+    if (pins.size() < 1) {
+        // Unreadable topology or no pinnable core in the affinity mask: nothing to pin the
+        // one spawned worker below to (pool(2,...) spawns nthreads-1 == 1 worker), so the
+        // exact-affinity check cannot run on this host.
+        WARN("pool pinning unavailable here (pool_pin_cpus() reports " << pins.size()
+                                                                       << " cores); skipped the pinned-mask check");
+    } else {
+        thread_pool pool(2, true);
+        pool.parallel_for(2, record);
+        cpu_set_t want;
+        CPU_ZERO(&want);
+        CPU_SET(pins[0], &want);
+        REQUIRE(CPU_EQUAL_S(sizeof rec[0], &rec[0], &want));     // worker 0 -> entry 0
+        REQUIRE(CPU_EQUAL_S(sizeof rec[1], &rec[1], &ambient));  // caller unmoved
+        WARN("pinned-mask check ran: worker 0 landed on pool_pin_cpus()[0], caller mask unmoved");
+    }
+    {
+        thread_pool pool(2, false);
+        pool.parallel_for(2, record);
+        // Unpinned pool: workers keep the ambient mask.
+        REQUIRE(CPU_EQUAL_S(sizeof rec[0], &rec[0], &ambient));
+        REQUIRE(CPU_EQUAL_S(sizeof rec[1], &rec[1], &ambient));
+    }
+    REQUIRE((rc[0] | rc[1]) == 0);  // every sched_getaffinity above succeeded
+#endif  // __linux__
+}
+
+TEST_CASE("options::pin_threads pinned plans reproduce unpinned bits", "[threads][poolpin]") {
+    // Pinning is scheduling only: a pinned transform must reproduce the unpinned bits. The
+    // batch shape guarantees a pool forms for nthreads=2, so the option-to-pool hop runs.
+    const std::vector<std::size_t> shape = {64, 512};
+    const auto in = make_input<double>(64 * 512, 0xB175u);
+    const admiral::options unpinned{2, admiral::effort::estimate, 0, false};
+    const admiral::options pinned{2, admiral::effort::estimate, 0, true};
+    auto a = in, b = in;
+    admiral::plan<double> pa(shape, unpinned), pb(shape, pinned);
+    pa.forward(a.data());
+    pb.forward(b.data());
+    REQUIRE(a == b);
+}
+
+#if defined(__linux__)
+TEST_CASE("options::pin_threads reaches the large-route pool on a 1-D plan",
+          "[threads][poolpin][large]") {
+    // Rank 1 has no outer batch pool (units=1), so the axis's own plan_impl pool is the only
+    // pool in play; that is the pool `make_nd_axis_state` used to build unpinned regardless of
+    // `opts.pin_threads`. Bits alone (the case above) can't see a scheduling-only bug.
+    using admiral::detail::pool_pin_cpus;
+    const std::vector<std::size_t>& pins = pool_pin_cpus();
+    if (pins.size() < 1) {
+        WARN("pool pinning unavailable here (pool_pin_cpus() reports " << pins.size()
+                                                                        << " cores); skipped");
+        return;
+    }
+    // f64 four_step_large is elected from n=2^15 at nthreads=2 on the probed host; 2^20 sits
+    // well inside that range regardless of nthreads.
+    constexpr std::size_t N = std::size_t{1} << 20;
+    const admiral::options opts{2, admiral::effort::estimate, 0, /*pin_threads=*/true};
+
+    const auto live_tids = [] {
+        std::vector<int> tids;
+        DIR* d = opendir("/proc/self/task");
+        REQUIRE(d != nullptr);
+        while (dirent* e = readdir(d))
+            if (std::isdigit(static_cast<unsigned char>(e->d_name[0])))
+                tids.push_back(std::atoi(e->d_name));
+        closedir(d);
+        std::sort(tids.begin(), tids.end());
+        return tids;
+    };
+    const auto cpu_list = [](int tid) {
+        std::ifstream f("/proc/self/task/" + std::to_string(tid) + "/status");
+        std::string line;
+        while (std::getline(f, line))
+            if (line.rfind("Cpus_allowed_list:", 0) == 0)
+                return line.substr(line.find_first_not_of(" \t", 18));
+        return std::string{};
+    };
+
+    const auto before = live_tids();
+    admiral::plan<double> p(N, opts);
+    std::vector<std::complex<double>> buf(N, std::complex<double>{1.0, 0.0});
+    p.forward(buf.data());  // blocks until every worker ran once, past its pin call
+    const auto after = live_tids();
+
+    std::vector<int> spawned;
+    std::set_difference(after.begin(), after.end(), before.begin(), before.end(),
+                         std::back_inserter(spawned));
+    REQUIRE(spawned.size() >= 1);  // the axis pool spawned at least its one worker
+
+    // A pinned worker's Cpus_allowed_list is one number (no ',' or '-'); the ambient mask, or
+    // an incidental non-pool thread another library spawned, is wider or unreadable.
+    bool found_pinned = false;
+    for (int tid : spawned) {
+        const std::string list = cpu_list(tid);
+        if (!list.empty() && list.find(',') == std::string::npos &&
+            list.find('-') == std::string::npos) {
+            found_pinned = true;
+            break;
+        }
+    }
+    REQUIRE(found_pinned);
+}
+#endif  // __linux__
+
 // ---------------------------------------------------------------------------
 // Concurrent-execute safety: two threads on ONE plan with separate buffers
 // must produce results identical to single-threaded execution.

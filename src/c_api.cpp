@@ -43,7 +43,7 @@ std::optional<admiral::options> to_cpp_options(const adm_options* opts) {
         return std::nullopt;
     return admiral::options{opts->nthreads,
                             static_cast<admiral::effort>(opts->eff),
-                            opts->debug};
+                            opts->debug, opts->pin_threads != 0};
 }
 
 bool bad_shape(const size_t* shape, size_t ndim) { return shape == nullptr || ndim == 0; }

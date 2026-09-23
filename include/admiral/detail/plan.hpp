@@ -107,19 +107,20 @@ private:
 
     [[nodiscard]] static std::unique_ptr<thread_pool> make_route_pool(std::size_t nthreads,
                                                                       std::size_t size,
-                                                                      route_kind rk) {
+                                                                      route_kind rk, bool pin) {
         return (nthreads > 1 && size > 1 && rk == route_kind::four_step_large)
-                   ? std::make_unique<thread_pool>(nthreads)
+                   ? std::make_unique<thread_pool>(nthreads, pin)
                    : nullptr;
     }
 
 public:
 
-    plan_impl(std::size_t size, bool is_forward, route_kind forced, std::size_t nthreads = 1);
+    plan_impl(std::size_t size, bool is_forward, route_kind forced, std::size_t nthreads = 1,
+              bool pin = false);
 
     plan_impl(std::size_t size, bool is_forward, std::size_t nthreads = 1,
               const dif_factor_plan* dif_override = nullptr,
-              admiral::effort eff = admiral::effort::estimate);
+              admiral::effort eff = admiral::effort::estimate, bool pin = false);
 
 private:
     struct routed_plan {
@@ -128,10 +129,10 @@ private:
         const dif_factor_plan* dif_override;
     };
 
-    plan_impl(std::size_t size, bool is_forward, routed_plan rp);
+    plan_impl(std::size_t size, bool is_forward, routed_plan rp, bool pin);
     plan_impl(std::size_t size, bool is_forward, std::size_t nthreads,
               const dif_factor_plan* dif_override, measured_choice choice)
-        : plan_impl(size, is_forward, routed_plan{choice, nthreads, dif_override}) {}
+        : plan_impl(size, is_forward, routed_plan{choice, nthreads, dif_override}, false) {}
 
     static double large_work_ns(std::size_t size) {
         const large_split sp = choose_large_split(size);
@@ -467,9 +468,9 @@ private:
 
 template<typename T>
 plan_impl<T>::plan_impl(std::size_t size, bool is_forward, route_kind forced,
-                        std::size_t nthreads)
+                        std::size_t nthreads, bool pin)
     : m{size, is_forward, forced, {},
-        make_route_pool(nthreads, size, forced)}
+        make_route_pool(nthreads, size, forced, pin)}
 {
     if (size == 0) ADM_UNLIKELY
         throw size_error("Plan size must be greater than 0");
@@ -480,15 +481,15 @@ plan_impl<T>::plan_impl(std::size_t size, bool is_forward, route_kind forced,
 
 template<typename T>
 plan_impl<T>::plan_impl(std::size_t size, bool is_forward, std::size_t nthreads,
-                        const dif_factor_plan* dif_override, admiral::effort eff)
-    : plan_impl(size, is_forward, route_plan(size, is_forward, nthreads, dif_override, eff)) {}
+                        const dif_factor_plan* dif_override, admiral::effort eff, bool pin)
+    : plan_impl(size, is_forward, route_plan(size, is_forward, nthreads, dif_override, eff), pin) {}
 
 template<typename T>
-plan_impl<T>::plan_impl(std::size_t size, bool is_forward, routed_plan rp)
+plan_impl<T>::plan_impl(std::size_t size, bool is_forward, routed_plan rp, bool pin)
     : m{size, is_forward,
         rp.ch.route,
         {},
-        make_route_pool(rp.nthreads, size, rp.ch.route)}
+        make_route_pool(rp.nthreads, size, rp.ch.route, pin)}
 {
     if (size == 0) ADM_UNLIKELY {
         throw size_error("Plan size must be greater than 0");

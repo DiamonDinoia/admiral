@@ -152,9 +152,9 @@ TEST_CASE("adm_options reaches threads, effort and debug", "[c_api][options]") {
     for (size_t i = 0; i < N; ++i) data[i] = {double(i % 13) - 6.0, double(i % 7) - 3.0};
     const auto ref = data;
 
-    const adm_options threaded = {2, ADM_EFFORT_ESTIMATE, 0};
-    const adm_options measured = {1, ADM_EFFORT_AUTOMATIC, 0};
-    const adm_options traced = {1, ADM_EFFORT_ESTIMATE, 2};
+    const adm_options threaded = {2, ADM_EFFORT_ESTIMATE, 0, 0};
+    const adm_options measured = {1, ADM_EFFORT_AUTOMATIC, 0, 0};
+    const adm_options traced = {1, ADM_EFFORT_ESTIMATE, 2, 0};
 
     for (const adm_options* o : {&threaded, &measured, &traced}) {
         REQUIRE(adm_forward(data.data(), N, o) == ADM_SUCCESS);
@@ -165,12 +165,23 @@ TEST_CASE("adm_options reaches threads, effort and debug", "[c_api][options]") {
         }
     }
 
+    // pin_threads is scheduling only: a pinned run must reproduce the unpinned bits exactly.
+    const adm_options pin_off = {2, ADM_EFFORT_ESTIMATE, 0, 0};
+    const adm_options pin_on = {2, ADM_EFFORT_ESTIMATE, 0, 1};
+    auto a = ref, b = ref;
+    REQUIRE(adm_forward(a.data(), N, &pin_off) == ADM_SUCCESS);
+    REQUIRE(adm_forward(b.data(), N, &pin_on) == ADM_SUCCESS);
+    for (size_t i = 0; i < N; ++i) {
+        REQUIRE(a[i].real == b[i].real);
+        REQUIRE(a[i].imag == b[i].imag);
+    }
+
     adm_plan plan = nullptr;
     REQUIRE(adm_plan_1d(&plan, N, &measured) == ADM_SUCCESS);
     REQUIRE(adm_plan_size(plan) == N);
     adm_plan_destroy(plan);
 
-    const adm_options bad = {1, static_cast<adm_effort>(3), 0};
+    const adm_options bad = {1, static_cast<adm_effort>(3), 0, 0};
     REQUIRE(adm_forward(data.data(), N, &bad) == ADM_ERROR_INVALID_OPTION);
     REQUIRE(adm_plan_1d(&plan, N, &bad) == ADM_ERROR_INVALID_OPTION);
     adm_plan_destroy(plan);

@@ -325,7 +325,7 @@ template<typename T>
 class nd_real_plan {
 public:
     explicit nd_real_plan(span<const std::size_t> shape, std::size_t nthreads = 1,
-                          admiral::effort eff = admiral::effort::estimate);
+                          admiral::effort eff = admiral::effort::estimate, bool pin = false);
 
     [[nodiscard]] std::size_t cplx_size() const noexcept { return m.total_c; }
     [[nodiscard]] std::size_t real_size() const noexcept { return m.rows * m.inner_len; }
@@ -376,7 +376,7 @@ private:
 
 template<typename T>
 nd_real_plan<T>::nd_real_plan(span<const std::size_t> shape, std::size_t nthreads,
-                              admiral::effort eff) {
+                              admiral::effort eff, bool pin) {
     m.shape.assign(shape.begin(), shape.end());
     const std::size_t n = m.shape.size();
     if (n == 0 || !extent_product(m.shape))
@@ -394,9 +394,9 @@ nd_real_plan<T>::nd_real_plan(span<const std::size_t> shape, std::size_t nthread
     for (std::size_t di = 0; di < nouter; ++di) {
         const std::size_t d = nouter - 1 - di;
         m.fwd_axes[d] = make_nd_axis_state<T>(m.shape[d], inner, true,
-                                              false, 1, eff);
+                                              false, 1, eff, pin);
         m.inv_axes[d] = make_nd_axis_state<T>(m.shape[d], inner, false,
-                                              false, 1, eff);
+                                              false, 1, eff, pin);
         // run_outer always calls nd_apply_axis with total=m.total_c (no plane-fusion here),
         // so plan_nruns is plan-invariant the same way nd_runtime_plan's is.
         const std::size_t nruns = m.total_c / (m.shape[d] * inner);
@@ -419,7 +419,7 @@ nd_real_plan<T>::nd_real_plan(span<const std::size_t> shape, std::size_t nthread
             nthreads = 1;
         }
     }
-    if (nthreads > 1) m.pool = std::make_unique<thread_pool>(nthreads);
+    if (nthreads > 1) m.pool = std::make_unique<thread_pool>(nthreads, pin);
 }
 
 template<typename T>

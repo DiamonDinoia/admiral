@@ -56,6 +56,8 @@ struct options {
     std::size_t nthreads = 0;
     effort eff = effort::estimate;
     unsigned debug = 0;
+    // Pin pool workers one-per-physical-core over the ambient mask. Linux-only; a no-op elsewhere.
+    bool pin_threads = false;
 };
 
 #if ADM_CXX20

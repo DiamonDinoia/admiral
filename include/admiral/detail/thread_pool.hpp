@@ -28,6 +28,7 @@ inline void cpu_relax() noexcept {
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdio>
 #include <exception>
 #include <fstream>
 #include <functional>
@@ -92,31 +93,107 @@ inline constexpr std::size_t kAutoSerialElems = std::size_t{1} << 15;
     return auto_n;
 }
 
+// (socket, core) names one physical core; SMT siblings share it.
+struct pool_topo_row {
+    std::size_t cpu;
+    long long socket;
+    long long core;
+};
+
+// One row per allowed cpu, core_id missing => that cpu drops out (untrustworthy row, never
+// guessed). cores_per_socket() and options::pin_threads both key off this, so the tree walks
+// /sys/.../topology exactly once.
+[[nodiscard]] inline const std::vector<pool_topo_row>& topology_rows() {
+    static const std::vector<pool_topo_row> rows = [] {
+        std::vector<pool_topo_row> out;
+#if defined(__linux__)
+        cpu_set_t aff;
+        if (sched_getaffinity(0, sizeof(aff), &aff) == 0) {
+            for (std::size_t cpu = 0; cpu < static_cast<std::size_t>(CPU_SETSIZE); ++cpu) {
+                if (!CPU_ISSET(cpu, &aff)) continue;
+                const std::string dir =
+                    "/sys/devices/system/cpu/cpu" + std::to_string(cpu) + "/topology/";
+                long long core = -1;
+                if (!(std::ifstream(dir + "core_id") >> core)) continue;
+                long long pkg = 0;
+                std::ifstream(dir + "physical_package_id") >> pkg;
+                out.push_back({cpu, pkg, core});
+            }
+        }
+#endif
+        return out;
+    }();
+    return rows;
+}
+
 [[nodiscard]] inline std::size_t cores_per_socket() {
 #if defined(__linux__)
     static const std::size_t c0 = [] {
-        cpu_set_t aff;
-        if (sched_getaffinity(0, sizeof(aff), &aff) == 0) {
-            long long pkgs[64]{};
-            std::size_t np = 0;
-            for (std::size_t cpu = 0; cpu < static_cast<std::size_t>(CPU_SETSIZE); ++cpu) {
-                if (!CPU_ISSET(cpu, &aff)) continue;
-                std::ifstream f("/sys/devices/system/cpu/cpu" + std::to_string(cpu) +
-                                "/topology/physical_package_id");
-                long long id = -1;
-                if (!(f >> id) || id < 0) continue;
-                bool seen = false;
-                for (std::size_t k = 0; k < np; ++k) seen |= pkgs[k] == id;
-                if (!seen && np < 64) pkgs[np++] = id;
-            }
-            if (np > 0)
-                return std::max<std::size_t>(1, allowed_physical_cores() / np);
+        long long pkgs[64]{};
+        std::size_t np = 0;
+        for (const pool_topo_row& r : topology_rows()) {
+            bool seen = false;
+            for (std::size_t k = 0; k < np; ++k) seen |= pkgs[k] == r.socket;
+            if (!seen && np < 64) pkgs[np++] = r.socket;
         }
-        return allowed_physical_cores();
+        return np > 0 ? std::max<std::size_t>(1, allowed_physical_cores() / np)
+                      : allowed_physical_cores();
     }();
     return c0;
 #else
     return allowed_physical_cores();
+#endif
+}
+
+// One pin per physical core: the lowest cpu of each (socket, core) pair (siblings collapse),
+// ordered socket-major then cpu-ascending.
+[[nodiscard]] inline std::vector<std::size_t> pool_pin_list(span<const pool_topo_row> rows) {
+    std::vector<pool_topo_row> cores;
+    for (const pool_topo_row& r : rows) {
+        auto it = std::find_if(cores.begin(), cores.end(), [&](const pool_topo_row& c) {
+            return c.socket == r.socket && c.core == r.core;
+        });
+        if (it == cores.end())
+            cores.push_back(r);
+        else if (r.cpu < it->cpu)
+            it->cpu = r.cpu;
+    }
+    std::sort(cores.begin(), cores.end(), [](const pool_topo_row& a, const pool_topo_row& b) {
+        return a.socket != b.socket ? a.socket < b.socket : a.cpu < b.cpu;
+    });
+    std::vector<std::size_t> out;
+    out.reserve(cores.size());
+    for (const pool_topo_row& c : cores) out.push_back(c.cpu);
+    return out;
+}
+
+// Empty on an unreadable topology or off Linux.
+[[nodiscard]] inline const std::vector<std::size_t>& pool_pin_cpus() {
+    static const std::vector<std::size_t> pins = pool_pin_list(topology_rows());
+    return pins;
+}
+
+// Fail-soft: a short mask or a rejected sched_setaffinity leaves the worker unpinned, with one
+// stderr note per process.
+inline void pool_pin_worker([[maybe_unused]] std::size_t tid,
+                            [[maybe_unused]] std::size_t nthreads) noexcept {
+#if defined(__linux__)
+    static std::atomic<bool> noted{false};
+    const std::vector<std::size_t>& pins = pool_pin_cpus();
+    // Only nthreads-1 workers are ever spawned (the caller runs the last chunk unmoved), so
+    // tid never exceeds nthreads-2 and the mask only needs to cover nthreads-1 cores.
+    if (pins.size() < nthreads - 1) {
+        if (!noted.exchange(true, std::memory_order_relaxed))
+            std::fprintf(stderr, "admiral: thread pinning disabled, mask holds %zu cores for "
+                                 "nthreads=%zu\n", pins.size(), nthreads);
+        return;
+    }
+    cpu_set_t one;
+    CPU_ZERO(&one);
+    CPU_SET(pins[tid], &one);
+    if (sched_setaffinity(0, sizeof one, &one) != 0 &&
+        !noted.exchange(true, std::memory_order_relaxed))
+        std::fputs("admiral: thread pinning disabled, sched_setaffinity failed\n", stderr);
 #endif
 }
 
@@ -257,10 +334,16 @@ inline constexpr std::uint32_t kSpinIters = 2048;
 
 class thread_pool {
 public:
-    explicit thread_pool(std::size_t nthreads) : nthreads_(std::max(nthreads, std::size_t{1})) {
+    // `pin` (options::pin_threads) pins each spawned worker to one physical core; the calling
+    // thread (chunk nt-1) is never moved.
+    explicit thread_pool(std::size_t nthreads, bool pin = false)
+        : nthreads_(std::max(nthreads, std::size_t{1})) {
         try {
             for (std::size_t tid = 0; tid + 1 < nthreads_; ++tid)
-                workers_.emplace_back([this, tid] { worker_loop(tid); });
+                workers_.emplace_back([this, tid, pin] {
+                    if (pin) pool_pin_worker(tid, nthreads_);
+                    worker_loop(tid);
+                });
         } catch (...) {
             stop_and_join();
             throw;
@@ -296,6 +379,8 @@ public:
             }
         };
 
+        // cppcheck-suppress danglingLifetime  // the spin-wait below joins every worker
+        // before run_chunk dies, so job_ is never read past its referent's lifetime.
         job_ = std::cref(run_chunk);
         pending_.store(nt, std::memory_order_relaxed);
         epoch_.fetch_add(1, std::memory_order_release);
@@ -366,7 +451,7 @@ private:
 
 class thread_pool {
 public:
-    explicit thread_pool(std::size_t) {}
+    explicit thread_pool(std::size_t, bool = false) {}
     [[nodiscard]] std::size_t size() const noexcept { return 1; }
 #if ADM_CXX20
     template<ChunkBody F>

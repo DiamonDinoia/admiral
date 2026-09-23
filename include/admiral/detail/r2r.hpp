@@ -32,7 +32,8 @@ template<typename T>
 class r2r_plan {
 public:
     r2r_plan(std::size_t N, r2r_kind kind, std::size_t rows = 1,
-             admiral::effort eff = admiral::effort::estimate, std::size_t nthreads = 1);
+             admiral::effort eff = admiral::effort::estimate, std::size_t nthreads = 1,
+             bool pin = false);
 
     void forward(const T* in, T* out, std::optional<T> fct = std::nullopt) const {
         run(in, out, r2r_forward_is_dct2(kind_), fct);
@@ -72,14 +73,14 @@ private:
 
 template<typename T>
 r2r_plan<T>::r2r_plan(std::size_t N, r2r_kind kind, std::size_t rows, admiral::effort eff,
-                      std::size_t nthreads)
+                      std::size_t nthreads, bool pin)
     : N_(N), rows_(rows), kind_(kind), rp_(checked(N, rows), eff), Nh_(N / 2 + 1) {
     tw_.resize(Nh_);
     for (std::size_t k = 0; k < Nh_; ++k) {
         const auto [sn, cs] = portable_trig::sincos_turns<true>(k, 4 * N);
         tw_[k] = std::complex<T>(static_cast<T>(cs), static_cast<T>(sn));
     }
-    if (nthreads > 1 && rows_ > 1) pool_ = std::make_unique<thread_pool>(nthreads);
+    if (nthreads > 1 && rows_ > 1) pool_ = std::make_unique<thread_pool>(nthreads, pin);
 }
 
 template<typename T>

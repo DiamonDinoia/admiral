@@ -18,6 +18,7 @@ call site names what it sets and nothing else. The C API mirrors it as
 | `nthreads` | `0` | worker threads owned by the plan. `0` is auto: serial below 2^15 elements, otherwise the power-of-two width that minimises modelled work plus per-dispatch wake cost, capped at the allowed physical cores. `1` forces serial, `n` forces `n` |
 | `eff` | `estimate` | how hard construction works to pick a route. `estimate` uses the fitted cost model, so it is fast and reproducible. `automatic` also times the model's top candidates; pick it when one plan serves many transforms. `measure` is the same race, kept for the FFTW flag mapping |
 | `debug` | `0` | stderr trace per execute: `0` silent, `1` what ran, `2` adds the shape, `3` adds the cost-model ranking |
+| `pin_threads` | `false` | pin each pool worker to one physical core, taken in order from the cores the process is already allowed to run on. Off by default; see [Threads](#threads) |
 
 `automatic` and `measure` elect from timings, so the picked route depends on the
 machine and the load; both are inert under `-DADM_MEASURE=OFF`. The one-shot
@@ -34,6 +35,15 @@ their parallel regions, and a shared plan buys correctness rather than
 throughput. Give each thread its own plan to overlap transforms; distinct plan
 objects are independent. Below the threading threshold, and at `nthreads = 1`,
 no pool exists and concurrent calls run fully in parallel.
+
+`pin_threads` binds each spawned worker to a single physical core. The
+candidate list is the intersection of the process affinity mask with the
+physical cores, one cpu per core, ordered by socket then cpu, so `taskset`,
+`numactl` and an MPI launcher keep full control of which cpus admiral may use.
+The calling thread is never moved. A mask holding fewer cores than the pool is
+wide, an unreadable `/sys` topology, or a rejected `sched_setaffinity` leaves
+the pool unpinned and prints one note on stderr. Pinning is Linux-only and
+changes scheduling only: a pinned plan returns the same bits as an unpinned one.
 
 `adm_plan_execute_*` carries the same guarantee. On the shim, `fftw_execute(p)`
 reuses the buffers `p` was planned with, so two concurrent calls write one

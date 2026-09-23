@@ -74,7 +74,9 @@ public:
         case route_kind::four_step_batched: return four_step_batched_supported<T>(size);
         case route_kind::four_step_large:   return choose_large_split(size).valid();
         case route_kind::rader:             return rader_supported(size);
-        case route_kind::bluestein:         return true;
+        // Pad 2N-1 makes N == 2 a radix-3 inner transform, not bit-exact where codelet and
+        // iterative_dif are, and nothing needs it there: codelet covers 2, the dif chain covers 1.
+        case route_kind::bluestein:         return size > 2;
         }
         ADM_UNREACHABLE();
     }

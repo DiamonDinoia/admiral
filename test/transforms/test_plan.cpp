@@ -449,6 +449,28 @@ TEMPLATE_TEST_CASE("plan with effort::measure at N=1 and N=2 stays exact", "[pla
     p2.forward(span(w));
     REQUIRE(w[0] == std::complex<T>(T(4), T(0)));
     REQUIRE(w[1] == std::complex<T>(T(-2), T(0)));
+
+    // Every route admissible at N <= 2 must be bit-exact, which no clock can perturb; the case
+    // above only samples the one that won. Fails on an admissible bluestein.
+    using P = admiral::detail::plan_impl<T>;
+    using R = typename P::route_kind;
+    REQUIRE_FALSE(P::route_available(R::bluestein, 2));
+    REQUIRE(P::route_available(R::bluestein, 3));
+    for (const R r : {R::codelet, R::good_thomas, R::iterative_dif, R::four_step,
+                      R::four_step_batched, R::four_step_large, R::rader, R::bluestein}) {
+        if (P::route_available(r, 1)) {
+            std::vector<std::complex<T>> a{{T(2), T(-1)}}, b(1);
+            P(1, true, r, 1).execute(a.data(), b.data());
+            CAPTURE(P(1, true, r, 1).route_name());
+            REQUIRE(b[0] == std::complex<T>(T(2), T(-1)));
+        }
+        if (!P::route_available(r, 2)) continue;
+        std::vector<std::complex<T>> a{{T(1), T(0)}, {T(3), T(0)}}, b(2);
+        P(2, true, r, 1).execute(a.data(), b.data());
+        CAPTURE(P(2, true, r, 1).route_name());
+        REQUIRE(b[0] == std::complex<T>(T(4), T(0)));
+        REQUIRE(b[1] == std::complex<T>(T(-2), T(0)));
+    }
 }
 
 TEMPLATE_TEST_CASE("effort::measure elects twice the same route at one shape",

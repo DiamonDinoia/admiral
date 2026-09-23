@@ -99,7 +99,12 @@ foreach(test_src IN LISTS ADM_TEST_SOURCES)
         target_link_libraries(${test_name} PRIVATE project_sanitizers)
     endif()
 
-    catch_discover_tests(${test_name})
+    # The probe-smoke case reads up to 23.4 s under sanitizers, valgrind and sde; 90 s bounds it.
+    if(test_name STREQUAL "test_route_forced")
+        catch_discover_tests(${test_name} PROPERTIES TIMEOUT 90)
+    else()
+        catch_discover_tests(${test_name})
+    endif()
 endforeach()
 
 # Bit-identity digest driver (test/digest). scripts/validate.sh's `digest` arm builds

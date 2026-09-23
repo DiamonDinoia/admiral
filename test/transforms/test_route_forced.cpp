@@ -32,6 +32,7 @@ static_assert(admiral::detail::choose_large_split(768).n1 == 24);
 static_assert(admiral::detail::choose_large_split(768).n2 == 32);
 static_assert(admiral::detail::choose_large_split(1 << 20).n1 == 1024);
 static_assert(!admiral::detail::choose_large_split(17).valid());
+static_assert(!admiral::detail::choose_large_split(3720).valid());
 
 TEMPLATE_TEST_CASE("forced route names itself and round-trips", "[coverage][route]",
                    float, double) {
@@ -189,6 +190,20 @@ TEMPLATE_TEST_CASE("threaded four_step_large admission scales with nthreads",
         REQUIRE(lo != "four_step_large");
         REQUIRE(hi == "four_step_large");
     }
+}
+
+TEMPLATE_TEST_CASE("route election survives an invalid large split under threads",
+                   "[coverage][route][four_step_large][threads]", float, double) {
+    using namespace admiral::detail;
+    using P = admiral::detail::plan_impl<TestType>;
+
+    // 3720's large split is invalid; measure/automatic at nthreads > 1 is the arm that once
+    // took sp.n2 % sp.n1 on it.
+    constexpr std::size_t n = 3720;
+    static_assert(n > BASE_MODEL_NMAX);
+
+    REQUIRE_NOTHROW(P(n, true, 2, nullptr, admiral::effort::measure));
+    REQUIRE_NOTHROW(P(n, true, 2, nullptr, admiral::effort::automatic));
 }
 
 template<typename T>

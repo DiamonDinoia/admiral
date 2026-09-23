@@ -539,7 +539,7 @@ plan_impl<T>::measure_route(std::size_t size, bool is_forward, std::size_t nthre
     // one the elected plan would carry: fused serially, n1 | n2 threaded.
     if (size > BASE_MODEL_NMAX) {
         const large_split sp = choose_large_split(size);
-        const bool shape_ok = nthreads > 1 ? sp.n2 % sp.n1 == 0
+        const bool shape_ok = nthreads > 1 ? (sp.valid() && sp.n2 % sp.n1 == 0)
                                            : four_step_large_fused_shape<T>(size);
         // Serially the line GATES and the race RE-CHECKS (the selection loop's
         // kMeasureRejectRatio bar below — one noisy dif sample cannot flip the line).

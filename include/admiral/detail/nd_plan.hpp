@@ -223,9 +223,7 @@ struct line_plan {
 // until thread exit; concurrent executes of one plan stay safe because distinct threads hold
 // distinct slices. The slice an axis needs follows from its cached route: 0 for a stack-covered
 // or uncached (axis_plan/live-resolved) dispatch, which keeps those paths on master's per-body
-// allocation byte for byte. The soa_scratch external-view constructor still validates coverage
-// at run time, so the ADM_COLDIF_GEO probe arm (Bt re-priced past the cached tile) falls back
-// to a per-body allocation silently.
+// allocation byte for byte.
 template<typename T>
 struct nd_ws_slot {
     aligned_buffer<T> buf;
@@ -364,25 +362,6 @@ void move_run(std::complex<T>* line, std::size_t inner, std::size_t len, std::si
     move_run_scalar<Gather>(line, inner, 0, len, gw, buf, pitch);
 }
 
-// The col_dif tile pair (Bt, ntiles): nd_col_block_geo re-prices Bt from the row period
-// under ADM_COLDIF_GEO; the default build keeps the line plan's own (tile, units).
-template<typename T>
-[[nodiscard]] ADM_ALWAYS_INLINE std::pair<std::size_t, std::size_t>
-resolve_col_tiles([[maybe_unused]] const line_plan& lp, [[maybe_unused]] std::size_t len,
-                  [[maybe_unused]] std::size_t run_len,
-                  [[maybe_unused]] std::size_t row_period_bytes,
-                  [[maybe_unused]] std::size_t nthreads, [[maybe_unused]] std::size_t nruns) {
-#if ADM_COLDIF_GEO
-    const std::size_t Bt =
-        nd_col_block_geo<T>(len, run_len, row_period_bytes, nthreads, nruns);
-    const std::size_t ntiles = (run_len + Bt - 1) / Bt;
-#else
-    const std::size_t Bt = lp.tile;
-    const std::size_t ntiles = lp.units;
-#endif
-    return {Bt, ntiles};
-}
-
 template<typename T, typename LineBase>
 ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t len,
                                            std::size_t inner, bool forward,
@@ -394,11 +373,7 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
     const line_plan lp = resolve_line_plan<T>(st, len, inner, run_len, nruns, nthreads,
                                               pool != nullptr);
     if (lp.route == line_route::col_dif) {
-        // Not a structured binding: capturing one is C++20-only.
-        const auto tiles =
-            resolve_col_tiles<T>(lp, len, run_len, inner * sizeof(std::complex<T>), nthreads,
-                                 nruns);
-        const std::size_t Bt = tiles.first, ntiles = tiles.second;
+        const std::size_t Bt = lp.tile, ntiles = lp.units;
         const std::size_t nunits = nruns * ntiles;
         const T scale = fct.value_or(forward ? T(1) : inv_extent<T>(len));
         // nd_col_block caps Bt at run_len, so ntiles == 1 means the tile covers the whole run and
@@ -479,11 +454,7 @@ apply_lines_strided_oop(const std::complex<T>* src, std::size_t src_line,
     const line_plan lp = resolve_line_plan<T>(st, len, src_line, run_len, nruns, nthreads,
                                               pool != nullptr, batch_ok);
     if (lp.route == line_route::col_dif) {
-        // Not a structured binding: capturing one is C++20-only.
-        const auto tiles =
-            resolve_col_tiles<T>(lp, len, run_len, dst_line * sizeof(std::complex<T>),
-                                 nthreads, nruns);
-        const std::size_t Bt = tiles.first, ntiles = tiles.second;
+        const std::size_t Bt = lp.tile, ntiles = lp.units;
         const std::size_t nunits = nruns * ntiles;
         const T scale = fct.value_or(forward ? T(1) : inv_extent<T>(len));
         parallel_for(pool, nunits, total_elems, [&](std::size_t b, std::size_t e, std::size_t) {

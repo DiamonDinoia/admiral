@@ -1,5 +1,8 @@
 
 set(ADM_TEST_SOURCES
+    kernels/test_granule.cpp
+    kernels/test_ct_root.cpp
+    kernels/test_dag_census.cpp
     transforms/test_threads.cpp
     transforms/test_alloc.cpp
     kernels/test_iterative.cpp
@@ -8,14 +11,11 @@ set(ADM_TEST_SOURCES
     accuracy/test_sweeps.cpp
     transforms/test_route_forced.cpp
     kernels/test_codelet.cpp
-    kernels/test_granule.cpp
     api/test_api_cxx.cpp
     api/test_api_c.cpp
     api/test_api_c_errors.cpp
     api/test_api_fftw.cpp
     kernels/test_ct_math.cpp
-    kernels/test_ct_root.cpp
-    kernels/test_dag_census.cpp
     kernels/test_factor_plan.cpp
     kernels/test_cost_model.cpp
     kernels/test_cxx_compat.cpp
@@ -72,54 +72,10 @@ elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     set(ADM_TEST_EXTRA_OPTIONS_test_ct_root /constexpr:steps100000000)
 endif()
 
-foreach(test_src IN LISTS ADM_TEST_SOURCES)
-    get_filename_component(test_name ${test_src} NAME_WE)
-
-    add_executable(${test_name} ${test_src})
-
-    target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
-        ${ADM_TEST_EXTRA_INCLUDES_${test_name}})
-    target_compile_options(${test_name} PRIVATE ${ADM_TEST_EXTRA_OPTIONS_${test_name}})
-
-    target_link_libraries(${test_name}
-        PRIVATE
-            admiral_internal
-            ${ADM_TEST_EXTRA_LIBS_${test_name}}
-            $<BUILD_INTERFACE:Catch2::Catch2WithMain>
-    )
-
-    if(CATCH2_INCLUDE_DIRS)
-        target_include_directories(${test_name} SYSTEM PRIVATE ${CATCH2_INCLUDE_DIRS})
-    endif()
-
-    if(TARGET project_warnings)
-        target_link_libraries(${test_name} PRIVATE project_warnings)
-    endif()
-    if(TARGET project_sanitizers)
-        target_link_libraries(${test_name} PRIVATE project_sanitizers)
-    endif()
-
-    # The probe-smoke case reads up to 23.4 s under sanitizers, valgrind and sde; 90 s bounds it.
-    if(test_name STREQUAL "test_route_forced")
-        catch_discover_tests(${test_name} PROPERTIES TIMEOUT 90)
-    else()
-        catch_discover_tests(${test_name})
-    endif()
-endforeach()
-
-# Bit-identity digest driver (test/digest). scripts/validate.sh's `digest` arm builds
-# this target in two builds -- shipped and ADM_USE_FAST_MATH=OFF -- and diffs both
-# against the committed goldens in test/digest/golden. It registers NO ctest test: the
-# gate is the two-build comparison the arm performs, and a ctest entry has no second
-# build to compare against. Public API only, so it links the shipped surface.
-add_executable(admiral_digest digest/digest.cpp)
-target_link_libraries(admiral_digest PRIVATE admiral::admiral)
-if(TARGET project_warnings)
-    target_link_libraries(admiral_digest PRIVATE project_warnings)
-endif()
-if(TARGET project_sanitizers)
-    target_link_libraries(admiral_digest PRIVATE project_sanitizers)
-endif()
+# The three poison twins and the first three entries of ADM_TEST_SOURCES are the six longest
+# TUs in the suite; on the cold windows cells they run 150-650 s each. Ninja dispatches ready
+# edges in declaration order, so declared last they compile alone after everything else has
+# drained, and the job's wall clock is their sum. Declared first they overlap the rest.
 
 # Positive control for the granule constant folding. Under ADM_GRANULE_TEST_POISON every
 # check that routes a radix-3 stage (N in {9, 12, 15, 24}) fails its direct-DFT gate, so
@@ -191,6 +147,55 @@ if(TARGET project_sanitizers)
 endif()
 add_test(NAME test_dag_census_poison COMMAND test_dag_census_poison)
 set_tests_properties(test_dag_census_poison PROPERTIES WILL_FAIL TRUE)
+
+foreach(test_src IN LISTS ADM_TEST_SOURCES)
+    get_filename_component(test_name ${test_src} NAME_WE)
+
+    add_executable(${test_name} ${test_src})
+
+    target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+        ${ADM_TEST_EXTRA_INCLUDES_${test_name}})
+    target_compile_options(${test_name} PRIVATE ${ADM_TEST_EXTRA_OPTIONS_${test_name}})
+
+    target_link_libraries(${test_name}
+        PRIVATE
+            admiral_internal
+            ${ADM_TEST_EXTRA_LIBS_${test_name}}
+            $<BUILD_INTERFACE:Catch2::Catch2WithMain>
+    )
+
+    if(CATCH2_INCLUDE_DIRS)
+        target_include_directories(${test_name} SYSTEM PRIVATE ${CATCH2_INCLUDE_DIRS})
+    endif()
+
+    if(TARGET project_warnings)
+        target_link_libraries(${test_name} PRIVATE project_warnings)
+    endif()
+    if(TARGET project_sanitizers)
+        target_link_libraries(${test_name} PRIVATE project_sanitizers)
+    endif()
+
+    # The probe-smoke case reads up to 23.4 s under sanitizers, valgrind and sde; 90 s bounds it.
+    if(test_name STREQUAL "test_route_forced")
+        catch_discover_tests(${test_name} PROPERTIES TIMEOUT 90)
+    else()
+        catch_discover_tests(${test_name})
+    endif()
+endforeach()
+
+# Bit-identity digest driver (test/digest). scripts/validate.sh's `digest` arm builds
+# this target in two builds -- shipped and ADM_USE_FAST_MATH=OFF -- and diffs both
+# against the committed goldens in test/digest/golden. It registers NO ctest test: the
+# gate is the two-build comparison the arm performs, and a ctest entry has no second
+# build to compare against. Public API only, so it links the shipped surface.
+add_executable(admiral_digest digest/digest.cpp)
+target_link_libraries(admiral_digest PRIVATE admiral::admiral)
+if(TARGET project_warnings)
+    target_link_libraries(admiral_digest PRIVATE project_warnings)
+endif()
+if(TARGET project_sanitizers)
+    target_link_libraries(admiral_digest PRIVATE project_sanitizers)
+endif()
 
 # ELF only: `nm -D` reads a dynamic symbol table, which a PE DLL does not have, and the
 # patterns below are Itanium mangling. On Windows llvm-nm reports

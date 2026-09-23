@@ -108,8 +108,11 @@ jobs:
   # reaches. Ninja under vcvarsall, the same single-config shape as the Linux cells: `-A x64`
   # belongs to the Visual Studio generator, and setup-cpp's vcvarsall makes NMake the default,
   # which rejects a platform specification outright.
+  # cl builds this tree about 1.6x slower on the windows-2022 image than on windows-2025, and a
+  # 90-minute budget cut it off one link edge short of a clean build. Both 2025 cells finish well
+  # inside this ceiling, so it only ever bites a genuine hang.
   windows:
-    timeout-minutes: 90
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -140,7 +143,7 @@ jobs:
           cmake -S . -B build
           -DCMAKE_BUILD_TYPE=Release
           -DADM_TARGET_ARCH=x86-64-v3
-          -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF
+          -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF -DADM_BUILD_EXAMPLES=OFF
       - run: cmake --build build
       - run: ctest --test-dir build --timeout 900 --output-on-failure --no-tests=error
       - name: Upload logs

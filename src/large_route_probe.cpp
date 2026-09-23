@@ -6,7 +6,6 @@
 #include <admiral/detail/four_step_large.hpp>
 
 #include <atomic>
-#include <cstdlib>
 
 namespace admiral {
 namespace detail {
@@ -24,14 +23,6 @@ std::size_t large_route_serial_override(std::size_t elem_bytes) {
 
 void set_large_route_serial_override(std::size_t elem_bytes, std::size_t bytes) {
     override_slot(elem_bytes).store(bytes, std::memory_order_relaxed);
-}
-
-bool large_route_probe_disabled() {
-    static const bool off = [] {
-        const char* e = std::getenv("ADM_LARGE_ROUTE_PROBE");
-        return e != nullptr && e[0] == '0' && e[1] == '\0';
-    }();
-    return off;
 }
 
 }  // namespace detail

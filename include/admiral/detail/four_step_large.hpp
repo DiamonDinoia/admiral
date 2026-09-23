@@ -450,9 +450,8 @@ inline constexpr std::size_t kLargeRouteThreadCapBytes = 1482910;  // [1, 2] MiB
 // engaged probe (plan_impl<T>::probe_large_route_serial) races forced dif and
 // four_step_large serial plans on a short ladder around the prior and caches the
 // crossover once per process and precision. The two constants below are the ladder's
-// starting prior AND the whole answer when the probe is disabled
-// (ADM_LARGE_ROUTE_PROBE=0) or throws: the pre-probe shipped values, so a host on which
-// the probe cannot run keeps the answer it always had.
+// starting prior AND the whole answer when the probe throws: the pre-probe shipped
+// values, so a host on which the probe cannot run keeps the answer it always had.
 inline constexpr std::size_t kLargeRouteSerialF64Bytes = std::size_t{12} << 20;
 inline constexpr std::size_t kLargeRouteSerialF32Bytes = (std::size_t{16} << 20) - 1;
 
@@ -535,7 +534,6 @@ large_route_serial_from_ladder(const std::size_t* ladder_bytes, const bool* dif_
 // copies across the engine shared library and a -fvisibility=hidden test binary.
 [[nodiscard]] std::size_t large_route_serial_override(std::size_t elem_bytes);
 void set_large_route_serial_override(std::size_t elem_bytes, std::size_t bytes);
-[[nodiscard]] bool large_route_probe_disabled();
 
 // RAII pin for tests: sets the per-precision overrides passed (0 leaves a precision
 // untouched) and clears exactly those on scope exit.

@@ -36,9 +36,8 @@ documents that mode.
   `fftw3f`, found through pkg-config.
 - `ADM_BENCH_THREADS=ON` threads the reference libraries too (ducc0's pool, and
   FFTW's `fftw3_threads` companions under `--nthreads=N`).
-- The FFTW arms read four environment variables (wisdom caching, plan-effort,
-  planner time limits); [../docs/build-options.md](../docs/build-options.md)
-  lists them.
+- The FFTW arms always plan with `FFTW_MEASURE`; no wisdom caching or planner
+  time limit.
 
 Threaded scaling, same host, `--compare-nd --nthreads=<t>` at t = 1, 2, 4, 8, 16
 (`fft_fwd_us`, min across rounds). Figures are Admiral's own single-thread time
@@ -80,9 +79,7 @@ admission is tracked as a follow-up.
   flatters the first arm), so A/B modes alternate arm order round by round and
   report the median plus the round-to-round spread; `--robust` adds an identity
   control. A delta inside the spread is a tie.
-- FFTW arms plan with `FFTW_MEASURE`. Setting `ADM_BENCH_FFTW_ESTIMATE` (any value) switches them
-  to the heuristic plan. That leaves FFTW untuned and flatters Admiral, so it
-  is not the default.
+- FFTW arms always plan with `FFTW_MEASURE`, tuned the same as Admiral's default.
 
 ## The headline numbers in the README
 

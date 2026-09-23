@@ -12,10 +12,6 @@
 #define ADM_COLDIF_GEO 0
 #endif
 
-#if ADM_COLDIF_GEO
-#include <cstdlib>
-#endif
-
 #include <admiral/errors.hpp>
 
 #include <poet/poet.hpp>
@@ -72,15 +68,9 @@ template<typename T>
 // flat floor under-amortizes the per-row cost it exists for (prologue, prefetch ramp, DRAM
 // page open) when the floored row covers < half of its write period (rome 512^3 axis1: a
 // 2 KiB row at an 8 KiB period), so when the floor fires the arm widens it toward
-// min(period/2, one 4 KiB page). Probe-only override: ADM_COLDIF_BT=<elements> replaces the
-// floor outright for the Bt sweep. Plan-time pricing only: routes and bit patterns never
+// min(period/2, one 4 KiB page). Plan-time pricing only: routes and bit patterns never
 // read this (Bt moves tile boundaries; inst_col_*'s pin keeps per-clone bits fixed).
-[[nodiscard]] inline std::size_t coldif_geo_floor_bytes(std::size_t row_period_bytes,
-                                                        std::size_t elem) {
-    if (const char* e = std::getenv("ADM_COLDIF_BT")) {
-        const unsigned long v = std::strtoul(e, nullptr, 10);
-        if (v > 0) return v * elem;
-    }
+[[nodiscard]] inline std::size_t coldif_geo_floor_bytes(std::size_t row_period_bytes) {
     if (row_period_bytes > 2 * kColDifMinRowBytes)
         return std::max(kColDifMinRowBytes,
                         std::min(row_period_bytes / 2, std::size_t{4096}));
@@ -97,7 +87,7 @@ template<typename T>
     std::size_t bt = col_budget_block<T>(len, nthreads);
     constexpr std::size_t elem = sizeof(std::complex<T>);
     if (len * run_len * nruns * elem > cpu_cache().l3)
-        bt = std::max(bt, coldif_geo_floor_bytes(row_period_bytes, elem) / elem);
+        bt = std::max(bt, coldif_geo_floor_bytes(row_period_bytes) / elem);
     if (nthreads > 1) {
         const std::size_t tiles = (kTilesPerWorker * nthreads + nruns - 1) / nruns;
         bt = std::min(bt, run_len / tiles);

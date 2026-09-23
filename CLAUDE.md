@@ -480,8 +480,8 @@ once-per-process-per-precision probe (`plan_impl<T>::probe_large_route_serial`) 
 forced dif vs forced four_step_large serial plans on a 3-rung ladder around the prior
 and caches the crossover. It engages only above the probe floor (2 MiB f64 / 4 MiB f32),
 so the digest (largest case 192 KiB) and small plans never see it. The shipped constants
-are the ladder's prior and the full fallback (`ADM_LARGE_ROUTE_PROBE=0`, or any probe
-exception). A new host class needs NOTHING — the probe reads it, and its answers have
+are the ladder's prior and the full fallback (any probe exception). A new host class
+needs NOTHING — the probe reads it, and its answers have
 drifted inside the measured band (ties resolve dif-side); the fallback constants move
 only via the receipted wave process. Tests never see probe output:
 `set_large_route_serial_override` and its RAII scope inject the line, route-name pins

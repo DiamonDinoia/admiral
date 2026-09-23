@@ -187,45 +187,6 @@ extern template bool bench_execute_overhead<double>(const std::vector<std::size_
                                                    admiral::effort);
 
 #ifdef ADM_BENCH_FFTW
-inline unsigned fftw_plan_flag() {
-    return std::getenv("ADM_BENCH_FFTW_ESTIMATE") ? FFTW_ESTIMATE : FFTW_MEASURE;
-}
-
-inline void fftw_load_wisdom() {
-    [[maybe_unused]] static const bool once = [] {
-        const char* p = std::getenv("ADM_BENCH_FFTW_WISDOM");
-        if (!p) return false;
-        static const std::string d = std::string(p) + ".d";
-        static const std::string f = std::string(p) + ".f";
-        fftw_import_wisdom_from_filename(d.c_str());
-        fftwf_import_wisdom_from_filename(f.c_str());
-        std::atexit([] {
-            fftw_export_wisdom_to_filename(d.c_str());
-            fftwf_export_wisdom_to_filename(f.c_str());
-        });
-        return true;
-    }();
-}
-
-inline void fftw_apply_timelimit(std::size_t total_elems) {
-#ifdef ADM_BENCH_FFTW
-    static const double tl = [] {
-        const char* e = std::getenv("ADM_BENCH_FFTW_TIMELIMIT");
-        return e ? std::atof(e) : 0.0;
-    }();
-    static const std::size_t floor_n = [] {
-        const char* e = std::getenv("ADM_BENCH_FFTW_TIMELIMIT_MIN_ELEMS");
-        return e ? static_cast<std::size_t>(std::strtoull(e, nullptr, 10)) : std::size_t{1};
-    }();
-    if (total_elems >= floor_n) {
-        if (tl > 0.0) { fftw_set_timelimit(tl); fftwf_set_timelimit(tl); }
-    } else {
-        fftw_set_timelimit(-1.0);
-        fftwf_set_timelimit(-1.0);
-    }
-#endif
-}
-
 #ifdef ADM_BENCH_THREADS
 template<typename T>
 inline void fftw_plan_threads(std::size_t nthreads) {
@@ -250,19 +211,17 @@ public:
     explicit fftw_c2c(const std::vector<std::size_t>& shape, [[maybe_unused]] int nthreads = 1)
         : N_([&]{ std::size_t n = 1; for (auto e : shape) n *= e; return n; }()),
           in_(N_), out_(N_) {
-        fftw_load_wisdom();
-        fftw_apply_timelimit(N_);
         std::vector<int> dims(shape.begin(), shape.end());
         const int rank = static_cast<int>(dims.size());
 #ifdef ADM_BENCH_THREADS
         if (nthreads > 1) fftw_plan_threads<T>(static_cast<std::size_t>(nthreads));
 #endif
         if constexpr (std::is_same_v<T, double>) {
-            fwd_ = fftw_plan_dft(rank, dims.data(), cpx(in_), cpx(out_), FFTW_FORWARD,  fftw_plan_flag());
-            inv_ = fftw_plan_dft(rank, dims.data(), cpx(out_), cpx(in_), FFTW_BACKWARD, fftw_plan_flag());
+            fwd_ = fftw_plan_dft(rank, dims.data(), cpx(in_), cpx(out_), FFTW_FORWARD,  FFTW_MEASURE);
+            inv_ = fftw_plan_dft(rank, dims.data(), cpx(out_), cpx(in_), FFTW_BACKWARD, FFTW_MEASURE);
         } else {
-            fwd_ = fftwf_plan_dft(rank, dims.data(), cpx(in_), cpx(out_), FFTW_FORWARD,  fftw_plan_flag());
-            inv_ = fftwf_plan_dft(rank, dims.data(), cpx(out_), cpx(in_), FFTW_BACKWARD, fftw_plan_flag());
+            fwd_ = fftwf_plan_dft(rank, dims.data(), cpx(in_), cpx(out_), FFTW_FORWARD,  FFTW_MEASURE);
+            inv_ = fftwf_plan_dft(rank, dims.data(), cpx(out_), cpx(in_), FFTW_BACKWARD, FFTW_MEASURE);
         }
     }
     ~fftw_c2c() {
@@ -322,8 +281,6 @@ class fftw_r2c {
 public:
     explicit fftw_r2c(const std::vector<std::size_t>& shape, [[maybe_unused]] int nthreads = 1) {
         Nreal_ = 1; for (auto e : shape) Nreal_ *= e;
-        fftw_load_wisdom();
-        fftw_apply_timelimit(Nreal_);
         std::vector<std::size_t> cshape(shape);
         cshape.back() = shape.back() / 2 + 1;
         Nc_ = 1; for (auto e : cshape) Nc_ *= e;
@@ -334,11 +291,11 @@ public:
         if (nthreads > 1) fftw_plan_threads<T>(static_cast<std::size_t>(nthreads));
 #endif
         if constexpr (std::is_same_v<T, double>) {
-            fwd_ = fftw_plan_dft_r2c(rank, dims.data(), rin_.data(),  cpx(cout_), fftw_plan_flag());
-            inv_ = fftw_plan_dft_c2r(rank, dims.data(), cpx(cin_),    rout_.data(), fftw_plan_flag());
+            fwd_ = fftw_plan_dft_r2c(rank, dims.data(), rin_.data(),  cpx(cout_), FFTW_MEASURE);
+            inv_ = fftw_plan_dft_c2r(rank, dims.data(), cpx(cin_),    rout_.data(), FFTW_MEASURE);
         } else {
-            fwd_ = fftwf_plan_dft_r2c(rank, dims.data(), rin_.data(), cpx(cout_), fftw_plan_flag());
-            inv_ = fftwf_plan_dft_c2r(rank, dims.data(), cpx(cin_),   rout_.data(), fftw_plan_flag());
+            fwd_ = fftwf_plan_dft_r2c(rank, dims.data(), rin_.data(), cpx(cout_), FFTW_MEASURE);
+            inv_ = fftwf_plan_dft_c2r(rank, dims.data(), cpx(cin_),   rout_.data(), FFTW_MEASURE);
         }
     }
     ~fftw_r2c() {

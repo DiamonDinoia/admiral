@@ -322,10 +322,7 @@ private:
     static std::size_t large_route_serial_bytes() {
         constexpr std::size_t elem = sizeof(std::complex<T>);
         if (const std::size_t ov = detail::large_route_serial_override(elem)) return ov;
-        static const std::size_t line =
-            detail::large_route_probe_disabled()
-                ? detail::large_route_serial_fallback(elem)
-                : probe_large_route_serial();
+        static const std::size_t line = probe_large_route_serial();
         return line;
     }
 

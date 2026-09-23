@@ -51,13 +51,3 @@ Every plan and one-shot takes an optional `admiral::options` aggregate
 [usage.md](usage.md) documents each. The library itself reads no environment
 variables.
 
-## Benchmark environment variables
-
-These affect only `admiral_benchmark`'s FFTW reference arm, never the library.
-
-| Variable | What it does | Default |
-|----------|--------------|---------|
-| `ADM_BENCH_FFTW_ESTIMATE` | When set, FFTW arms plan with `FFTW_ESTIMATE` instead of the default `FFTW_MEASURE`. An untuned reference, so label runs that use it | unset (`MEASURE`) |
-| `ADM_BENCH_FFTW_WISDOM` | Path prefix for FFTW wisdom import/export, `<prefix>.d` and `<prefix>.f`, to carry the MEASURE search across runs | unset (no wisdom) |
-| `ADM_BENCH_FFTW_TIMELIMIT` | Seconds; bounds FFTW's MEASURE planner per plan | unset (no limit) |
-| `ADM_BENCH_FFTW_TIMELIMIT_MIN_ELEMS` | Applies the time limit only to plans of at least this many elements, so small sizes keep the unbounded planner | `1` (cap everywhere) |

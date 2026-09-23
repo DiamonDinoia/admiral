@@ -676,7 +676,7 @@ template<typename T>
         return std::pair{rs, c};
     };
     const auto offer = [beam, &before, &sorted_chain](std::size_t n, span<dif_chain_entry> r,
-                                                      const dif_chain_entry e) {
+                                                      const dif_chain_entry& e) {
         for (std::size_t m = 0; beam > 1 && m < beam && r[m].cost < kDifUnreachable; ++m) {
             if (r[m].key != e.key || sorted_chain(n, r[m]) != sorted_chain(n, e)) continue;
             if (!before(e, r[m])) return;

@@ -19,7 +19,7 @@ endif()
 if(ADM_ENABLE_CPPCHECK)
   find_program(ADM_CPPCHECK NAMES cppcheck REQUIRED)
   # cppcheck cannot follow every system header, and it reports the template-heavy SIMD headers as
-  # unreachable configurations; those two classes are suppressed and nothing else is.
+  # unreachable configurations; those three classes are suppressed and nothing else is.
   set(CMAKE_CXX_CPPCHECK
       "${ADM_CPPCHECK}"
       "--enable=warning,performance,portability"
@@ -32,6 +32,9 @@ if(ADM_ENABLE_CPPCHECK)
       # lambda (butterfly.hpp `crt_index`). Scoped to that file so a parse failure anywhere else
       # still fails the build.
       "--suppress=syntaxError:*/butterfly.hpp"
+      # cppcheck 2.13.0 reads gate_leaf_cyc's `n <= kFourStepLeafMax` guard as off-by-one; 2.21.0
+      # does not.
+      "--suppress=containerOutOfBounds:*/math.hpp"
       "--error-exitcode=2"
       "--std=c++${ADM_CXX_STANDARD}")
   message(STATUS "cppcheck: ${ADM_CPPCHECK}")

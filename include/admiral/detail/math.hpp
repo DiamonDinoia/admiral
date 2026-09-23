@@ -83,6 +83,8 @@ inline constexpr std::array<double, kFourStepLeafMax + 1> gate_leaf_cyc_ref = {
     293.0, 337.8, 759.8, 470.5, 408.3, 331.7, 765.0, 375.7, 784.6, 388.2, 405.7,
     663.5, 1526.7, 402.8, 398.0, 384.4, 522.2, 431.0, 997.7, 575.4, 491.3, 505.7,
     691.6, 726.3, 1584.7, 500.8, 1124.1, 807.4, 574.8, 457.2};
+// A short braced list zero-fills the tail, which reads as "no entry" below.
+static_assert(gate_leaf_cyc_ref[kFourStepLeafMax] > 0.0);
 
 // Leaf cycles for the gates: the frozen table where it has an entry, else n as a placeholder.
 [[nodiscard]] constexpr double gate_leaf_cyc(std::size_t n) {

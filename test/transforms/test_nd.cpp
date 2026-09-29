@@ -524,51 +524,6 @@ TEMPLATE_TEST_CASE("N-D plans honour the measuring efforts", "[nd][effort]", flo
 
 namespace {
 
-template<typename T>
-std::vector<std::complex<T>> reference_nd(const std::vector<std::complex<T>>& x,
-                                          const std::vector<std::size_t>& shape,
-                                          bool forward) {
-    std::vector<std::complex<T>> cur = x, next(x.size());
-    std::size_t inner = 1;
-    for (std::size_t d = shape.size(); d-- > 0;) {
-        const std::size_t len = shape[d], outer = x.size() / (len * inner);
-        for (std::size_t o = 0; o < outer; ++o)
-            for (std::size_t g = 0; g < inner; ++g) {
-                std::vector<std::complex<T>> line(len);
-                for (std::size_t p = 0; p < len; ++p) line[p] = cur[o * len * inner + p * inner + g];
-                const auto out = reference_dft<T>(line, forward);
-                for (std::size_t p = 0; p < len; ++p) next[o * len * inner + p * inner + g] = out[p];
-            }
-        cur = next;
-        inner *= len;
-    }
-    return cur;
-}
-
-
-// Separable long double reference: one reference_dft per line per axis, last axis first.
-template<typename T>
-std::vector<std::complex<long double>> reference_nd_ld(const std::vector<std::complex<T>>& x,
-                                                        const std::vector<std::size_t>& shape,
-                                                        bool forward) {
-    std::vector<std::complex<long double>> cur(x.begin(), x.end()), next(x.size()), line;
-    std::size_t inner = 1;
-    for (std::size_t d = shape.size(); d-- > 0;) {
-        const std::size_t len = shape[d], outer = x.size() / (len * inner);
-        line.resize(len);
-        for (std::size_t o = 0; o < outer; ++o)
-            for (std::size_t g = 0; g < inner; ++g) {
-                const std::size_t base = o * len * inner + g;
-                for (std::size_t p = 0; p < len; ++p) line[p] = cur[base + p * inner];
-                const auto out = reference_dft<long double>(line, forward);
-                for (std::size_t p = 0; p < len; ++p) next[base + p * inner] = out[p];
-            }
-        cur.swap(next);
-        inner *= len;
-    }
-    return cur;
-}
-
 // Output columns k of a 2-D DFT: bin k of every row, then one length-shape[0] DFT of that column.
 // O(n + shape[0]^2) per column, so a 4096-long strided axis stays checkable in long double.
 template<typename T>
@@ -639,7 +594,7 @@ TEMPLATE_TEST_CASE("3D plane-fused shapes match the separable reference pointwis
         admiral::plan<T> p(admiral::span<const std::size_t>(shape.data(), shape.size()), serial);
         INFO("shape " << shape[0] << "x" << shape[1] << "x" << shape[2]);
 
-        const auto fwd = reference_nd_ld(in, shape, true);
+        const auto fwd = reference_nd<T, long double>(in, shape, true);
         std::vector<std::complex<T>> out(n);
         p.forward(in.data(), out.data());
         require_close_pointwise(out, fwd);
@@ -647,7 +602,7 @@ TEMPLATE_TEST_CASE("3D plane-fused shapes match the separable reference pointwis
         p.forward(ip.data());
         require_close_pointwise(ip, fwd);
 
-        auto inv = reference_nd_ld(out, shape, false);
+        auto inv = reference_nd<T, long double>(out, shape, false);
         for (auto& v : inv) v *= 0.75L;
         std::vector<std::complex<T>> back(n);
         p.inverse(out.data(), back.data(), T(0.75));

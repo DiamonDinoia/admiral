@@ -379,7 +379,7 @@ nd_real_plan<T>::nd_real_plan(span<const std::size_t> shape, std::size_t nthread
                               admiral::effort eff, bool pin) {
     m.shape.assign(shape.begin(), shape.end());
     const std::size_t n = m.shape.size();
-    if (n == 0 || !extent_product(m.shape))
+    if (n == 0 || !extent_product(m.shape)) ADM_UNLIKELY
         throw size_error("Plan size must be greater than 0");
     m.inner_len = m.shape.back();
     m.Nh = m.inner_len / 2 + 1;

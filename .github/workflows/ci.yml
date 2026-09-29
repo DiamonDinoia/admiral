@@ -437,7 +437,7 @@ jobs:
           cmake --build build -j "$(nproc)"
       - name: Test under SDE
         run: |
-          ctest --test-dir build --timeout 900 --output-on-failure --no-tests=error -j "$(nproc)" --timeout 1800
+          ctest --test-dir build --output-on-failure --no-tests=error -j "$(nproc)" --timeout 1800
           sde-spr build/benchmark/admiral_benchmark --verify
 
   catalog:

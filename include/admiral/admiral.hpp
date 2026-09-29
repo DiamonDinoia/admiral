@@ -5,7 +5,6 @@
 #include <initializer_list>
 #include <memory>
 #include <optional>
-#include <stdexcept>
 #include <type_traits>
 
 #include <admiral/errors.hpp>

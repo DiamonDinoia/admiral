@@ -80,8 +80,7 @@ private:
         constexpr std::size_t critical = l1_set_period_bytes / (2 * sizeof(T));
         constexpr std::size_t lane = span_align<T> / sizeof(T);
         const std::size_t s = (n % critical == 0) ? n + SBO_PAD : n;
-        const std::size_t padded = s;
-        return (padded + lane - 1) & ~(lane - 1);
+        return (s + lane - 1) & ~(lane - 1);
     }
 
     struct M {

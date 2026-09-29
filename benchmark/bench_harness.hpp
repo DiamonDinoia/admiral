@@ -10,7 +10,9 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <admiral/admiral.hpp>
@@ -33,6 +35,51 @@ constexpr double default_accuracy_tol() {
 struct NbStat { double us; double cyc; double err; double instr; };
 
 inline constexpr double kStableMdape = 0.05;
+
+// Value after `--name=value` argv entries. String form: last match wins (assignment cannot
+// throw). Converting form: cvt runs on EVERY match in argv order and the last value wins, so a
+// malformed occurrence throws at its argv position exactly as in the old scan-assign loops.
+inline std::optional<std::string> find_arg(int argc, char** argv, const std::string& prefix) {
+    std::optional<std::string> out;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg.rfind(prefix, 0) == 0) out = arg.substr(prefix.size());
+    }
+    return out;
+}
+
+template<typename Cvt>
+inline auto find_arg(int argc, char** argv, const std::string& prefix, Cvt cvt)
+    -> std::optional<decltype(cvt(std::declval<const std::string&>()))> {
+    std::optional<decltype(cvt(std::declval<const std::string&>()))> out;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg.rfind(prefix, 0) == 0) out = cvt(arg.substr(prefix.size()));
+    }
+    return out;
+}
+
+inline std::optional<int> find_arg_int(int argc, char** argv, const std::string& prefix) {
+    return find_arg(argc, argv, prefix, [](const std::string& s) { return std::stoi(s); });
+}
+inline std::optional<long> find_arg_long(int argc, char** argv, const std::string& prefix) {
+    return find_arg(argc, argv, prefix, [](const std::string& s) { return std::stol(s); });
+}
+inline std::optional<std::size_t> find_arg_size(int argc, char** argv, const std::string& prefix) {
+    return find_arg(argc, argv, prefix, [](const std::string& s) { return std::stoul(s); });
+}
+inline std::optional<double> find_arg_double(int argc, char** argv, const std::string& prefix) {
+    return find_arg(argc, argv, prefix, [](const std::string& s) { return std::stod(s); });
+}
+
+inline std::string shape_to_string(const std::vector<std::size_t>& shape) {
+    std::string s;
+    for (std::size_t i = 0; i < shape.size(); ++i) {
+        if (i) s += 'x';
+        s += std::to_string(shape[i]);
+    }
+    return s;
+}
 
 template<typename T>
 void pass_microbench(unsigned IP, std::size_t ido, std::size_t l1, bool last,

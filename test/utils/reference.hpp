@@ -154,27 +154,39 @@ std::vector<std::complex<Out>> reference_dft(const std::vector<std::complex<T>>&
     return out;
 }
 
-// Separable N^3 reference: reference_dft composed along each axis of an NxNxN block
-// (innermost first). Unnormalized, matching reference_dft: admiral's inverse divides by
-// the total, so callers scale. Out = long double keeps the whole composition in long
-// double for a pointwise (max_ulps) compare.
+// Separable N-D reference: reference_dft composed along each axis of a shape-product
+// block, innermost axis first. Unnormalized, matching reference_dft: admiral's inverse
+// divides by the total, so callers scale. Out = long double keeps the whole composition
+// in long double for a pointwise (max_ulps) compare; the default Out = T re-rounds after
+// each axis.
+template<typename T, typename Out = T>
+std::vector<std::complex<Out>> reference_nd(const std::vector<std::complex<T>>& x,
+                                            const std::vector<std::size_t>& shape,
+                                            bool forward) {
+    std::vector<std::complex<Out>> cur(x.begin(), x.end()), next(x.size());
+    std::size_t inner = 1;
+    for (std::size_t d = shape.size(); d-- > 0;) {
+        const std::size_t len = shape[d], outer = x.size() / (len * inner);
+        for (std::size_t o = 0; o < outer; ++o)
+            for (std::size_t g = 0; g < inner; ++g) {
+                std::vector<std::complex<Out>> line(len);
+                for (std::size_t p = 0; p < len; ++p)
+                    line[p] = cur[o * len * inner + p * inner + g];
+                line = reference_dft(line, forward);
+                for (std::size_t p = 0; p < len; ++p)
+                    next[o * len * inner + p * inner + g] = line[p];
+            }
+        cur = next;
+        inner *= len;
+    }
+    return cur;
+}
+
+// Cube wrapper: the three equal axes of an NxNxN block.
 template<typename T, typename Out = T>
 std::vector<std::complex<Out>> reference_cube3d(const std::vector<std::complex<T>>& x,
                                                 std::size_t N, bool forward) {
-    std::vector<std::complex<Out>> v(x.begin(), x.end());
-    for (std::size_t stride : {std::size_t{1}, N, N * N}) {
-        std::vector<std::complex<Out>> out = v;
-        const std::size_t block = N * stride;
-        for (std::size_t base = 0; base < v.size(); base += block)
-            for (std::size_t off = 0; off < stride; ++off) {
-                std::vector<std::complex<Out>> line(N);
-                for (std::size_t p = 0; p < N; ++p) line[p] = v[base + p * stride + off];
-                line = reference_dft(line, forward);
-                for (std::size_t p = 0; p < N; ++p) out[base + p * stride + off] = line[p];
-            }
-        v = std::move(out);
-    }
-    return v;
+    return reference_nd<T, Out>(x, {N, N, N}, forward);
 }
 
 template<typename T>

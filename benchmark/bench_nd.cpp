@@ -17,15 +17,6 @@
 
 namespace {
 
-std::string shape_to_string(const std::vector<std::size_t>& shape) {
-    std::string s;
-    for (std::size_t i = 0; i < shape.size(); ++i) {
-        if (i) s += 'x';
-        s += std::to_string(shape[i]);
-    }
-    return s;
-}
-
 template<typename T>
 void ducc0_c2c_nd(const std::complex<T>* in, std::complex<T>* out,
                   const std::vector<std::size_t>& shape, bool forward, size_t nthreads = 1) {

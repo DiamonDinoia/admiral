@@ -34,13 +34,11 @@ if(ADM_BENCH_THREADS)
     endif()
 endif()
 
+# This one leg stays an unconditional link: the pre-profile build linked it without an
+# if(TARGET) guard, and every other leg on the bench targets takes adm_apply_build_profile's
+# guards.
 target_link_libraries(admiral_benchmark PRIVATE admiral_optimization_flags)
-if(TARGET admiral_fast_math_flags)
-    target_link_libraries(admiral_benchmark PRIVATE admiral_fast_math_flags)
-endif()
-if(TARGET project_warnings)
-    target_link_libraries(admiral_benchmark PRIVATE project_warnings)
-endif()
+adm_apply_build_profile(admiral_benchmark)
 
 # bench_granule_ab stays its OWN executable (WI-0c-ii): the granule-admission arm in
 # scripts/validate.sh builds it under both knob states and A/Bs the two binaries, so it
@@ -50,15 +48,7 @@ endif()
 add_executable(bench_granule_ab bench_granule_ab.cpp)
 target_include_directories(bench_granule_ab PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(bench_granule_ab PRIVATE admiral_internal)
-if(TARGET admiral_optimization_flags)
-    target_link_libraries(bench_granule_ab PRIVATE admiral_optimization_flags)
-endif()
-if(TARGET admiral_fast_math_flags)
-    target_link_libraries(bench_granule_ab PRIVATE admiral_fast_math_flags)
-endif()
-if(TARGET project_warnings)
-    target_link_libraries(bench_granule_ab PRIVATE project_warnings)
-endif()
+adm_apply_build_profile(bench_granule_ab)
 
 # bench_large_route stays its OWN executable (WI-2c / P-2c-D): the kLargeRoute* re-derivation
 # wave runs it stand-alone on cluster nodes, so it joins neither the admiral_benchmark
@@ -67,15 +57,7 @@ endif()
 # is the hook, and admission gates the engine chooser, never the drivers.
 add_executable(bench_large_route bench_large_route.cpp)
 target_link_libraries(bench_large_route PRIVATE admiral_internal)
-if(TARGET admiral_optimization_flags)
-    target_link_libraries(bench_large_route PRIVATE admiral_optimization_flags)
-endif()
-if(TARGET admiral_fast_math_flags)
-    target_link_libraries(bench_large_route PRIVATE admiral_fast_math_flags)
-endif()
-if(TARGET project_warnings)
-    target_link_libraries(bench_large_route PRIVATE project_warnings)
-endif()
+adm_apply_build_profile(bench_large_route)
 
 # Identity baked into the binary's stderr header; the header's consumers are per-host class
 # receipts, so the sha and the arch string must survive a copied binary.

@@ -40,6 +40,16 @@
 #define ADM_COLD
 #endif
 
+// ADM_COLD/ADM_NOINLINE mark error arms and once-per-process probes only; a mark re-partitions
+// every clone in its TU, so a hot sibling rules the site out (r6: thread_pool lifecycle marks).
+
+// ADM_HOT marks per-call dispatch hubs; add a site only with a counter A/B at parity or better.
+#if defined(__GNUC__) || defined(__clang__)
+#define ADM_HOT __attribute__((hot))
+#else
+#define ADM_HOT
+#endif
+
 #if defined(_MSC_VER) && !defined(__clang__)
 #define ADM_RESTRICT __restrict
 #elif defined(__GNUC__) || defined(__clang__)

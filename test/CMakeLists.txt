@@ -66,10 +66,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     endif()
     set(ADM_TEST_EXTRA_OPTIONS_test_ct_root ${adm_clang_arg}-fconstexpr-steps=100000000)
     set(ADM_TEST_EXTRA_OPTIONS_test_dag_census ${adm_clang_arg}-fbracket-depth=1024)
+    # The poison twins fold the same constructs, so they need the same budgets.
+    set(ADM_TEST_EXTRA_OPTIONS_test_ct_root_poison ${ADM_TEST_EXTRA_OPTIONS_test_ct_root})
+    set(ADM_TEST_EXTRA_OPTIONS_test_dag_census_poison ${ADM_TEST_EXTRA_OPTIONS_test_dag_census})
     unset(adm_clang_arg)
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     # The lattice fold busts cl's constexpr step limit too (cl 19.45, C2131); clang's budget.
     set(ADM_TEST_EXTRA_OPTIONS_test_ct_root /constexpr:steps100000000)
+    set(ADM_TEST_EXTRA_OPTIONS_test_ct_root_poison ${ADM_TEST_EXTRA_OPTIONS_test_ct_root})
 endif()
 
 # The three poison twins and the first three entries of ADM_TEST_SOURCES are the six longest
@@ -77,110 +81,92 @@ endif()
 # edges in declaration order, so declared last they compile alone after everything else has
 # drained, and the job's wall clock is their sum. Declared first they overlap the rest.
 
+# Registers one test binary: the executable, the per-name ADM_TEST_EXTRA_*_<name>
+# includes/options/libs (set above), the Catch2 includes, and the optional
+# project_warnings/project_sanitizers linkage. A plain test is registered through
+# catch_discover_tests. POISON <def> instead compiles a positive-control twin with
+# -D<def>=1 and registers the whole binary through add_test with WILL_FAIL TRUE: the
+# poisoned invariant makes the binary exit nonzero, so a poison build that PASSES
+# proves the guarded check cannot fail and the control goes red. ARCH_GATE registers
+# the poison only where the dialect it guards exists.
+function(adm_add_test name source)
+    cmake_parse_arguments(ADM_T "ARCH_GATE" "POISON" "" ${ARGN})
+
+    add_executable(${name} ${source})
+    target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+        ${ADM_TEST_EXTRA_INCLUDES_${name}})
+    if(ADM_T_POISON)
+        target_compile_definitions(${name} PRIVATE ${ADM_T_POISON}=1)
+    endif()
+    target_compile_options(${name} PRIVATE ${ADM_TEST_EXTRA_OPTIONS_${name}})
+
+    target_link_libraries(${name}
+        PRIVATE
+            admiral_internal
+            ${ADM_TEST_EXTRA_LIBS_${name}}
+            $<BUILD_INTERFACE:Catch2::Catch2WithMain>
+    )
+
+    if(CATCH2_INCLUDE_DIRS)
+        target_include_directories(${name} SYSTEM PRIVATE ${CATCH2_INCLUDE_DIRS})
+    endif()
+
+    if(TARGET project_warnings)
+        target_link_libraries(${name} PRIVATE project_warnings)
+    endif()
+    if(TARGET project_sanitizers)
+        target_link_libraries(${name} PRIVATE project_sanitizers)
+    endif()
+
+    if(ADM_T_POISON)
+        if(ADM_T_ARCH_GATE)
+            # The control exists only where the dialect does: at v2-and-below the family
+            # compiles out and this binary's checks are all skipped, so a WILL_FAIL entry
+            # would mis-assert on a healthy build. The arch string is the configure-time
+            # proxy for kGranuleFmaddsub.
+            if(ADM_TARGET_ARCH MATCHES "^(native|x86-64-v3|x86-64-v4)$")
+                add_test(NAME ${name} COMMAND ${name})
+                set_tests_properties(${name} PROPERTIES WILL_FAIL TRUE)
+            endif()
+        else()
+            add_test(NAME ${name} COMMAND ${name})
+            set_tests_properties(${name} PROPERTIES WILL_FAIL TRUE)
+        endif()
+        return()
+    endif()
+
+    # The probe-smoke case reads up to 23.4 s under sanitizers, valgrind and sde; 90 s bounds it.
+    if(name STREQUAL "test_route_forced")
+        catch_discover_tests(${name} PROPERTIES TIMEOUT 90)
+    else()
+        catch_discover_tests(${name})
+    endif()
+endfunction()
+
 # Positive control for the granule constant folding. Under ADM_GRANULE_TEST_POISON every
 # check that routes a radix-3 stage (N in {9, 12, 15, 24}) fails its direct-DFT gate, so
 # the binary exits nonzero; WILL_FAIL makes that the asserted outcome. A poison build
 # that PASSES would prove the folding cannot fail and this control would go red.
-add_executable(test_granule_poison kernels/test_granule.cpp)
-target_include_directories(test_granule_poison PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
-    ${ADM_TEST_EXTRA_INCLUDES_test_granule_poison})
-target_compile_definitions(test_granule_poison PRIVATE ADM_GRANULE_TEST_POISON=1)
-target_link_libraries(test_granule_poison
-    PRIVATE admiral_internal $<BUILD_INTERFACE:Catch2::Catch2WithMain>)
-if(CATCH2_INCLUDE_DIRS)
-    target_include_directories(test_granule_poison SYSTEM PRIVATE ${CATCH2_INCLUDE_DIRS})
-endif()
-if(TARGET project_warnings)
-    target_link_libraries(test_granule_poison PRIVATE project_warnings)
-endif()
-if(TARGET project_sanitizers)
-    target_link_libraries(test_granule_poison PRIVATE project_sanitizers)
-endif()
-# The control exists only where the dialect does: at v2-and-below the family compiles
-# out and this binary's checks are all skipped, so a WILL_FAIL entry would mis-assert on
-# a healthy build. The arch string is the configure-time proxy for kGranuleFmaddsub.
-if(ADM_TARGET_ARCH MATCHES "^(native|x86-64-v3|x86-64-v4)$")
-    add_test(NAME test_granule_poison COMMAND test_granule_poison)
-    set_tests_properties(test_granule_poison PROPERTIES WILL_FAIL TRUE)
-endif()
+# The arch gate is inside adm_add_test.
+adm_add_test(test_granule_poison kernels/test_granule.cpp
+    POISON ADM_GRANULE_TEST_POISON ARCH_GATE)
 
 # Positive control for the root-form classifier. Under ADM_CT_ROOT_POISON the classifier
 # swaps the two diagonal classes, so the lattice's fold-agreement check fails and the binary
 # exits nonzero; WILL_FAIL makes that the asserted outcome. No arch gate: classification is
-# ISA-free integer arithmetic, so the dialect's v3+ gate above does not apply here.
-add_executable(test_ct_root_poison kernels/test_ct_root.cpp)
-target_include_directories(test_ct_root_poison PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_definitions(test_ct_root_poison PRIVATE ADM_CT_ROOT_POISON=1)
-target_compile_options(test_ct_root_poison PRIVATE ${ADM_TEST_EXTRA_OPTIONS_test_ct_root})
-target_link_libraries(test_ct_root_poison
-    PRIVATE admiral_internal $<BUILD_INTERFACE:Catch2::Catch2WithMain>)
-if(CATCH2_INCLUDE_DIRS)
-    target_include_directories(test_ct_root_poison SYSTEM PRIVATE ${CATCH2_INCLUDE_DIRS})
-endif()
-if(TARGET project_warnings)
-    target_link_libraries(test_ct_root_poison PRIVATE project_warnings)
-endif()
-if(TARGET project_sanitizers)
-    target_link_libraries(test_ct_root_poison PRIVATE project_sanitizers)
-endif()
-add_test(NAME test_ct_root_poison COMMAND test_ct_root_poison)
-set_tests_properties(test_ct_root_poison PROPERTIES WILL_FAIL TRUE)
+# ISA-free integer arithmetic, so the dialect's v3+ gate for the granule control does not
+# apply here.
+adm_add_test(test_ct_root_poison kernels/test_ct_root.cpp POISON ADM_CT_ROOT_POISON)
 
 # Positive control for the DAG census comparator. Under ADM_DAG_TEST_POISON the
 # expected-count helper returns its oracle biased by +1, so the census REQUIREs fail and
 # the binary exits nonzero; WILL_FAIL makes that the asserted outcome. No arch gate: the
 # sym dialect records nodes identically at every ISA, and the oracle bias is ISA-free.
-add_executable(test_dag_census_poison kernels/test_dag_census.cpp)
-target_include_directories(test_dag_census_poison PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_definitions(test_dag_census_poison PRIVATE ADM_DAG_TEST_POISON=1)
-target_compile_options(test_dag_census_poison PRIVATE ${ADM_TEST_EXTRA_OPTIONS_test_dag_census})
-target_link_libraries(test_dag_census_poison
-    PRIVATE admiral_internal $<BUILD_INTERFACE:Catch2::Catch2WithMain>)
-if(CATCH2_INCLUDE_DIRS)
-    target_include_directories(test_dag_census_poison SYSTEM PRIVATE ${CATCH2_INCLUDE_DIRS})
-endif()
-if(TARGET project_warnings)
-    target_link_libraries(test_dag_census_poison PRIVATE project_warnings)
-endif()
-if(TARGET project_sanitizers)
-    target_link_libraries(test_dag_census_poison PRIVATE project_sanitizers)
-endif()
-add_test(NAME test_dag_census_poison COMMAND test_dag_census_poison)
-set_tests_properties(test_dag_census_poison PROPERTIES WILL_FAIL TRUE)
+adm_add_test(test_dag_census_poison kernels/test_dag_census.cpp POISON ADM_DAG_TEST_POISON)
 
 foreach(test_src IN LISTS ADM_TEST_SOURCES)
     get_filename_component(test_name ${test_src} NAME_WE)
-
-    add_executable(${test_name} ${test_src})
-
-    target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
-        ${ADM_TEST_EXTRA_INCLUDES_${test_name}})
-    target_compile_options(${test_name} PRIVATE ${ADM_TEST_EXTRA_OPTIONS_${test_name}})
-
-    target_link_libraries(${test_name}
-        PRIVATE
-            admiral_internal
-            ${ADM_TEST_EXTRA_LIBS_${test_name}}
-            $<BUILD_INTERFACE:Catch2::Catch2WithMain>
-    )
-
-    if(CATCH2_INCLUDE_DIRS)
-        target_include_directories(${test_name} SYSTEM PRIVATE ${CATCH2_INCLUDE_DIRS})
-    endif()
-
-    if(TARGET project_warnings)
-        target_link_libraries(${test_name} PRIVATE project_warnings)
-    endif()
-    if(TARGET project_sanitizers)
-        target_link_libraries(${test_name} PRIVATE project_sanitizers)
-    endif()
-
-    # The probe-smoke case reads up to 23.4 s under sanitizers, valgrind and sde; 90 s bounds it.
-    if(test_name STREQUAL "test_route_forced")
-        catch_discover_tests(${test_name} PROPERTIES TIMEOUT 90)
-    else()
-        catch_discover_tests(${test_name})
-    endif()
+    adm_add_test(${test_name} ${test_src})
 endforeach()
 
 # Bit-identity digest driver (test/digest). scripts/validate.sh's `digest` arm builds

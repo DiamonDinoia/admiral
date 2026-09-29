@@ -452,7 +452,8 @@ public:
 
 private:
     static std::size_t axis_count(span<const std::size_t> shape) {
-        if (shape.empty()) throw std::invalid_argument("Plan size must be greater than 0");
+        if (shape.empty()) ADM_UNLIKELY
+            throw std::invalid_argument("Plan size must be greater than 0");
         return shape.size();
     }
     scalar_nd_c2c<T> plan;
@@ -527,7 +528,7 @@ public:
 
 private:
     static std::size_t last_extent(span<const std::size_t> shape) {
-        if (shape.empty() || shape.back() == 0)
+        if (shape.empty() || shape.back() == 0) ADM_UNLIKELY
             throw std::invalid_argument("Plan size must be greater than 0");
         return shape.back();
     }

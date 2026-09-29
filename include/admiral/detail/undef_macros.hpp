@@ -5,4 +5,5 @@
 #undef ADM_FLATTEN
 #undef ADM_NOINLINE
 #undef ADM_COLD
+#undef ADM_HOT
 #undef ADM_RESTRICT

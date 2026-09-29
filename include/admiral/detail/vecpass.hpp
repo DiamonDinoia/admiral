@@ -72,37 +72,37 @@ ADM_ALWAYS_INLINE void vpass_one(const V* src_re, const V* src_im,
                 tr[j] = src_re[a + ido * (j + IP * b)];
                 ti[j] = src_im[a + ido * (j + IP * b)];
             }
-            if constexpr (Forward) {
-                admiral::detail::dif_butterfly<T, IP, V>(tr, ti,
-                    [&](const auto k, V sr, V si) {
-                        if constexpr (k > 0u) {
-                            const V owr(tw_re[(k - 1u) * ido + a]);
-                            const V owi(tw_im[(k - 1u) * ido + a]);
+            // One butterfly, one sink: the inverse feeds the same code the swapped planes
+            // (br/bi) and swaps the two store expressions (the fma/fnma role swap); every
+            // discarded arm vanishes at instantiation, so one direction's kept text matches
+            // the historical twin it replaces exactly.
+            const auto [br, bi] = admiral::detail::plane_refs<Forward>(tr, ti);
+            admiral::detail::dif_butterfly<T, IP, V>(br, bi,
+                [&](const auto k, V sr, V si) {
+                    if constexpr (k > 0u) {
+                        const V owr(tw_re[(k - 1u) * ido + a]);
+                        const V owi(tw_im[(k - 1u) * ido + a]);
+                        if constexpr (Forward) {
                             dst_re[a + ido * (b + l1 * k)] =
                                 admiral::detail::piece_fnma(owi, si, owr * sr);
                             dst_im[a + ido * (b + l1 * k)] =
                                 admiral::detail::piece_fma(owr, si, owi * sr);
                         } else {
-                            dst_re[a + ido * (b + l1 * k)] = sr;
-                            dst_im[a + ido * (b + l1 * k)] = si;
-                        }
-                    });
-            } else {
-                admiral::detail::dif_butterfly<T, IP, V>(ti, tr,
-                    [&](const auto k, V sr, V si) {
-                        if constexpr (k > 0u) {
-                            const V owr(tw_re[(k - 1u) * ido + a]);
-                            const V owi(tw_im[(k - 1u) * ido + a]);
                             dst_re[a + ido * (b + l1 * k)] =
                                 admiral::detail::piece_fma(owr, si, owi * sr);
                             dst_im[a + ido * (b + l1 * k)] =
                                 admiral::detail::piece_fnma(owi, si, owr * sr);
+                        }
+                    } else {
+                        if constexpr (Forward) {
+                            dst_re[a + ido * (b + l1 * k)] = sr;
+                            dst_im[a + ido * (b + l1 * k)] = si;
                         } else {
                             dst_re[a + ido * (b + l1 * k)] = si;
                             dst_im[a + ido * (b + l1 * k)] = sr;
                         }
-                    });
-            }
+                    }
+                });
         }
     }
 }

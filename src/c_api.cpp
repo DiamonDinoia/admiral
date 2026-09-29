@@ -10,8 +10,9 @@
 #include <utility>
 #include <variant>
 #include "admiral/detail/cxx_compat.hpp"
+#include "admiral/detail/macros.hpp"
 
-const char* adm_error_string(adm_status status) {
+ADM_NOINLINE ADM_COLD const char* adm_error_string(adm_status status) {
     switch (status) {
         case ADM_SUCCESS: return "Success";
         case ADM_ERROR_NULL_POINTER: return "Null pointer argument";
@@ -183,7 +184,8 @@ struct adm_plan_s {
 
 namespace {
 
-adm_status plan_error(adm_plan* out, adm_status status, const char* detail) noexcept {
+ADM_NOINLINE ADM_COLD adm_status plan_error(adm_plan* out, adm_status status,
+                                            const char* detail) noexcept {
     *out = nullptr;
     try {
         *out = new adm_plan_s(status, detail);
@@ -290,7 +292,7 @@ adm_status adm_plan_status(adm_plan plan) {
     return plan->err;
 }
 
-const char* adm_plan_error_message(adm_plan plan) {
+ADM_NOINLINE ADM_COLD const char* adm_plan_error_message(adm_plan plan) {
     if (plan == nullptr) return "null plan";
     return plan->what.c_str();
 }

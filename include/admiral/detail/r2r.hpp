@@ -49,7 +49,7 @@ private:
     void dct3_rows(const T* in, T* out, T scale) const;
 
     [[nodiscard]] static std::size_t checked(std::size_t N, std::size_t rows) {
-        if (N == 0 || rows == 0) throw size_error("Plan size must be greater than 0");
+        if (N == 0 || rows == 0) ADM_UNLIKELY throw size_error("Plan size must be greater than 0");
         return N;
     }
 

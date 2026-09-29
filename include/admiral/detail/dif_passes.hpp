@@ -22,14 +22,49 @@
 namespace admiral {
 namespace detail {
 
-template<typename T, std::size_t IP, std::size_t PW, typename CC, typename CH>
-ADM_ALWAYS_INLINE void small_ido_piece(CC ccre, CC ccim, CH chre, CH chim,
-                                       std::size_t ido, std::size_t b, std::size_t a,
-                                       std::size_t obase, std::size_t kstride,
-                                       const T* twre, const T* twim) {
+// Twiddle-store pair for one butterfly output: re = fnma(owi, si, owr * sr), im = fma(owr,
+// si, owi * sr). One always-inline wrapper per store flavor; each carries exactly the pair
+// of statements its site needs, argument order kept from the macro spelling.
+template<typename T, typename V>
+ADM_ALWAYS_INLINE void tw_store_unaligned(T* dre, T* dim, V owr, V owi, V sr, V si) {
+    piece_fnma(owi, si, (owr) * (sr)).store_unaligned(dre);
+    piece_fma(owr, si, (owi) * (sr)).store_unaligned(dim);
+}
+template<typename T, typename V>
+ADM_ALWAYS_INLINE void tw_store_aligned(T* dre, T* dim, V owr, V owi, V sr, V si) {
+    piece_fnma(owi, si, (owr) * (sr)).store_aligned(dre);
+    piece_fma(owr, si, (owi) * (sr)).store_aligned(dim);
+}
+template<typename T, typename V, typename M, typename U>
+ADM_ALWAYS_INLINE void tw_store_masked(T* dre, T* dim, M m, U um, V owr, V owi, V sr,
+                                       V si) {
+    piece_fnma(owi, si, (owr) * (sr)).store(dre, m, um);
+    piece_fma(owr, si, (owi) * (sr)).store(dim, m, um);
+}
+template<typename T>
+ADM_ALWAYS_INLINE void tw_store_scalar(T& dre, T& dim, T owr, T owi, T sr, T si) {
+    dre = piece_fnma(owi, si, (owr) * (sr));
+    dim = piece_fma(owr, si, (owi) * (sr));
+}
+template<typename T, std::size_t PW, typename V>
+ADM_ALWAYS_INLINE void tw_store_piece(T* dre, T* dim, V owr, V owi, V sr, V si) {
+    store_piece<T, PW>(dre, piece_fnma(owi, si, (owr) * (sr)));
+    store_piece<T, PW>(dim, piece_fma(owr, si, (owi) * (sr)));
+}
+
+// Shared body of small_ido_piece and small_ido_piece_tw below: the twins differ only in
+// where the k>0 twiddles come from -- the hoist lambda loads them per k from twre/twim, or
+// the caller already hoisted them and its lambda just forwards the array elements. The
+// lambda is handed the k index and the store continuation. ld/st stay `static constexpr`
+// (MSVC C3861: MSVC does not find a block-scope `constexpr auto` holding a function
+// pointer from inside a lambda body).
+template<typename T, std::size_t IP, std::size_t PW, typename CC, typename CH,
+         typename Hoist>
+ADM_ALWAYS_INLINE void small_ido_body(CC ccre, CC ccim, CH chre, CH chim,
+                                      std::size_t ido, std::size_t b, std::size_t a,
+                                      std::size_t obase, std::size_t kstride,
+                                      Hoist&& hoist) {
     using V = sized_piece_t<T, PW>;
-    // Static, because MSVC does not find a block-scope `constexpr auto` holding a function
-    // pointer from inside a lambda body: `error C3861: 'ld': identifier not found`.
     static constexpr auto ld = load_piece<T, PW>;
     static constexpr auto st = store_piece<T, PW>;
     V tr[IP], ti_arr[IP];
@@ -41,10 +76,9 @@ ADM_ALWAYS_INLINE void small_ido_piece(CC ccre, CC ccim, CH chre, CH chim,
     dif_butterfly<T, IP, V>(tr, ti_arr, [&](const auto k, V sr, V si) {
         const std::size_t off = obase + a + kstride * k;
         if constexpr (k > 0u) {
-            const V owr = ld(twre + (k - 1u) * ido + a);
-            const V owi = ld(twim + (k - 1u) * ido + a);
-            st(chre + off, piece_fnma(owi, si, owr * sr));
-            st(chim + off, piece_fma(owr, si, owi * sr));
+            hoist(k, [&](const V& owr, const V& owi) {
+                tw_store_piece<T, PW>(chre + off, chim + off, owr, owi, sr, si);
+            });
         } else {
             st(chre + off, sr);
             st(chim + off, si);
@@ -53,28 +87,30 @@ ADM_ALWAYS_INLINE void small_ido_piece(CC ccre, CC ccim, CH chre, CH chim,
 }
 
 template<typename T, std::size_t IP, std::size_t PW, typename CC, typename CH>
+ADM_ALWAYS_INLINE void small_ido_piece(CC ccre, CC ccim, CH chre, CH chim,
+                                       std::size_t ido, std::size_t b, std::size_t a,
+                                       std::size_t obase, std::size_t kstride,
+                                       const T* twre, const T* twim) {
+    using V = sized_piece_t<T, PW>;
+    // Some (IP, PW, InPlace) instantiation contexts fold the hoist path away without ever
+    // reading ld; the attribute keeps -Werror=unused-but-set-variable quiet there.
+    [[maybe_unused]] static constexpr auto ld = load_piece<T, PW>;
+    small_ido_body<T, IP, PW>(ccre, ccim, chre, chim, ido, b, a, obase, kstride,
+                              [&](const auto k, auto&& use) {
+                                  const V owr = ld(twre + (k - 1u) * ido + a);
+                                  const V owi = ld(twim + (k - 1u) * ido + a);
+                                  use(owr, owi);
+                              });
+}
+
+template<typename T, std::size_t IP, std::size_t PW, typename CC, typename CH>
 ADM_ALWAYS_INLINE void small_ido_piece_tw(CC ccre, CC ccim, CH chre, CH chim,
                                           std::size_t ido, std::size_t b, std::size_t a,
                                           std::size_t obase, std::size_t kstride,
                                           const sized_piece_t<T, PW>* owr,
                                           const sized_piece_t<T, PW>* owi) {
-    using V = sized_piece_t<T, PW>;
-    V tr[IP], ti_arr[IP];
-    poet::static_for<IP>([&](auto J) {
-        const std::size_t off = a + ido * (J + IP * b);
-        tr[J] = load_piece<T, PW>(ccre + off);
-        ti_arr[J] = load_piece<T, PW>(ccim + off);
-    });
-    dif_butterfly<T, IP, V>(tr, ti_arr, [&](const auto k, V sr, V si) {
-        const std::size_t off = obase + a + kstride * k;
-        if constexpr (k > 0u) {
-            store_piece<T, PW>(chre + off, piece_fnma(owi[k], si, owr[k] * sr));
-            store_piece<T, PW>(chim + off, piece_fma(owr[k], si, owi[k] * sr));
-        } else {
-            store_piece<T, PW>(chre + off, sr);
-            store_piece<T, PW>(chim + off, si);
-        }
-    });
+    small_ido_body<T, IP, PW>(ccre, ccim, chre, chim, ido, b, a, obase, kstride,
+                              [&](const auto k, auto&& use) { use(owr[k], owi[k]); });
 }
 
 template<typename T, std::size_t IP>
@@ -147,10 +183,9 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                     });
                     dif_butterfly<T, IP>(tr, ti_arr, [&](const auto k, batch sr, batch si) {
                         if constexpr (k > 0u) {
-                            piece_fnma(owi[k - 1], si, owr[k - 1] * sr)
-                                .store_unaligned(chre + (aa * eso + idz * (b + l1 * k)));
-                            piece_fma(owr[k - 1], si, owi[k - 1] * sr)
-                                .store_unaligned(chim + (aa * eso + idz * (b + l1 * k)));
+                            tw_store_unaligned(chre + (aa * eso + idz * (b + l1 * k)),
+                                                          chim + (aa * eso + idz * (b + l1 * k)),
+                                                          owr[k - 1], owi[k - 1], sr, si);
                         } else {
                             sr.store_unaligned(chre + (aa * eso + idz * (b + l1 * k)));
                             si.store_unaligned(chim + (aa * eso + idz * (b + l1 * k)));
@@ -189,10 +224,8 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                                              ADM_LAMBDA_ALWAYS_INLINE {
                         const std::size_t off = o0 + idi * k;
                         if constexpr (k > 0u) {
-                            piece_fnma(owi[k - 1u], si, owr[k - 1u] * sr)
-                                .store_unaligned(re + off);
-                            piece_fma(owr[k - 1u], si, owi[k - 1u] * sr)
-                                .store_unaligned(im + off);
+                            tw_store_unaligned(re + off, im + off, owr[k - 1u],
+                                                          owi[k - 1u], sr, si);
                         } else {
                             sr.store_unaligned(re + off);
                             si.store_unaligned(im + off);
@@ -220,8 +253,7 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                     if constexpr (k > 0u) {
                         const batch owr = batch::load_unaligned(twre + ((k - 1u) * ido + aa));
                         const batch owi = batch::load_unaligned(twim + ((k - 1u) * ido + aa));
-                        piece_fnma(owi, si, owr * sr).store_unaligned(chre + off);
-                        piece_fma(owr, si, owi * sr).store_unaligned(chim + off);
+                        tw_store_unaligned(chre + off, chim + off, owr, owi, sr, si);
                     } else {
                         sr.store_unaligned(chre + off);
                         si.store_unaligned(chim + off);
@@ -243,8 +275,7 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                     if constexpr (k > 0u) {
                         const batch owr = batch::load_unaligned(twre + ((k - 1u) * ido + aa));
                         const batch owi = batch::load_unaligned(twim + ((k - 1u) * ido + aa));
-                        piece_fnma(owi, si, owr * sr).store_unaligned(chre + off);
-                        piece_fma(owr, si, owi * sr).store_unaligned(chim + off);
+                        tw_store_unaligned(chre + off, chim + off, owr, owi, sr, si);
                     } else {
                         sr.store_unaligned(chre + off);
                         si.store_unaligned(chim + off);
@@ -317,8 +348,8 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                         if constexpr (k > 0u) {
                             const batch owr = batch::load_unaligned(twre + ((k - 1u) * ido + aa));
                             const batch owi = batch::load_unaligned(twim + ((k - 1u) * ido + aa));
-                            piece_fnma(owi, yi, owr * yr).store_unaligned(chre + off);
-                            piece_fma(owr, yi, owi * yr).store_unaligned(chim + off);
+                            tw_store_unaligned(chre + off, chim + off,
+                                                          owr, owi, yr, yi);
                         } else {
                             yr.store_unaligned(chre + off);
                             yi.store_unaligned(chim + off);
@@ -364,8 +395,8 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                                         batch::load(twre + ((k - 1u) * ido + a), m, um);
                                     const batch owi =
                                         batch::load(twim + ((k - 1u) * ido + a), m, um);
-                                    piece_fnma(owi, si, owr * sr).store(chre + off, m, um);
-                                    piece_fma(owr, si, owi * sr).store(chim + off, m, um);
+                                    tw_store_masked(chre + off, chim + off,
+                                                               m, um, owr, owi, sr, si);
                                 } else {
                                     sr.store(chre + off, m, um);
                                     si.store(chim + off, m, um);
@@ -391,8 +422,9 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                         if constexpr (k > 0u) {
                             const T owr = twre[(k - 1u) * ido + a];
                             const T owi = twim[(k - 1u) * ido + a];
-                            chre[obase + a * eso + kstride * k] = piece_fnma(owi, si, owr * sr);
-                            chim[obase + a * eso + kstride * k] = piece_fma(owr, si, owi * sr);
+                            tw_store_scalar(chre[obase + a * eso + kstride * k],
+                                                       chim[obase + a * eso + kstride * k],
+                                                       owr, owi, sr, si);
                         } else {
                             chre[obase + a * eso + kstride * k] = sr;
                             chim[obase + a * eso + kstride * k] = si;
@@ -458,7 +490,7 @@ ADM_NOINLINE void dif_pass_prime_chip(const T* ccre, const T* ccim,
                     }
                 }
                 batch yre[P], yim[P];
-                rader_apply_batched<P, T, batch>(xre, xim, 1, yre, yim);
+                rader_apply<P, T, batch>(xre, xim, 1, yre, yim);
                 for (unsigned k = 0; k < P; ++k) {
                     const std::size_t off = aa * eso + idz * (b + l1 * k);
                     batch sr = yre[k], si = yim[k];
@@ -468,13 +500,13 @@ ADM_NOINLINE void dif_pass_prime_chip(const T* ccre, const T* ccim,
                         if constexpr (full) {
                             const batch owr = batch::load_unaligned(twr);
                             const batch owi = batch::load_unaligned(twi);
-                            piece_fnma(owi, si, owr * sr).store_unaligned(chre + off);
-                            piece_fma(owr, si, owi * sr).store_unaligned(chim + off);
+                            tw_store_unaligned(chre + off, chim + off,
+                                                          owr, owi, sr, si);
                         } else {
                             const batch owr = batch::load(twr, m, um);
                             const batch owi = batch::load(twi, m, um);
-                            piece_fnma(owi, si, owr * sr).store(chre + off, m, um);
-                            piece_fma(owr, si, owi * sr).store(chim + off, m, um);
+                            tw_store_masked(chre + off, chim + off, m, um,
+                                                       owr, owi, sr, si);
                         }
                     } else {
                         if constexpr (full) {
@@ -530,8 +562,7 @@ void dif_pass_fused2(const T* ccre, const T* ccim,
                         if constexpr (k > 0u) {
                             const batch owr = batch::load_unaligned(ptw1_cur + (k - 1u) * 2u * W);
                             const batch owi = batch::load_unaligned(ptw1_cur + (k - 1u) * 2u * W + W);
-                            piece_fnma(owi, si, owr * sr).store_aligned(lr);
-                            piece_fma(owr, si, owi * sr).store_aligned(li);
+                            tw_store_aligned(lr, li, owr, owi, sr, si);
                         } else {
                             sr.store_aligned(lr);
                             si.store_aligned(li);
@@ -556,10 +587,9 @@ void dif_pass_fused2(const T* ccre, const T* ccim,
                         if constexpr (k2 > 0u) {
                             const batch owr = batch::load_unaligned(ptw2_cur + (k2 - 1u) * 2u * W);
                             const batch owi = batch::load_unaligned(ptw2_cur + (k2 - 1u) * 2u * W + W);
-                            piece_fnma(owi, si, owr * sr)
-                                .store_unaligned(chre + (a2 + ido2 * (bp + l12 * k2)));
-                            piece_fma(owr, si, owi * sr)
-                                .store_unaligned(chim + (a2 + ido2 * (bp + l12 * k2)));
+                            tw_store_unaligned(chre + (a2 + ido2 * (bp + l12 * k2)),
+                                                          chim + (a2 + ido2 * (bp + l12 * k2)),
+                                                          owr, owi, sr, si);
                         } else {
                             sr.store_unaligned(chre + (a2 + ido2 * (bp + l12 * k2)));
                             si.store_unaligned(chim + (a2 + ido2 * (bp + l12 * k2)));
@@ -614,8 +644,7 @@ void dif_pass_fused3(const T* ccre, const T* ccim,
                             if constexpr (Kc > 0u) {
                                 const batch owr = batch::load_unaligned(tw1re + ((Kc - 1u) * ido + a));
                                 const batch owi = batch::load_unaligned(tw1im + ((Kc - 1u) * ido + a));
-                                piece_fnma(owi, si, owr * sr).store_aligned(lr);
-                                piece_fma(owr, si, owi * sr).store_aligned(li);
+                                tw_store_aligned(lr, li, owr, owi, sr, si);
                             } else {
                                 sr.store_aligned(lr);
                                 si.store_aligned(li);
@@ -640,8 +669,7 @@ void dif_pass_fused3(const T* ccre, const T* ccim,
                             if constexpr (Kc > 0u) {
                                 const batch owr = batch::load_unaligned(tw2re + ((Kc - 1u) * ido2 + a1));
                                 const batch owi = batch::load_unaligned(tw2im + ((Kc - 1u) * ido2 + a1));
-                                piece_fnma(owi, si, owr * sr).store_aligned(lr);
-                                piece_fma(owr, si, owi * sr).store_aligned(li);
+                                tw_store_aligned(lr, li, owr, owi, sr, si);
                             } else {
                                 sr.store_aligned(lr);
                                 si.store_aligned(li);
@@ -665,10 +693,10 @@ void dif_pass_fused3(const T* ccre, const T* ccim,
                             if constexpr (Kc > 0u) {
                                 const batch owr = batch::load_unaligned(tw3re + ((Kc - 1u) * ido3 + a3));
                                 const batch owi = batch::load_unaligned(tw3im + ((Kc - 1u) * ido3 + a3));
-                                piece_fnma(owi, si, owr * sr)
-                                    .store_unaligned(chre + (a3 + ido3 * (bp2 + l123 * Kc)));
-                                piece_fma(owr, si, owi * sr)
-                                    .store_unaligned(chim + (a3 + ido3 * (bp2 + l123 * Kc)));
+                                tw_store_unaligned(
+                                    chre + (a3 + ido3 * (bp2 + l123 * Kc)),
+                                    chim + (a3 + ido3 * (bp2 + l123 * Kc)),
+                                    owr, owi, sr, si);
                             } else {
                                 sr.store_unaligned(chre + (a3 + ido3 * (bp2 + l123 * Kc)));
                                 si.store_unaligned(chim + (a3 + ido3 * (bp2 + l123 * Kc)));
@@ -681,8 +709,7 @@ void dif_pass_fused3(const T* ccre, const T* ccim,
     }
 }
 
-template<typename T, bool Forward, std::size_t IP, bool Split = false, std::size_t Eso = 0,
-         std::size_t L1 = 0>
+template<typename T, bool Forward, std::size_t IP, bool Split = false, std::size_t L1 = 0>
 void dif_pass_first_impl(const std::complex<T>* data,
                     T* chre, T* chim,
                     std::size_t l1, std::size_t ido,
@@ -859,10 +886,9 @@ void dif_pass_first_impl(const std::complex<T>* data,
     }
 }
 
-template<typename T, bool Forward, std::size_t IP, bool Split, std::size_t Eso, std::size_t L1,
-         typename... A>
+template<typename T, bool Forward, std::size_t IP, bool Split, std::size_t L1, typename... A>
 ADM_FLATTEN void dif_pass_first_flat(A... a) {
-    dif_pass_first_impl<T, Forward, IP, Split, Eso, L1>(a...);
+    dif_pass_first_impl<T, Forward, IP, Split, L1>(a...);
 }
 
 template<typename T, bool Forward, std::size_t IP, std::size_t L1 = 0>
@@ -873,11 +899,11 @@ void dif_pass_first(const std::complex<T>* data,
                     std::size_t eso, std::size_t blk) {
     const auto run = [&](auto split) {
         if constexpr (dif_butterfly_wants_reload<IP>)
-            dif_pass_first_impl<T, Forward, IP, split, 0u, L1>(data, chre, chim, l1, ido, twre,
-                                                               twim, eso, blk);
+            dif_pass_first_impl<T, Forward, IP, split, L1>(data, chre, chim, l1, ido, twre,
+                                                           twim, eso, blk);
         else
-            dif_pass_first_flat<T, Forward, IP, split, 0u, L1>(data, chre, chim, l1, ido, twre,
-                                                               twim, eso, blk);
+            dif_pass_first_flat<T, Forward, IP, split, L1>(data, chre, chim, l1, ido, twre,
+                                                           twim, eso, blk);
     };
     if (blk != 0) run(std::bool_constant<true>{});
     else run(std::bool_constant<false>{});

@@ -247,9 +247,8 @@ struct batch_sink {
     }
 };
 
-template<unsigned P, typename T, typename V = xsimd::batch<T>>
-void rader_apply_batched(const V* xre, const V* xim, std::size_t xstride,
-                         V* yre, V* yim);
+template<unsigned P, typename T, typename V>
+void rader_apply(const V* xre, const V* xim, std::size_t xstride, V* yre, V* yim);
 
 template<unsigned N, typename T, bool Forward, typename V = xsimd::batch<T>>
 struct kernel_batched {
@@ -293,7 +292,7 @@ struct kernel_batched {
     // site keeps the unpatched shape, and only the top-level entry pays for the test.
     static void apply_strided(const V* xre, const V* xim, std::size_t xstride, V* yre, V* yim) {
         if constexpr (is_rader_prime(N)) {
-            rader_apply_batched<N, T, V>(xre, xim, xstride, yre, yim);
+            rader_apply<N, T, V>(xre, xim, xstride, yre, yim);
             return;
         } else if constexpr (flat_leaf) {
             apply_gathered(xre, xim, xstride, yre, yim);
@@ -320,7 +319,7 @@ struct kernel_batched {
     static void apply_sink(const V* xre, const V* xim, std::size_t xstride, V* yre, V* yim,
                            Sink&& sink) {
         if constexpr (is_rader_prime(N)) {
-            rader_apply_batched<N, T, V>(xre, xim, xstride, yre, yim);
+            rader_apply<N, T, V>(xre, xim, xstride, yre, yim);
             poet::static_for<0, N>([&](auto P) { sink(P, yre[P], yim[P]); });
         } else if constexpr (flat_leaf) {
             if (xstride == 1) {
@@ -369,9 +368,6 @@ struct kernel_batched<N, T, false, V> {
             [&](std::size_t p, V outr, V outi) { sink(p, outi, outr); });
     }
 };
-
-template<unsigned P, typename T>
-void rader_apply(const T* xre, const T* xim, std::size_t xstride, T* yre, T* yim);
 
 inline constexpr unsigned kNoinlineMinSize = 16;
 
@@ -435,7 +431,7 @@ struct kernel {
     static void apply_impl(const T* xre, const T* xim, std::size_t xstride,
                            T* yre, T* yim, Sink&& sink) {
         if constexpr (is_rader_prime(N)) {
-            rader_apply<N, T>(xre, xim, xstride, yre, yim);
+            rader_apply<N, T, T>(xre, xim, xstride, yre, yim);
             poet::static_for<0, N>([&](auto P) { sink(P, yre[P], yim[P]); });
             return;
         }
@@ -639,61 +635,13 @@ ADM_CONSTEVAL std::array<std::size_t, L> rader_ginvpow_table() {
     return t;
 }
 
-template<unsigned P, typename T>
-ADM_NOINLINE void rader_apply(const T* xre, const T* xim, std::size_t xstride,
-                              T* yre, T* yim) {
-    constexpr unsigned L = P - 1;
-
-    static constexpr std::array<std::size_t, L> gpow = rader_gpow_table<P>();
-    static constexpr std::array<std::size_t, L> ginvpow = rader_ginvpow_table<P>();
-    static constexpr std::array<T, L> Bre = make_rader_bhat<P, T, false>();
-    static constexpr std::array<T, L> Bim = make_rader_bhat<P, T, true>();
-
-    const T x0r = xre[0];
-    const T x0i = xim[0];
-    T are[L], aim[L];
-    for (unsigned q = 0; q < L; ++q) {
-        const std::size_t idx = gpow[q] * xstride;
-        are[q] = xre[idx];
-        aim[q] = xim[idx];
-    }
-
-    T Are[L], Aim[L];
-    kernel<L, T, true>::apply(are, aim, 1, Are, Aim);
-
-    T Pre[L], Pim[L];
-    using batch = xsimd::batch<T>;
-    constexpr std::size_t Wd = batch::size;
-    constexpr std::size_t Lv = L - L % Wd;
-    for (std::size_t k = 0; k < Lv; k += Wd) {
-        const batch ar = batch::load_unaligned(&Are[k]);
-        const batch ai = batch::load_unaligned(&Aim[k]);
-        const batch br = batch::load_unaligned(&Bre[k]);
-        const batch bi = batch::load_unaligned(&Bim[k]);
-        (ar * br - ai * bi).store_unaligned(&Pre[k]);
-        (ar * bi + ai * br).store_unaligned(&Pim[k]);
-    }
-    if constexpr (L % Wd != 0) {
-        for (std::size_t k = Lv; k < L; ++k) {
-            Pre[k] = Are[k] * Bre[k] - Aim[k] * Bim[k];
-            Pim[k] = Are[k] * Bim[k] + Aim[k] * Bre[k];
-        }
-    }
-
-    T cre[L], cim[L];
-    kernel<L, T, false>::apply(Pre, Pim, 1, cre, cim);
-
-    yre[0] = x0r + Are[0];
-    yim[0] = x0i + Aim[0];
-    for (unsigned m = 0; m < L; ++m) {
-        yre[ginvpow[m]] = x0r + cre[m];
-        yim[ginvpow[m]] = x0i + cim[m];
-    }
-}
-
+// Rader's pipeline (gather -> inner FFT -> B-hat multiply -> inverse -> scatter), one body
+// for both carriers: the V == T arm is scalar, the batched arm carries the caller's V.
+// noinline is load-bearing: it keeps the pipeline out of the kernel<N>/kernel_batched<N>
+// bodies that call it.
 template<unsigned P, typename T, typename V>
-ADM_NOINLINE void rader_apply_batched(const V* xre, const V* xim, std::size_t xstride,
-                                      V* yre, V* yim) {
+ADM_NOINLINE void rader_apply(const V* xre, const V* xim, std::size_t xstride,
+                              V* yre, V* yim) {
     constexpr unsigned L = P - 1;
 
     static constexpr std::array<std::size_t, L> gpow = rader_gpow_table<P>();
@@ -711,18 +659,38 @@ ADM_NOINLINE void rader_apply_batched(const V* xre, const V* xim, std::size_t xs
     }
 
     V Are[L], Aim[L];
-    kernel_batched<L, T, true, V>::apply(are, aim, 1, Are, Aim);
-
     V Pre[L], Pim[L];
-    for (unsigned k = 0; k < L; ++k) {
-        const V br(Bre[k]);
-        const V bi(Bim[k]);
-        Pre[k] = Are[k] * br - Aim[k] * bi;
-        Pim[k] = Are[k] * bi + Aim[k] * br;
-    }
-
     V cre[L], cim[L];
-    kernel_batched<L, T, false, V>::apply(Pre, Pim, 1, cre, cim);
+    if constexpr (std::is_same_v<V, T>) {
+        kernel<L, T, true>::apply(are, aim, 1, Are, Aim);
+        using batch = xsimd::batch<T>;
+        constexpr std::size_t Wd = batch::size;
+        constexpr std::size_t Lv = L - L % Wd;
+        for (std::size_t k = 0; k < Lv; k += Wd) {
+            const batch ar = batch::load_unaligned(&Are[k]);
+            const batch ai = batch::load_unaligned(&Aim[k]);
+            const batch br = batch::load_unaligned(&Bre[k]);
+            const batch bi = batch::load_unaligned(&Bim[k]);
+            (ar * br - ai * bi).store_unaligned(&Pre[k]);
+            (ar * bi + ai * br).store_unaligned(&Pim[k]);
+        }
+        if constexpr (L % Wd != 0) {
+            for (std::size_t k = Lv; k < L; ++k) {
+                Pre[k] = Are[k] * Bre[k] - Aim[k] * Bim[k];
+                Pim[k] = Are[k] * Bim[k] + Aim[k] * Bre[k];
+            }
+        }
+        kernel<L, T, false>::apply(Pre, Pim, 1, cre, cim);
+    } else {
+        kernel_batched<L, T, true, V>::apply(are, aim, 1, Are, Aim);
+        for (unsigned k = 0; k < L; ++k) {
+            const V br(Bre[k]);
+            const V bi(Bim[k]);
+            Pre[k] = Are[k] * br - Aim[k] * bi;
+            Pim[k] = Are[k] * bi + Aim[k] * br;
+        }
+        kernel_batched<L, T, false, V>::apply(Pre, Pim, 1, cre, cim);
+    }
 
     yre[0] = x0r + Are[0];
     yim[0] = x0i + Aim[0];

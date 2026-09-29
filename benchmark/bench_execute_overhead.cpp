@@ -13,19 +13,6 @@
 
 #include "bench_harness.hpp"
 
-namespace {
-
-std::string shape_to_string(const std::vector<std::size_t>& shape) {
-    std::string s;
-    for (std::size_t i = 0; i < shape.size(); ++i) {
-        if (i) s += 'x';
-        s += std::to_string(shape[i]);
-    }
-    return s;
-}
-
-}
-
 namespace bench {
 
 // Per-execute overhead for tiny N-D (bucket A): every existing timed mode in this tree reuses a
@@ -42,7 +29,7 @@ bool bench_execute_overhead(const std::vector<std::size_t>& shape, int reps, lon
         in[i] = std::complex<T>(std::sin(T(i) * T(0.1)), std::cos(T(i) * T(0.1)));
 
     const admiral::plan<T> p(admiral::span<const std::size_t>(shape.data(), shape.size()),
-                             {.nthreads = 1, .eff = eff});
+                             admiral::options{1, eff});
 
     volatile T sink = T(0);
     const auto call_once = [&]() {

@@ -9,7 +9,6 @@
 #include <malloc.h>
 #endif
 #include <memory>
-#include <new>
 #include <utility>
 #include <vector>
 #include "admiral/detail/cxx_compat.hpp"

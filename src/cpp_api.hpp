@@ -80,10 +80,10 @@ struct axis_state {
                const admiral::options& opts)
         : shape(extents.begin(), extents.end()), stride(extents.size()), axis(ax), forward(fwd),
           innermost(ax + 1 == extents.size()), debug(opts.debug) {
-        if (shape.empty() || axis >= shape.size())
+        if (shape.empty() || axis >= shape.size()) ADM_UNLIKELY
             throw size_error("axis_plan: axis out of range");
         const auto total = extent_product(shape);
-        if (!total)
+        if (!total) ADM_UNLIKELY
             throw size_error("axis_plan: extents must be > 0 and their product must fit");
         std::size_t s = 1;
         for (std::size_t di = 0; di < shape.size(); ++di) {
@@ -113,11 +113,13 @@ struct strides_state {
         : len(len_), nbatch(n), in_stride(istride), in_dist(idist), out_stride(ostride),
           out_dist(odist) {
         if (istride == 0 || ostride == 0 || (n > 1 && (idist == 0 || odist == 0)))
+            ADM_UNLIKELY
             throw size_error("strides_plan: strides must be nonzero");
         const std::size_t dims[2] = {len_, n};
         const auto total = extent_product(span<const std::size_t>(dims, 2));
-        if (!total) throw size_error("strides_plan: len and nbatch must be > 0 and their"
-                                     " product must fit");
+        if (!total) ADM_UNLIKELY
+            throw size_error("strides_plan: len and nbatch must be > 0 and their"
+                             " product must fit");
         const std::size_t axis_threads =
             split_batch_threads<T>(opts.nthreads, *total, n, len_, pool, opts.pin_threads);
         fwd = make_nd_axis_state<T>(len_, istride, true, false,
@@ -143,7 +145,7 @@ struct strides_state {
     void run(bool is_forward, const std::complex<T>* src, std::complex<T>* dst,
              std::optional<T> fct) const {
         const nd_axis_state<T>& st = is_forward ? fwd : inv;
-        if (src == dst && (in_stride != out_stride || in_dist != out_dist))
+        if (src == dst && (in_stride != out_stride || in_dist != out_dist)) ADM_UNLIKELY
             throw size_error("strides_plan: in place requires matching in/out strides");
         if (len <= 1) {
             const T scale = fct.value_or(T(1));
@@ -402,23 +404,24 @@ void axis_plan<T>::execute_bands(std::complex<T>* data, span<const std::size_t> 
     const std::size_t len = m->shape[m->axis];
     const std::size_t inner = m->stride[m->axis];
 
-    if ((!lo.empty() && lo.size() != ndim) || (!hi.empty() && hi.size() != ndim))
+    if ((!lo.empty() && lo.size() != ndim) || (!hi.empty() && hi.size() != ndim)) ADM_UNLIKELY
         throw size_error("axis_plan: box rank must match shape");
     const auto blo = [&](std::size_t d) { return lo.empty() ? std::size_t{0} : lo[d]; };
     const auto bhi = [&](std::size_t d) { return hi.empty() ? m->shape[d] : hi[d]; };
     bool empty_box = false;
     for (std::size_t d = 0; d < ndim; ++d) {
-        if (bhi(d) > m->shape[d] || blo(d) > bhi(d))
+        if (bhi(d) > m->shape[d] || blo(d) > bhi(d)) ADM_UNLIKELY
             throw size_error("axis_plan: box out of range");
         empty_box |= (blo(d) == bhi(d));
     }
-    if (blo(m->axis) != 0 || bhi(m->axis) != len)
+    if (blo(m->axis) != 0 || bhi(m->axis) != len) ADM_UNLIKELY
         throw size_error("axis_plan: transformed axis must be full");
     if (lo2_last != hi2_last) {
         const std::size_t last = ndim - 1;
         if (hi2_last > m->shape[last] || lo2_last > hi2_last || m->axis == last || empty_box)
+            ADM_UNLIKELY
             throw size_error("axis_plan: second band out of range");
-        if (lo2_last < bhi(last) && blo(last) < hi2_last)
+        if (lo2_last < bhi(last) && blo(last) < hi2_last) ADM_UNLIKELY
             throw size_error("axis_plan: bands overlap");
     }
     if (empty_box || len <= 1) return;

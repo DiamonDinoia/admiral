@@ -1321,10 +1321,10 @@ int main(int argc, char** argv) {
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--verify") verify = true;
-            else if (arg.rfind("--prec=", 0) == 0) v_prec = arg.substr(7);
-            else if (arg.rfind("--tol=", 0) == 0) tol_override = std::stod(arg.substr(6));
-            else if (arg.rfind("--sizes=", 0) == 0) sizes = parse_size_list(arg.substr(8));
         }
+        if (const auto v = find_arg(argc, argv, "--prec=")) v_prec = *v;
+        if (const auto v = find_arg_double(argc, argv, "--tol=")) tol_override = *v;
+        if (const auto v = find_arg(argc, argv, "--sizes=", parse_size_list)) sizes = *v;
         if (verify) {
             if (sizes.empty()) {
                 for (std::size_t n = 2; n <= 64; ++n) sizes.push_back(n);
@@ -1363,13 +1363,13 @@ int main(int argc, char** argv) {
             else if (arg == "--r2c") r2c = true;
             else if (arg == "--robust") robust = true;
             else if (arg == "--fail-on-lose") fail_on_lose = true;
-            else if (arg.rfind("--prec=", 0) == 0) cmp_prec = arg.substr(7);
-            else if (arg.rfind("--reps=", 0) == 0) reps = std::stoi(arg.substr(7));
-            else if (arg.rfind("--rounds=", 0) == 0) rounds = std::stoi(arg.substr(9));
-            else if (arg.rfind("--nthreads=", 0) == 0) nthreads = std::stoi(arg.substr(11));
-            else if (arg.rfind("--inner=", 0) == 0) inner = std::stol(arg.substr(8));
-            else if (arg.rfind("--shapes=", 0) == 0) shapes = parse_nd_shape_list(arg.substr(9));
         }
+        if (const auto v = find_arg(argc, argv, "--prec=")) cmp_prec = *v;
+        if (const auto v = find_arg_int(argc, argv, "--reps=")) reps = *v;
+        if (const auto v = find_arg_int(argc, argv, "--rounds=")) rounds = *v;
+        if (const auto v = find_arg_int(argc, argv, "--nthreads=")) nthreads = *v;
+        if (const auto v = find_arg_long(argc, argv, "--inner=")) inner = *v;
+        if (const auto v = find_arg(argc, argv, "--shapes=", parse_nd_shape_list)) shapes = *v;
         if (compare_nd_mode) {
             if (shapes.empty())
                 shapes = {{256, 256}, {512, 512}, {1024, 1024},
@@ -1403,10 +1403,6 @@ int main(int argc, char** argv) {
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--overhead") overhead = true;
-            else if (arg.rfind("--prec=", 0) == 0) ov_prec = arg.substr(7);
-            else if (arg.rfind("--reps=", 0) == 0) reps = std::stoi(arg.substr(7));
-            else if (arg.rfind("--inner=", 0) == 0) inner = std::stol(arg.substr(8));
-            else if (arg.rfind("--shapes=", 0) == 0) shapes = parse_nd_shape_list(arg.substr(9));
             else if (arg.rfind("--effort=", 0) == 0) {
                 // Rejected rather than ignored like the flags above it: every other unknown value
                 // here shows up as missing output, while an unparsed effort silently falls back to
@@ -1421,6 +1417,10 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        if (const auto v = find_arg(argc, argv, "--prec=")) ov_prec = *v;
+        if (const auto v = find_arg_int(argc, argv, "--reps=")) reps = *v;
+        if (const auto v = find_arg_long(argc, argv, "--inner=")) inner = *v;
+        if (const auto v = find_arg(argc, argv, "--shapes=", parse_nd_shape_list)) shapes = *v;
         if (overhead) {
             if (shapes.empty())
                 shapes = {{4, 4, 4}, {8, 8, 8}, {16, 16}, {16, 16, 16}, {32, 32}};
@@ -1452,10 +1452,6 @@ int main(int argc, char** argv) {
             const std::string arg = argv[i];
             if (arg == "--compare") compare = true;
             else if (arg == "--fail-on-lose") fail_on_lose = true;
-            else if (arg.rfind("--prec=", 0) == 0) cmp_prec = arg.substr(7);
-            else if (arg.rfind("--reps=", 0) == 0) reps = std::stoi(arg.substr(7));
-            else if (arg.rfind("--nthreads=", 0) == 0) nthreads = std::stoi(arg.substr(11));
-            else if (arg.rfind("--adm-nthreads=", 0) == 0) adm_nthreads = std::stoi(arg.substr(15));
             else if (arg.rfind("--adm-effort=", 0) == 0) {
                 const std::string v = arg.substr(13);
                 adm_eff = v == "measure"                          ? admiral::effort::measure
@@ -1464,14 +1460,16 @@ int main(int argc, char** argv) {
                                                                   : throw std::invalid_argument(
                                                                         "--adm-effort=" + v);
             }
-            else if (arg.rfind("--inner=", 0) == 0) inner = std::stol(arg.substr(8));
-            else if (arg.rfind("--tol=", 0) == 0) tol_override = std::stod(arg.substr(6));
-            else if (arg.rfind("--sizes=", 0) == 0) {
-                sizes = parse_size_list(arg.substr(8));
-            } else if (arg.rfind("--factors=", 0) == 0) {
-                factor_override = parse_radix_list(arg.substr(10));
-            }
         }
+        if (const auto v = find_arg(argc, argv, "--prec=")) cmp_prec = *v;
+        if (const auto v = find_arg_int(argc, argv, "--reps=")) reps = *v;
+        if (const auto v = find_arg_int(argc, argv, "--nthreads=")) nthreads = *v;
+        if (const auto v = find_arg_int(argc, argv, "--adm-nthreads=")) adm_nthreads = *v;
+        if (const auto v = find_arg_long(argc, argv, "--inner=")) inner = *v;
+        if (const auto v = find_arg_double(argc, argv, "--tol=")) tol_override = *v;
+        if (const auto v = find_arg(argc, argv, "--sizes=", parse_size_list)) sizes = *v;
+        if (const auto v = find_arg(argc, argv, "--factors=", parse_radix_list))
+            factor_override = *v;
         if (compare) {
             if (sizes.empty())
                 sizes = {2,4,8,16,32,64,128,256,512,1024,2048,4096,8192,16384,32768,
@@ -1500,15 +1498,12 @@ int main(int argc, char** argv) {
         int reps = 9, rounds = 7;
         long inner = 0;
         double tol_override = -1.0;
-        for (int i = 1; i < argc; ++i) {
-            const std::string arg = argv[i];
-            if (arg.rfind("--factors-ab=", 0) == 0) ab_arg = arg.substr(13);
-            else if (arg.rfind("--prec=", 0) == 0) cmp_prec = arg.substr(7);
-            else if (arg.rfind("--reps=", 0) == 0) reps = std::stoi(arg.substr(7));
-            else if (arg.rfind("--rounds=", 0) == 0) rounds = std::stoi(arg.substr(9));
-            else if (arg.rfind("--inner=", 0) == 0) inner = std::stol(arg.substr(8));
-            else if (arg.rfind("--tol=", 0) == 0) tol_override = std::stod(arg.substr(6));
-        }
+        if (const auto v = find_arg(argc, argv, "--factors-ab=")) ab_arg = *v;
+        if (const auto v = find_arg(argc, argv, "--prec=")) cmp_prec = *v;
+        if (const auto v = find_arg_int(argc, argv, "--reps=")) reps = *v;
+        if (const auto v = find_arg_int(argc, argv, "--rounds=")) rounds = *v;
+        if (const auto v = find_arg_long(argc, argv, "--inner=")) inner = *v;
+        if (const auto v = find_arg_double(argc, argv, "--tol=")) tol_override = *v;
         if (!ab_arg.empty()) {
             const auto colon = ab_arg.find(':');
             if (colon == std::string::npos) {
@@ -1548,13 +1543,13 @@ int main(int argc, char** argv) {
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--fftw-ab") fftw_ab = true;
-            else if (arg.rfind("--prec=", 0) == 0) cmp_prec = arg.substr(7);
-            else if (arg.rfind("--reps=", 0) == 0) reps = std::stoi(arg.substr(7));
-            else if (arg.rfind("--rounds=", 0) == 0) rounds = std::stoi(arg.substr(9));
-            else if (arg.rfind("--inner=", 0) == 0) inner = std::stol(arg.substr(8));
-            else if (arg.rfind("--tol=", 0) == 0) tol_override = std::stod(arg.substr(6));
-            else if (arg.rfind("--sizes=", 0) == 0) sizes = parse_size_list(arg.substr(8));
         }
+        if (const auto v = find_arg(argc, argv, "--prec=")) cmp_prec = *v;
+        if (const auto v = find_arg_int(argc, argv, "--reps=")) reps = *v;
+        if (const auto v = find_arg_int(argc, argv, "--rounds=")) rounds = *v;
+        if (const auto v = find_arg_long(argc, argv, "--inner=")) inner = *v;
+        if (const auto v = find_arg_double(argc, argv, "--tol=")) tol_override = *v;
+        if (const auto v = find_arg(argc, argv, "--sizes=", parse_size_list)) sizes = *v;
         if (fftw_ab) {
             if (sizes.empty()) { std::cerr << "--fftw-ab needs --sizes=\n"; return 1; }
             auto run = [&](auto tag) {
@@ -1649,15 +1644,12 @@ int main(int argc, char** argv) {
         int reps = 9, rounds = 15;
         long inner = 0;
         double tol_override = -1.0;
-        for (int i = 1; i < argc; ++i) {
-            const std::string arg = argv[i];
-            if (arg.rfind("--cost-audit=", 0) == 0) ca_arg = arg.substr(13);
-            else if (arg.rfind("--prec=", 0) == 0) cmp_prec = arg.substr(7);
-            else if (arg.rfind("--reps=", 0) == 0) reps = std::stoi(arg.substr(7));
-            else if (arg.rfind("--rounds=", 0) == 0) rounds = std::stoi(arg.substr(9));
-            else if (arg.rfind("--inner=", 0) == 0) inner = std::stol(arg.substr(8));
-            else if (arg.rfind("--tol=", 0) == 0) tol_override = std::stod(arg.substr(6));
-        }
+        if (const auto v = find_arg(argc, argv, "--cost-audit=")) ca_arg = *v;
+        if (const auto v = find_arg(argc, argv, "--prec=")) cmp_prec = *v;
+        if (const auto v = find_arg_int(argc, argv, "--reps=")) reps = *v;
+        if (const auto v = find_arg_int(argc, argv, "--rounds=")) rounds = *v;
+        if (const auto v = find_arg_long(argc, argv, "--inner=")) inner = *v;
+        if (const auto v = find_arg_double(argc, argv, "--tol=")) tol_override = *v;
         if (!ca_arg.empty()) {
             const auto colon = ca_arg.find(':');
             const std::size_t N = std::strtoul(ca_arg.substr(0, colon).c_str(), nullptr, 10);
@@ -1691,11 +1683,8 @@ int main(int argc, char** argv) {
 
     {
         std::string range, md_prec = "both";
-        for (int i = 1; i < argc; ++i) {
-            const std::string arg = argv[i];
-            if (arg.rfind("--model-dump=", 0) == 0) range = arg.substr(13);
-            else if (arg.rfind("--prec=", 0) == 0) md_prec = arg.substr(7);
-        }
+        if (const auto v = find_arg(argc, argv, "--model-dump=")) range = *v;
+        if (const auto v = find_arg(argc, argv, "--prec=")) md_prec = *v;
         if (!range.empty()) {
             const auto dash = range.find('-');
             const std::size_t lo = std::stoul(range.substr(0, dash));
@@ -1713,15 +1702,12 @@ int main(int argc, char** argv) {
         int                      reps = 9, rounds = 7;
         long                     inner = 0;
         std::size_t              max_chains = 96;
-        for (int i = 1; i < argc; ++i) {
-            const std::string arg = argv[i];
-            if (arg.rfind("--chain-sweep=", 0) == 0) sizes = parse_size_list(arg.substr(14));
-            else if (arg.rfind("--prec=", 0) == 0) cs_prec = arg.substr(7);
-            else if (arg.rfind("--reps=", 0) == 0) reps = std::stoi(arg.substr(7));
-            else if (arg.rfind("--rounds=", 0) == 0) rounds = std::stoi(arg.substr(9));
-            else if (arg.rfind("--inner=", 0) == 0) inner = std::stol(arg.substr(8));
-            else if (arg.rfind("--max-chains=", 0) == 0) max_chains = std::stoul(arg.substr(13));
-        }
+        if (const auto v = find_arg(argc, argv, "--chain-sweep=", parse_size_list)) sizes = *v;
+        if (const auto v = find_arg(argc, argv, "--prec=")) cs_prec = *v;
+        if (const auto v = find_arg_int(argc, argv, "--reps=")) reps = *v;
+        if (const auto v = find_arg_int(argc, argv, "--rounds=")) rounds = *v;
+        if (const auto v = find_arg_long(argc, argv, "--inner=")) inner = *v;
+        if (const auto v = find_arg_size(argc, argv, "--max-chains=")) max_chains = *v;
         if (!sizes.empty()) {
             for (const std::size_t N : sizes) {
                 if (cs_prec == "f64" || cs_prec == "both") chain_sweep<double>(N, rounds, reps, inner, max_chains);
@@ -1739,13 +1725,13 @@ int main(int argc, char** argv) {
         long inner = 0, perf_iters = 0;
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
-            if (arg.rfind("--pass=", 0) == 0) pass_arg = arg.substr(7);
-            else if (arg == "--last") last = true;
-            else if (arg.rfind("--prec=", 0) == 0) pp = arg.substr(7);
-            else if (arg.rfind("--reps=", 0) == 0) reps = std::stoi(arg.substr(7));
-            else if (arg.rfind("--inner=", 0) == 0) inner = std::stol(arg.substr(8));
-            else if (arg.rfind("--perf-iters=", 0) == 0) perf_iters = std::stol(arg.substr(13));
+            if (arg == "--last") last = true;
         }
+        if (const auto v = find_arg(argc, argv, "--pass=")) pass_arg = *v;
+        if (const auto v = find_arg(argc, argv, "--prec=")) pp = *v;
+        if (const auto v = find_arg_int(argc, argv, "--reps=")) reps = *v;
+        if (const auto v = find_arg_long(argc, argv, "--inner=")) inner = *v;
+        if (const auto v = find_arg_long(argc, argv, "--perf-iters=")) perf_iters = *v;
         if (!pass_arg.empty()) {
             const auto f = parse_radix_list(pass_arg);
             if (f.size() != 3) {
@@ -1775,10 +1761,10 @@ int main(int argc, char** argv) {
             const std::string arg = argv[i];
             if (arg == "--codelet-sweep") csweep = true;
             else if (arg == "--no-ducc") with_ducc = false;
-            else if (arg.rfind("--prec=", 0) == 0) cs_prec = arg.substr(7);
-            else if (arg.rfind("--reps=", 0) == 0) reps = std::stoi(arg.substr(7));
-            else if (arg.rfind("--inner=", 0) == 0) inner = std::stol(arg.substr(8));
         }
+        if (const auto v = find_arg(argc, argv, "--prec=")) cs_prec = *v;
+        if (const auto v = find_arg_int(argc, argv, "--reps=")) reps = *v;
+        if (const auto v = find_arg_long(argc, argv, "--inner=")) inner = *v;
         if (csweep) {
             std::cout << "size,prec,metric,cyc,us,cyc_per_n,cyc_per_nlogn,ducc_cyc,ratio,err,l2\n";
             if (cs_prec == "f64" || cs_prec == "both") codelet_sweep<double>(reps, inner, with_ducc);
@@ -1795,10 +1781,10 @@ int main(int argc, char** argv) {
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--fs-split-sweep") ssweep = true;
-            else if (arg.rfind("--prec=", 0) == 0) sp = arg.substr(7);
-            else if (arg.rfind("--reps=", 0) == 0) reps = std::stoi(arg.substr(7));
-            else if (arg.rfind("--sizes=", 0) == 0) sizes = parse_size_list(arg.substr(8));
         }
+        if (const auto v = find_arg(argc, argv, "--prec=")) sp = *v;
+        if (const auto v = find_arg_int(argc, argv, "--reps=")) reps = *v;
+        if (const auto v = find_arg(argc, argv, "--sizes=", parse_size_list)) sizes = *v;
         if (ssweep) {
             if (sizes.empty())
                 for (std::size_t n = 65; n <= 512; ++n) sizes.push_back(n);
@@ -1816,7 +1802,6 @@ int main(int argc, char** argv) {
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--decomp-report") report = true;
-            else if (arg.rfind("--prec=", 0) == 0) rp_prec = arg.substr(7);
             else if (arg.rfind("--sizes=", 0) == 0) sizes = parse_size_list(arg.substr(8));
             else if (arg.rfind("--range=", 0) == 0) {
                 const std::string r = arg.substr(8);
@@ -1826,6 +1811,7 @@ int main(int argc, char** argv) {
                 for (std::size_t n = lo; n <= hi; ++n) sizes.push_back(n);
             }
         }
+        if (const auto v = find_arg(argc, argv, "--prec=")) rp_prec = *v;
         if (report) {
             if (sizes.empty())
                 for (std::size_t n = 2; n <= 2048; ++n) sizes.push_back(n);
@@ -1846,11 +1832,12 @@ int main(int argc, char** argv) {
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--factor-sweep") factor_sweep = true;
-            else if (arg.rfind("--prec=", 0) == 0) sweep_prec = arg.substr(7);
-            else if (arg.rfind("--reps=", 0) == 0) reps = std::stoi(arg.substr(7));
-            else if (arg.rfind("--sizes=", 0) == 0) sizes = parse_size_list(arg.substr(8));
-            else if (arg.rfind("--factors=", 0) == 0) factor_override = parse_radix_list(arg.substr(10));
         }
+        if (const auto v = find_arg(argc, argv, "--prec=")) sweep_prec = *v;
+        if (const auto v = find_arg_int(argc, argv, "--reps=")) reps = *v;
+        if (const auto v = find_arg(argc, argv, "--sizes=", parse_size_list)) sizes = *v;
+        if (const auto v = find_arg(argc, argv, "--factors=", parse_radix_list))
+            factor_override = *v;
         if (factor_sweep) {
             if (sizes.empty()) {
                 std::cerr << "--factor-sweep requires --sizes=a,b,c\n";
@@ -1887,15 +1874,12 @@ int main(int argc, char** argv) {
         int bc_rounds = 6;
         int bc_reps   = 9;
         long bc_inner = 0;
-        for (int i = 1; i < argc; ++i) {
-            const std::string arg = argv[i];
-            if      (arg.rfind("--base-cost=", 0) == 0) bc_arg    = arg.substr(12);
-            else if (arg.rfind("--out=",       0) == 0) bc_out    = arg.substr(6);
-            else if (arg.rfind("--prec=",      0) == 0) bc_prec   = arg.substr(7);
-            else if (arg.rfind("--rounds=",    0) == 0) bc_rounds = std::stoi(arg.substr(9));
-            else if (arg.rfind("--reps=",      0) == 0) bc_reps   = std::stoi(arg.substr(7));
-            else if (arg.rfind("--inner=",     0) == 0) bc_inner  = std::stol(arg.substr(8));
-        }
+        if (const auto v = find_arg(argc, argv, "--base-cost=")) bc_arg = *v;
+        if (const auto v = find_arg(argc, argv, "--out=")) bc_out = *v;
+        if (const auto v = find_arg(argc, argv, "--prec=")) bc_prec = *v;
+        if (const auto v = find_arg_int(argc, argv, "--rounds=")) bc_rounds = *v;
+        if (const auto v = find_arg_int(argc, argv, "--reps=")) bc_reps = *v;
+        if (const auto v = find_arg_long(argc, argv, "--inner=")) bc_inner = *v;
         if (!bc_arg.empty()) {
             const auto sizes = parse_size_list(bc_arg);
             std::ofstream bc_file;
@@ -1934,15 +1918,13 @@ int main(int argc, char** argv) {
         int reps = 15, rounds = 15;
         long inner = 0;
         std::vector<unsigned> factors_override;
-        for (int i = 1; i < argc; ++i) {
-            const std::string arg = argv[i];
-            if (arg.rfind("--route-ab-dif=", 0) == 0) rab_dif_N = std::stoul(arg.substr(15));
-            else if (arg.rfind("--prec=",   0) == 0) cmp_prec = arg.substr(7);
-            else if (arg.rfind("--reps=",   0) == 0) reps   = std::stoi(arg.substr(7));
-            else if (arg.rfind("--rounds=", 0) == 0) rounds = std::stoi(arg.substr(9));
-            else if (arg.rfind("--inner=",  0) == 0) inner  = std::stol(arg.substr(8));
-            else if (arg.rfind("--factors=",0) == 0) factors_override = parse_radix_list(arg.substr(10));
-        }
+        if (const auto v = find_arg_size(argc, argv, "--route-ab-dif=")) rab_dif_N = *v;
+        if (const auto v = find_arg(argc, argv, "--prec=")) cmp_prec = *v;
+        if (const auto v = find_arg_int(argc, argv, "--reps=")) reps = *v;
+        if (const auto v = find_arg_int(argc, argv, "--rounds=")) rounds = *v;
+        if (const auto v = find_arg_long(argc, argv, "--inner=")) inner = *v;
+        if (const auto v = find_arg(argc, argv, "--factors=", parse_radix_list))
+            factors_override = *v;
         if (rab_dif_N > 0) {
             if (cmp_prec == "f64" || cmp_prec == "both")
                 route_ab_dif_one<double>(rab_dif_N, factors_override, rounds, reps, inner);
@@ -1956,12 +1938,9 @@ int main(int argc, char** argv) {
         std::size_t prof_size = 0;
         long prof_iters = 0;
         std::string prof_prec = "f64";
-        for (int i = 1; i < argc; ++i) {
-            const std::string arg = argv[i];
-            if (arg.rfind("--size=", 0) == 0) prof_size = std::stoul(arg.substr(7));
-            else if (arg.rfind("--iters=", 0) == 0) prof_iters = std::stol(arg.substr(8));
-            else if (arg.rfind("--prec=", 0) == 0) prof_prec = arg.substr(7);
-        }
+        if (const auto v = find_arg_size(argc, argv, "--size=")) prof_size = *v;
+        if (const auto v = find_arg_long(argc, argv, "--iters=")) prof_iters = *v;
+        if (const auto v = find_arg(argc, argv, "--prec=")) prof_prec = *v;
         if (prof_size > 0) {
             if (prof_iters <= 0) {
                 constexpr long kProfItersTiny = 5000000L;

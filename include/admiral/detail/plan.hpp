@@ -372,7 +372,7 @@ private:
     // rung, one warmup each). Public as the probe's test entry point; the lazy path goes
     // through large_route_serial_bytes. Any build/allocation failure yields the fallback.
 public:
-    static std::size_t probe_large_route_serial();
+    ADM_NOINLINE static std::size_t probe_large_route_serial();
 private:
 
     [[nodiscard]] static bool dif_chain_supported(std::size_t size) {
@@ -474,7 +474,7 @@ plan_impl<T>::plan_impl(std::size_t size, bool is_forward, route_kind forced,
 {
     if (size == 0) ADM_UNLIKELY
         throw size_error("Plan size must be greater than 0");
-    if (!route_available(forced, size))
+    if (!route_available(forced, size)) ADM_UNLIKELY
         throw unsupported_error("force-route: kernel unavailable for this size/precision");
     emplace_route_state(size, is_forward, nullptr);
 }
@@ -494,7 +494,7 @@ plan_impl<T>::plan_impl(std::size_t size, bool is_forward, routed_plan rp, bool 
     if (size == 0) ADM_UNLIKELY {
         throw size_error("Plan size must be greater than 0");
     }
-    if (rp.dif_override && !route_available(route_kind::iterative_dif, size))
+    if (rp.dif_override && !route_available(route_kind::iterative_dif, size)) ADM_UNLIKELY
         throw unsupported_error("forced dif: size is not 11-smooth");
     const dif_factor_plan* chain =
         rp.dif_override != nullptr        ? rp.dif_override
@@ -804,8 +804,8 @@ void plan_impl<T>::execute(span<std::complex<T>> data, const exec_options<T>& op
 }
 
 template<typename T>
-void plan_impl<T>::execute(const std::complex<T>* src, std::complex<T>* dst,
-                           const exec_options<T>& opts) const {
+ADM_HOT void plan_impl<T>::execute(const std::complex<T>* src, std::complex<T>* dst,
+                                   const exec_options<T>& opts) const {
     const T fct = opts.fct.value_or(default_transform_fct<T>(m.is_forward, m.size));
     if (opts.debug >= dbg_route) ADM_UNLIKELY
         trace(opts.debug, src == dst ? "in-place" : "oop", fct);

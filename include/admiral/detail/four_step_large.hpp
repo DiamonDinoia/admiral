@@ -24,6 +24,7 @@
 #include "simd_swizzle.hpp"
 #include "thread_pool.hpp"
 #include "twiddles.hpp"
+#include "macros.hpp"
 
 namespace admiral {
 namespace detail {
@@ -281,49 +282,90 @@ inline void four_step_fused_sweep_phase(std::complex<T>* out, std::size_t ld,
     });
 }
 
+// The fused twins below share their will_thread/panel skeleton: one always-inline helper,
+// NTTP Arm selecting the twin and each arm body the site's own text under if constexpr.
+// Arm 0 is the dft twin (tile row transform length n1, plus the bandw local), Arm 1 the
+// twist twin (row length n2); each arm splices into both scheduling arms.
+// The forward declaration is for two-phase lookup: the Arm 1 body names the twist row
+// helper with explicit template arguments, which C++17 resolves at the point of
+// definition, before the helper's own definition.
 template<typename T>
-void four_step_dft_transpose_fused(std::complex<T>* out, std::size_t n1, std::size_t n2,
-                                   std::size_t m, bool is_forward,
-                                   const dif_twiddle_set<T>& dtw, T row_scale,
-                                   thread_pool* pool) {
+inline void four_step_row_dft_twist(std::complex<T>* row, std::size_t n2, std::size_t j,
+                                    bool is_forward, const dif_twiddle_set<T>& dtw,
+                                    T p2_scale, soa_scratch<T, 4>& rsc,
+                                    const std::complex<T>* hitab,
+                                    const std::complex<T>* lotab, std::size_t twist_M,
+                                    std::size_t twist_logM);
+
+template<int Arm, typename T>
+ADM_ALWAYS_INLINE void fsl_fused_run(std::complex<T>* out, std::size_t n1, std::size_t n2,
+                                     std::size_t m, bool is_forward,
+                                     const dif_twiddle_set<T>& dtw, T scale,
+                                     const std::complex<T>* hitab,
+                                     const std::complex<T>* lotab, std::size_t twist_M,
+                                     std::size_t twist_logM, thread_pool* pool) {
     using batch = xsimd::batch<T>;
     constexpr std::size_t W = batch::size;
     const std::size_t ld = n2;
     const std::size_t ntiles = n1 / W;
-    const std::size_t bandw = m * W;
+    const std::size_t row_n = Arm == 0 ? n1 : n2;
+    const std::size_t bandw = Arm == 0 ? m * W : 0;
     const std::size_t total = n1 * n2;
     if (will_thread(pool, ntiles, total)) {
         pool->parallel_for(ntiles, [&](std::size_t a0, std::size_t a1, std::size_t) {
-            soa_scratch<T, 4> rsc(n1);
-            for (std::size_t a = a0; a < a1; ++a) {
-                const std::size_t k0 = a * bandw;
-                for (std::size_t k = k0; k < k0 + bandw; ++k)
-                    dif_dispatch<T>(is_forward, out + k * n1, out + k * n1, n1, rsc.buf(0),
-                                    rsc.buf(1), rsc.buf(2), rsc.buf(3), dtw, row_scale,
-                                    rsc.stride());
-            }
+            soa_scratch<T, 4> rsc(row_n);
+            for (std::size_t a = a0; a < a1; ++a)
+                if constexpr (Arm == 0) {
+                    const std::size_t k0 = a * bandw;
+                    for (std::size_t k = k0; k < k0 + bandw; ++k)
+                        dif_dispatch<T>(is_forward, out + k * n1, out + k * n1, n1,
+                                        rsc.buf(0), rsc.buf(1), rsc.buf(2), rsc.buf(3), dtw,
+                                        scale, rsc.stride());
+                } else {
+                    for (std::size_t j = a * W; j < (a + 1) * W; ++j)
+                        four_step_row_dft_twist<T>(out + j * n2, n2, j, is_forward, dtw,
+                                                   scale, rsc, hitab, lotab, twist_M,
+                                                   twist_logM);
+                }
         });
         four_step_fused_sweep_phase<T>(out, ld, n1, m, ntiles, pool);
         return;
     }
     parallel_for(pool, ntiles, total, [&](std::size_t a0, std::size_t a1, std::size_t) {
-        soa_scratch<T, 4> rsc(n1);
+        soa_scratch<T, 4> rsc(row_n);
         alignas(batch::arch_type::alignment()) std::complex<T> stage[W * W];
-        // A panel's sweeps run after the panel's own DFTs, and a sweep of tile row `a` reads
-        // rows at most a * W + W - 1, which band floor(a / m) <= a already produced. So
-        // deferring the sweeps by one panel keeps the dependency and buys the blocking.
+        /* A panel's sweeps run after the panel's own DFTs, and a sweep of tile row `a`
+           reads rows at most a * W + W - 1, which band floor(a / m) <= a already
+           produced. So deferring the sweeps by one panel keeps the dependency and
+           buys the blocking. */
         for (std::size_t pa = a0; pa < a1; pa += four_step_panel_tiles(W)) {
             const std::size_t paE = std::min(pa + four_step_panel_tiles(W), a1);
-            for (std::size_t a = pa; a < paE; ++a) {
-                const std::size_t k0 = a * bandw;
-                for (std::size_t k = k0; k < k0 + bandw; ++k)
-                    dif_dispatch<T>(is_forward, out + k * n1, out + k * n1, n1, rsc.buf(0),
-                                    rsc.buf(1), rsc.buf(2), rsc.buf(3), dtw, row_scale,
-                                    rsc.stride());
-            }
+            for (std::size_t a = pa; a < paE; ++a)
+                if constexpr (Arm == 0) {
+                    const std::size_t k0 = a * bandw;
+                    for (std::size_t k = k0; k < k0 + bandw; ++k)
+                        dif_dispatch<T>(is_forward, out + k * n1, out + k * n1, n1,
+                                        rsc.buf(0), rsc.buf(1), rsc.buf(2), rsc.buf(3), dtw,
+                                        scale, rsc.stride());
+                } else {
+                    for (std::size_t j = a * W; j < (a + 1) * W; ++j)
+                        four_step_row_dft_twist<T>(out + j * n2, n2, j, is_forward, dtw,
+                                                   scale, rsc, hitab, lotab, twist_M,
+                                                   twist_logM);
+                }
             four_step_fused_sweep_range<T>(out, ld, n1, m, pa, paE, stage);
         }
     });
+}
+
+template<typename T>
+void four_step_dft_transpose_fused(std::complex<T>* out, std::size_t n1, std::size_t n2,
+                                   std::size_t m, bool is_forward,
+                                   const dif_twiddle_set<T>& dtw, T row_scale,
+                                   thread_pool* pool) {
+    fsl_fused_run<0>(out, n1, n2, m, is_forward, dtw, row_scale,
+                     static_cast<const std::complex<T>*>(nullptr),
+                     static_cast<const std::complex<T>*>(nullptr), 1, 0, pool);
 }
 
 template<typename T>
@@ -348,34 +390,8 @@ void four_step_twist_dft_transpose_fused(std::complex<T>* out, std::size_t n1,
                                          const std::complex<T>* hitab,
                                          const std::complex<T>* lotab, std::size_t twist_M,
                                          std::size_t twist_logM, thread_pool* pool) {
-    using batch = xsimd::batch<T>;
-    constexpr std::size_t W = batch::size;
-    const std::size_t ld = n2;
-    const std::size_t ntiles = n1 / W;
-    const std::size_t total = n1 * n2;
-    if (will_thread(pool, ntiles, total)) {
-        pool->parallel_for(ntiles, [&](std::size_t a0, std::size_t a1, std::size_t) {
-            soa_scratch<T, 4> rsc(n2);
-            for (std::size_t a = a0; a < a1; ++a)
-                for (std::size_t j = a * W; j < (a + 1) * W; ++j)
-                    four_step_row_dft_twist<T>(out + j * n2, n2, j, is_forward, dtw, p2_scale,
-                                               rsc, hitab, lotab, twist_M, twist_logM);
-        });
-        four_step_fused_sweep_phase<T>(out, ld, n1, m, ntiles, pool);
-        return;
-    }
-    parallel_for(pool, ntiles, total, [&](std::size_t a0, std::size_t a1, std::size_t) {
-        soa_scratch<T, 4> rsc(n2);
-        alignas(batch::arch_type::alignment()) std::complex<T> stage[W * W];
-        for (std::size_t pa = a0; pa < a1; pa += four_step_panel_tiles(W)) {
-            const std::size_t paE = std::min(pa + four_step_panel_tiles(W), a1);
-            for (std::size_t a = pa; a < paE; ++a)
-                for (std::size_t j = a * W; j < (a + 1) * W; ++j)
-                    four_step_row_dft_twist<T>(out + j * n2, n2, j, is_forward, dtw, p2_scale,
-                                               rsc, hitab, lotab, twist_M, twist_logM);
-            four_step_fused_sweep_range<T>(out, ld, n1, m, pa, paE, stage);
-        }
-    });
+    fsl_fused_run<1>(out, n1, n2, m, is_forward, dtw, p2_scale, hitab, lotab, twist_M,
+                     twist_logM, pool);
 }
 
 using large_split = four_step_split;
@@ -588,83 +604,102 @@ template<typename T>
     return pool != nullptr && pool->size() > 1;
 }
 
-template<typename T>
-void fsl_ws_s1(const std::complex<T>* in, std::complex<T>* ws, std::size_t n1,
-               std::size_t n2, bool is_forward, const dif_twiddle_set<T>& dtw, T p2_scale,
-               const std::complex<T>* hitab, const std::complex<T>* lotab,
-               std::size_t twist_M, std::size_t twist_logM, thread_pool* pool) {
+// Shared band skeleton of fsl_ws_s1/s2, same shape as fsl_fused_run above: one W-wide
+// band of the band axis per work item, the last band covering the scalar remainder
+// [bandv, band_len). NTTP Arm selects the twin: Arm 0 is s1 (in -> ws, twist rows of n2),
+// Arm 1 is s2 (ws -> out, dif_dispatch rows of n1); each arm's gather builds the W x LEN
+// staged block and the per-band payload text is the site's own.
+template<int Arm, typename T>
+ADM_ALWAYS_INLINE void fsl_ws_run(const std::complex<T>* src, std::complex<T>* dst,
+                                  std::size_t n1, std::size_t n2, bool is_forward,
+                                  const dif_twiddle_set<T>& dtw, T scale,
+                                  const std::complex<T>* hitab,
+                                  const std::complex<T>* lotab, std::size_t twist_M,
+                                  std::size_t twist_logM, thread_pool* pool) {
     using batch = xsimd::batch<T>;
     constexpr std::size_t W = batch::size;
     const std::size_t N = n1 * n2;
     const std::size_t n1v = n1 & ~(W - 1);
     const std::size_t n2v = n2 & ~(W - 1);
-    const std::size_t nbands = n1v / W + (n1v < n1 ? 1 : 0);
+    const std::size_t bandv = Arm == 0 ? n1v : n2v;
+    const std::size_t band_len = Arm == 0 ? n1 : n2;
+    const std::size_t row_n = Arm == 0 ? n2 : n1;
+    const std::size_t nbands = bandv / W + (bandv < band_len ? 1 : 0);
     parallel_for(pool, nbands, N, [&](std::size_t b0, std::size_t b1, std::size_t) {
-        soa_scratch<T, 4> rsc(n2);
-        const auto stage = make_aligned_buffer<std::complex<T>>(W * n2);
+        soa_scratch<T, 4> rsc(row_n);
+        const auto stage = make_aligned_buffer<std::complex<T>>(W * row_n);
         for (std::size_t b = b0; b < b1; ++b) {
-            const std::size_t j0 = b * W;
-            if (j0 >= n1v) {
-                for (std::size_t j = n1v; j < n1; ++j) {
-                    for (std::size_t i = 0; i < n2; ++i) stage[i] = in[i * n1 + j];
-                    four_step_row_dft_twist<T>(stage.get(), n2, j, is_forward, dtw, p2_scale,
-                                               rsc, hitab, lotab, twist_M, twist_logM);
-                    std::copy_n(stage.get(), n2, ws + j * n2);
+            if constexpr (Arm == 0) {
+                const std::complex<T>* in = src;
+                std::complex<T>* ws = dst;
+                const std::size_t j0 = b * W;
+                if (j0 >= n1v) {
+                    for (std::size_t j = n1v; j < n1; ++j) {
+                        for (std::size_t i = 0; i < n2; ++i) stage[i] = in[i * n1 + j];
+                        four_step_row_dft_twist<T>(stage.get(), n2, j, is_forward, dtw,
+                                                   scale, rsc, hitab, lotab, twist_M,
+                                                   twist_logM);
+                        std::copy_n(stage.get(), n2, ws + j * n2);
+                    }
+                    continue;
                 }
-                continue;
-            }
-            for (std::size_t i0 = 0; i0 < n2v; i0 += W)
-                four_step_tile_transpose<T>(in + i0 * n1 + j0, n1, stage.get() + i0, n2);
-            for (std::size_t i = n2v; i < n2; ++i)
-                for (std::size_t k = 0; k < W; ++k) stage[k * n2 + i] = in[i * n1 + j0 + k];
-            for (std::size_t k = 0; k < W; ++k) {
-                four_step_row_dft_twist<T>(stage.get() + k * n2, n2, j0 + k, is_forward, dtw,
-                                           p2_scale, rsc, hitab, lotab, twist_M, twist_logM);
-                std::copy_n(stage.get() + k * n2, n2, ws + (j0 + k) * n2);
+                for (std::size_t i0 = 0; i0 < n2v; i0 += W)
+                    four_step_tile_transpose<T>(in + i0 * n1 + j0, n1, stage.get() + i0, n2);
+                for (std::size_t i = n2v; i < n2; ++i)
+                    for (std::size_t k = 0; k < W; ++k) stage[k * n2 + i] = in[i * n1 + j0 + k];
+                for (std::size_t k = 0; k < W; ++k) {
+                    four_step_row_dft_twist<T>(stage.get() + k * n2, n2, j0 + k, is_forward,
+                                               dtw, scale, rsc, hitab, lotab, twist_M,
+                                               twist_logM);
+                    std::copy_n(stage.get() + k * n2, n2, ws + (j0 + k) * n2);
+                }
+            } else {
+                const std::complex<T>* ws = src;
+                std::complex<T>* out = dst;
+                const std::size_t kb0 = b * W;
+                if (kb0 >= n2v) {
+                    for (std::size_t k2 = n2v; k2 < n2; ++k2) {
+                        for (std::size_t j = 0; j < n1; ++j) stage[j] = ws[j * n2 + k2];
+                        dif_dispatch<T>(is_forward, stage.get(), stage.get(), n1, rsc.buf(0),
+                                        rsc.buf(1), rsc.buf(2), rsc.buf(3), dtw, scale,
+                                        rsc.stride());
+                        for (std::size_t j = 0; j < n1; ++j) out[j * n2 + k2] = stage[j];
+                    }
+                    continue;
+                }
+                for (std::size_t j0 = 0; j0 < n1v; j0 += W)
+                    four_step_tile_transpose<T>(ws + j0 * n2 + kb0, n2, stage.get() + j0, n1);
+                for (std::size_t j = n1v; j < n1; ++j)
+                    for (std::size_t c = 0; c < W; ++c) stage[c * n1 + j] = ws[j * n2 + kb0 + c];
+                for (std::size_t c = 0; c < W; ++c)
+                    dif_dispatch<T>(is_forward, stage.get() + c * n1, stage.get() + c * n1, n1,
+                                    rsc.buf(0), rsc.buf(1), rsc.buf(2), rsc.buf(3), dtw,
+                                    scale, rsc.stride());
+                for (std::size_t j1 = 0; j1 < n1v; j1 += W)
+                    four_step_tile_transpose<T>(stage.get() + j1, n1, out + j1 * n2 + kb0, n2);
+                for (std::size_t j = n1v; j < n1; ++j)
+                    for (std::size_t c = 0; c < W; ++c) out[j * n2 + kb0 + c] = stage[c * n1 + j];
             }
         }
     });
 }
 
 template<typename T>
+void fsl_ws_s1(const std::complex<T>* in, std::complex<T>* ws, std::size_t n1,
+               std::size_t n2, bool is_forward, const dif_twiddle_set<T>& dtw, T p2_scale,
+               const std::complex<T>* hitab, const std::complex<T>* lotab,
+               std::size_t twist_M, std::size_t twist_logM, thread_pool* pool) {
+    fsl_ws_run<0>(in, ws, n1, n2, is_forward, dtw, p2_scale, hitab, lotab, twist_M,
+                  twist_logM, pool);
+}
+
+template<typename T>
 void fsl_ws_s2(const std::complex<T>* ws, std::complex<T>* out, std::size_t n1,
                std::size_t n2, bool is_forward, const dif_twiddle_set<T>& dtw, T row_scale,
                thread_pool* pool) {
-    using batch = xsimd::batch<T>;
-    constexpr std::size_t W = batch::size;
-    const std::size_t N = n1 * n2;
-    const std::size_t n1v = n1 & ~(W - 1);
-    const std::size_t n2v = n2 & ~(W - 1);
-    const std::size_t nbands = n2v / W + (n2v < n2 ? 1 : 0);
-    parallel_for(pool, nbands, N, [&](std::size_t b0, std::size_t b1, std::size_t) {
-        soa_scratch<T, 4> rsc(n1);
-        const auto stage = make_aligned_buffer<std::complex<T>>(W * n1);
-        for (std::size_t b = b0; b < b1; ++b) {
-            const std::size_t kb0 = b * W;
-            if (kb0 >= n2v) {
-                for (std::size_t k2 = n2v; k2 < n2; ++k2) {
-                    for (std::size_t j = 0; j < n1; ++j) stage[j] = ws[j * n2 + k2];
-                    dif_dispatch<T>(is_forward, stage.get(), stage.get(), n1, rsc.buf(0),
-                                    rsc.buf(1), rsc.buf(2), rsc.buf(3), dtw, row_scale,
-                                    rsc.stride());
-                    for (std::size_t j = 0; j < n1; ++j) out[j * n2 + k2] = stage[j];
-                }
-                continue;
-            }
-            for (std::size_t j0 = 0; j0 < n1v; j0 += W)
-                four_step_tile_transpose<T>(ws + j0 * n2 + kb0, n2, stage.get() + j0, n1);
-            for (std::size_t j = n1v; j < n1; ++j)
-                for (std::size_t c = 0; c < W; ++c) stage[c * n1 + j] = ws[j * n2 + kb0 + c];
-            for (std::size_t c = 0; c < W; ++c)
-                dif_dispatch<T>(is_forward, stage.get() + c * n1, stage.get() + c * n1, n1,
-                                rsc.buf(0), rsc.buf(1), rsc.buf(2), rsc.buf(3), dtw,
-                                row_scale, rsc.stride());
-            for (std::size_t j1 = 0; j1 < n1v; j1 += W)
-                four_step_tile_transpose<T>(stage.get() + j1, n1, out + j1 * n2 + kb0, n2);
-            for (std::size_t j = n1v; j < n1; ++j)
-                for (std::size_t c = 0; c < W; ++c) out[j * n2 + kb0 + c] = stage[c * n1 + j];
-        }
-    });
+    fsl_ws_run<1>(ws, out, n1, n2, is_forward, dtw, row_scale,
+                  static_cast<const std::complex<T>*>(nullptr),
+                  static_cast<const std::complex<T>*>(nullptr), 1, 0, pool);
 }
 
 template<typename T>
@@ -804,3 +839,5 @@ struct four_step_large_plan {
 
 }
 }
+
+#include "undef_macros.hpp"

@@ -31,6 +31,14 @@ template<bool Forward, typename V>
     else                   return std::tie(im, re);
 }
 
+// Array twin: a butterfly call site takes its two array operands through one name and the
+// direction pick happens at the reference, not at a second call arm.
+template<bool Forward, typename V, std::size_t IP>
+[[nodiscard]] ADM_ALWAYS_INLINE auto plane_refs(V (&re)[IP], V (&im)[IP]) {
+    if constexpr (Forward) return std::tie(re, im);
+    else                   return std::tie(im, re);
+}
+
 template<bool Forward, typename V>
 [[nodiscard]] ADM_ALWAYS_INLINE std::pair<V, V> plane_vals(V re, V im) {
     if constexpr (Forward) return {re, im};

@@ -586,10 +586,6 @@ template<typename T>
     rec(rec, N, 0);
     return out;
 }
-template<typename T>
-[[nodiscard]] constexpr dif_factor_plan enumerate_pow2_dif_plan(std::size_t N) {
-    return enumerate_pow2_dif_chains<T>(N, 1)[0];
-}
 
 template<typename T>
 [[nodiscard]] inline bool dif_chain_shape_ok(std::size_t N, const dif_factor_plan& p) {
@@ -761,6 +757,10 @@ template<typename T>
     return best;
 }
 
+// Unlike dif_elected_chain above, this returns the top candidate without the dif_chain_shape_ok
+// rescan; its engine consumers filter differently -- real_fft's multipass_supported admits only
+// radices in dif_radix_set -- so the rescan's fallback matters only to build_dif_twiddle_set,
+// which admits generic radices.
 template<typename T>
 [[nodiscard]] inline dif_factor_plan build_dif_factor_plan(std::size_t N) {
     return dif_chain_candidates<T>(N, 1)[0];
@@ -809,9 +809,10 @@ template<typename T>
     if (override_plan)
         for (std::size_t p = 0; p < planned.count; ++p) {
             if (!in_seq(dif_radix_set{}, planned[p]) && !dif_is_generic_radix(planned[p]))
+                ADM_UNLIKELY
                 throw unsupported_error("forced dif: radix is not in dif_radix_set");
             if (dif_is_generic_radix(planned[p]) &&
-                (p == 0 || p + 1 == planned.count))
+                (p == 0 || p + 1 == planned.count)) ADM_UNLIKELY
                 throw unsupported_error("forced dif: generic radix must be a middle pass");
         }
 

@@ -362,6 +362,52 @@ void move_run(std::complex<T>* line, std::size_t inner, std::size_t len, std::si
     move_run_scalar<Gather>(line, inner, 0, len, gw, buf, pitch);
 }
 
+// Tile-advance loop shared by the four col-route lambda arms in apply_lines_strided{,_oop}
+// (codelet and col_dif dispatch, in-place and out): walk units [b, e) as (run, tile),
+// dispatch on the tile run [c0, c0 + bc) and rebase the line pointer(s) when the tile
+// wraps. The NTTP Arm selects the arm: 0 ip codelet, 1 ip col_dif, 2 oop codelet,
+// 3 oop col_dif; unused per-arm parameters are inert. The one_tile fast arm stays outside:
+// it is a different loop shape with no tile bookkeeping. Per-arm write order is unchanged.
+template<int Arm, typename T, typename LineBase, typename SrcBase, typename DstBase>
+ADM_ALWAYS_INLINE void col_tile_loop4(
+    std::size_t b, std::size_t e, std::size_t Bt, std::size_t run_len, std::size_t ntiles,
+    std::size_t& run, std::size_t& tile, bool forward, std::size_t len,
+    [[maybe_unused]] std::size_t inner, T scale, [[maybe_unused]] std::complex<T>* data,
+    [[maybe_unused]] LineBase&& line_base, [[maybe_unused]] const std::complex<T>* src,
+    [[maybe_unused]] SrcBase&& src_base, [[maybe_unused]] std::complex<T>* dst,
+    [[maybe_unused]] DstBase&& dst_base, std::size_t src_line, std::size_t dst_line,
+    [[maybe_unused]] std::complex<T>*& line, [[maybe_unused]] const std::complex<T>*& sline,
+    [[maybe_unused]] std::complex<T>*& dline, [[maybe_unused]] soa_scratch<T, 4>* sc,
+    [[maybe_unused]] const dif_twiddle_set<T>& dtw) {
+    for (std::size_t u = b; u < e; ++u) {
+        const std::size_t c0 = tile * Bt;
+        const std::size_t bc = std::min(Bt, run_len - c0);
+        if constexpr (Arm == 0) {
+            col_codelet_dispatch<T>(forward, line + c0, inner, line + c0, inner, bc, len,
+                                    scale);
+        } else if constexpr (Arm == 1) {
+            col_dif_dispatch<T>(forward, line + c0, len, inner, bc, sc->buf(0), sc->buf(1),
+                                sc->buf(2), sc->buf(3), dtw, scale);
+        } else if constexpr (Arm == 2) {
+            col_codelet_dispatch<T>(forward, sline + c0, src_line, dline + c0, dst_line, bc,
+                                    len, scale);
+        } else {
+            col_dif_dispatch<T>(forward, dline + c0, len, dst_line, bc, sc->buf(0),
+                                sc->buf(1), sc->buf(2), sc->buf(3), dtw, scale, sline + c0,
+                                src_line);
+        }
+        if (++tile == ntiles) {
+            tile = 0;
+            if constexpr (Arm < 2) {
+                line = data + line_base(++run);
+            } else {
+                sline = src + src_base(++run);
+                dline = dst + dst_base(run);
+            }
+        }
+    }
+}
+
 template<typename T, typename LineBase>
 ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t len,
                                            std::size_t inner, bool forward,
@@ -392,13 +438,12 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
                                                 data + line_base(r), inner, run_len, len, scale);
                     return;
                 }
-                for (std::size_t u = b; u < e; ++u) {
-                    const std::size_t c0 = tile * Bt;
-                    const std::size_t bc = std::min(Bt, run_len - c0);
-                    col_codelet_dispatch<T>(forward, line + c0, inner, line + c0, inner, bc,
-                                            len, scale);
-                    if (++tile == ntiles) { tile = 0; line = data + line_base(++run); }
-                }
+                const std::complex<T>* unused_sline = nullptr;
+                std::complex<T>* unused_dline = nullptr;
+                col_tile_loop4<0, T>(b, e, Bt, run_len, ntiles, run, tile, forward, len,
+                                     inner, scale, data, line_base, nullptr, line_base,
+                                     nullptr, line_base, std::size_t{0}, std::size_t{0},
+                                     line, unused_sline, unused_dline, nullptr, st.dtw);
                 return;
             }
             soa_scratch<T, 4> sc(len * Bt, ws_elems ? nd_ws_slice<T>(ws_elems) : nullptr,
@@ -410,13 +455,12 @@ ADM_ALWAYS_INLINE void apply_lines_strided(std::complex<T>* data, std::size_t le
                                         scale);
                 return;
             }
-            for (std::size_t u = b; u < e; ++u) {
-                const std::size_t c0 = tile * Bt;
-                const std::size_t bc = std::min(Bt, run_len - c0);
-                col_dif_dispatch<T>(forward, line + c0, len, inner, bc,
-                                    sc.buf(0), sc.buf(1), sc.buf(2), sc.buf(3), st.dtw, scale);
-                if (++tile == ntiles) { tile = 0; line = data + line_base(++run); }
-            }
+            const std::complex<T>* unused_sline = nullptr;
+            std::complex<T>* unused_dline = nullptr;
+            col_tile_loop4<1, T>(b, e, Bt, run_len, ntiles, run, tile, forward, len, inner,
+                                 scale, data, line_base, nullptr, line_base, nullptr,
+                                 line_base, std::size_t{0}, std::size_t{0}, line,
+                                 unused_sline, unused_dline, &sc, st.dtw);
         });
         return;
     }
@@ -462,32 +506,19 @@ apply_lines_strided_oop(const std::complex<T>* src, std::size_t src_line,
             const std::complex<T>* sline = src + src_base(run);
             std::complex<T>* dline = dst + dst_base(run);
             if (st.col_codelet) {
-                for (std::size_t u = b; u < e; ++u) {
-                    const std::size_t c0 = tile * Bt;
-                    const std::size_t bc = std::min(Bt, run_len - c0);
-                    col_codelet_dispatch<T>(forward, sline + c0, src_line, dline + c0,
-                                            dst_line, bc, len, scale);
-                    if (++tile == ntiles) {
-                        tile = 0;
-                        sline = src + src_base(++run);
-                        dline = dst + dst_base(run);
-                    }
-                }
+                std::complex<T>* unused_line = nullptr;
+                col_tile_loop4<2, T>(b, e, Bt, run_len, ntiles, run, tile, forward, len,
+                                     dst_line, scale, nullptr, src_base, src, src_base, dst,
+                                     dst_base, src_line, dst_line, unused_line, sline,
+                                     dline, nullptr, st.dtw);
                 return;
             }
             soa_scratch<T, 4> sc(len * Bt);
-            for (std::size_t u = b; u < e; ++u) {
-                const std::size_t c0 = tile * Bt;
-                const std::size_t bc = std::min(Bt, run_len - c0);
-                col_dif_dispatch<T>(forward, dline + c0, len, dst_line, bc, sc.buf(0),
-                                    sc.buf(1), sc.buf(2), sc.buf(3), st.dtw, scale,
-                                    sline + c0, src_line);
-                if (++tile == ntiles) {
-                    tile = 0;
-                    sline = src + src_base(++run);
-                    dline = dst + dst_base(run);
-                }
-            }
+            std::complex<T>* unused_line = nullptr;
+            col_tile_loop4<3, T>(b, e, Bt, run_len, ntiles, run, tile, forward, len,
+                                 dst_line, scale, nullptr, src_base, src, src_base, dst,
+                                 dst_base, src_line, dst_line, unused_line, sline, dline,
+                                 &sc, st.dtw);
         });
         return;
     }
@@ -580,7 +611,6 @@ void nd_apply_axis(std::complex<T>* data, std::size_t total, std::size_t len,
                                total, [len, inner](std::size_t r) { return r * (len * inner); });
 }
 
-#define ADM_HAS_FAST2D 1
 // PROTOTYPE (scratch, uncommitted): rank-2 in-place fast path.
 // The gate is decided once in the constructor; execute() only tests the flag.
 // nd_fast2d_disable() is read ONLY at construction, so one binary can build a fast-path plan

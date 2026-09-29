@@ -268,48 +268,39 @@ for t in json.load(sys.stdin)["tests"]:
     ((rc == 0)) && { echo "  OK"; ((pass++)); rm -rf "$dir"; } || failed+=("valgrind")
 }
 
-# clang-tidy runs as a compiler launcher, so it sees every TU of the library, not a hand-picked
-# pair, and a finding fails the build. The same wiring runs in CI's static-analysis job.
-arm_tidy() {
-    local dir=$out/tidy log=$out/tidy.log
-    echo "=== tidy"
-    if ! command -v clang-tidy >/dev/null; then
-        echo "  skipped: clang-tidy not on PATH"; skipped+=(tidy); return
+# clang-tidy and cppcheck run as compiler launchers, so each sees every TU of the library, not
+# a hand-picked pair, and a finding fails the build. The same wiring runs in CI's
+# static-analysis job. Tidy alone carries two extra gates: the HeaderFilterRegex presence check
+# on .clang-tidy and the pre-build check_flags sweep.
+run_static_analysis_arm() {
+    local name=$1 tool=$2 cxx=$3 knob=$4
+    local dir=$out/$name log=$out/$name.log
+    echo "=== $name"
+    if ! command -v "$tool" >/dev/null; then
+        echo "  skipped: $tool not on PATH"; skipped+=("$name"); return
     fi
-    grep -q 'HeaderFilterRegex' "$src/.clang-tidy" ||
-        { echo "  MISSING: HeaderFilterRegex in .clang-tidy"; failed+=("tidy"); return; }
+    if [[ $name == tidy ]]; then
+        grep -q 'HeaderFilterRegex' "$src/.clang-tidy" ||
+            { echo "  MISSING: HeaderFilterRegex in .clang-tidy"; failed+=("$name"); return; }
+    fi
     rm -rf "$dir"; : >"$log"
     cmake -S "$src" -B "$dir" -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-        -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CXX_COMPILER="$cxx" -DCMAKE_BUILD_TYPE=Release \
         -DADM_TARGET_ARCH=x86-64-v3 -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=OFF \
-        -DADM_BUILD_EXAMPLES=OFF -DADM_ENABLE_CLANG_TIDY=ON \
-        >>"$log" 2>&1 || { echo "  FAILED: configure (see $log)"; failed+=("tidy"); return; }
-    check_flags "$dir" "want:clang++" "want:-march=x86-64-v3" || { failed+=("tidy"); return; }
+        -DADM_BUILD_EXAMPLES=OFF "-D$knob=ON" \
+        >>"$log" 2>&1 || { echo "  FAILED: configure (see $log)"; failed+=("$name"); return; }
+    if [[ $name == tidy ]]; then
+        check_flags "$dir" "want:$cxx" "want:-march=x86-64-v3" || { failed+=("$name"); return; }
+    fi
     cmake --build "$dir" --target admiral -j "$jobs" >>"$log" 2>&1 ||
-        { echo "  FAILED: clang-tidy (see $log)"; failed+=("tidy"); return; }
+        { echo "  FAILED: $tool (see $log)"; failed+=("$name"); return; }
     "$src/scripts/static_analysis_control.sh" "$dir" >>"$log" 2>&1 &&
         { echo "  OK"; ((pass++)); rm -rf "$dir"; } ||
-        { echo "  FAILED: positive control (see $log)"; failed+=("tidy"); }
+        { echo "  FAILED: positive control (see $log)"; failed+=("$name"); }
 }
 
-arm_cppcheck() {
-    local dir=$out/cppcheck log=$out/cppcheck.log
-    echo "=== cppcheck"
-    if ! command -v cppcheck >/dev/null; then
-        echo "  skipped: cppcheck not on PATH"; skipped+=(cppcheck); return
-    fi
-    rm -rf "$dir"; : >"$log"
-    cmake -S "$src" -B "$dir" -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-        -DCMAKE_CXX_COMPILER=g++ -DCMAKE_BUILD_TYPE=Release \
-        -DADM_TARGET_ARCH=x86-64-v3 -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=OFF \
-        -DADM_BUILD_EXAMPLES=OFF -DADM_ENABLE_CPPCHECK=ON \
-        >>"$log" 2>&1 || { echo "  FAILED: configure (see $log)"; failed+=("cppcheck"); return; }
-    cmake --build "$dir" --target admiral -j "$jobs" >>"$log" 2>&1 ||
-        { echo "  FAILED: cppcheck (see $log)"; failed+=("cppcheck"); return; }
-    "$src/scripts/static_analysis_control.sh" "$dir" >>"$log" 2>&1 &&
-        { echo "  OK"; ((pass++)); rm -rf "$dir"; } ||
-        { echo "  FAILED: positive control (see $log)"; failed+=("cppcheck"); }
-}
+arm_tidy() { run_static_analysis_arm tidy clang-tidy clang++ ADM_ENABLE_CLANG_TIDY; }
+arm_cppcheck() { run_static_analysis_arm cppcheck cppcheck g++ ADM_ENABLE_CPPCHECK; }
 
 # Constants-with-receipt coupling (WI-0b): a commit touching a hand-fit- or probe-fit
 # constants header must name its derivation receipt. The scan is

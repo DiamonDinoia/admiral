@@ -246,13 +246,19 @@ template<typename T>
 double rel_diff(const std::complex<T>* a, const std::complex<T>* b, std::size_t n) {
     long double num = 0.0L, den = 0.0L;
     for (std::size_t i = 0; i < n; ++i) {
-        const long double dr = static_cast<long double>(a[i].real()) - b[i].real();
-        const long double di = static_cast<long double>(a[i].imag()) - b[i].imag();
-        const long double br = b[i].real(), bi = b[i].imag();
+        const long double ar = static_cast<long double>(a[i].real());
+        const long double ai = static_cast<long double>(a[i].imag());
+        const long double br = static_cast<long double>(b[i].real());
+        const long double bi = static_cast<long double>(b[i].imag());
+        const long double dr = ar - br;
+        const long double di = ai - bi;
         num = std::max(num, dr * dr + di * di);
         den = std::max(den, br * br + bi * bi);
     }
-    if (den <= 0.0L) return num > 0.0L ? std::numeric_limits<double>::infinity() : 0.0;
+    // max(), not infinity(): this TU builds under -ffinite-math-only, where an infinity
+    // is UB (-Wnan-infinity-disabled). A nonzero residual over a zero reference is still
+    // reported as a huge error, just a finite one.
+    if (den <= 0.0L) return num > 0.0L ? std::numeric_limits<double>::max() : 0.0;
     return static_cast<double>(std::sqrt(num / den));
 }
 
@@ -264,7 +270,8 @@ void ref_dft(const std::complex<T>* in, std::complex<long double>* out, std::siz
         for (std::size_t j = 0; j < n; ++j) {
             const long double ang = -kTwoPi * static_cast<long double>((k * j) % n) /
                                     static_cast<long double>(n);
-            acc += std::complex<long double>(in[j].real(), in[j].imag()) *
+            acc += std::complex<long double>(static_cast<long double>(in[j].real()),
+                                                 static_cast<long double>(in[j].imag())) *
                    std::complex<long double>(std::cos(ang), std::sin(ang));
         }
         out[k] = acc;

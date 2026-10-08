@@ -123,8 +123,11 @@ function(adm_add_test name source)
             # The control exists only where the dialect does: at v2-and-below the family
             # compiles out and this binary's checks are all skipped, so a WILL_FAIL entry
             # would mis-assert on a healthy build. The arch string is the configure-time
-            # proxy for kGranuleFmaddsub.
-            if(ADM_TARGET_ARCH MATCHES "^(native|x86-64-v3|x86-64-v4)$")
+            # proxy for kGranuleFmaddsub. `native' only counts on x86: on ARM/Power it
+            # never carries FMA3, so the dialect (XSIMD_WITH_FMA3_SSE/_AVX) compiles out
+            # there too and the poison twin trivially exits 0.
+            if(ADM_TARGET_ARCH MATCHES "^(native|x86-64-v3|x86-64-v4)$" AND
+               CMAKE_SYSTEM_PROCESSOR MATCHES "^([xX]86|AMD64|amd64)")
                 add_test(NAME ${name} COMMAND ${name})
                 set_tests_properties(${name} PROPERTIES WILL_FAIL TRUE)
             endif()

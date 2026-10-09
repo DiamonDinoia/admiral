@@ -264,11 +264,14 @@ TEST_CASE("streaming transpose band matches the cached one bit for bit", "[large
 
     // The gate decides whether the streaming arm ever runs, so it is checked in both directions
     // before the kernel is. span_align is max(arch alignment, 64), so offset_buffer supplies an
-    // arch-aligned base on every target and the positive control is not host-specific.
-    const std::size_t huge = 64 * admiral::detail::cpu_cache().l3;
+    // arch-aligned base on every target and the positive control is not host-specific. With l3
+    // unprobed (Darwin arm64) the gate is closed outright and `huge` collapses to 0, so the
+    // positive control is meaningful only where l3 is probed.
+    const std::size_t l3 = admiral::detail::cpu_cache().l3;
+    const std::size_t huge = 64 * l3;
     offset_buffer<double> aligned(n1 * n2, 0);
     REQUIRE(reinterpret_cast<std::uintptr_t>(aligned.ptr) % A == 0);
-    CHECK(four_step_stream_ok<double>(aligned.ptr, n2, huge));
+    CHECK(four_step_stream_ok<double>(aligned.ptr, n2, huge) == (l3 != 0));
     CHECK(!four_step_stream_ok<double>(aligned.ptr, n2, 0));
 
     // One T past the base, never dereferenced. Shifting by a whole complex would still be
@@ -323,7 +326,7 @@ TEST_CASE("2^24 impulse against the analytic spectrum, aligned out-of-place",
     const bool streamed = admiral::detail::four_step_stream_ok<double>(out.ptr, split.n2, bytes);
     std::cout << "[2^24 aligned out-of-place] " << bytes / (1024 * 1024) << " MiB, L3 "
               << l3 / (1024 * 1024) << " MiB, streaming transpose = " << streamed << '\n';
-    CHECK(streamed == (bytes >= admiral::detail::kFourStepStreamL3Mult * l3));
+    CHECK(streamed == (l3 != 0 && bytes >= admiral::detail::kFourStepStreamL3Mult * l3));
 
     const double tol = fft_tol<double>();
     double worst = 0.0;
@@ -375,7 +378,7 @@ TEST_CASE("2^25 impulse against the analytic spectrum, aligned out-of-place",
     const bool streamed = admiral::detail::four_step_stream_ok<double>(out.ptr, split.n2, bytes);
     std::cout << "[2^25 aligned out-of-place] " << bytes / (1024 * 1024) << " MiB, L3 "
               << l3 / (1024 * 1024) << " MiB, streaming transpose = " << streamed << '\n';
-    CHECK(streamed == (bytes >= admiral::detail::kFourStepStreamL3Mult * l3));
+    CHECK(streamed == (l3 != 0 && bytes >= admiral::detail::kFourStepStreamL3Mult * l3));
 
     const double tol = fft_tol<double>();
     double worst = 0.0;

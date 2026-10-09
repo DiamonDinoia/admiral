@@ -21,6 +21,7 @@ set(ADM_TEST_SOURCES
     kernels/test_cxx_compat.cpp
     transforms/test_plan.cpp
     transforms/test_axis.cpp
+    transforms/test_cpu_cache.cpp
     transforms/test_strides.cpp
     transforms/test_large_align.cpp
     transforms/test_generic_pass.cpp

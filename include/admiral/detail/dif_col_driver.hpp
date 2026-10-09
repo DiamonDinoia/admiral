@@ -24,7 +24,9 @@ namespace detail {
     const cache_bytes& cc = cpu_cache();
     const std::size_t nt = std::max<std::size_t>(1, nthreads);
     const std::size_t sharing = cc.l3_cores ? std::min(nt, cc.l3_cores) : nt;
-    return std::min(cc.l2, (cc.l3 / 6) / sharing);
+    // An unprobed l3 means no off-chip shared cache to divide across workers; the budget is
+    // the per-core l2 alone (Darwin arm64 reads 0 there).
+    return cc.l3 == 0 ? cc.l2 : std::min(cc.l2, (cc.l3 / 6) / sharing);
 }
 
 inline constexpr std::size_t kTilesPerWorker = 4;

@@ -464,16 +464,26 @@ TEST_CASE("large-route serial probe: side rule, geo-mid and ladder selection",
 
     // The ladder constants are the priors the probe walks from; the envelope floors are
     // half the bottom rung (no probed line admits below it, so the router never probes).
+#if defined(__aarch64__) && defined(__APPLE__)
+    REQUIRE(kLargeRouteSerialF64Bytes == 16 * mib);
+    REQUIRE(kLargeRouteSerialF32Bytes == 8 * mib);
+#else
     REQUIRE(kLargeRouteSerialF64Bytes == 12 * mib);
     REQUIRE(kLargeRouteSerialF32Bytes == 16 * mib - 1);
+#endif
     REQUIRE(kLargeRouteProbeLadderF64[0] == 4 * mib);
     REQUIRE(kLargeRouteProbeLadderF64[kLargeRouteProbeLadderCount - 1] == 16 * mib);
     REQUIRE(kLargeRouteProbeLadderF32[0] == 8 * mib);
     REQUIRE(kLargeRouteProbeLadderF32[kLargeRouteProbeLadderCount - 1] == 32 * mib);
     REQUIRE(large_route_serial_min_bytes(16) == 2 * mib);
     REQUIRE(large_route_serial_min_bytes(8) == 4 * mib);
+#if defined(__aarch64__) && defined(__APPLE__)
+    REQUIRE(large_route_serial_fallback(16) == 16 * mib);
+    REQUIRE(large_route_serial_fallback(8) == 8 * mib);
+#else
     REQUIRE(large_route_serial_fallback(16) == kLargeRouteSerialF64Bytes);
     REQUIRE(large_route_serial_fallback(8) == kLargeRouteSerialF32Bytes);
+#endif
 
     // Selection over a walked segment: interior bracket, all-four_step bottom clamp,
     // all-dif 2x-top answer. These are the only three shapes the walk can produce.

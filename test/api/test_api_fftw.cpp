@@ -8,6 +8,9 @@
 #include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <csignal>
+#include <fstream>
+#include <malloc.h>
 #endif
 
 #include <admiral/admiral.hpp>
@@ -296,5 +299,42 @@ TEST_CASE("fftw shim: planner allocation failure returns NULL, nothing escapes t
     REQUIRE(waitpid(pid, &status, 0) == pid);
     REQUIRE(WIFEXITED(status));
     REQUIRE(WEXITSTATUS(status) == 0);
+}
+
+TEST_CASE("fftw shim: an execute-time engine failure aborts under noexcept", "[fftw]") {
+    // At 2^17 f64 the iterative dif route asks the heap for 4 MiB of scratch once per
+    // execute. The child trims the allocator's free headroom, then caps its address space
+    // just above live use so that request throws bad_alloc. fftw_execute is noexcept, so
+    // the child must die by SIGABRT; before the noexcept fix the exception escaped the
+    // C ABI and the child exited 4. 2^17 stays clear of snmalloc, whose first >= 32 MiB
+    // allocation would abort the capped child for a reason of its own.
+    const pid_t pid = fork();
+    REQUIRE(pid != -1);
+    if (pid == 0) {
+        constexpr int n = 1 << 17;
+        fftw_complex* in = static_cast<fftw_complex*>(fftw_malloc(n * sizeof(fftw_complex)));
+        fftw_complex* out = static_cast<fftw_complex*>(fftw_malloc(n * sizeof(fftw_complex)));
+        fftw_plan p = fftw_plan_dft_1d(n, in, out, FFTW_FORWARD, FFTW_ESTIMATE);
+        if (in == nullptr || out == nullptr || p == nullptr) _exit(3);
+        malloc_trim(0);
+        std::ifstream statm("/proc/self/statm");
+        size_t pages = 0;
+        statm >> pages;
+        if (pages == 0) _exit(2);
+        const rlim_t cap = pages * static_cast<rlim_t>(sysconf(_SC_PAGESIZE)) + (rlim_t{2} << 20);
+        const struct rlimit lim{cap, cap};
+        if (setrlimit(RLIMIT_AS, &lim) != 0) _exit(2);
+        try {
+            fftw_execute(p);
+            fftw_execute_dft(p, in, out);
+        } catch (...) {
+            _exit(4);
+        }
+        _exit(0);
+    }
+    int status = 0;
+    REQUIRE(waitpid(pid, &status, 0) == pid);
+    REQUIRE(WIFSIGNALED(status));
+    REQUIRE(WTERMSIG(status) == SIGABRT);
 }
 #endif

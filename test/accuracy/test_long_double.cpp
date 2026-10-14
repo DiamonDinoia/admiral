@@ -124,6 +124,35 @@ TEST_CASE("long double r2c N-D round-trip", "[longdouble]") {
     require_close_lt(x, back);
 }
 
+TEST_CASE("long double r2c/c2r with an explicit fct scale every element", "[longdouble]") {
+    constexpr lt_t fct = 0.37L;
+    for (const auto& shape : {std::vector<std::size_t>{2}, {5}, {8}, {31}, {64}, {3, 7}, {4, 12},
+                              {2, 3, 5}}) {
+        INFO("shape " << shape.size() << "-D, inner " << shape.back());
+        admiral::plan_r2c<lt_t> rp(shape);
+        std::vector<lt_t> x(rp.real_size());
+        std::uniform_real_distribution<lt_t> unif(-1, 1);
+        for (auto& v : x) v = unif(rng);
+
+        std::vector<lc_t> plain(rp.cplx_size()), scaled(rp.cplx_size());
+        rp.forward(x.data(), plain.data(), lt_t(1));
+        rp.forward(x.data(), scaled.data(), fct);
+        for (auto& v : plain) v *= fct;
+        require_close_lt(plain, scaled);
+        for (std::size_t k = 0; k < plain.size(); ++k) {
+            CAPTURE(k);
+            REQUIRE(std::abs(plain[k] - scaled[k]) <= 16 * std::numeric_limits<lt_t>::epsilon());
+        }
+
+        auto spec = scaled, spec1 = scaled;
+        std::vector<lt_t> back(x.size()), back1(x.size());
+        rp.inverse(spec.data(), back.data(), fct);
+        rp.inverse(spec1.data(), back1.data(), lt_t(1));
+        for (auto& v : back1) v *= fct;
+        require_close_lt(back1, back);
+    }
+}
+
 TEST_CASE("long double plans validate extents like the SIMD path", "[longdouble][error]") {
     // A zero extent or overflowing product throws at plan time instead of SIGFPE at
     // execute; r2c rejects an empty shape, matching nd_runtime_plan and nd_real_plan.

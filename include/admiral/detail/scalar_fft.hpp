@@ -316,7 +316,8 @@ public:
     template<bool Forward>
     void execute(std::complex<T>* data, T fct = T(1), thread_pool* pool = nullptr) const {
         if (active_ == 0) {
-            if (fct != T(1)) data[0] *= fct;
+            if (fct != T(1))
+                for (std::size_t i = 0; i < total_; ++i) data[i] *= fct;
             return;
         }
         for (std::size_t d = 0; d < active_; ++d) {

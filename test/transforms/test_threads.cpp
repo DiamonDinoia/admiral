@@ -407,11 +407,19 @@ TEST_CASE("options::pin_threads pinned plans reproduce unpinned bits", "[threads
     const auto in = make_input<double>(64 * 512, 0xB175u);
     const admiral::options unpinned{2, admiral::effort::estimate, 0, false};
     const admiral::options pinned{2, admiral::effort::estimate, 0, true};
-    auto a = in, b = in;
+    // The 1-D row engine's bits depend on the buffer's address mod 64 (the last pass peels
+    // rows up to a cache line), so `a` and `b` must share one alignment class: two halves of
+    // one buffer, split at N * 16 B (a multiple of 64). Two vectors land in heap-state classes.
+    const std::size_t N = in.size();
+    std::vector<std::complex<double>> buf(2 * N);
+    std::copy(in.begin(), in.end(), buf.begin());
+    std::copy(in.begin(), in.end(), buf.begin() + static_cast<std::ptrdiff_t>(N));
+    std::complex<double>* const a = buf.data();
+    std::complex<double>* const b = a + N;
     admiral::plan<double> pa(shape, unpinned), pb(shape, pinned);
-    pa.forward(a.data());
-    pb.forward(b.data());
-    REQUIRE(a == b);
+    pa.forward(a);
+    pb.forward(b);
+    REQUIRE(std::equal(a, a + N, b));
 }
 
 #if defined(__linux__)

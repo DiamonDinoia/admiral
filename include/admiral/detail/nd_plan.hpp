@@ -35,16 +35,6 @@
 namespace admiral {
 namespace detail {
 
-[[nodiscard]] inline std::optional<std::size_t> extent_product(
-    span<const std::size_t> shape) noexcept {
-    std::size_t total = 1;
-    for (const std::size_t e : shape) {
-        if (e == 0 || total > std::numeric_limits<std::size_t>::max() / e) return std::nullopt;
-        total *= e;
-    }
-    return total;
-}
-
 enum class line_route : std::uint8_t {
     col_dif,
     transposed,

@@ -8,11 +8,12 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
-#include <stdexcept>
 #include <utility>
 #include <vector>
 
 #include <poet/poet.hpp>
+
+#include <admiral/errors.hpp>
 
 #include "butterfly.hpp"
 #include "cxx_compat.hpp"
@@ -291,6 +292,8 @@ public:
     explicit scalar_nd_c2c(span<const std::size_t> shape, std::size_t n_axes,
                            std::size_t nthreads = 1)
         : shape_(shape.begin(), shape.end()), stride_(shape_.size(), 1) {
+        if (!extent_product(shape_)) ADM_UNLIKELY
+            throw size_error("Plan size must be greater than 0");
         if (n_axes > shape_.size()) n_axes = shape_.size();
         active_ = n_axes;
         total_ = 1;
@@ -312,6 +315,10 @@ public:
 
     template<bool Forward>
     void execute(std::complex<T>* data, T fct = T(1), thread_pool* pool = nullptr) const {
+        if (active_ == 0) {
+            if (fct != T(1)) data[0] *= fct;
+            return;
+        }
         for (std::size_t d = 0; d < active_; ++d) {
             const std::size_t len = shape_[d], st = stride_[d];
             const scalar_c2c<T>& eng = eng_[axis_engine_[d]];
@@ -434,7 +441,7 @@ private:
     struct resolved_tag {};
     scalar_plan_state(span<const std::size_t> shape, std::size_t nthreads, resolved_tag,
                       bool pin)
-        : plan(shape, axis_count(shape), nthreads),
+        : plan(shape, shape.size(), nthreads),
           pool_(nthreads > 1 ? std::make_unique<thread_pool>(nthreads, pin) : nullptr) {}
 
 public:
@@ -451,11 +458,6 @@ public:
     }
 
 private:
-    static std::size_t axis_count(span<const std::size_t> shape) {
-        if (shape.empty()) ADM_UNLIKELY
-            throw std::invalid_argument("Plan size must be greater than 0");
-        return shape.size();
-    }
     scalar_nd_c2c<T> plan;
     std::unique_ptr<thread_pool> pool_;
 };
@@ -528,8 +530,8 @@ public:
 
 private:
     static std::size_t last_extent(span<const std::size_t> shape) {
-        if (shape.empty() || shape.back() == 0) ADM_UNLIKELY
-            throw std::invalid_argument("Plan size must be greater than 0");
+        if (shape.empty() || !extent_product(shape)) ADM_UNLIKELY
+            throw size_error("Plan size must be greater than 0");
         return shape.back();
     }
     static std::size_t outer_extent_product(span<const std::size_t> shape) {

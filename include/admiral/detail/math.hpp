@@ -5,6 +5,7 @@
 #include <complex>
 #include <cstddef>
 #include <limits>
+#include <optional>
 #include <type_traits>
 #include <utility>
 
@@ -20,6 +21,16 @@ namespace detail {
         while (N % p == 0) N /= p;
     }
     return N == 1;
+}
+
+[[nodiscard]] inline std::optional<std::size_t> extent_product(
+    span<const std::size_t> shape) noexcept {
+    std::size_t total = 1;
+    for (const std::size_t e : shape) {
+        if (e == 0 || total > std::numeric_limits<std::size_t>::max() / e) return std::nullopt;
+        total *= e;
+    }
+    return total;
 }
 
 template<typename T>

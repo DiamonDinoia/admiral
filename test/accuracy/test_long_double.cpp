@@ -5,6 +5,7 @@
 #include <admiral/admiral.hpp>
 #include <admiral/detail/scalar_fft.hpp>
 
+#include <array>
 #include <cmath>
 #include <complex>
 #include <limits>
@@ -121,6 +122,39 @@ TEST_CASE("long double r2c N-D round-trip", "[longdouble]") {
     std::vector<lt_t> back(total);
     rp.inverse(spec_copy.data(), back.data());
     require_close_lt(x, back);
+}
+
+TEST_CASE("long double plans validate extents like the SIMD path", "[longdouble][error]") {
+    // A zero extent or overflowing product throws at plan time instead of SIGFPE at
+    // execute; r2c rejects an empty shape, matching nd_runtime_plan and nd_real_plan.
+    REQUIRE_THROWS_AS(admiral::plan<lt_t>({3, 0, 5}), admiral::size_error);
+    REQUIRE_THROWS_AS(
+        admiral::plan<lt_t>(std::initializer_list<std::size_t>{std::size_t(-1) / 2, 4}),
+        admiral::size_error);
+    REQUIRE_THROWS_AS(admiral::plan_r2c<lt_t>({0, 8}), admiral::size_error);
+    REQUIRE_THROWS_AS(admiral::plan_r2c<lt_t>(admiral::span<const std::size_t>{}),
+                      admiral::size_error);
+    REQUIRE_THROWS_AS(
+        admiral::plan_r2c<lt_t>(std::initializer_list<std::size_t>{std::size_t(-1) / 2, 4}),
+        admiral::size_error);
+}
+
+TEST_CASE("long double rank-0 plan is the identity", "[longdouble][edge]") {
+    admiral::plan<lt_t> p(std::array<std::size_t, 0>{});
+    REQUIRE(p.size() == 1);
+
+    lc_t a{2.0L, -3.0L};
+    p.forward(&a);
+    REQUIRE(a == lc_t(2.0L, -3.0L));
+
+    lc_t dst{99.0L, 99.0L};
+    p.forward(&a, &dst);
+    REQUIRE(dst == lc_t(2.0L, -3.0L));
+
+    p.inverse(&a, &dst, 0.25L);
+    REQUIRE(dst == lc_t(0.5L, -0.75L));
+    p.forward(&a, 0.25L);
+    REQUIRE(a == lc_t(0.5L, -0.75L));
 }
 
 TEST_CASE("long double plans thread without sharing scratch", "[longdouble][threads]") {

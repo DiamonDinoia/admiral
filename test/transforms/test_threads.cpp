@@ -25,6 +25,7 @@
 #include <thread>
 #if defined(__linux__)
 #include <dirent.h>
+#include <dlfcn.h>
 #include <sched.h>
 #endif
 
@@ -37,6 +38,60 @@ std::string shape_str(const std::vector<std::size_t>& s) {
 }
 
 constexpr std::size_t kNthreads = 4;
+
+#if defined(__linux__)
+// A pinned pool worker's Cpus_allowed_list is one number; the ambient mask, or an
+// incidental non-pool thread another library spawned, is wider or unreadable.
+std::vector<int> live_tids() {
+    std::vector<int> tids;
+    DIR* d = opendir("/proc/self/task");
+    if (d == nullptr) return tids;
+    while (dirent* e = readdir(d))
+        if (std::isdigit(static_cast<unsigned char>(e->d_name[0])))
+            tids.push_back(std::atoi(e->d_name));
+    closedir(d);
+    std::sort(tids.begin(), tids.end());
+    return tids;
+}
+
+std::string cpu_list(int tid) {
+    std::ifstream f("/proc/self/task/" + std::to_string(tid) + "/status");
+    std::string line;
+    while (std::getline(f, line))
+        if (line.rfind("Cpus_allowed_list:", 0) == 0)
+            return line.substr(line.find_first_not_of(" \t", 18));
+    return std::string{};
+}
+
+bool any_spawned_pinned(const std::vector<int>& before, const std::vector<int>& after) {
+    std::vector<int> spawned;
+    std::set_difference(after.begin(), after.end(), before.begin(), before.end(),
+                        std::back_inserter(spawned));
+    for (int tid : spawned) {
+        const std::string list = cpu_list(tid);
+        if (!list.empty() && list.find(',') == std::string::npos &&
+            list.find('-') == std::string::npos)
+            return true;
+    }
+    return false;
+}
+
+// Interposition witness: thread_pool pins workers via sched_setaffinity(pid=0) with a
+// single-cpu mask, exactly when the pool's `pin` flag was forwarded. Deterministic for
+// one-shot plans whose pool dies with the call, where a /proc sample races the exit.
+std::atomic<std::size_t> pin_witnesses{0};
+}  // namespace
+
+extern "C" int sched_setaffinity(pid_t pid, size_t cpusetsize, const cpu_set_t* mask) {
+    using fnt = int (*)(pid_t, size_t, const cpu_set_t*);
+    static const fnt real_fn = reinterpret_cast<fnt>(dlsym(RTLD_NEXT, "sched_setaffinity"));
+    if (pid == 0 && CPU_COUNT(mask) == 1)
+        pin_witnesses.fetch_add(1, std::memory_order_relaxed);
+    return real_fn(pid, cpusetsize, mask);
+}
+
+namespace {
+#endif  // __linux__
 
 template<typename T>
 double forecast_tol(std::size_t N) {
@@ -377,49 +432,39 @@ TEST_CASE("options::pin_threads reaches the large-route pool on a 1-D plan",
     constexpr std::size_t N = std::size_t{1} << 20;
     const admiral::options opts{2, admiral::effort::estimate, 0, /*pin_threads=*/true};
 
-    const auto live_tids = [] {
-        std::vector<int> tids;
-        DIR* d = opendir("/proc/self/task");
-        REQUIRE(d != nullptr);
-        while (dirent* e = readdir(d))
-            if (std::isdigit(static_cast<unsigned char>(e->d_name[0])))
-                tids.push_back(std::atoi(e->d_name));
-        closedir(d);
-        std::sort(tids.begin(), tids.end());
-        return tids;
-    };
-    const auto cpu_list = [](int tid) {
-        std::ifstream f("/proc/self/task/" + std::to_string(tid) + "/status");
-        std::string line;
-        while (std::getline(f, line))
-            if (line.rfind("Cpus_allowed_list:", 0) == 0)
-                return line.substr(line.find_first_not_of(" \t", 18));
-        return std::string{};
-    };
-
     const auto before = live_tids();
     admiral::plan<double> p(N, opts);
     std::vector<std::complex<double>> buf(N, std::complex<double>{1.0, 0.0});
     p.forward(buf.data());  // blocks until every worker ran once, past its pin call
     const auto after = live_tids();
+    REQUIRE(any_spawned_pinned(before, after));  // the axis pool spawned at least one worker
+}
+#endif  // __linux__
 
-    std::vector<int> spawned;
-    std::set_difference(after.begin(), after.end(), before.begin(), before.end(),
-                         std::back_inserter(spawned));
-    REQUIRE(spawned.size() >= 1);  // the axis pool spawned at least its one worker
-
-    // A pinned worker's Cpus_allowed_list is one number (no ',' or '-'); the ambient mask, or
-    // an incidental non-pool thread another library spawned, is wider or unreadable.
-    bool found_pinned = false;
-    for (int tid : spawned) {
-        const std::string list = cpu_list(tid);
-        if (!list.empty() && list.find(',') == std::string::npos &&
-            list.find('-') == std::string::npos) {
-            found_pinned = true;
-            break;
-        }
+#if defined(__linux__)
+TEST_CASE("options::pin_threads reaches the r2c/c2r one-shot pool", "[threads][poolpin]") {
+    // The one-shot forward/inverse build an nd_real_plan whose pool pins its worker only if
+    // the call site forwards opts.pin_threads; bits can't see a scheduling-only bug and the
+    // pool dies with the call, so count pinning syscalls instead of sampling /proc.
+    using admiral::detail::pool_pin_cpus;
+    if (pool_pin_cpus().empty()) {
+        WARN("pool pinning unavailable here (pool_pin_cpus() reports no cores); skipped");
+        return;
     }
-    REQUIRE(found_pinned);
+    // nthreads=2: the plan's pool spawns exactly one worker.
+    const std::vector<std::size_t> shape = {64, 512};
+    const admiral::options opts{2, admiral::effort::estimate, 0, /*pin_threads=*/true};
+    std::vector<double> in(64 * 512, 1.0);
+    std::vector<std::complex<double>> spec(64 * (512 / 2 + 1));
+    std::vector<double> out(in.size());
+
+    const std::size_t before_fwd = pin_witnesses.load(std::memory_order_relaxed);
+    admiral::forward(in.data(), spec.data(), shape, opts);
+    REQUIRE(pin_witnesses.load(std::memory_order_relaxed) > before_fwd);
+
+    const std::size_t before_inv = pin_witnesses.load(std::memory_order_relaxed);
+    admiral::inverse(spec.data(), out.data(), shape, opts);
+    REQUIRE(pin_witnesses.load(std::memory_order_relaxed) > before_inv);
 }
 #endif  // __linux__
 

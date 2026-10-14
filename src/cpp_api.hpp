@@ -329,7 +329,7 @@ forward(const T* in, std::complex<T>* out, span<const std::size_t> shape,
     if constexpr (std::is_same_v<T, long double>) {
         detail::real_state<T>(shape, opts).forward(in, out, fct);
     } else {
-        detail::nd_real_plan<T>(shape, opts.nthreads, effort::estimate)
+        detail::nd_real_plan<T>(shape, opts.nthreads, effort::estimate, opts.pin_threads)
             .forward(in, out, {fct, opts.debug});
     }
 }
@@ -346,7 +346,7 @@ inverse(std::complex<T>* spec, T* out, span<const std::size_t> shape,
     if constexpr (std::is_same_v<T, long double>) {
         detail::real_state<T>(shape, opts).inverse(spec, out, fct);
     } else {
-        detail::nd_real_plan<T>(shape, opts.nthreads, effort::estimate)
+        detail::nd_real_plan<T>(shape, opts.nthreads, effort::estimate, opts.pin_threads)
             .inverse(spec, out, {fct, opts.debug});
     }
 }

@@ -1,505 +1,138 @@
 # admiral
 
-FFT library (compiled engine behind extern-template boundaries) with C++
-and C APIs plus an FFTW shim. `README.md` is the reference; this file only lists
-what an agent gets wrong first.
+FFT library (compiled engine behind extern-template boundaries) with C++ and C APIs plus an FFTW shim. `README.md` is the reference. This file lists what an agent gets wrong first.
 
 ## Language standard
 
-C++20 by default. `-DADM_CXX_STANDARD=17` builds the same kernels at C++17; 23 also
-builds. The seam is `include/admiral/detail/cxx_compat.hpp`: a `span` polyfill,
-`ADM_CONSTEVAL`, `ADM_UNLIKELY`, `ADM_UNREACHABLE`, bit ops, `numbers`, `type_identity`
-(the struct indirection is what makes the alias a non-deduced context; a bare alias is
-not) and `const_find` (`std::find` goes constexpr only in C++20).
+C++20 by default. `-DADM_CXX_STANDARD=17` builds the same kernels at C++17. 23 also builds. The seam is `include/admiral/detail/cxx_compat.hpp`. It holds a `span` polyfill, `ADM_CONSTEVAL`, `ADM_UNLIKELY`, `ADM_UNREACHABLE`, and bit ops. It also holds `numbers`, `type_identity` (struct indirection makes the alias a non-deduced context), and `const_find` (`std::find` is constexpr only in C++20).
 
-Constraint machinery keeps an `#if ADM_CXX20` pair, C++20 arm first, so deleting the
-`#else` half leaves ordinary C++20: the `precision` and `ChunkBody` concepts, `run_tiles`'
-`requires std::invocable`, and the two `requires`-expressions in `twiddles.hpp`. Both arms
-constrain, never assert: a concept and `std::enable_if_t` each REMOVE the overload, while
-a `static_assert` in the body makes the same mistake a hard error instead of a
-substitution failure. The C++17 arm spells the constraint as `precision_void_t<T>` in a
-public function's return type, a defaulted template parameter internally, or a `void_t`
-member detection.
+Keep one spelling valid in both standards where possible. Constraint machinery keeps an `#if ADM_CXX20` pair, C++20 arm first: the `precision` and `ChunkBody` concepts, `run_tiles`' `requires std::invocable`, and the two `requires`-expressions in `twiddles.hpp`. Both arms constrain, never assert. The C++17 arm spells the constraint as `precision_void_t<T>` in a public function's return type or a `void_t` member detection.
 
-The five public class templates are the exception: they carry a one-line `static_assert`
-in both standards. Constraining their heads means constraining all 41 out-of-class member
-definitions in `src/cpp_api.hpp` to match, and the assert names the offending T where the
-concept would only say the constraint failed.
+The five public class templates are the exception: they carry a one-line `static_assert` in both standards. Constraining their heads means constraining all 41 out-of-class member definitions in `src/cpp_api.hpp` to match. The assert names the offending T; a concept would only say the constraint failed.
 
-Everything else carries ONE spelling, the one valid in both standards, because the C++17
-form is also idiomatic C++20 and a second arm would only rot. A templated lambda becomes
-a stateless struct with a member-template call operator, an `auto` parameter becomes a
-named template parameter, and Good-Thomas's gather keeps its masks compile-time through
-generator types keyed by integral NTTPs (class-type NTTPs and xsimd's array
-`make_batch_constant` are C++20-only). A nested lambda reads an OUTER `static_for` index
-through `IC<expr>{}`: cl evaluates the captured index's conversion operator inside a
-template argument but rejects it anywhere else in a constant expression (C2131,
-measured on cl 19.44 and 19.51), while a snapshot local swaps the captured entity from
-the index to that local and moves gcc 14.2's inliner and a bit under `-ffast-math`
-(digest case 107). A runtime read needs nothing -- name the index. Two sites still hold
-a snapshot and each says so in place: `codelet_many_block`, where `IC<B * W>{}` moves
-the inliner the other way, and `granule_row_tile`'s `qb`, where the snapshot is also the
-narrowing -- poet hands the index as `ptrdiff_t`, so `qb_ < NF` is `-Wsign-compare`.
+Use `IC<expr>{}` to read an outer `static_for` index inside a nested lambda. cl rejects the captured index in a constant expression (C2131, cl 19.44 and 19.51). Two sites hold a snapshot: `codelet_many_block` (`IC<B * W>{}` moves the inliner) and `granule_row_tile`'s `qb` (the snapshot is also the narrowing from `ptrdiff_t`).
 
-Verify a change to the seam with a per-object function-symbol diff: `nm --defined-only
--S`, comparing the multiset of symbol sizes. Do NOT use `objcopy -O binary
---only-section=.text`. Every template instantiation lands in its own COMDAT
-`.text._Z...` section, which that filter skips, so a `.text`-only diff never looks at a
-single kernel. At Release/x86-64/gcc 14.2 over the 225 objects of a full build:
+Verify a seam change with `nm --defined-only -S`, comparing the multiset of symbol sizes. Do not use `objcopy -O binary --only-section=.text`: every template instantiation lands in its own COMDAT `.text._Z...` section, which that filter skips. At Release/x86-64/gcc 14.2 over 225 objects, 165 are bit-identical. The seam wrappers inline away. The instantiation TUs shrink. The codelets grow because master plus the `asm volatile` barrier reproduces shipped sizes on codelet_6, codelet_12 and codelet_16.
 
-- 165 objects carry a bit-identical size multiset, and every seam wrapper inlines away:
-  `admiral::span`'s members, `const_find`, the bit ops, `make_unique_for_overwrite` and
-  `cmp_less` have ZERO out-of-line definitions in either standard's library.
-- The instantiation TUs SHRINK, because naming a closure type deduplicates what a
-  templated lambda instantiated once per call site: `vpass_invoke` symbols fall from 120
-  to 60, `inst_dif_f_{fwd,inv}` by 23%, `inst_real_{f,d}` by 11%.
-- The codelets GROW, and the seam is not the cause. Master plus the `asm volatile`
-  alignment barrier alone reproduces the shipped sizes byte-for-byte on codelet_6,
-  codelet_12 and codelet_16, so the barrier owns the whole delta.
+The two builds are NOT link-compatible: `admiral::span` is `std::span` at C++20 and the polyfill at C++17.
 
-Anything else that moves is a regression to explain.
+## Auto thread count
 
-The two builds are NOT link-compatible: `admiral::span` is `std::span` at C++20 and the
-polyfill at C++17.
+`resolve_nthreads(n, total, K, w_ns, cls)` in `thread_pool.hpp` selects pool width at every public entry point. The law: argmin over pow2 nt <= P of `W/min(nt, knee_eff) + K * Dhat(nt, gap^)`. Serial below 2^15 elements or at K == 0. K = 5 (1-D four_step_large) / rank (N-D batch loops) / 1, 2 with the strides slab. W = `line_work_cyc` at measured core frequency (`core_cyc_per_ns`: 3-cycle IMUL latency chain, not rdtsc. The TSC ticks at base clock and miscalibrates W by the boost ratio). Dhat is the 12x6 wake-probe grid per host class: icelake 2x32, rome 2x64, genoa 2x48. Unknown hosts take the rome row. Re-fit: `mt_scaling --mode=probe`, add a row. Pow2 quantization stays: off-divisor counts load-imbalance static chunks by 2-4x.
 
-## Auto thread count is the wake law; its constants are probe-provenanced, not fitted
+`nthreads=0` timing on 2P nodes is bistable at 1-D 2^15-2^18 through the `effort::measure` race. Do not fit to a single run there.
 
-`resolve_nthreads(n, total, K, w_ns, cls)` in `thread_pool.hpp` selects the pool width
-at every public entry point, resolved inside the engine constructors where the route is
-known (`route_plan` in `plan.hpp` for 1-D, the `nd_runtime_plan` ctor for N-D, the
-axis/strides split in `cpp_api.hpp`). The law (fi/mt t0-modeler-r2.md + r3.md, 2026-08-31
-campaign): argmin over pow2 nt <= P of `W/min(nt, knee_eff) + K * Dhat(nt, gap^)`,
-with gap^ the self-consistent per-dispatch gap (two fixed-point iterations), the
-pocket rider (hot gap < 30 us at >= C0/2 prices Dhat at >= 100 us), and knee_eff the
-class's two-tier knee: the home-domain width below the f64-array gate (gateMB per
-class) and the additive-cap tier past it (fi/mt pass-knee probe, 2026-08-31). Serial
-below 2^15 elements or at K == 0. K = 5 (1-D four_step_large) / rank (N-D batch loops)
-/ 1, 2 with the strides slab (axis loops). W = `line_work_cyc` (leaf-priced <= 64, n
-log2 n octave stream beyond) at the measured core frequency (`core_cyc_per_ns`: a
-3-cycle IMUL latency chain, NOT rdtsc — the invariant TSC ticks at base clock and
-miscalibrates W by the boost ratio; the chain is a once-per-process ~1 ms probe, cached
-in a static, and it is the tree's one rung-2 measurement exception to the
-formula-only policy — the boost/base ratio differs per host and cannot be
-probed by lookup, so the calibration must be live). Dhat is the 12x6 wake-probe grid per host class
-keyed by (C0=soc cores, P): icelake 2x32, rome 2x64, genoa 2x48; unknown hosts take
-the rome row. Re-fit on a new host class: probe once (`mt_scaling --mode=probe`), add
-a row; the pow2 quantization stays load-bearing (off-divisor counts load-imbalance the
-passes' static chunks by 2-4x). `nthreads=0` timing on 2P nodes is bistable at 1-D
-2^15-2^18 through the `effort::measure` race — do not fit to a single run there.
+## Alignment barrier
 
-## Alignment hazard: one barrier holds it, and no sanitizer sits under it
+codelet.hpp's cofactor `Wc == r` fast arm reinterprets scalar pointers as aligned batch arrays behind a runtime check. The `asm volatile("" ::: "memory")` immediately before `kb_aligned` stops the compiler from hoisting direct loads above the check. Delete it and gcc 13.3 release at v3 segfaults in `codelet kernel<N> matches reference DFT`. The same tree with the barrier passes 295/295. gcc 14.2 is clean either way, so re-verify on 13.3 before touching that arm. The barrier grows `codelet_apply<16u, float, true>` from 625 to 700 bytes and moves every codelet object by 1-2% at v3/gcc 14.2.
 
-codelet.hpp's cofactor `Wc == r` fast arm reinterprets scalar pointers as aligned batch
-arrays behind a runtime check. Reading a misaligned-reinterpreted `V*` is UB the moment
-it executes. The check makes that conditional dynamically, but a hoisting compiler can
-still pull the direct loads above it. The `asm volatile("" ::: "memory")` immediately
-before the `kb_aligned` computation is what stops the hoist, and it is load-bearing
-today, not insurance against a future layout change: delete it and gcc 13.3 release at
-v3 segfaults in `codelet kernel<N> matches reference DFT` and `...::apply_sink...`,
-while the same tree with the barrier passes 295/295. gcc 14.2 is clean either way, so
-a 14.2-only check cannot see this. Re-verify on 13.3 before touching that arm. The
-barrier is not free: it constrains scheduling around the test, which grows
-`codelet_apply<16u, float, true>` from 625 to 700 bytes and moves every codelet object
-by 1-2% at v3/gcc 14.2.
+**ubsan will not catch it.** `-fsanitize=undefined` does not instrument the arm's `kernel_batched<...>::apply(reinterpret_cast<const V*>(xre), ...)` shape: a misaligned `const V a = p[0];` segfaults with no diagnostic, and `objdump -d` finds zero `__ubsan_handle_type_mismatch` sites in that function. ubsan instruments scalar loads and reference binding, not a whole-object copy through a dereferenced pointer. Measured clang 20.1.8, `-O1 -march=x86-64-v3`, 2026-09-13.
 
-**ubsan will not catch it if the barrier goes.** `-fsanitize=undefined`'s `alignment` check does
-not instrument the arm's `kernel_batched<...>::apply(reinterpret_cast<const V*>(xre), ...)` shape at
-all: a misaligned `const V a = p[0];` through a `const V*` parameter segfaults with no diagnostic,
-and `objdump -d --disassemble=` finds ZERO `__ubsan_handle_type_mismatch` sites in that function
-against 6 in the same binary's `main`. The check is live in that same build, which is what makes the
-negative mean something: a misaligned `double` load reports `load of misaligned address`, and
-`const V& r = *reinterpret_cast<const V*>(p);` reports `reference binding to misaligned address`.
-ubsan instruments scalar loads and reference binding, not a whole-object copy of a trivially
-copyable class through a dereferenced pointer. Measured clang 20.1.8, `-O1 -march=x86-64-v3`,
-`-fsanitize=address,undefined`, worker6082, 2026-09-13.
-
-So a green `validate.sh sanitize` says nothing about this arm. The barrier is the guard and a
-segfault is the detector. Gate a change here on gcc 13.3 at v3, not on a sanitizer run.
+The barrier is the guard and a segfault is the detector. Gate a change here on gcc 13.3 at v3, not on a sanitizer run.
 
 ## Bitwise stability of the column engine
 
-The col chain clones its store-policy lambdas per inline context (bulk/prefix/suffix in
-`dif_col_pass_last`, width covers elsewhere), so under `-ffast-math` the compiler contracts
-and reassociates one butterfly differently per clone: a transform's bits depend on the
-data's alignment class, because that is what picks the clone covering a column. The pin
-is in `src/CMakeLists.txt`, on the four `inst_col_*` TUs only: `-ffp-contract=on
--fno-associative-math`, guarded on the compiler id because the spellings differ and an
-unknown `-f` name is a hard error on clang. The 1-D engine runs one clone per length and
-needs nothing.
+The col chain clones its store-policy lambdas per inline context. Under `-ffast-math` the compiler contracts and reassociates one butterfly differently per clone. Transform bits depend on data alignment class. The pin is in `src/CMakeLists.txt`, on the four `inst_col_*` TUs only: `-ffp-contract=on -fno-associative-math`, guarded on compiler id. The 1-D engine needs nothing.
 
-`test/transforms/test_strides.cpp`'s "bit-identical across alignment classes" case IS the check,
-and it is a real one: strip the pin and it fails. WHICH length it fails at is set by
-`e2_len_cap()`, so the case's evidence is cap-conditional, and the cap is a property of the host
-rather than of the build.
+`test/transforms/test_strides.cpp`'s "bit-identical across alignment classes" case is the check. `e2_len_cap()` sets the length at which it fails: 32 below 2 MiB of L3 per physical core, 64 above. Raising the cap moves 16 lengths from chain to codelet. They are: 33 35 36 40 42 44 45 48 49 50 54 55 56 60 63 64. The case tries {20, 60, 81, 96, 192, 256, 1024}. Exactly one, 60, is in that set.
 
-A col axis runs the col codelet at `len <= e2_len_cap()` and the col DIF chain above it
-(`nd_plan.hpp:133`). `e2_len_cap()` is 32 below 2 MiB of L3 per PHYSICAL core and 64 above, so 45
-MiB over 16 physical cores reads 64 while the same silicon counted by logical cpu reads 32. Raising
-the cap moves 16 lengths from the chain to the codelet: 33 35 36 40 42 44 45 48 49 50 54 55 56 60
-63 64. The case tries seven lengths, {20, 60, 81, 96, 192, 256, 1024}, and exactly one of them, 60,
-is in that set.
+At cap 32 the lowest detecting length is 33 (gcc) or 35 f32 / 33 f64 (clang). At cap 64 it is 66. Nothing at or below the cap detects, so the pin protects the col pass, not the leaf codelet. `admiral_codelets` needs no pin. Length 20 does not detect on this host. 96, 192, 256 detect under gcc only. 1024 detects nowhere. Every failure goes through `axis_plan`.
 
-So the case measures the codelet's layout invariance at the lengths at or below the cap and the col
-chain above it, and 60 changes sides. Measured on SPR (ccmlin075, gcc 14.2 and clang 19.1.7,
-Release, at both `x86-64-v4` and `native`) with the pin stripped and nothing else changed, routes
-confirmed by breakpoint counts on `col_codelet_body<N,T>`:
+Len 81 is load-bearing: it is not in `CODELET_CATALOG_SIZES` and exceeds `kFourStepLeafMax`, so no cap can route it to the codelet. It cannot change sides. 96 does not detect under clang at any cap or ISA. Without 81, a clang host with >= 2 MiB L3 per physical core runs this gate with nothing behind it.
 
-    cap  compiler  lowest detecting length   first length THIS case detects at
-    32   gcc       33                        60   (chain), then 81
-    32   clang     35 f32 / 33 f64           60   (chain), then 81
-    64   gcc       66                        81   (chain; 20 and 60 both pass)
-    64   clang     66                        81   -- and 81 is the ONLY one it has
+OPEN: a few lengths still change bits with the pin ON. All of them carry a prime factor above 11: 191, 226, 247, 257, 289, 291, 292, 293. They run the 1-D engine, not the col chain. A breakpoint on `col_dif_execute_ws<T,Forward>` counts zero hits at every one. No measurement covers Bluestein and Rader alignment sensitivity. No test looks at it.
 
-The lowest detecting length is always the first one ABOVE that build's cap: 33 at cap 32, 66 at cap
-64, measured over eleven pin-stripped builds spanning two compilers, two caps, two ISAs and
-pristine `09cb3d2`. Nothing at or below the cap ever detects, so the pin protects the col pass and
-not the leaf codelet, which is why `admiral_codelets` needs no pin of its own.
+Both flags are load-bearing. The 2x2 at v4/gcc 14.2: no pin fails, `-fno-associative-math` alone fails, `-ffp-contract=on` alone fails, the pair passes. `-fno-associative-math` and `-fno-tree-reassoc` are interchangeable here (geomean 1.0027 over 10 col cells). `-ftree-reassoc` stays enabled. gcc gates FP reassociation on `flag_associative_math`, and nothing tests that gate.
 
-Length 20 does NOT detect a stripped pin on this host. It detects in none of those eleven builds,
-at either cap, either ISA or either precision, including pristine `09cb3d2` at gcc/x86-64-v4. An
-earlier version of this paragraph recorded gcc failing at len 20 offset 1; that datum is not
-reproducible here and should not be relied on. 1024 detects nowhere either, and 96, 192 and 256
-detect under gcc only. Every failure goes through `axis_plan`, so the defect is on master and
-predates the `strides_plan` branch; `strides_plan` only reaches the same col chain. Every other
-test in the tree compares against a tolerance and passes either way.
+The pin costs: FMAs in `inst_col_f_fwd.cpp.o` fall from 21110 to 3029, total FP instructions rise 20%, costing about 0.9% geomean wall clock and at most 3% on any cell. `inst_dif_f_fwd.cpp.o` is byte-identical, the control that the pin reaches those four TUs and nothing else.
 
-Len 81 is what makes this case able to fail at cap 64, and it is load-bearing: without it, a clang
-host with 2 MiB or more of L3 per physical core runs this gate with nothing behind it, because 60
-has moved to the codelet and 96/192/256 detect under gcc only. 81 is not in `CODELET_CATALOG_SIZES`
-and exceeds `kFourStepLeafMax`, so no value of the cap can ever route it to the codelet; it cannot
-change sides the way 60 did. 96, the obvious-looking choice, does not detect under clang at any cap
-or ISA. Twelve other lengths qualify equally (90 99 108 110 126 135 162 180 189 216 243 252); 81 is
-the cheapest. Nothing in the tree asserts which side of the cap a host sits on, so 81 is the only
-thing standing between a clang CI host and a gate that cannot fail.
-
-OPEN, and out of this pin's scope: a few lengths still change bits with the alignment class with
-the pin ON, every one of them carrying a prime factor above 11 (191, 226, 247, 257, 289, 291, 292,
-293 across the sweeps run). None of them reaches the pinned code. `make_nd_axis_state` sets
-`st.dif` only where `is_codelet_supported` holds, which is 11-smooth lengths, so those axes never
-enter the col chain at all: a breakpoint on `col_dif_execute_ws<T,Forward>`, the sole instantiation
-the four pinned TUs export, counts ZERO hits at every one of them at both caps, against 128 hits at
-len 81 and len 96 on the same binary. They run the 1-D engine line by line, Bluestein at all of
-them except 257, which runs Rader. Which lengths show up also moves with the sweep window, so the
-set is not a fixed property of a length. Bluestein and Rader alignment sensitivity is unexamined
-here and no test in the tree looks at it; an agent that rediscovers it should know it was measured
-and routed, not overlooked, and that it is a different engine from the one this pin covers.
-
-Both flags are load-bearing and the pair is minimal. The 2x2 at v4/gcc 14.2 on that same
-test: no pin fails, `-fno-associative-math` alone fails, `-ffp-contract=on` alone fails,
-the pair passes. Per-clone contraction and reassociation are independent sources, and
-closing one leaves the other. `-fno-associative-math` and gcc's narrower
-`-fno-tree-reassoc` are interchangeable here and indistinguishable in speed (geomean
-1.0027 over 10 col cells at v4, against a 1.1% same-binary control floor), so the portable
-spelling wins. `-ftree-reassoc` stays ENABLED under the pin; what stops it touching floats
-is gcc gating FP reassociation on `flag_associative_math`. Nothing tests that gate, so a
-gcc that moved FP reassociation out from behind it would break the pin silently.
-
-The pin is NOT cheap, and `-ffp-contract=on` is what costs. The butterflies write the
-multiply and the add as separate statements, so scoping contraction to one expression
-leaves almost nothing to contract: FMAs in `inst_col_f_fwd.cpp.o` fall from 21110 to 3029
-and total FP instructions rise 20% (56965 to 68448), f64 the same shape.
-`inst_dif_f_fwd.cpp.o` is byte-identical across the two builds, which is the control that
-the pin reaches those four TUs and nothing else. The col kernels are memory-bound at the
-benchmarked sizes, so that 20% costs about 0.9% geomean wall clock and at most 3% on any
-cell. Source-level `piece_fma` pinning is not needed for correctness once the flags are
-set, but routing the col butterfly twiddles through it the way `dif_passes.hpp` already
-does would take contraction out of the compiler's hands and buy those FMAs back. 3% is
-the ceiling, so it is a lead and not a priority.
-
-A second, source-level invariant sits next to the flag pin: `strides_plan` bits must not
-depend on the OUTPUT layout, because the route and the f32 radix-4 factoring proxy are
-what pick the numbers. `choose_line_route` in `apply_lines_strided_oop` therefore reads
-`src_line` only, `strides_state` builds its axis states from `istride` only, and the slab
-arm runs only when that same chooser picks the col route. Pricing the destination stride
-into either (a `std::max(src, dst)` looks reasonable and was the original code) flips the
-route or the factoring on wide output strides: the "bits do not depend on the output
-layout" case in `test_strides.cpp` then fails at len 64 nbatch 2 out (8192, 1), 100 of
-128 elements, both precisions.
+A second invariant sits next to the flag pin: `strides_plan` bits must not depend on the OUTPUT layout. `choose_line_route` in `apply_lines_strided_oop` reads `src_line` only. `strides_state` builds axis states from `istride` only. Pricing the destination stride into either flips the route on wide output strides. The "bits do not depend on the output layout" case then fails at len 64 nbatch 2 out (8192, 1).
 
 ## N-D engine
 
-- Rank >= 3, serial: `execute_nd` runs the last two axes plane by plane when one plane fits L2
-  and the whole array does not (`fuse_planes`). Below the gate the unfused chain is L2-resident
-  anyway and the per-plane loop costs 13% at 8^3; above it the plane itself spills. Measured
-  on SPR (2 MiB L2): 256^3 0.885, 64^3 0.974, everything else inside the 1% floor.
-- Transposed route, rows of one page or more (`inner * 16 >= 4096`): the strip is one page of
-  columns capped at 3/4 of L3, the line pitch is `len + W` when `len` is a multiple of a page
-  (4K aliasing, `address_alias` 0.27), and the gate is `col_budget_block < 2W`. The step5a
-  widening to `max(16, 2W)` was fitted before the 2048 B col floor re-priced col_dif; with the
-  floor in, both measurable W=4 flips favor col_dif (rome 2d_1024 block 10: 0.86 counter-backed;
-  SPR-v3 4096^2 block 10, Bt floored to 128: 0.92). The forms coincide wherever a precision's
-  W >= 8 (2W >= 16): every campaign-native build except rome's f64 — AVX-512 f64 W=8, f32
-  anywhere on the campaign hosts — so ice/genoa/SPR-native are unchanged by folding and rome
-  keeps the strip at 2d_2048/4096/8192 (blocks 5/2/1, transposed under both forms, the
-  2d_2048/4096 D1 flip wins intact). Where W < 8 the forms differ and none of it is measured
-  here: f64 at v3 (covered: 0.92 above) and at v2/NEON (W=2), f32 at v2/NEON (W=4) — for those
-  targets the change is no fix, it RESTORES the pre-step5a gate those builds always ran.
-  Mechanism at 8192^2: the L2 streamer stops at a page, so `l2_rqsts.miss` rises 1.5x while
-  demand `l3_miss` falls to 0.25 (IPC 0.61 -> 0.94); 4096^2 0.69, 8192^2 0.54, 2048^2 untouched
-  (block 21 > gate).
-- col_dif tile row: `nd_col_block` floors `Bt` at 2048 B of contiguous run (`kColDifMinRowBytes`)
-  when the array exceeds L3. The per-row cost (prologue, prefetch ramp, DRAM page open) is what
-  it amortizes, so it pays only from DRAM: floor alone loses 2d_1024 1.08-1.23x on every build.
-  Fires on 3 of 24 col_dif axes on SPR (2048^2 Bt 16->128, 512^3 both axes 80->128), 5 on genoa,
-  7 on rome (analytical); 2048^2 0.79/0.88/0.96 and 512^3 0.93/0.94/0.97 at gcc W=8/W=4/clang.
-  Not a TLB effect: walks stay flat across a 4x Bt sweep while cycles track instructions.
-- A default-off arm must leave master's TEXT. `const std::size_t pitch = len;` alone, a pure
-  SSA alias, shifts gcc 14.2's inline budget and breaks the `nm -S` size-multiset identity.
+- Rank >= 3, serial: `execute_nd` runs the last two axes plane by plane when one plane fits L2 and the array does not (`fuse_planes`). Below the gate the unfused chain is L2-resident. Above it the plane spills. Measured on SPR: 256^3 0.885, 64^3 0.974.
+- Transposed route, rows of one page or more (`inner * 16 >= 4096`): the strip is one page of columns capped at 3/4 of L3. The line pitch is `len + W` when `len` is a page multiple (4K aliasing). The gate is `col_budget_block < 2W`. The step5a widening to `max(16, 2W)` predates the 2048 B col floor. With the floor in, both measurable W=4 flips favor col_dif (rome 2d_1024 block 10: 0.86, SPR-v3 4096^2 block 10, Bt floored to 128: 0.92). Where W < 8 the change restores the pre-step5a gate.
+- col_dif tile row: `nd_col_block` floors `Bt` at 2048 B of contiguous run (`kColDifMinRowBytes`) when the array exceeds L3. The floor pays for the per-row cost only from DRAM. Floor alone loses 2d_1024 1.08-1.23x.
+- A default-off arm must leave master's TEXT. `const std::size_t pitch = len;` alone shifts gcc 14.2's inline budget and breaks the `nm -S` size-multiset identity.
 
 ## Build
 
 - `module load gcc/14.2.0`. The system g++ is 8.5 and cannot compile C++20.
-- `unset NINJA_STATUS` before any `cmake --build`. A placeholder this ninja
-  rejects aborts the build with an error unrelated to the code; `scripts/validate.sh`
-  already does it.
-- Seven usable presets over a shared `base`: `debug`, `asan`, `tsan`, `coverage`,
-  `dev`, `release`, `relwithdebinfo`. Benchmark only `release`.
-- `scripts/validate.sh [isa|compilers|catalog|digest|cxx17|sanitize|valgrind|tidy|cppcheck|receipt-coupling|granule-admission]` is
-  the one entry point for "does it build clean and pass everywhere". Every arm asserts against
-  `compile_commands.json` that the flags it asked for actually arrived. CMake accepts
-  an unknown `-D` name in silence, which is how a previous sweep ran four "sanitizer"
-  builds carrying no `-fsanitize` at all.
-- `tidy` and `cppcheck` run their tool as a compiler launcher
-  (`ADM_ENABLE_CLANG_TIDY`, `ADM_ENABLE_CPPCHECK` in `cmake/StaticAnalysis.cmake`), so a
-  finding is a build failure over every library TU, not a hand-picked pair. Both are the
-  same wiring CI's `static-analysis` job uses.
-- Two ways a clean clang-tidy run lies, both already closed, both silent:
-  `.clang-tidy` writes `Checks` as a YAML **sequence**, never `Checks: >`. A folded scalar
-  collapses to one line, so a `#` rationale becomes glob text and swallows the entry after it;
-  nine checks were off that way. And the launcher passes `--config-file` explicitly, because the
-  generated codelet TUs live in the BUILD tree, from which the upward search can miss the repo
-  config entirely and fall back to the near-empty default set. `scripts/static_analysis_control.sh`
-  is the check on both: every name listed in `.clang-tidy` must appear in `--list-checks`, and
-  each analyser must be silent on a clean file and report on `test/static_analysis/control.cpp`.
-- `coverage` is clang source-based coverage (`-fprofile-instr-generate
-  -fcoverage-mapping`, -O1; report with llvm-profdata/llvm-cov). Do not resurrect
-  the gcov preset: gcc's --coverage build here is ASSEMBLER-bound (one TU took
-  1 h 50 m in single-threaded GNU `as`), clang's instrumented build is an ordinary
-  compile.
+- `unset NINJA_STATUS` before any `cmake --build`. A placeholder this ninja rejects aborts the build with an unrelated error. `scripts/validate.sh` already does it.
+- Seven presets over `base`: `debug`, `asan`, `tsan`, `coverage`, `dev`, `release`, `relwithdebinfo`. Benchmark only `release`.
+- `scripts/validate.sh [isa|compilers|catalog|digest|cxx17|sanitize|valgrind|tidy|cppcheck|receipt-coupling|granule-admission]` is the one entry point. Every arm asserts against `compile_commands.json` that the flags arrived. CMake accepts an unknown `-D` in silence.
+- `tidy` and `cppcheck` run as compiler launchers (`ADM_ENABLE_CLANG_TIDY`, `ADM_ENABLE_CPPCHECK` in `cmake/StaticAnalysis.cmake`), so a finding is a build failure over every library TU.
+- `.clang-tidy` writes `Checks` as a YAML sequence, never folded. A folded scalar collapses to one line, so a `#` rationale becomes glob text and swallows the next entry. Nine checks were off that way. The launcher passes `--config-file` explicitly because generated codelet TUs live in the build tree and the upward search can miss the repo config. `scripts/static_analysis_control.sh` checks both. Every name in `.clang-tidy` must appear in `--list-checks`. Each analyser must be silent on a clean file and report on `test/static_analysis/control.cpp`.
+- `coverage` is clang source-based coverage (`-fprofile-instr-generate -fcoverage-mapping`). Do not resurrect gcov: gcc's `--coverage` builds are assembler-bound (one TU took 1 h 50 m in `as`), clang's instrumented build is an ordinary compile.
 
 ## Precisions
 
-`float` and `double` reach the SIMD engine. `long double` reaches
-`include/admiral/detail/scalar_fft.hpp` instead, because no ISA carries lanes that
-wide, and it covers `plan`, `plan_r2c` and the one-shots only; `axis_plan`,
-`strides_plan` and `plan_r2r` stay float and double. The two gates are
-`detail::is_precision_v` and `detail::is_simd_precision_v` in the compat seam.
+`float` and `double` reach the SIMD engine. `long double` reaches `include/admiral/detail/scalar_fft.hpp` because no ISA carries lanes that wide. It covers `plan`, `plan_r2c` and the one-shots only. `axis_plan`, `strides_plan` and `plan_r2r` stay float and double. Gates are `detail::is_precision_v` and `detail::is_simd_precision_v`.
 
-`long double` is THREE different types across the supported targets, and a constant
-tuned to one of them is tuned to one host: x87 double-extended on x86-64 Linux
-(`digits` 64), IEEE binary128 on aarch64 Linux (113), and plain `double` on arm64 macOS
-and MSVC (53). So a width can be NARROWER than double's carrier expects, not only wider:
-`test_cxx_compat.cpp`'s `pi_v` case asks for distinct low bits where they exist and
-equality where they do not. And a series cannot be truncated at a term count:
-`ct_sincos_small` runs until both tails fall under `eps(F)/2`, which is 9 iterations at
-53 bits, 10 at 64 and 14 or 15 at 113. A 12-term fold, calibrated to x87, missed by
-437 eps at den 7 and 16000 at den 64, and `ct_sincos_turns` is the butterflies' only
-twiddle source, so the whole transform inherited that phase. Only CI can see any of
-this; x86-64 alone cannot. `std::numeric_limits<F>::digits` is the only honest way to
-ask.
+`long double` is three types: x87 double-extended on x86-64 Linux (`digits` 64), IEEE binary128 on aarch64 Linux (113), plain `double` on arm64 macOS and MSVC (53). Do not truncate a series at a fixed term count. `ct_sincos_small` runs until both tails fall under `eps(F)/2`. That is 9 iterations at 53 bits, 10 at 64, and 14 or 15 at 113. A 12-term fold missed by 437 eps at den 7 and 16000 at den 64. `std::numeric_limits<F>::digits` is the only honest way to ask.
 
-The scalar backend carries NO second copy of the radix math. `butterfly.hpp` is
-V-generic: the same text is the SIMD kernel at `V = xsimd::batch<T>` and the scalar
-kernel at `V = T`. An edit to a butterfly moves both, so a long double accuracy test
-can fail on a change that looks SIMD-only. `ct_math.hpp` folds its twiddles at
-`ct_real_t<T>`, which is long double past double, because a double constant caps a
-transform at 2^-53.
+The scalar backend carries no second copy of the radix math. `butterfly.hpp` is V-generic: the same text is the SIMD kernel at `V = xsimd::batch<T>` and the scalar kernel at `V = T`. An edit to a butterfly moves both. `ct_math.hpp` folds twiddles at `ct_real_t<T>`, long double past double, because a double constant caps a transform at 2^-53.
 
 ## SIMD and dispatch
 
-- All vector code goes through xsimd, all dispatch and unrolling through poet.
-  There are zero raw `_mm*_` intrinsics in `include/` or `src/`; keep it that way.
-  `xsimd::batch<std::complex<T>>` is banned. Use split re/im.
-- `alignas` takes the arch alignment (`batch_t::arch_type::alignment()`), never a
-  literal. The single non-arch constant, `kCacheLine` in `cache.hpp`, is documented.
-- Never `(void)x` to silence a warning. Delete the dead thing or use
-  `[[maybe_unused]]`.
+- All vector code goes through xsimd, all dispatch and unrolling through poet. Zero raw `_mm*_` intrinsics in `include/` or `src/`. Keep it that way. Do not use `xsimd::batch<std::complex<T>>`. Use split re/im.
+- `alignas` takes the arch alignment (`batch_t::arch_type::alignment()`), never a literal. The single non-arch constant, `kCacheLine` in `cache.hpp`, has a comment that documents it.
+- Never `(void)x` to silence a warning. Delete the dead thing or use `[[maybe_unused]]`.
 
 ## Compile-time architecture
 
-Each engine is reached through a `forward` trampoline that turns one runtime bool into
-`<Forward>` leaves; the scale factor is a runtime argument folded into the last pass,
-not a template axis. The trampoline is the *only* place its two leaves are named, so
-one `extern template` per precision keeps a whole engine tree out of every TU that
-merely routes to it (`src/inst_*.cpp`, one TU per engine per direction). Whether a split
-pays is per-TU and measured: `inst_col_*` and `inst_dif_*` split per direction with
-byte-identical leaf codegen, `inst_plan_*` does not because its two route trees share
-sub-instantiations, `inst_gt_*` is an engine split (Good-Thomas inside `inst_plan_*`
-exhausted gcc's per-TU inline budget), and `inst_dif_thunks_*` hosts the direction-free
-families once each. Do not mark such a trampoline always-inline. That pastes both arms,
-engine included, into every call site.
+A `forward` trampoline reaches each engine and turns one runtime bool into `<Forward>` leaves. The scale factor is a runtime argument folded into the last pass. The trampoline is the only place that names its two leaves. So one `extern template` per precision keeps a whole engine tree out of every TU that merely routes to it. The tree lives in `src/inst_*.cpp`, one TU per engine per direction. Whether a split pays is per-TU and measured: `inst_col_*` and `inst_dif_*` split per direction with byte-identical leaf codegen. `inst_plan_*` does not because its two route trees share sub-instantiations. `inst_gt_*` is an engine split. `inst_dif_thunks_*` hosts direction-free families once each. Do not mark such a trampoline always-inline. That pastes both arms into every call site.
 
 ## Measuring
 
-- Wall time cannot resolve small effects here: within-arm spread reaches 17 % on the
-  compile side and 1.17× on the run side. Use differenced retired counters, two
-  rep counts subtracted, and rotate arm order.
-- Static asm cannot count executed work. In a hand-versioned function the object holds
-  every version while the run executes one, so summed spill counts across versions are
-  not comparable. Frames here are realigned to `%rbp`, so a `%rsp` spill regex reads a
-  false zero.
-- `.clang-format` is `ColumnLimit: 100`, but the tree is NOT format-clean: 188 lines
-  exceed it (90 `include/`, 65 `benchmark/`, 26 `test/`, 7 `src/`). Re-measure rather than
-  trusting that number: `find <dir> -type f \( -name '*.hpp' -o -name '*.cpp' -o -name
-  '*.h' \) -print0 | xargs -0 awk 'length($0)>100' | wc -l`. Never run `clang-format -i`
-  over a whole file. It rewrites unrelated hand-tuned layout. Format only the lines the change
-  touches, and do not add new violations.
+- Wall time cannot resolve small effects here: within-arm spread reaches 17% on the compile side and 1.17× on the run side. Use differenced retired counters, two rep counts subtracted, and rotate arm order.
+- Static asm cannot count executed work. In a hand-versioned function the object holds every version while the run executes one, so summed spill counts across versions are not comparable. The build realigns frames here to `%rbp`, so a `%rsp` spill regex reads a false zero.
+- `.clang-format` is `ColumnLimit: 100`, but the tree is not format-clean: 188 lines exceed it. Re-measure that number. Do not trust it. Never run `clang-format -i` over a whole file. It rewrites unrelated hand-tuned layout. Format only the lines the change touches, and do not add new violations.
 
 ## Cost model
 
-The routing cost model header (`include/admiral/detail/base_cost_model.hpp`) is
-GENERATED, not handwritten: `cmake -DADM_FIT_COST_MODEL=ON`, targets
-`admiral_cost_sweep` (re-measure this build, ~2 min) then `admiral_cost_model`
-(refit from all receipts in `ADM_COST_MODEL_DATA`). The fitter is C++20 stdlib-only
-(`tools/fit_cost_model.cpp`), with no Python. The refit overwrites the tracked header
-by default; dry-run with `-DADM_COST_MODEL_OUT=<path>`.
+The routing cost model header (`include/admiral/detail/base_cost_model.hpp`) comes from a generator, not from hand edits: `cmake -DADM_FIT_COST_MODEL=ON`, targets `admiral_cost_sweep` then `admiral_cost_model` (refit from `ADM_COST_MODEL_DATA`). The fitter is C++20 stdlib-only (`tools/fit_cost_model.cpp`), no Python. Dry-run with `-DADM_COST_MODEL_OUT=<path>`.
 
-It is COEFFICIENTS ONLY: 38 of them, one sparse lasso per form, pooled over
-every swept build. There is no per-(machine, size) correction table: there used to
-be 316 rows, and pricing each form off what the engine actually runs (the measured
-per-precision leaf table, `bluestein_choose_pad`, length-(p−1) Rader) beat them
-outright: 6.10% → 4.16% mean route regret on all 16 swept builds (same metric, rows
-off both sides), 0.80 geomean runtime on the 77 cells whose route moved, and 0.95
-plan time inside 2..512 because nothing walks a row table any more. 12 of 8190 cells
-are worse at `effort::estimate` (worst 3.4x, N=67 f32); `effort::automatic` recovers
-all 12 to 1.02 geomean with zero cells above their own noise. That is the trade the
-rows were hiding. A table keyed to machines someone happened to sweep cannot race
-candidates at plan time, and this model does not have to.
+It is coefficients only: 38 of them, one sparse lasso per form, pooled over every swept build. There is no per-(machine, size) table. Pricing each form off what the engine runs (the measured leaf table, `bluestein_choose_pad`, Rader) beat 316 rows outright: 6.10% to 4.16% mean route regret on all 16 swept builds, 0.80 geomean runtime on the 77 cells whose route moved, and 0.95 plan time inside 2..512. 12 of 8190 cells are worse at `effort::estimate`. `effort::automatic` recovers all 12 to 1.02 geomean.
 
-So onboarding a machine is just: sweep it (lands
-`base_cost_<compiler>_<arch>_<flags+uarch hash>.txt`), refit over all receipts.
-Nothing is keyed to silicon, so nothing has to be held fixed. The CANONICAL receipt
-set is not in the repo (2e499e0 policy); it lives in ~/repos/memory/admiral/bench-results/
-(the project's name, not this checkout's). Pointing `--data` straight at that
-directory does NOT reproduce the tracked header: the fitter's walk is
-`directory_iterator`, not recursive, so the znver2 receipt in its dated subdirectory
-is skipped and every coefficient moves. The set that regenerates the tracked header
-byte-for-byte is the 8 top-level receipts (the 6 legacy `base_cost_{gcc,clang}_v*`,
-the SPR `e18facfb` and the clang-19 `c6aad4a5`) plus
-`2026-08-06-znver2/base_cost_gnu14_x86_64_4a23d8b9.txt`, flattened into one
-directory; `base_cost_gnu14_x86_64_9a65e7f8.txt` and znver4 are deliberately out (no
-`uarch=znver4` row is fitted).
+Onboarding a machine: sweep it, refit over all receipts. The canonical receipt set is not in the repo. It lives in `~/repos/memory/admiral/bench-results/`. Pointing `--data` at that directory does not reproduce the tracked header because the fitter's walk is `directory_iterator`, not recursive. The fitter's walk skips the znver2 receipt in its dated subdirectory. The set that regenerates the tracked header byte-for-byte is the 8 top-level receipts plus `2026-08-06-znver2/base_cost_gnu14_x86_64_4a23d8b9.txt`, flattened into one directory. It excludes `base_cost_gnu14_x86_64_9a65e7f8.txt` and znver4, because the fitter has no znver4 row.
 
-### The COMPILER is a model feature; the machine is not
+### The compiler is a model feature. The machine is not
 
-One feature slot is keyed to the compiler. Build identity reaches the model nowhere
-else except `log2(W)`, `log(bytes)` and the `regs` argument `chain_work` takes.
-`regs` is collinear with `W` across every swept row, so it is not separately
-identifiable. The compiler slot is there because of a paired sweep: one host, one
-tree, one kernel vintage, back to back under one lock. That sweep reads the
-`four_step`-versus-`iterative_dif` contrast 1.25x apart between gcc and clang, and
-that pair is the dominant route below 512. The slot alone takes pooled route regret
-from 66.1 to 56.7 over the 16 rows shared with the previous header, and 56.5 as
-shipped (the slot plus the fresh clang-19 receipt), halving both worst rows
-(clang-18 f32 W=4: 9.5 → 4.8; clang-18 f64 W=8: 10.3 → 5.8). Scored against each
-receipt's MEASURED forms at AVX-512, it moves 37 cells under clang for a large net win
-(f64 regret 2.34% → 1.45%, f32 2.39% → 1.36%, best cells 2.7x and 1.64x) and 10 cells
-under gcc, where f32 improves slightly and f64 does not (0.97% → 1.13%). The two
-compilers move the same pairs in OPPOSITE directions at equal width. No width or
-machine key can express that. An unswept compiler (icx, msvc) takes the gcc branch.
+One feature slot keys on the compiler because a paired sweep ran gcc and clang at matched width and vintage. The `four_step`-versus-`iterative_dif` contrast reads 1.25x apart between them below 512. The slot takes pooled route regret from 66.1 to 56.7 over the shared 16 rows. An unswept compiler takes the gcc branch.
 
-The gcc f64 cost is real and measured: at `effort::estimate` three cells regress beyond
-their own round-to-round spread (N=91 1.25x, N=169 1.30x, N=366 1.19x, all
-`four_step` → `bluestein`), against one 1.23x gain at f32 N=71. `effort::automatic`
-recovers all three to 0.99/1.05/1.00. Same trade the 316 correction rows bought, one
-order milder.
+The gcc f64 cost is real: at `effort::estimate` three cells regress beyond their own spread (N=91 1.25x, N=169 1.30x, N=366 1.19x, all `four_step` to `bluestein`), recovered by `effort::automatic` to 0.99/1.05/1.00.
 
-Do NOT read this as licence for a uarch slot. Adding the archived znver4 receipts
-COSTS regret (65.3 → 69.5 summed over the same 16 rows) and the archive confounds
-machine with kernel vintage: gcc-14 at the same (W, regs) reads that same contrast
-1.37x apart between the `gcc_v4` archive and a fresh sweep on this host. The compiler
-is identifiable because gcc and clang were swept at matched width and matched
-vintage; the machine is not.
+Do not add a uarch slot. Adding the archived znver4 receipts costs regret (65.3 to 69.5), and the archive confounds machine with kernel vintage: gcc-14 at the same (W, regs) reads the same contrast 1.37x apart between the `gcc_v4` archive and a fresh sweep.
 
-A refit is only comparable inside ONE tree. The fitter prices each form off
-`math.hpp`'s leaf tables through the shared helpers, so the same receipts fitted on
-two trees give different coefficients. Reproduce the tracked header on the tree the
-change starts from before believing anything about the tree it ends on.
+A refit is only comparable inside one tree. The fitter prices each form off `math.hpp`'s leaf tables, so the same receipts fitted on two trees give different coefficients.
 
-Only the two SPR receipts (`base_cost_gnu14_x86_64_e18facfb.txt` and the clang-19
-`base_cost_clang19_x86_64_c6aad4a5.txt`) were swept against the kernels that ship.
-The clang/gcc v2-v4 and znver2 receipts predate the flat-prime, Meteor Lake and
-znver2-gap integration, and re-sweeping epyc7742 and epyc9474 is the follow-up that
-closes it.
+Only the two SPR receipts were swept against the kernels that ship. The v2-v4 and znver2 receipts predate the flat-prime, Meteor Lake and znver2-gap integration. Re-sweeping epyc7742 and epyc9474 is the follow-up.
 
-### VINTAGE dominates the residual, so score a new feature on the FRESH rows
+### VINTAGE dominates the residual
 
-Four pairs of rows carry identical model inputs and differ only in receipt vintage
-(`major` and `uarch` are not features, so each pair scores identically). The stale row
-of each pair carries 2.7x the regret: 1.9/1.5, 4.0/1.0, 1.8/1.1, 5.8/1.4. Nothing
-coefficient-shaped reaches that. The model already fits the fresh rows to 1.0-1.5%,
-which is the sweep's own repeatability.
+Four pairs of rows carry identical model inputs and differ only in vintage. The stale row of each pair carries 2.7x the regret. The model fits the fresh rows to 1.0-1.5%, the sweep's own repeatability. Stale rows outnumber fresh 14 to 4. A bluestein pad slot gained on stale rows only and lost on all four fresh ones, re-routing nine cells for 3 wins and 5 losses. Split regret by vintage before believing a new slot, and confirm on the shipped build with a route diff filtered to the receipt's measured forms.
 
-So a pooled regret sum is a majority vote by receipt count, and stale rows outnumber
-fresh ones 14 to 4. A bluestein pad slot (`log2(pad2/M)`, the smooth-pad saving over
-`bit_ceil`) was rejected on exactly this: it took the pooled sum 56.5 → 49.9, gained
-on stale rows only, and lost on all four fresh ones, re-routing nine cells on the
-shipped build for 3 wins and 5 losses (worst 1.74x, f32 N=251). A junk n-keyed control
-gains exactly zero, so the metric is sound. The DATA is what is mixed. Split regret by
-vintage before believing a new slot, and confirm on the shipped build with a route diff
-filtered to the receipt's MEASURED forms.
+### The leaf-cost table holds absolute measurements
 
-### The leaf-cost table is measured, and its absolute scale decides routes
+`codelet_cost_cyc_f64` / `_f32` / `_extra` in `include/admiral/detail/math.hpp` hold absolute measured cycles. A sweep on another machine reads a near-constant multiple (1.78 geomean, spread 1.26-3.4 on znver2), so importing another host's numbers re-frames the table instead of refreshing it. Never import a leaf-table hunk.
 
-`codelet_cost_cyc_f64` / `_f32` / `_extra` in `include/admiral/detail/math.hpp` hold
-absolute measured cycles, not relative weights. `iterative_dif` carries no leaf term,
-so codelet-vs-`iterative_dif` turns on their magnitude and not only on intra-table
-ratios. A sweep on another machine reads a near-constant multiple of the tracked
-values (1.78 geomean, spread 1.26-3.4 on znver2), so importing another host's numbers
-RE-FRAMES the table instead of refreshing it. Never import a leaf-table hunk.
+Refresh after a kernel change re-prices a leaf:
 
-Refresh protocol, after a kernel change re-prices a leaf:
-
-1. Sweep the pre-change and post-change builds on ONE host, `--codelet-sweep
-   --prec=both`, 7 sweeps, arm order alternating, pinned.
+1. Sweep pre-change and post-change builds on one host, `--codelet-sweep --prec=both`, 7 sweeps, arm order alternating, pinned.
 2. Take per-entry medians. A single sweep moves an entry by ~46%.
-3. Move only entries whose RATIO between the two builds departs from 1 beyond their
-   own spread. The ratio cancels the frame; an absolute reading does not.
-4. Confirm every mover against a codegen diff: `nm --defined-only -S` over both
-   `libadmiral.so`, `codelet_apply` specialisations. An entry whose symbol size is
-   byte-identical did not change, whatever the timer says. That check killed 10 of 27
-   candidate movers in the 2026-08 integration.
-5. A new entry (a catalog addition, a new extras row) has no ratio. Price it from the
-   post-change sweep rescaled by the frame factor measured over the codegen-IDENTICAL
-   leaves only.
+3. Move only entries whose ratio departs from 1 beyond their own spread. The ratio cancels the frame.
+4. Confirm every mover against a codegen diff: `nm --defined-only -S` over both `libadmiral.so`, `codelet_apply` specialisations. An entry whose symbol size is byte-identical did not change. That check killed 10 of 27 candidate movers in 2026-08.
+5. A new entry has no ratio. Price it from the post-change sweep rescaled by the frame factor measured over codegen-identical leaves only.
 
-`gate_leaf_cyc_ref` STAYS FROZEN. It is the reference the compile-time `N > 512` gates
-were fitted against, and refreshing it de-calibrated that band by 1.63 geomean once.
+`gate_leaf_cyc_ref` stays frozen. It was the fit reference for the compile-time `N > 512` gates. Refreshing it de-calibrated that band by 1.63 geomean once.
 
-### The four_step_large admission lines are probed at runtime, never keyed to a host class
+### Runtime probes set the four_step_large admission lines
 
-Past the cost model's domain, admission is decided by the `kLargeRoute*` machinery in
-`include/admiral/detail/four_step_large.hpp` (one of two such families of constants; the
-other is the E2 col-batch gate `kE2Len64MinL3PerCoreBytes` in
-`include/admiral/detail/nd_plan.hpp` — node knob A/B, re-derived per host class by
-sweeping len-64 col cells with the arm off vs on). Receipt:
-`admiral/beat-standings/wi2c-large1d.md`, 2026-09-15 campaign.
+Past the cost model's domain, the `kLargeRoute*` machinery in `include/admiral/detail/four_step_large.hpp` decides admission. The other runtime-probed family is the E2 col-batch gate `kE2Len64MinL3PerCoreBytes` in `include/admiral/detail/nd_plan.hpp`, re-derived per host class. Receipt: `admiral/beat-standings/wi2c-large1d.md`, 2026-09-15.
 
-Serial f64/f32 lower edges are MEASURED on the running host: a lazy
-once-per-process-per-precision probe (`plan_impl<T>::probe_large_route_serial`) races
-forced dif vs forced four_step_large serial plans on a 3-rung ladder around the prior
-and caches the crossover. It engages only above the probe floor (2 MiB f64 / 4 MiB f32),
-so the digest (largest case 192 KiB) and small plans never see it. The shipped constants
-are the ladder's prior and the full fallback (any probe exception). A new host class
-needs NOTHING — the probe reads it, and its answers have
-drifted inside the measured band (ties resolve dif-side); the fallback constants move
-only via the receipted wave process. Tests never see probe output:
-`set_large_route_serial_override` and its RAII scope inject the line, route-name pins
-assert the fallback, and the seam's storage sits in `src/large_route_probe.cpp` — a
-header-local static splits into one copy per module across the engine DSO and a hidden-
-visibility test binary.
+The running host measures the serial f64/f32 lower edges. A lazy once-per-process-per-precision probe (`plan_impl<T>::probe_large_route_serial`) races forced dif against forced four_step_large serial plans. It uses a 3-rung ladder around the prior and caches the crossover. It engages only above the probe floor (2 MiB f64 / 4 MiB f32). The shipped constants are the ladder's prior and the full fallback. A new host class needs nothing. The probe reads it, and only the receipted wave process moves the fallback constants. Tests never see probe output: `set_large_route_serial_override` and its RAII scope inject the line, and the seam's storage sits in `src/large_route_probe.cpp`.
 
-The f32 serial window cap is deleted: four_step wins at every rung past it on every
-class through 256 MiB; past the ladder top `choose_large_split` and the stream arm bound
-the shape structurally (f64 never carried a cap). The threaded line (unreachable at
-nt=1, `nthreads > 1` guard in `plan.hpp`) is an element-keyed floor
-(`kLargeRouteThreadFloorF64Bytes` / `...F32Bytes`) flat to the knees
-(`kLargeRouteThreadKneeF64Nt` 32 / `...F32Nt` 8), then a linear rise to the shared
-`kLargeRouteThreadCapBytes` anchored at the pool width P, and nt=2 f32 at the cap
-outright. Named exceptions the law accepts and effort::measure/automatic's race
-recovers: genoa's non-monotone nt=8 f32 notch and the icelake interpolation/cap
-compromise rungs — but past the cost model's domain the race re-checks the line behind
-kMeasureRejectRatio (1.25), so only the sub-set of those rungs whose wrongness clears the
-bar still recovers (the notch's 1.756x and the 1.35x interpolation rung do; the 1.06-1.20x
-compromise rungs no longer do — the price of one-noisy-sample flip immunity there, wi3e).
-`test/` pins the constants, the law's shape with injected pool widths, and the seam.
+Nothing caps the f32 serial window now: four_step wins at each rung beyond it through 256 MiB. The threaded line (unreachable at nt=1, `nthreads > 1` guard in `plan.hpp`) is an element-keyed floor (`kLargeRouteThreadFloorF64Bytes` / `...F32Bytes`), flat to the knees. The knees are `kLargeRouteThreadKneeF64Nt` 32 and `...F32Nt` 8. Beyond the knees the line rises linearly to `kLargeRouteThreadCapBytes`, with pool width P as the anchor and nt=2 f32 at the cap outright. Named exceptions the law accepts: genoa's nt=8 f32 notch and icelake interpolation/cap compromise rungs. Past the cost model's domain the race re-checks the line behind `kMeasureRejectRatio` (1.25). Only the subset whose wrongness clears the bar recovers: the notch's 1.756x and the 1.35x interpolation rung do, the 1.06-1.20x compromise rungs do not.
+
+`test/` pins the constants, the law's shape, and the seam.

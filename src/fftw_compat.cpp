@@ -71,20 +71,22 @@ void run(H* p, void* in, void* out) {
     }
 }
 
+// The planner's failure channel is a NULL plan, so the whole body — the shape vector's
+// allocation included — runs inside the try: nothing crosses the extern "C" boundary.
 template<typename H>
 H* make_plan(int rank, const int* n, void* in, void* out, int sign, unsigned flags) {
-    if (rank < 1 || n == nullptr) return nullptr;
-    std::vector<size_t> shape(static_cast<size_t>(rank));
-    for (size_t i = 0; i < shape.size(); ++i) {
-        if (n[i] < 1) return nullptr;
-        shape[i] = static_cast<size_t>(n[i]);
-    }
-    const admiral::effort eff =
-        (flags & FFTW_ESTIMATE) ? admiral::effort::estimate : admiral::effort::automatic;
     try {
+        if (rank < 1 || n == nullptr) return nullptr;
+        std::vector<size_t> shape(static_cast<size_t>(rank));
+        for (size_t i = 0; i < shape.size(); ++i) {
+            if (n[i] < 1) return nullptr;
+            shape[i] = static_cast<size_t>(n[i]);
+        }
+        const admiral::effort eff =
+            (flags & FFTW_ESTIMATE) ? admiral::effort::estimate : admiral::effort::automatic;
         return std::make_unique<H>(sign, in, out, admiral::span<const size_t>(shape),
                                    admiral::options{1, eff})
-            .release();
+                .release();
     } catch (...) {
         return nullptr;
     }

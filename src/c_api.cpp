@@ -202,32 +202,29 @@ adm_status make_plan(adm_plan* plan, const size_t* shape, size_t ndim, const adm
         return plan_error(plan, ADM_ERROR_INVALID_SIZE, "null shape or zero rank");
     const auto o = to_cpp_options(opts);
     if (!o) return plan_error(plan, ADM_ERROR_INVALID_OPTION, "eff is outside the adm_effort enum");
-    adm_status st;
-    std::string detail;
     try {
         *plan = std::make_unique<adm_plan_s>(std::in_place_type<admiral::plan<T>>,
                                              admiral::span<const size_t>(shape, ndim), *o)
                     .release();
         return ADM_SUCCESS;
+    // Each handler hands `e.what()` straight to plan_error: copying it into a local
+    // std::string could itself throw while recovering from bad_alloc, and that throw
+    // would escape the extern "C" boundary. plan_error builds the message under its
+    // own try/catch.
     } catch (const std::bad_alloc&) {
-        st = ADM_ERROR_OUT_OF_MEMORY;
+        return plan_error(plan, ADM_ERROR_OUT_OF_MEMORY,
+                          adm_error_string(ADM_ERROR_OUT_OF_MEMORY));
     } catch (const admiral::size_error& e) {
-        st = ADM_ERROR_INVALID_SIZE;
-        detail = e.what();
+        return plan_error(plan, ADM_ERROR_INVALID_SIZE, e.what());
     } catch (const admiral::error& e) {
-        st = ADM_ERROR_INTERNAL;
-        detail = e.what();
+        return plan_error(plan, ADM_ERROR_INTERNAL, e.what());
     } catch (const std::length_error& e) {
-        st = ADM_ERROR_INVALID_SIZE;
-        detail = e.what();
+        return plan_error(plan, ADM_ERROR_INVALID_SIZE, e.what());
     } catch (const std::exception& e) {
-        st = ADM_ERROR_INTERNAL;
-        detail = e.what();
+        return plan_error(plan, ADM_ERROR_INTERNAL, e.what());
     } catch (...) {
-        st = ADM_ERROR_INTERNAL;
-        detail = "non-standard exception";
+        return plan_error(plan, ADM_ERROR_INTERNAL, "non-standard exception");
     }
-    return plan_error(plan, st, detail.empty() ? adm_error_string(st) : detail.c_str());
 }
 
 template<typename T, typename U>

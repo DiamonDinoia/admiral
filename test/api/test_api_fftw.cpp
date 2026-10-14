@@ -1,7 +1,14 @@
 #include <catch2/catch_test_macros.hpp>
+#include <climits>
 #include <cmath>
 #include <complex>
 #include <vector>
+
+#if !defined(_WIN32)
+#include <sys/resource.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 #include <admiral/admiral.hpp>
 #include <admiral/detail/scratch.hpp>
@@ -261,3 +268,33 @@ TEST_CASE("fftw shim: FFTW_MEASURE plans run and stay correct", "[fftw]") {
     fftw_free(out);
     fftw_free(alt);
 }
+
+#if !defined(_WIN32)
+TEST_CASE("fftw shim: planner allocation failure returns NULL, nothing escapes the C ABI",
+          "[fftw]") {
+    // INT_MAX ranks a 17 GiB shape vector, allocated before any engine code runs. In a
+    // forked child under a 1 GiB address-space cap the allocation throws deterministically
+    // on any host; the planner's failure channel is a NULL plan, so the throw must never
+    // cross the extern "C" boundary. Exit 4 below is the pre-fix behavior made visible.
+    const pid_t pid = fork();
+    REQUIRE(pid != -1);
+    if (pid == 0) {
+        const struct rlimit cap{1u << 30, 1u << 30};
+        if (setrlimit(RLIMIT_AS, &cap) != 0) _exit(2);
+        int n[1] = {8};
+        fftw_plan p = nullptr;
+        fftwf_plan q = nullptr;
+        try {
+            p = fftw_plan_dft(INT_MAX, n, nullptr, nullptr, FFTW_FORWARD, FFTW_ESTIMATE);
+            q = fftwf_plan_dft(INT_MAX, n, nullptr, nullptr, FFTW_FORWARD, FFTW_ESTIMATE);
+        } catch (...) {
+            _exit(4);
+        }
+        _exit(p == nullptr && q == nullptr ? 0 : 3);
+    }
+    int status = 0;
+    REQUIRE(waitpid(pid, &status, 0) == pid);
+    REQUIRE(WIFEXITED(status));
+    REQUIRE(WEXITSTATUS(status) == 0);
+}
+#endif

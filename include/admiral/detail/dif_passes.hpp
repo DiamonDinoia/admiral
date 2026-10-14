@@ -1130,7 +1130,11 @@ void dif_pass_last(const T* ccre, const T* ccim,
     constexpr std::size_t W = batch_t::size;
     assert(ido == 1);
     std::size_t b = 0;
-    if (const std::size_t peel = aos_store_align_peel<T, W>(data, l1, l1);
+    // The peel trades one full-price butterfly block per call for cache-line-aligned
+    // interleave-store targets. At four or fewer row blocks the block is the bigger half
+    // of that trade (pass-level A/B, arena-misaligned output: ~20% win unpeeled at 3-4
+    // blocks at W=8 f64 and W=16 f32; ~16% loss at 8 blocks), so peel only past 4W.
+    if (const std::size_t peel = l1 > 4u * W ? aos_store_align_peel<T, W>(data, l1, l1) : 0;
         peel != 0 && l1 >= peel + W) {
         poet::dispatch(dif_last_tail_invoke<T, Forward, IP>,
                        poet::dispatch_param<dif_last_tail_seq<W>>{peel},

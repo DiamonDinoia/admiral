@@ -116,10 +116,11 @@ extern "C" {
         const int n[3] = {n0, n1, n2}; \
         return PREFIX##_plan_dft(3, n, in, out, sign, flags); \
     } \
-    void PREFIX##_execute(const PREFIX##_plan p) { \
+    void PREFIX##_execute(const PREFIX##_plan p) noexcept { \
         if (p != nullptr) run(p, p->in, p->out); \
     } \
-    void PREFIX##_execute_dft(const PREFIX##_plan p, COMPLEX_T* in, COMPLEX_T* out) { \
+    void PREFIX##_execute_dft(const PREFIX##_plan p, COMPLEX_T* in, \
+                              COMPLEX_T* out) noexcept { \
         if (p != nullptr) run(p, in, out); \
     } \
     void     PREFIX##_destroy_plan(PREFIX##_plan p) { delete p; } \

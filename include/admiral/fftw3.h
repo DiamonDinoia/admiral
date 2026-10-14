@@ -6,6 +6,14 @@
 
 #define FFTW_C_API ADM_VISIBILITY
 
+// noexcept is a C++ keyword; C consumers see the plain declarations. An engine failure
+// reaching an execute therefore calls std::terminate (abort), and never crosses the C ABI.
+#ifdef __cplusplus
+#define ADM_FFTW_NOEXCEPT noexcept
+#else
+#define ADM_FFTW_NOEXCEPT
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -45,8 +53,9 @@ FFTW_C_API fftw_plan fftw_plan_dft(int rank, const int* n, fftw_complex* in,
 // `fftw_execute` reuses the plan-time `in`/`out`, so two concurrent calls race on that one output
 // array; `fftw_execute_dft` takes fresh buffers. Either runs in place at `in == out`.
 // `fftw_destroy_plan` accepts NULL.
-FFTW_C_API void fftw_execute(const fftw_plan p);
-FFTW_C_API void fftw_execute_dft(const fftw_plan p, fftw_complex* in, fftw_complex* out);
+FFTW_C_API void fftw_execute(const fftw_plan p) ADM_FFTW_NOEXCEPT;
+FFTW_C_API void fftw_execute_dft(const fftw_plan p, fftw_complex* in, fftw_complex* out)
+    ADM_FFTW_NOEXCEPT;
 FFTW_C_API void fftw_destroy_plan(fftw_plan p);
 
 // `fftw_malloc` returns memory aligned for the SIMD engine, or NULL. `fftw_cleanup` is a no-op.
@@ -65,8 +74,9 @@ FFTW_C_API fftwf_plan fftwf_plan_dft_3d(int n0, int n1, int n2, fftwf_complex* i
 FFTW_C_API fftwf_plan fftwf_plan_dft(int rank, const int* n, fftwf_complex* in,
                                      fftwf_complex* out, int sign, unsigned flags);
 
-FFTW_C_API void          fftwf_execute(const fftwf_plan p);
-FFTW_C_API void          fftwf_execute_dft(const fftwf_plan p, fftwf_complex* in, fftwf_complex* out);
+FFTW_C_API void          fftwf_execute(const fftwf_plan p) ADM_FFTW_NOEXCEPT;
+FFTW_C_API void          fftwf_execute_dft(const fftwf_plan p, fftwf_complex* in,
+                                           fftwf_complex* out) ADM_FFTW_NOEXCEPT;
 FFTW_C_API void          fftwf_destroy_plan(fftwf_plan p);
 
 FFTW_C_API void*          fftwf_malloc(size_t n);
@@ -78,3 +88,5 @@ FFTW_C_API void           fftwf_cleanup(void);
 #ifdef __cplusplus
 }
 #endif
+
+#undef ADM_FFTW_NOEXCEPT

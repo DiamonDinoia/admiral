@@ -39,6 +39,7 @@ struct aligned_delete {
 template<typename T>
 using aligned_buffer = std::unique_ptr<T[], aligned_delete<T>>;
 
+// The returned buffer is implicitly-typed storage, not yet a T object.
 template<typename T>
 [[nodiscard]] aligned_buffer<T> make_aligned_buffer(std::size_t n) {
     return aligned_buffer<T>(static_cast<T*>(scratch_alloc(n * sizeof(T), span_align<T>)));

@@ -13,6 +13,7 @@
 #include <type_traits>
 #include <utility>
 
+namespace admiral::detail {
 inline void cpu_relax() noexcept {
 #if defined(__x86_64__) || defined(__i386__)
     __builtin_ia32_pause();
@@ -21,6 +22,7 @@ inline void cpu_relax() noexcept {
 #else
     std::this_thread::yield();
 #endif
+}
 }
 
 #if ADM_THREADS

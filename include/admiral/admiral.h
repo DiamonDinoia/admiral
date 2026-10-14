@@ -84,8 +84,9 @@ ADM_NODISCARD ADM_C_API adm_status adm_c2r_nd(adm_complex* spec, double* out, co
 
 typedef struct adm_plan_s* adm_plan;
 
-// A failed create still writes a handle instead of NULL. Read the reason with
-// `adm_plan_status`, then release the handle with `adm_plan_destroy` as after a success.
+// A failed create still writes a handle; only an exhausted allocator leaves NULL.
+// Read the reason with `adm_plan_status`, then release the handle with `adm_plan_destroy`
+// as after a success.
 ADM_NODISCARD ADM_C_API adm_status admf_plan_1d(adm_plan* plan, size_t n, const adm_options* opts);
 ADM_NODISCARD ADM_C_API adm_status adm_plan_1d(adm_plan* plan, size_t n, const adm_options* opts);
 

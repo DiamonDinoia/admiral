@@ -9,8 +9,22 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <csignal>
+#endif
+
+// The execute-abort case calls malloc_trim and reads /proc/self/statm, both glibc/Linux
+// only, and its RLIMIT_AS cap breaks under asan/tsan, which reserve terabytes of shadow.
+#if defined(__linux__) && defined(__GLIBC__) && !defined(__SANITIZE_ADDRESS__) && \
+    !defined(__SANITIZE_THREAD__)
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#define ADM_TEST_FFTW_SANITIZED 1
+#endif
+#endif
+#if !defined(ADM_TEST_FFTW_SANITIZED)
+#define ADM_TEST_FFTW_EXECUTE_ABORT 1
 #include <fstream>
 #include <malloc.h>
+#endif
 #endif
 
 #include <admiral/admiral.hpp>
@@ -300,7 +314,9 @@ TEST_CASE("fftw shim: planner allocation failure returns NULL, nothing escapes t
     REQUIRE(WIFEXITED(status));
     REQUIRE(WEXITSTATUS(status) == 0);
 }
+#endif
 
+#if defined(ADM_TEST_FFTW_EXECUTE_ABORT)
 TEST_CASE("fftw shim: an execute-time engine failure aborts under noexcept", "[fftw]") {
     // At 2^17 f64 the iterative dif route asks the heap for 4 MiB of scratch once per
     // execute. The child trims the allocator's free headroom, then caps its address space

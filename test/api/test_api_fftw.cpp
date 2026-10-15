@@ -24,8 +24,11 @@
 #endif
 #if !defined(ADM_TEST_FFTW_SANITIZED)
 #define ADM_TEST_FFTW_RLIMIT_FAILURE 1
+#include <cstdlib>
 #include <fstream>
+#include <limits>
 #include <malloc.h>
+#include <new>
 #endif
 #endif
 
@@ -289,84 +292,148 @@ TEST_CASE("fftw shim: FFTW_MEASURE plans run and stay correct", "[fftw]") {
 }
 
 #if defined(ADM_TEST_FFTW_RLIMIT_FAILURE)
+namespace {
+
+// Child exit codes other than 76 skip nothing: 2 means the child could not read its own
+// /proc/self/statm, 3 a plan/handle check failed, 4 an exception escaped the code under
+// test, and 1 is valgrind's documented answer to the throw probe below (its operator new
+// exits(1) where a plain one throws). 76 is the positive skip marker; the whole child body
+// runs inside the try, so the forked Catch2 runner is unreachable and no code it could
+// produce (42, 66, ...) is ever observed.
+constexpr int kSkipExit = 76;
+
+// Runs, before any code under test, the two probes that decide whether a hard RLIMIT_AS
+// cap can inject a failure here at all. A child that returns meets the cap with a plain
+// glibc allocator and a plain-sized footprint. First probe: operator new of a size that
+// fails on every runtime. With plain glibc the failure is a catchable bad_alloc, which is
+// exactly the channel a capped allocation failure must use; valgrind's replacement exits(1)
+// inside the probe, the runtime's own deterministic statement that it cannot express that
+// channel. Second probe: the process's own address-space use. Past 1 GiB an instrumenting
+// runtime (SDE maps ~1.25 GiB) dominates the address space, so a cap tight enough to fail
+// the test allocation starves the instrumentation's own allocator first and no subsequent
+// death can be attributed to the code under test.
+void rlimit_probes_or_skip() {
+    // Standard signal dispositions: without them an inherited Catch2 fatal handler would
+    // print a bogus failure report on the child's own death, into the parent's capture.
+    std::signal(SIGABRT, SIG_DFL);
+    std::signal(SIGSEGV, SIG_DFL);
+    try {
+        // 2^62 fails on every runtime (mmap is hard-bounded far below it, whatever the
+        // overcommit policy), and stays below gcc's max-object-size diagnostic.
+        char* probe = new char[std::numeric_limits<std::size_t>::max() / 4];
+        probe[0] = 1;    // stores through the result: the new cannot be elided or assumed non-null
+        delete[] probe;  // never reached in practice
+        _exit(kSkipExit);  // an allocator this unbounded cannot be capped
+    } catch (const std::bad_alloc&) {
+    }
+    std::ifstream statm("/proc/self/statm");
+    std::size_t pages = 0;
+    statm >> pages;
+    if (pages == 0) _exit(2);
+    const std::size_t vm = pages * static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    if (vm >= (std::size_t{1} << 30)) _exit(kSkipExit);
+}
+
+[[noreturn]] void capped_plan_child() {
+    try {
+        rlimit_probes_or_skip();
+        const struct rlimit cap{1u << 30, 1u << 30};
+        if (setrlimit(RLIMIT_AS, &cap) != 0) _exit(kSkipExit);  // no cap can be applied
+        // The cap must refuse an allocation larger than itself; if it does not, it cannot
+        // fail the planner's shape vector either.
+        void* probe = std::malloc((std::size_t{1} << 30) + (std::size_t{256} << 20));
+        if (probe != nullptr) {
+            std::free(probe);
+            _exit(kSkipExit);
+        }
+        int n[1] = {8};
+        const fftw_plan p = fftw_plan_dft(INT_MAX, n, nullptr, nullptr, FFTW_FORWARD,
+                                          FFTW_ESTIMATE);
+        const fftwf_plan q = fftwf_plan_dft(INT_MAX, n, nullptr, nullptr, FFTW_FORWARD,
+                                            FFTW_ESTIMATE);
+        _exit(p == nullptr && q == nullptr ? 0 : 3);
+    } catch (...) {
+        _exit(4);
+    }
+}
+
+[[noreturn]] void capped_execute_child() {
+    try {
+        rlimit_probes_or_skip();
+        constexpr int n = 1 << 17;
+        auto* in = static_cast<fftw_complex*>(fftw_malloc(n * sizeof(fftw_complex)));
+        auto* out = static_cast<fftw_complex*>(fftw_malloc(n * sizeof(fftw_complex)));
+        fftw_plan p = fftw_plan_dft_1d(n, in, out, FFTW_FORWARD, FFTW_ESTIMATE);
+        if (in == nullptr || out == nullptr || p == nullptr) _exit(2);
+        malloc_trim(0);
+        std::ifstream statm("/proc/self/statm");
+        std::size_t pages = 0;
+        statm >> pages;
+        if (pages == 0) _exit(2);
+        const rlim_t cap = pages * static_cast<rlim_t>(sysconf(_SC_PAGESIZE)) + (rlim_t{2} << 20);
+        const struct rlimit lim{cap, cap};
+        if (setrlimit(RLIMIT_AS, &lim) != 0) _exit(kSkipExit);
+        // A 1 GiB request dwarfs the 2 MiB headroom; if even it succeeds, the cap cannot
+        // fail the engine's 4 MiB scratch request either.
+        void* probe = std::malloc(std::size_t{1} << 30);
+        if (probe != nullptr) {
+            std::free(probe);
+            _exit(kSkipExit);
+        }
+        fftw_execute(p);
+        fftw_execute_dft(p, in, out);
+        _exit(0);
+    } catch (...) {
+        _exit(4);
+    }
+}
+
+}  // namespace
+
 TEST_CASE("fftw shim: planner allocation failure returns NULL, nothing escapes the C ABI",
           "[fftw]") {
-    // INT_MAX ranks a 17 GiB shape vector, allocated before any engine code runs. In a forked
-    // child under a 1 GiB address-space cap the allocation throws deterministically on a plain
-    // Linux host, and the planner's failure channel is a NULL plan: exit 3/4 below are pre-fix
-    // behaviors made visible. Any other fate is the runtime breaking the mechanism, not the
-    // shim -- valgrind installs an operator new that aborts instead of throwing, SDE kills the
-    // capped child -- and says nothing about the failure channel, so skip there.
+    // INT_MAX ranks a 17 GiB shape vector, allocated before any engine code runs. In a
+    // forked child under a 1 GiB address-space cap the allocation throws deterministically
+    // on a plain Linux host, and the planner's failure channel is a NULL plan. The child
+    // skips only on its positive pre-test marker (76, or valgrind's own exit 1); every
+    // other fate fails: exit 3 is a non-NULL plan under the cap, exit 4 an exception
+    // crossing the C ABI, any signal a runtime abort outside the noexcept execute case.
     const pid_t pid = fork();
     REQUIRE(pid != -1);
-    if (pid == 0) {
-        // Standard signal dispositions: without them an inherited Catch2 fatal handler would
-        // print a bogus failure report on the child's own death, into the parent's capture.
-        std::signal(SIGABRT, SIG_DFL);
-        std::signal(SIGSEGV, SIG_DFL);
-        const struct rlimit cap{1u << 30, 1u << 30};
-        if (setrlimit(RLIMIT_AS, &cap) != 0) _exit(2);
-        int n[1] = {8};
-        fftw_plan p = nullptr;
-        fftwf_plan q = nullptr;
-        try {
-            p = fftw_plan_dft(INT_MAX, n, nullptr, nullptr, FFTW_FORWARD, FFTW_ESTIMATE);
-            q = fftwf_plan_dft(INT_MAX, n, nullptr, nullptr, FFTW_FORWARD, FFTW_ESTIMATE);
-        } catch (...) {
-            _exit(4);
-        }
-        _exit(p == nullptr && q == nullptr ? 0 : 3);
-    }
+    if (pid == 0) capped_plan_child();
     int status = 0;
     REQUIRE(waitpid(pid, &status, 0) == pid);
-    if (!WIFEXITED(status) || WEXITSTATUS(status) == 1 || WEXITSTATUS(status) == 2)
-        SKIP("RLIMIT_AS does not fail a capped allocation in this runtime");
+    CAPTURE(status);
+    if (WIFEXITED(status) && WEXITSTATUS(status) == kSkipExit)
+        SKIP("RLIMIT_AS cannot fail an allocation of the code under test in this runtime");
+    if (WIFEXITED(status) && WEXITSTATUS(status) == 1)
+        SKIP("operator new aborts instead of throwing in this runtime (probed pre-test)");
+    REQUIRE(WIFEXITED(status));
     REQUIRE(WEXITSTATUS(status) == 0);
 }
-#endif
 
-#if defined(ADM_TEST_FFTW_RLIMIT_FAILURE)
 TEST_CASE("fftw shim: an execute-time engine failure aborts under noexcept", "[fftw]") {
     // At 2^17 f64 the iterative dif route asks the heap for 4 MiB of scratch once per
     // execute. The child trims the allocator's free headroom, then caps its address space
     // just above live use so that request throws bad_alloc. fftw_execute is noexcept, so
     // the child must die by SIGABRT; before the noexcept fix the exception escaped the
     // C ABI and the child exited 4. 2^17 stays clear of snmalloc, whose first >= 32 MiB
-    // allocation would abort the capped child for a reason of its own. Other fates belong
-    // to the runtime again -- valgrind's operator new aborts rather than throws, SDE
-    // reports the child's signal death as a plain exit -- skip those.
+    // allocation would abort the capped child for a reason of its own. The child skips only
+    // on its positive pre-test marker (76, or valgrind's own exit 1); every other fate --
+    // exit 0 (a swallowed engine failure), exit 4 (an escaping exception), or any signal
+    // other than SIGABRT -- is a failure.
     const pid_t pid = fork();
     REQUIRE(pid != -1);
-    if (pid == 0) {
-        std::signal(SIGABRT, SIG_DFL);  // an inherited Catch2 handler would hijack the SIGABRT
-        std::signal(SIGSEGV, SIG_DFL);
-        constexpr int n = 1 << 17;
-        fftw_complex* in = static_cast<fftw_complex*>(fftw_malloc(n * sizeof(fftw_complex)));
-        fftw_complex* out = static_cast<fftw_complex*>(fftw_malloc(n * sizeof(fftw_complex)));
-        fftw_plan p = fftw_plan_dft_1d(n, in, out, FFTW_FORWARD, FFTW_ESTIMATE);
-        if (in == nullptr || out == nullptr || p == nullptr) _exit(3);
-        malloc_trim(0);
-        std::ifstream statm("/proc/self/statm");
-        size_t pages = 0;
-        statm >> pages;
-        if (pages == 0) _exit(2);
-        const rlim_t cap = pages * static_cast<rlim_t>(sysconf(_SC_PAGESIZE)) + (rlim_t{2} << 20);
-        const struct rlimit lim{cap, cap};
-        if (setrlimit(RLIMIT_AS, &lim) != 0) _exit(2);
-        try {
-            fftw_execute(p);
-            fftw_execute_dft(p, in, out);
-        } catch (...) {
-            _exit(4);
-        }
-        _exit(0);
-    }
+    if (pid == 0) capped_execute_child();
     int status = 0;
     REQUIRE(waitpid(pid, &status, 0) == pid);
-    if (WIFEXITED(status) && WEXITSTATUS(status) == 4)
-        FAIL("an exception escaped the noexcept execute");
-    if (!WIFSIGNALED(status) || WTERMSIG(status) != SIGABRT)
-        SKIP("a capped allocation failure does not surface as SIGABRT in this runtime");
+    CAPTURE(status);
+    if (WIFEXITED(status)) {
+        if (WEXITSTATUS(status) == kSkipExit)
+            SKIP("RLIMIT_AS cannot fail an allocation of the code under test in this runtime");
+        if (WEXITSTATUS(status) == 1)
+            SKIP("operator new aborts instead of throwing in this runtime (probed pre-test)");
+    }
     REQUIRE(WIFSIGNALED(status));
     REQUIRE(WTERMSIG(status) == SIGABRT);
 }

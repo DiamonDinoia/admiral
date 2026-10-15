@@ -1,18 +1,14 @@
 # Benchmarks
-
-`admiral_benchmark` times Admiral against ducc0 with nanobench,
-and against FFTW when built with `-DADM_BENCH_FFTW=ON`. Not installed.
+`admiral_benchmark` times Admiral against ducc0 with nanobench, and against FFTW when built with
+`-DADM_BENCH_FFTW=ON`. The binary is not installed.
 
 ## Build and run
-
 ```bash
 cmake --preset release          # benchmarks build in this preset
 cmake --build --preset release
 ./build/release/benchmark/admiral_benchmark --compare       # 1-D vs ducc0
 ./build/release/benchmark/admiral_benchmark --compare-nd    # N-D vs ducc0
 ```
-
-Main modes:
 
 | Mode | What it reports |
 |------|-----------------|
@@ -23,38 +19,28 @@ Main modes:
 | `--size=N` | Single-size profiling of the library alone |
 | `--factors-ab=A:B` | In-process A/B of two DIF factorizations of the same N |
 
-Every mode takes `--prec=f32|f64|both`, `--reps`, `--inner`, and most take
-`--sizes=`/`--shapes=`. The remaining modes are development diagnostics
-(`--pass`, `--codelet-sweep`, `--base-cost`, `--chain-sweep`, `--factor-sweep`,
-`--model-dump`, `--decomp-report`, `--cost-audit`, `--route-ab-dif`,
-`--fs-split-sweep`). A comment at the top of each block in `bench_fft.cpp`
-documents that mode.
+Every mode takes `--prec=f32|f64|both`, `--reps`, and `--inner`, and most take `--sizes=`/`--shapes=`. The
+remaining modes (`--pass`, `--codelet-sweep`, `--base-cost`, `--chain-sweep`, `--factor-sweep`,
+`--model-dump`, `--decomp-report`, `--cost-audit`, `--route-ab-dif`, `--fs-split-sweep`) are development
+diagnostics. Each block in `bench_fft.cpp` documents its mode in a comment.
 
-## Build options
+`ADM_BENCH_FFTW=ON` adds the FFTW reference arm. It needs the system `fftw3` and `fftw3f`, found through
+pkg-config. `ADM_BENCH_THREADS=ON` threads the reference libraries too (ducc0's pool, and FFTW's
+`fftw3_threads` companions under `--nthreads=N`).
 
-- `ADM_BENCH_FFTW=ON` adds the FFTW reference arm. Needs system `fftw3` and
-  `fftw3f`, found through pkg-config.
-- `ADM_BENCH_THREADS=ON` threads the reference libraries too (ducc0's pool, and
-  FFTW's `fftw3_threads` companions under `--nthreads=N`).
-- The FFTW arms always plan with `FFTW_MEASURE`; no wisdom caching or planner
-  time limit.
+## Threaded scaling
+Measured with `--compare-nd --nthreads=<t>` at t = 1, 2, 4, 8, 16 (`fft_fwd_us`, min across rounds). A figure is
+Admiral's single-thread time over its threaded time.
 
-Threaded scaling, same host, `--compare-nd --nthreads=<t>` at t = 1, 2, 4, 8, 16
-(`fft_fwd_us`, min across rounds). Figures are Admiral's own single-thread time
-over its threaded time. At 16 threads, shapes under ~16k elements run slower
-than serial (0.7-1.0×). Threading pays from about 32k elements (32³: 4.2-6.4×,
-192²: 2.6-3.5×), reaches 6-7× at 512² and 8-9× at 64³, and 10-11× at 256³-scale
-and up (128³: 10-11×, 509²: 10-12×). Rectangles split on the innermost extent:
-64×4096 reaches 9×, 4096×64 only 2×. The `nthreads = 0` auto law
-(`resolve_nthreads` in `thread_pool.hpp`) is the wake law from the 2026-08-31
-campaign: argmin of work/saturating-knee plus per-dispatch probed wake cost.
+- Shapes under ~16k elements run slower at 16 threads (0.7-1.0×). Threading pays from about 32k elements:
+  4.2-6.4× at 32³, 2.6-3.5× at 192².
+- Large shapes reach 6-7× (512²), 8-9× (64³), and 10-12× (128³, 256³-scale, 509²).
+- Rectangles split on the innermost extent: 64×4096 reaches 9×, 4096×64 only 2×.
 
-1-D threading is the one late case: the threaded route (four_step_large) admits
-a size only past its byte budget line (~512 KiB floor at 16 threads), so below
-~32k elements a 1-D plan is the serial one and threading changes nothing. Past
-that, 16 threads versus threaded ducc0 (ducc0's 1-D does thread from ~1M) split
-the wins on the current admission rules (geomean of ducc0 time over Admiral
-time, `--compare --nthreads=16 --adm-nthreads=16`):
+1-D is the one late case: the threaded route admits a size only past its byte budget line (~512 KiB at 16
+threads), so below ~32k elements a 1-D plan stays serial. Past that line, 16 threads split the wins with
+threaded ducc0, which threads 1-D only from ~1M elements (`--compare --nthreads=16 --adm-nthreads=16`, geomean
+of ducc0 over Admiral):
 
 | N | f64 | f32 |
 |---|-----|-----|
@@ -64,30 +50,19 @@ time, `--compare --nthreads=16 --adm-nthreads=16`):
 | 8M | 0.36× | 0.36× |
 | 16M | 1.82× | 1.72× |
 
-The mixed rows are the six-step admission check (`n2 % n1`) rejecting a threaded
-split and dropping the size to the serial DIF chain while ducc0 threads. Sizes
-whose split is divisible engage the threaded route and win. Widening the
-admission is tracked as a follow-up.
+The losing rows are the six-step admission check (`n2 % n1`) rejecting a threaded split, so the size falls to
+the serial DIF chain while ducc0 threads. Divisible splits engage the threaded route and win.
 
 ## Measurement conventions
+- Nanobench, min across repetitions. `--inner=0` lets it auto-tune the epoch.
+- The metric is TSC cycles where available. `--nthreads > 1` forces wall clock (cycle counting is per-thread).
+- Every timed size passes an accuracy gate against a reference DFT before timing.
+- A/B modes alternate the arm order round by round against the measurement-order frequency bias (cold turbo
+  flatters the first arm), and report the median plus the round-to-round spread. A delta inside the spread is
+  a tie. `--robust` adds an identity control.
+- FFTW arms always plan with `FFTW_MEASURE`, with no wisdom caching or planner time limit, tuned the same as
+  Admiral's default.
 
-- Nanobench, min across repetitions; `--inner=0` lets it auto-tune the epoch.
-- The metric is TSC cycles where available; `--nthreads > 1` forces wall clock
-  (cycle counting is per-thread).
-- Every timed size is accuracy-gated against a reference DFT before timing.
-- Single-shot compares carry measurement-order frequency bias (cold turbo
-  flatters the first arm), so A/B modes alternate arm order round by round and
-  report the median plus the round-to-round spread; `--robust` adds an identity
-  control. A delta inside the spread is a tie.
-- FFTW arms always plan with `FFTW_MEASURE`, tuned the same as Admiral's default.
-
-## The headline numbers in the README
-
-Measured on a Xeon w5-3435X (16 physical cores, AVX-512, `-march=native`), GCC
-14.2, sweep of 2026-08-24:
-
-- ducc0 comparison (`c4dda23`): `--compare` over 61 1-D lengths and
-  `--compare-nd` over 27 N-D shapes, both precisions. Ratios are their time over
-  Admiral's, so above 1 Admiral is faster.
-- FFTW comparison: `FFTW_MEASURE`, single thread, 19 1-D lengths and 9 N-D
-  shapes, both precisions pooled.
+The headline numbers in the README come from the 2026-08-24 sweep on the host named there, GCC 14.2: ducc0
+(`c4dda23`) `--compare` over 61 1-D lengths and `--compare-nd` over 27 N-D shapes, and FFTW `FFTW_MEASURE`
+over 19 1-D lengths and 9 N-D shapes, all at both precisions.

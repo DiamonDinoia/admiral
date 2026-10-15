@@ -1,74 +1,52 @@
 # Bit-identity digest
+`digest.cpp` runs a positional case sweep (1344 cases: the f32 block, then the identical f64 block).
+`case_list.hpp` is the list. It prints one `id tag name hash` line per case, the hash a FNV-1a over the raw
+output bytes. `scripts/validate.sh digest` builds this target twice, as shipped (Release, `x86-64-v3`) and as
+strict (plus `-DADM_USE_FAST_MATH=OFF`), and diffs both runs against the goldens in `golden/` with
+`scripts/check_digest.sh`. A machinery-only change moves nothing. A kernel change moves exactly the cases its
+diff reaches. The goldens encode "prediction: zero movers".
 
-`digest.cpp` runs a positional case sweep (1344 cases: the f32 block, then the identical
-f64 block; `case_list.hpp` is the list) and prints one `id tag name hash` line per case,
-the hash a FNV-1a over the raw output bytes. `scripts/validate.sh digest` builds this
-target twice -- shipped (Release, `x86-64-v3`) and strict (the same plus
-`-DADM_USE_FAST_MATH=OFF`) -- and diffs both runs against the goldens in `golden/` with
-`scripts/check_digest.sh`. A machinery-only change moves nothing; a kernel change moves
-exactly the cases its diff reaches, so the arm's expectation is the landing's
-reachability prediction, and goldens are the committed form of "prediction: zero
-movers".
-
-The digest lives in the validate arm, not in ctest: the gate is a comparison across two
-builds plus committed goldens, and a ctest entry sees only its own build. Building the
-`admiral_digest` target is all `test/CMakeLists.txt` does for it.
+The digest lives in the validate arm, not in ctest: the gate compares two builds plus committed goldens.
+`test/CMakeLists.txt` only builds the `admiral_digest` target.
 
 ## The arm, case by case
-
-1. Shipped and strict builds each assert their flags on `compile_commands.json`
-   (`-march=x86-64-v3`, `-ffast-math` present/absent) and the strict build's cache
-   carries `ADM_USE_FAST_MATH:BOOL=OFF`.
-2. Each digest run self-checks: the emitted case count must equal `kCaseCount` and case
-   `kUlpControlCase` must still be named `kUlpControlName` (`case_list.hpp`). A
-   renumbered list fails here, loudly, before any comparison.
-3. `check_digest.sh golden actual` reports the mover ids (hash differs), fails on ids
-   the golden does not know (a case landed without regoldening) and on id/tag/name drift
-   (renumbering). Ids only in the golden are skipped: a build that leaves a case
-   undefined does not participate in it.
-4. The strict mover set must be a subset of the shipped mover set. Strict numerics never
-   move a case that shipped numerics leave alone.
-5. Positive control, every run: `--ulp <kUlpControlCase>` perturbs one output element of
-   one case by one ulp; the perturbed digest must differ from the same build's plain
-   digest in exactly that case. This is what proves the comparison can see a one-ulp
-   change, today, in this arm.
+1. Each build asserts its flags on `compile_commands.json` (`-march=x86-64-v3`, `-ffast-math` present or
+   absent), and the strict build's cache carries `ADM_USE_FAST_MATH:BOOL=OFF`.
+2. Each run self-checks: the emitted case count must equal `kCaseCount`, and case `kUlpControlCase` must keep
+   the name `kUlpControlName` (`case_list.hpp`). A renumbered list fails here, before any comparison.
+3. `check_digest.sh golden actual` reports the mover ids (hash differs). It fails on ids the golden does not
+   know and on id/tag/name drift. Ids only in the golden are skipped.
+4. The strict mover set must be a subset of the shipped mover set.
+5. Positive control on every run: `--ulp <kUlpControlCase>` perturbs one output element of one case by one
+   ulp. The perturbed digest must differ from the plain digest in exactly that case. This proves the
+   comparison can see a one-ulp change.
 6. `--dump <id> <file>` writes one case's raw output for mover forensics.
 
 ## The shipped-arm waiver
+Under fast math, the shipped dialect keys vector-arm dispatch on pointer alignment, so a change to the
+construction-time allocation sequence re-draws which address-sensitive cases move. The class is 1-D lengths
+with a prime factor above 11, the pow2-dif surface {96, 128, 160, 192, 256, 320}, and the N-D 96x96 line. The
+arm therefore runs against a banked upper bound, `golden/allowed-movers-wi4a-2026-09-17.txt`
+(`check_digest.sh --expect-movers-upper`): a mover id outside the bank fails the arm, a banked id that stops
+moving passes. The strict arm and the `--ulp` control are exact-match always.
 
-The shipped dialect keys vector-arm dispatch on pointer alignment under fast-math, so
-any change to the construction-time allocation sequence re-draws which
-address-sensitive cases move (the roulette class: 1-D prime-factor>11 lengths, the
-pow2-dif surface {96, 128, 160, 192, 256, 320}, and the N-D 96x96 line; see the
-`wi4a-nd-scratch-tls` and `phase7-plan-storage` receipts). `validate.sh digest`
-therefore holds the shipped arm against a banked **upper bound**,
-`golden/allowed-movers-wi4a-2026-09-17.txt`: a mover id outside the bank fails the
-arm, and a banked id that stops moving is an improvement, not a failure
-(`check_digest.sh --expect-movers-upper`). The strict arm and the `--ulp` control are
-exact-match always. When the underlying alignment sensitivity is fixed, shrink the
-bank to the ids that still move and delete it when it is empty; a landing that
-legitimately re-draws the class edits the bank in the same commit, quoting the new
+When the alignment sensitivity is fixed, shrink the bank to the ids that still move, and delete the empty
+bank. A landing that legitimately re-draws the class edits the bank in the same commit and quotes the new
 mover list.
 
 ## Case-list stability and growth budget
+Case ids are positional, and goldens plus the ulp control key on them, so numbering is append-stable.
+`case_list.hpp` states the full rule and carries the guards. In short:
 
-Case ids are positional, and goldens plus the ulp control key on them, so numbering is
-append-stable by construction -- the rule and its guards are stated in
-`case_list.hpp`, which is the source of truth. In short:
-
-* New cases append after the f64 block ONLY (f32 growth happens as a new block after
-  f64, because f64 follows f32 in emission order).
-* The same commit bumps `kCaseCount` (the `static_assert` in `case_list.hpp` enforces
-  the pairing) and regenerates both goldens.
-* Growth is at most 5% of the list length per landing (at most 67 cases at 1344). A
-  catalog-structural landing may exceed the budget only by stating so in a `receipt:`
-  trailer in its commit message.
+* New cases append after the f64 block ONLY, because f64 follows f32 in emission order.
+* The same commit bumps `kCaseCount` (a `static_assert` in `case_list.hpp` enforces the pairing) and
+  regenerates both goldens.
+* Growth is at most 5% of the list length per landing (67 cases at 1344). A catalog-structural landing may
+  exceed the budget only by stating so in a `receipt:` trailer in its commit message.
 
 ## Regoldening
-
-A landing whose diff legitimately changes bits regenerates both goldens **in the same
-commit**, and its commit body quotes the mover list against the old goldens
-(`check_digest.sh` output) and argues that list equals the diff's reachability:
+A landing whose diff legitimately changes bits regenerates both goldens **in the same commit**, quoting the
+mover list against the old goldens (`check_digest.sh` output) and arguing it equals the diff's reachability:
 
 ```sh
 module load gcc/14.2.0 && unset NINJA_STATUS
@@ -87,28 +65,20 @@ done
 scripts/validate.sh digest   # must go green against the new goldens
 ```
 
-(`|| true` above is the deliberate exception to the no-swallowed-failures rule: the
-regolden step WANTS the non-empty mover list check_digest then reports.)
+(`|| true` is deliberate: the regolden step wants the non-empty mover list that check_digest reports.)
 
 ## Provenance and portability
+The committed goldens come from the pristine base commit `683a697`, generated on ccmlin075 (Xeon w5-3435X, 16
+physical cores, 2 MiB L2/core, 45 MiB L3) with the arm's exact flags (Release, `-march=x86-64-v3`,
+`-ffast-math` / `ADM_USE_FAST_MATH=OFF`, gcc 14.2.0).
 
-The committed goldens were generated from the pristine base commit `683a697` (the
-machinery port adds no library code, so branch builds reproduce them), on ccmlin075
-(Xeon w5-3435X, 16 physical cores, 2 MiB L2/core, 45 MiB L3 over 16 physical cores)
-with the arm's exact flags: Release, `-march=x86-64-v3`, `-ffast-math` /
-`ADM_USE_FAST_MATH=OFF`, gcc 14.2.0, 2026-09-14.
+`-march=x86-64-v3` pins the codegen, so any x86-64 host with AVX2 builds identical kernels. Route selection is
+NOT pinned: plan routing reads the host cache geometry (the L3-per-physical-core gate and the L2
+`fuse_planes` gate), so a host with a different cache geometry can legitimately produce route-shaped movers
+with no code change. Regolden on the gating host class if the arm moves to a new one. The ulp control and the
+strict-subset rule are geometry-independent.
 
-Codegen is pinned by `-march=x86-64-v3` (not `native`), so any x86-64 host with AVX2
-builds identical kernels. Route selection is NOT pinned: plan routing reads host cache
-geometry (`e2_len_cap`'s L3-per-physical-core gate, the L2 `fuse_planes` gate), so a
-host whose cache geometry differs from ccmlin075's can legitimately produce
-route-shaped movers with no code change. Regolden on the gating host class if the arm
-moves to a new one; the ulp control and the strict-subset invariant are
-geometry-independent and gate everywhere.
-
-Digest stdout must be captured through a 4096-blksize-class sink (a pipe, tmpfs, or a
-local-disk file): the Bluestein/Rader heap buffers' alignment class rides the process's
-first stdio heap allocation, whose size scales with the sink's st_blksize, so a 1
-MiB-blksize NFS file sink flips fast-math prime>11 1-D case bits; the arm therefore
-pipes `admiral_digest` through `cat`, and the underlying engine sensitivity is the open
-Bluestein/Rader alignment item, tracked separately.
+**Caution**: capture digest stdout only through a 4096-blksize-class sink (pipe, tmpfs, local-disk file). The
+Bluestein/Rader heap buffers take their alignment class from the process's first stdio heap allocation, whose
+size scales with the sink's st_blksize. A 1 MiB-blksize NFS file sink flips the bits of fast-math prime>11
+1-D cases. The arm therefore pipes `admiral_digest` through `cat`.

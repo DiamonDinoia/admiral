@@ -1,5 +1,5 @@
 # Bit-identity digest
-`digest.cpp` runs a positional case sweep (1344 cases: the f32 block, then the identical f64 block).
+`digest.cpp` runs a positional case sweep (1348 cases: the f32 block, then the identical f64 block).
 `case_list.hpp` is the list. It prints one `id tag name hash` line per case, the hash a FNV-1a over the raw
 output bytes. `scripts/validate.sh digest` builds this target twice, as shipped (Release, `x86-64-v3`) and as
 strict (plus `-DADM_USE_FAST_MATH=OFF`), and diffs both runs against the goldens in `golden/` with
@@ -41,7 +41,7 @@ Case ids are positional, and goldens plus the ulp control key on them, so number
 * New cases append after the f64 block ONLY, because f64 follows f32 in emission order.
 * The same commit bumps `kCaseCount` (a `static_assert` in `case_list.hpp` enforces the pairing) and
   regenerates both goldens.
-* Growth is at most 5% of the list length per landing (67 cases at 1344). A catalog-structural landing may
+* Growth is at most 5% of the list length per landing (67 cases at 1348). A catalog-structural landing may
   exceed the budget only by stating so in a `receipt:` trailer in its commit message.
 
 ## Regoldening

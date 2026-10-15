@@ -318,10 +318,15 @@ void rlimit_probes_or_skip() {
     std::signal(SIGABRT, SIG_DFL);
     std::signal(SIGSEGV, SIG_DFL);
     try {
-        // 2^62 fails on every runtime (mmap is hard-bounded far below it, whatever the
-        // overcommit policy), and stays below gcc's max-object-size diagnostic.
-        char* probe = new char[std::numeric_limits<std::size_t>::max() / 4];
-        probe[0] = 1;    // stores through the result: the new cannot be elided or assumed non-null
+        // 2^60 fails on every runtime (mmap is hard-bounded far below it, whatever the
+        // overcommit policy), and stays below gcc's max-object-size diagnostic and below
+        // clang's compile-time constant array size limit (2^62 elements exceeds it).
+        char* probe = new char[std::size_t{1} << 60];
+        // A volatile store through the result: the new cannot be elided or assumed
+        // non-null. A plain store is dead to clang, which elides the allocation at -O2
+        // and would make the skip path fire on every plain clang release build.
+        volatile char* const written = probe;
+        written[0] = 1;
         delete[] probe;  // never reached in practice
         _exit(kSkipExit);  // an allocator this unbounded cannot be capped
     } catch (const std::bad_alloc&) {
@@ -342,6 +347,10 @@ void rlimit_probes_or_skip() {
         // The cap must refuse an allocation larger than itself; if it does not, it cannot
         // fail the planner's shape vector either.
         void* probe = std::malloc((std::size_t{1} << 30) + (std::size_t{256} << 20));
+        // clang's InstCombine folds `malloc(N) != nullptr` to true at -O1 and deletes the
+        // call outright (verified 18.1.8); the asm round-trip keeps which value came back
+        // a runtime question.
+        asm volatile("" : "+r"(probe));
         if (probe != nullptr) {
             std::free(probe);
             _exit(kSkipExit);
@@ -376,6 +385,7 @@ void rlimit_probes_or_skip() {
         // A 1 GiB request dwarfs the 2 MiB headroom; if even it succeeds, the cap cannot
         // fail the engine's 4 MiB scratch request either.
         void* probe = std::malloc(std::size_t{1} << 30);
+        asm volatile("" : "+r"(probe));  // see the plan case: clang folds malloc != nullptr
         if (probe != nullptr) {
             std::free(probe);
             _exit(kSkipExit);

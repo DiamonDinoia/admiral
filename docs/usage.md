@@ -5,7 +5,7 @@ input (`fct` overrides the scale). The FFTW shim keeps FFTW's convention (both d
 trip multiplies by N. Each interface header states the full contract: layout, scaling, errors, and threading.
 
 ## Options
-Every plan and one-shot takes an optional `admiral::options` aggregate (C: `adm_options` by pointer. `NULL`
+Every plan and one-shot takes an optional `admiral::options` aggregate (C: `adm_options` by pointer; `NULL`
 means the defaults).
 
 | field | default | what it does |
@@ -52,7 +52,8 @@ adm_plan_destroy(plan);
 
 Runnable: [../examples/c_api.c](../examples/c_api.c). Double precision keeps the plain name and single
 precision prefixes `admf_`. Every call returns an `adm_status` (`ADM_SUCCESS` is 0, nodiscard), and
-`adm_error_string()` turns a status into text. A failed plan construction still writes a handle:
+`adm_error_string()` turns a status into text. A failed plan construction still writes a handle (an exhausted
+allocator still leaves `NULL`):
 `adm_plan_status()` re-reads the failure, `adm_plan_error_message()` returns the reason, `adm_plan_destroy()`
 releases the handle.
 
@@ -89,3 +90,5 @@ split interfaces, wisdom, and `fftw_plan_with_nthreads`. An uncovered call fails
 `FFTW_ESTIMATE` maps to `estimate`. Every other flag, `FFTW_MEASURE` included, maps to the plan-time race. See
 [Threads](#threads) for a shim plan shared across threads. A plan call fails with NULL, as in FFTW, and NULL
 carries no reason. For the reason, plan the same shape through the C API and read `adm_plan_error_message()`.
+`fftw_execute*` is `noexcept`: an engine failure at execute time aborts the process. Only plan-time failure
+has a `NULL` channel.

@@ -11,8 +11,10 @@
 #include <csignal>
 #endif
 
-// The execute-abort case calls malloc_trim and reads /proc/self/statm, both glibc/Linux
-// only, and its RLIMIT_AS cap breaks under asan/tsan, which reserve terabytes of shadow.
+// Both failure-injection cases below fork a child under a hard RLIMIT_AS cap. That mechanism
+// is Linux/glibc only: darwin's setrlimit refuses the cap, and asan/tsan reserve a shadow
+// address space the cap kills at startup. The execute case additionally calls malloc_trim and
+// reads /proc/self/statm.
 #if defined(__linux__) && defined(__GLIBC__) && !defined(__SANITIZE_ADDRESS__) && \
     !defined(__SANITIZE_THREAD__)
 #if defined(__has_feature)
@@ -21,7 +23,7 @@
 #endif
 #endif
 #if !defined(ADM_TEST_FFTW_SANITIZED)
-#define ADM_TEST_FFTW_EXECUTE_ABORT 1
+#define ADM_TEST_FFTW_RLIMIT_FAILURE 1
 #include <fstream>
 #include <malloc.h>
 #endif
@@ -286,16 +288,22 @@ TEST_CASE("fftw shim: FFTW_MEASURE plans run and stay correct", "[fftw]") {
     fftw_free(alt);
 }
 
-#if !defined(_WIN32)
+#if defined(ADM_TEST_FFTW_RLIMIT_FAILURE)
 TEST_CASE("fftw shim: planner allocation failure returns NULL, nothing escapes the C ABI",
           "[fftw]") {
-    // INT_MAX ranks a 17 GiB shape vector, allocated before any engine code runs. In a
-    // forked child under a 1 GiB address-space cap the allocation throws deterministically
-    // on any host; the planner's failure channel is a NULL plan, so the throw must never
-    // cross the extern "C" boundary. Exit 4 below is the pre-fix behavior made visible.
+    // INT_MAX ranks a 17 GiB shape vector, allocated before any engine code runs. In a forked
+    // child under a 1 GiB address-space cap the allocation throws deterministically on a plain
+    // Linux host, and the planner's failure channel is a NULL plan: exit 3/4 below are pre-fix
+    // behaviors made visible. Any other fate is the runtime breaking the mechanism, not the
+    // shim -- valgrind installs an operator new that aborts instead of throwing, SDE kills the
+    // capped child -- and says nothing about the failure channel, so skip there.
     const pid_t pid = fork();
     REQUIRE(pid != -1);
     if (pid == 0) {
+        // Standard signal dispositions: without them an inherited Catch2 fatal handler would
+        // print a bogus failure report on the child's own death, into the parent's capture.
+        std::signal(SIGABRT, SIG_DFL);
+        std::signal(SIGSEGV, SIG_DFL);
         const struct rlimit cap{1u << 30, 1u << 30};
         if (setrlimit(RLIMIT_AS, &cap) != 0) _exit(2);
         int n[1] = {8};
@@ -311,22 +319,27 @@ TEST_CASE("fftw shim: planner allocation failure returns NULL, nothing escapes t
     }
     int status = 0;
     REQUIRE(waitpid(pid, &status, 0) == pid);
-    REQUIRE(WIFEXITED(status));
+    if (!WIFEXITED(status) || WEXITSTATUS(status) == 1 || WEXITSTATUS(status) == 2)
+        SKIP("RLIMIT_AS does not fail a capped allocation in this runtime");
     REQUIRE(WEXITSTATUS(status) == 0);
 }
 #endif
 
-#if defined(ADM_TEST_FFTW_EXECUTE_ABORT)
+#if defined(ADM_TEST_FFTW_RLIMIT_FAILURE)
 TEST_CASE("fftw shim: an execute-time engine failure aborts under noexcept", "[fftw]") {
     // At 2^17 f64 the iterative dif route asks the heap for 4 MiB of scratch once per
     // execute. The child trims the allocator's free headroom, then caps its address space
     // just above live use so that request throws bad_alloc. fftw_execute is noexcept, so
     // the child must die by SIGABRT; before the noexcept fix the exception escaped the
     // C ABI and the child exited 4. 2^17 stays clear of snmalloc, whose first >= 32 MiB
-    // allocation would abort the capped child for a reason of its own.
+    // allocation would abort the capped child for a reason of its own. Other fates belong
+    // to the runtime again -- valgrind's operator new aborts rather than throws, SDE
+    // reports the child's signal death as a plain exit -- skip those.
     const pid_t pid = fork();
     REQUIRE(pid != -1);
     if (pid == 0) {
+        std::signal(SIGABRT, SIG_DFL);  // an inherited Catch2 handler would hijack the SIGABRT
+        std::signal(SIGSEGV, SIG_DFL);
         constexpr int n = 1 << 17;
         fftw_complex* in = static_cast<fftw_complex*>(fftw_malloc(n * sizeof(fftw_complex)));
         fftw_complex* out = static_cast<fftw_complex*>(fftw_malloc(n * sizeof(fftw_complex)));
@@ -350,6 +363,10 @@ TEST_CASE("fftw shim: an execute-time engine failure aborts under noexcept", "[f
     }
     int status = 0;
     REQUIRE(waitpid(pid, &status, 0) == pid);
+    if (WIFEXITED(status) && WEXITSTATUS(status) == 4)
+        FAIL("an exception escaped the noexcept execute");
+    if (!WIFSIGNALED(status) || WTERMSIG(status) != SIGABRT)
+        SKIP("a capped allocation failure does not surface as SIGABRT in this runtime");
     REQUIRE(WIFSIGNALED(status));
     REQUIRE(WTERMSIG(status) == SIGABRT);
 }

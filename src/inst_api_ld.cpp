@@ -3,6 +3,16 @@
 
 namespace admiral {
 
+namespace detail {
+
+plan_state<long double>::plan_state(span<const std::size_t> shape, const admiral::options& opts)
+    : scalar_plan_state(shape, opts.nthreads, opts.pin_threads) {}
+
+real_state<long double>::real_state(span<const std::size_t> shape, const admiral::options& opts)
+    : scalar_real_state(shape, opts.nthreads, opts.pin_threads) {}
+
+}
+
 template class ADM_API_INST plan<long double>;
 template class ADM_API_INST plan_r2c<long double>;
 

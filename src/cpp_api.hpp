@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "admiral/detail/cxx_compat.hpp"
+#include "admiral/detail/dd_fft.hpp"
 #include "admiral/detail/nd_plan.hpp"
 #include "admiral/detail/scratch.hpp"
 #include "admiral/detail/plan.hpp"
@@ -59,9 +60,9 @@ struct plan_state {
 };
 
 template<>
-struct plan_state<long double> : scalar_plan_state<long double> {
-    plan_state(span<const std::size_t> shape, const admiral::options& opts)
-        : scalar_plan_state(shape, opts.nthreads, opts.pin_threads) {}
+struct plan_state<long double> : scalar_plan_state<long double, ld_c2c_t<long double>> {
+    // Defined in inst_api_ld.cpp, the one TU built without fast math (dd_fft.hpp).
+    plan_state(span<const std::size_t> shape, const admiral::options& opts);
 };
 
 template<typename T>
@@ -218,9 +219,10 @@ struct real_state {
 };
 
 template<>
-struct real_state<long double> : scalar_real_state<long double> {
-    real_state(span<const std::size_t> shape, const admiral::options& opts)
-        : scalar_real_state(shape, opts.nthreads, opts.pin_threads) {}
+struct real_state<long double>
+    : scalar_real_state<long double, ld_c2c_t<long double>, ld_r2c_t<long double>> {
+    // Defined in inst_api_ld.cpp, the one TU built without fast math (dd_fft.hpp).
+    real_state(span<const std::size_t> shape, const admiral::options& opts);
 };
 
 template<typename T>

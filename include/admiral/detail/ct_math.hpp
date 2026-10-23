@@ -10,8 +10,17 @@
 namespace admiral {
 namespace detail {
 
+// A T wider than long double is its own fold type: the double-double of dd_fft.hpp.
 template<typename T>
-using ct_real_t = std::conditional_t<(std::numeric_limits<T>::digits > 53), long double, double>;
+using ct_real_t = std::conditional_t<
+    (std::numeric_limits<T>::digits > 64), T,
+    std::conditional_t<(std::numeric_limits<T>::digits > 53), long double, double>>;
+
+// The circle constants of a fold type. A fold type wider than long double specializes them.
+template<typename F>
+inline constexpr F ct_pi = detail::numbers::pi_v<F>;
+template<typename F>
+inline constexpr F ct_sqrt2 = detail::numbers::sqrt2_v<F>;
 
 template<typename F>
 struct ct_sincos_v {
@@ -20,8 +29,10 @@ struct ct_sincos_v {
 };
 using ct_sincos_t = ct_sincos_v<double>;
 
-template<typename F = double>
-[[nodiscard]] ADM_CONSTEVAL ct_sincos_v<F> ct_sincos_small(F x) {
+// The series and the octant fold below run at compile time through the consteval names; the
+// double-double engine also runs them to build its twiddle tables.
+template<typename F>
+[[nodiscard]] constexpr ct_sincos_v<F> sincos_small_eval(F x) {
     const F x2 = x * x;
     const F tiny = std::numeric_limits<F>::epsilon() / F(2);
     F cterm = 1, csum = 1;
@@ -42,16 +53,20 @@ template<typename F = double>
 }
 
 template<typename F = double>
-[[nodiscard]] ADM_CONSTEVAL ct_sincos_v<F> ct_sincos_turns(bool conjugate, std::size_t num,
-                                                           std::size_t den) {
+[[nodiscard]] ADM_CONSTEVAL ct_sincos_v<F> ct_sincos_small(F x) {
+    return sincos_small_eval<F>(x);
+}
+
+template<typename F>
+[[nodiscard]] constexpr ct_sincos_v<F> sincos_turns_eval(bool conjugate, std::size_t num,
+                                                         std::size_t den) {
     num %= den;
     if (conjugate && num != 0) num = den - num;
     const std::size_t oct = (8 * num) / den;
     const std::size_t rem = 8 * num - oct * den;
-    const F res = static_cast<F>(rem) *
-                  (detail::numbers::pi_v<F> / (F(4) * static_cast<F>(den)));
-    const ct_sincos_v<F> r = ct_sincos_small<F>(res);
-    constexpr F inv_sqrt2 = detail::numbers::sqrt2_v<F> / F(2);
+    const F res = static_cast<F>(rem) * (ct_pi<F> / (F(4) * static_cast<F>(den)));
+    const ct_sincos_v<F> r = sincos_small_eval<F>(res);
+    constexpr F inv_sqrt2 = ct_sqrt2<F> / F(2);
     F bc = 0, bs = 0;
     switch (oct) {
         case 0: bc = 1;            bs = 0;            break;
@@ -64,6 +79,12 @@ template<typename F = double>
         default: bc = inv_sqrt2;   bs = -inv_sqrt2;   break;
     }
     return {bs * r.c + bc * r.s, bc * r.c - bs * r.s};
+}
+
+template<typename F = double>
+[[nodiscard]] ADM_CONSTEVAL ct_sincos_v<F> ct_sincos_turns(bool conjugate, std::size_t num,
+                                                           std::size_t den) {
+    return sincos_turns_eval<F>(conjugate, num, den);
 }
 
 // Exact root-of-unity classification of the stage-twiddle constants. Every twiddle the

@@ -75,10 +75,16 @@ and the static-link rules. [docs/usage.md](docs/usage.md) covers the data layout
 options, the C API and the FFTW shim. [docs/](docs/README.md) is the docs index.
 
 The engine is compiled, so the C++ API creates plans for `std::complex<float>`, `std::complex<double>` and
-`std::complex<long double>` only. The long-double transform runs a scalar backend (no SIMD ISA has 80-bit
-lanes) and covers `plan`, `plan_r2c` and the one-shots. `axis_plan`, `strides_plan` and `plan_r2r` stay
-float/double. The C++20 and C++17 builds are not link-compatible: `admiral::span` is `std::span` at C++20 and
-a polyfill at C++17. The exported target compiles at the configured `ADM_CXX_STANDARD`.
+`std::complex<long double>` only. The long-double transform covers `plan`, `plan_r2c` and the one-shots. In an
+x86-64 build with FMA (`x86-64-v3` and newer), a line of length 8 or more (n/2 for an even-length r2c line)
+runs on SIMD double-double lanes and converts from and to long double only at its ends. The tests compare it
+with a float128 DFT: c2c, r2c and c2r at lengths 8 to 1024, and 12 bins at length 65537. Forward and at the
+default inverse scale, every 1-D output above 2^-30 of the largest output is within 0.5 + 2^-7 ulp. N-D
+transforms round to long double between axes. An input more than about 2^1000 below the largest input of its
+line reads as zero. A non-finite input makes the whole line NaN. Shorter lines, other targets and other
+`long double` formats run a scalar backend. `axis_plan`, `strides_plan` and `plan_r2r` stay float/double. The
+C++20 and C++17 builds are not link-compatible: `admiral::span` is `std::span` at C++20 and a polyfill at
+C++17. The exported target compiles at the configured `ADM_CXX_STANDARD`.
 
 ## License
 BSD 3-Clause Attribution License (SPDX `BSD-3-Clause-Attribution`), see [LICENSE](LICENSE). Redistributions

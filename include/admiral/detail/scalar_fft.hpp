@@ -286,7 +286,7 @@ private:
     std::size_t nthreads_;
 };
 
-template<typename T>
+template<typename T, typename Eng = scalar_c2c<T>>
 class scalar_nd_c2c {
 public:
     explicit scalar_nd_c2c(span<const std::size_t> shape, std::size_t n_axes,
@@ -322,7 +322,7 @@ public:
         }
         for (std::size_t d = 0; d < active_; ++d) {
             const std::size_t len = shape_[d], st = stride_[d];
-            const scalar_c2c<T>& eng = eng_[axis_engine_[d]];
+            const Eng& eng = eng_[axis_engine_[d]];
             const T line_fct = (d == active_ - 1) ? fct : T(1);
             const std::size_t pre = total_ / (len * st);
             const std::size_t nlines = pre * st;
@@ -352,13 +352,13 @@ public:
 
 private:
     std::vector<std::size_t> shape_, stride_;
-    std::vector<scalar_c2c<T>> eng_;
+    std::vector<Eng> eng_;
     std::vector<std::size_t> axis_engine_;
     std::size_t line_cap_;
     std::size_t total_, active_;
 };
 
-template<typename T>
+template<typename T, typename Eng = scalar_c2c<T>>
 class scalar_r2c_1d {
 public:
     explicit scalar_r2c_1d(std::size_t n, std::size_t nthreads = 1)
@@ -411,7 +411,7 @@ public:
 private:
     std::size_t n_, nh_;
     bool even_;
-    scalar_c2c<T> eng_;
+    Eng eng_;
     std::vector<std::complex<T>> tw_;
 };
 
@@ -433,7 +433,7 @@ template<typename T>
                             shape.size() >= 3 ? 2 : 1);
 }
 
-template<typename T>
+template<typename T, typename Eng = scalar_c2c<T>>
 struct scalar_plan_state {
     scalar_plan_state(span<const std::size_t> shape, std::size_t nthreads, bool pin = false)
         : scalar_plan_state(shape, scalar_resolve<T>(shape, nthreads), resolved_tag{}, pin) {}
@@ -459,7 +459,7 @@ public:
     }
 
 private:
-    scalar_nd_c2c<T> plan;
+    scalar_nd_c2c<T, Eng> plan;
     std::unique_ptr<thread_pool> pool_;
 };
 
@@ -486,7 +486,7 @@ template<typename T>
                             work_cyc / core_cyc_per_ns(), shape.size() >= 3 ? 2 : 1);
 }
 
-template<typename T>
+template<typename T, typename Eng = scalar_c2c<T>, typename R2c = scalar_r2c_1d<T, Eng>>
 struct scalar_real_state {
     scalar_real_state(span<const std::size_t> shape, std::size_t nthreads, bool pin = false)
         : scalar_real_state(shape, scalar_real_resolve<T>(shape, nthreads), resolved_tag{},
@@ -548,8 +548,8 @@ private:
     }
 
     std::size_t n_, nh_, rows_;
-    scalar_r2c_1d<T> inner_;
-    scalar_nd_c2c<T> outer_;
+    R2c inner_;
+    scalar_nd_c2c<T, Eng> outer_;
     std::unique_ptr<thread_pool> pool_;
 };
 

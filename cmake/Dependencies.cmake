@@ -88,7 +88,7 @@ if(NOT TARGET xsimd)
     CPMAddPackage(
         NAME xsimd
         GITHUB_REPOSITORY xtensor-stack/xsimd
-        GIT_TAG e3cdb6aee0fe0676d2eea50016d4b340acb56709
+        GIT_TAG 457dcf71ec0aa54a04ca8aa65bce7c1c72361226
         SYSTEM YES
         EXCLUDE_FROM_ALL YES
         OPTIONS
@@ -98,7 +98,7 @@ if(NOT TARGET xsimd)
     )
 
     if(xsimd_ADDED)
-        message(STATUS "xsimd: xtensor-stack/xsimd e3cdb6ae (master + fused scalar fms)")
+        message(STATUS "xsimd: xtensor-stack/xsimd 457dcf71 (master)")
     endif()
 else()
     message(STATUS "xsimd: reusing parent-provided target")

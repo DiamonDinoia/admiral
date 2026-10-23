@@ -43,6 +43,24 @@ if(ADM_PIN_1D)
         inst_real_f.cpp inst_real_d.cpp inst_api_ld.cpp
         PROPERTIES COMPILE_OPTIONS "${_adm_col_numerics}")
 endif()
+# The long double engine (dd_fft.hpp) splits values exactly; fast math folds the splits to zero.
+# Contraction keeps the 0.5 ulp bound but moves low-order output bits, and the compilers default
+# to different modes. Off costs at most 0.5% of the engine's instructions. icpx reassociates by
+# default but defines no __FAST_MATH__, so only this flag, not kDdStrictFp, catches it.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|IntelLLVM")
+    set_property(SOURCE inst_api_ld.cpp APPEND PROPERTY COMPILE_OPTIONS
+        -fno-fast-math -ffp-contract=off)
+    # Fast math also kept the x87 engine's complex products inline; without it each one calls
+    # __mulxc3, and the x87 lines run at half speed.
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag("-fcx-limited-range" ADM_HAVE_CX_LIMITED_RANGE)
+    if(ADM_USE_FAST_MATH AND ADM_HAVE_CX_LIMITED_RANGE)
+        set_property(SOURCE inst_api_ld.cpp APPEND PROPERTY COMPILE_OPTIONS -fcx-limited-range)
+    endif()
+    if(ADM_HAVE_WNO_OVERRIDING_OPTION)
+        set_property(SOURCE inst_api_ld.cpp APPEND PROPERTY COMPILE_OPTIONS -Wno-overriding-option)
+    endif()
+endif()
 target_compile_features(admiral_engine PRIVATE cxx_std_${ADM_CXX_STANDARD})
 target_include_directories(admiral_engine PRIVATE
     ${PROJECT_SOURCE_DIR}/include

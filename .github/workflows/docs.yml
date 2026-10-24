@@ -4,7 +4,6 @@ on:
   push:
     branches: [ master ]
     paths:
-      - 'include/**'
       - 'docs/**'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
@@ -27,13 +26,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install documentation toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y doxygen
-          pip install -r docs/requirements.txt
+        run: pip install -r docs/requirements.txt
 
-      - name: Build (Sphinx runs Doxygen via exhale)
-        run: sphinx-build -b html docs docs/_build/html
+      - name: Build
+        run: sphinx-build -W -b html docs docs/_build/html
 
       - name: Keep Pages from running Jekyll over _static
         run: touch docs/_build/html/.nojekyll

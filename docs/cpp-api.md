@@ -1,103 +1,100 @@
-# The C++ API
-The whole C++ API lives in `<admiral/admiral.hpp>`. Keep a plan when a size repeats. Use a one-shot when it
-does not. Every snippet has a runnable counterpart under [../examples/](../examples/).
+# C++ API
 
-## Complex plans
-```cpp
-admiral::plan<double> p(1024);          // 1-D
-admiral::plan<double> q({64, 64, 8});   // any rank, last axis fastest
-p.forward(x);                           // in place
-p.inverse(x);                           // divides by the element count
-```
+All types are in `admiral/admiral.hpp`, except the error types, which are in `admiral/errors.hpp`.
 
-Forward is unscaled and inverse divides by the element count, so a round trip returns the input. Pass `fct` or
-the `(src, dst)` overloads for out-of-place work. `p.size()` returns the element count the plan expects. Span
-overloads throw on a size mismatch. Pointer overloads trust the caller
-([example](../examples/quickstart.cpp)).
+## Types
 
-One-shots do the same without a plan and always route with `effort::estimate`:
+| Name | Purpose |
+|------|---------|
+| `plan<T>` | Complex transform of any rank. `T` is `float`, `double` or `long double`. |
+| `plan_r2c<T>` | Real-to-complex transform in FFTW's packed layout. The last axis shrinks to `n/2 + 1`. |
+| `plan_r2r<T>` | DCT and DST of one kind, one line or `rows` contiguous lines. `float` and `double` only. |
+| `axis_plan<T>` | Transform of one axis, optionally inside a sub-box. `float` and `double` only. |
+| `strides_plan<T>` | Out-of-place transform of `nbatch` strided lines. `float` and `double` only. |
+| `options` | Settings struct. Every plan and every one-shot takes it. |
+| `effort` | Route selection: `estimate`, `automatic`, `measure`. |
+| `r2r_kind` | Transform kind: `dct2`, `dct3`, `dst2`, `dst3`. |
 
-```cpp
-admiral::forward<double>(x, x);
-admiral::forward<double>(y.data(), {64, 64});   // N-D, in place
-```
+## plan
 
-## Real transforms
-`plan_r2c` transforms real input to half the spectrum, in FFTW's packed layout: the last axis shrinks to `n/2
-+ 1`. `real_size()` and `cplx_size()` return the two buffer lengths
-([example](../examples/real_transforms.cpp)).
+| Name | Purpose |
+|------|---------|
+| `plan(size_t n, const options& = {})` | 1-D plan of `n` elements. |
+| `plan(span<const size_t> shape, const options& = {})` | N-D plan. The last axis is the fastest. A braced list also works. |
+| `forward(span<complex<T>> x, optional<T> fct = {})` | In-place forward transform, unscaled. Throws `size_error` on a size mismatch. |
+| `inverse(span<complex<T>> x, optional<T> fct = {})` | In-place inverse transform. Divides by `size()`. |
+| `forward(complex<T>* x, optional<T> fct = {})` | Pointer overload. Reads and writes `size()` elements without a check. |
+| `inverse(complex<T>* x, optional<T> fct = {})` | Pointer overload of the inverse. |
+| `forward(const complex<T>* src, complex<T>* dst, optional<T> fct = {})` | Out-of-place forward transform. |
+| `inverse(const complex<T>* src, complex<T>* dst, optional<T> fct = {})` | Out-of-place inverse transform. |
+| `size()` | Element count the plan expects. |
 
-```cpp
-admiral::plan_r2c<double> p(512);
-std::vector<double> in(p.real_size());
-std::vector<std::complex<double>> spec(p.cplx_size());
-p.forward(in, spec);
-p.inverse(spec, in);                    // divides by the real element count
-```
+## One-shots
 
-The free `forward(in, out, shape)` and `inverse(spec, out, shape)` overloads are the one-shot forms: they
-plan, transform, and discard.
+| Name | Purpose |
+|------|---------|
+| `forward(span<const complex<T>> in, span<complex<T>> out, const options& = {}, optional<T> fct = {})` | 1-D complex transform without a plan. |
+| `inverse(span<const complex<T>> in, span<complex<T>> out, const options& = {}, optional<T> fct = {})` | 1-D complex inverse without a plan. |
+| `forward(complex<T>* x, span<const size_t> shape, const options& = {}, optional<T> fct = {})` | N-D in-place transform without a plan. |
+| `inverse(complex<T>* x, span<const size_t> shape, const options& = {}, optional<T> fct = {})` | N-D in-place inverse without a plan. |
+| `forward(const T* in, complex<T>* out, span<const size_t> shape, const options& = {}, optional<T> fct = {})` | Real-to-complex transform without a plan. |
+| `inverse(complex<T>* spec, T* out, span<const size_t> shape, const options& = {}, optional<T> fct = {})` | Complex-to-real inverse without a plan. |
 
-## DCT / DST
-`plan_r2r` takes one of `r2r_kind::{dct2, dct3, dst2, dst3}` (FFTW's REDFT10, REDFT01, RODFT10, RODFT01).
-`forward()` applies the unnormalized kind and `inverse()` its exact inverse scaled by 1/(2N), so a round trip
-returns the input. Pass `fct` for FFTW's 2N scaling. The `rows` form transforms `rows` contiguous lines at
-once. There is no strided r2r, so an N-D DCT requires a transpose to the innermost axis first
-([example](../examples/r2r_dct.cpp)).
+## plan_r2c
 
-```cpp
-admiral::plan_r2r<double> dct2(n, admiral::r2r_kind::dct2);
-dct2.forward(in, out);
-dct2.inverse(out, in);
+| Name | Purpose |
+|------|---------|
+| `plan_r2c(span<const size_t> shape, const options& = {})` | Plan for a real array of the given shape. A size or a braced list also works. |
+| `forward(span<const T> in, span<complex<T>> out, optional<T> fct = {})` | Real to half spectrum. |
+| `inverse(span<complex<T>> spec, span<T> out, optional<T> fct = {})` | Half spectrum to real. Divides by the real element count. |
+| `forward(const T* in, complex<T>* out, optional<T> fct = {})` | Pointer overload. No size check. |
+| `inverse(complex<T>* spec, T* out, optional<T> fct = {})` | Pointer overload. No size check. |
+| `real_size()` | Length of the real buffer. |
+| `cplx_size()` | Length of the complex buffer. |
 
-admiral::plan_r2r<double> batched(n, admiral::r2r_kind::dct2, rows);
-```
+## plan_r2r
 
-## One axis of a tensor
-`axis_plan` transforms a single axis, optionally inside a rectangular sub-box. Chaining a plan per axis equals
-`plan<T>(shape)`. `execute_bands()` runs the same plan on two disjoint bands of the last dimension in one call.
-The header states when that beats two `execute()` calls ([example](../examples/axis_transform.cpp)).
+| Name | Purpose |
+|------|---------|
+| `plan_r2r(size_t n, r2r_kind kind, size_t rows = 1, const options& = {})` | Plan for `rows` contiguous lines of length `n`. |
+| `forward(span<const T> in, span<T> out, optional<T> fct = {})` | Applies the unnormalized kind. |
+| `inverse(span<const T> in, span<T> out, optional<T> fct = {})` | Applies the exact inverse, scaled by 1/(2N). |
+| `forward(const T* in, T* out, optional<T> fct = {})` | Pointer overload. No size check. |
+| `inverse(const T* in, T* out, optional<T> fct = {})` | Pointer overload. No size check. |
+| `size()` | Element count the plan expects. |
 
-```cpp
-admiral::axis_plan<double> ax0({rows, cols}, 0, /*forward=*/true);
-ax0.execute(data.data(), {}, {});        // empty bounds = full extent
-```
+## axis_plan
 
-## Strided lines
-`strides_plan` transforms `nbatch` lines of `len` complex elements out of place, with FFTW's `plan_many(rank =
-1)` geometry: a stride separates the elements of one transform, and a dist separates consecutive transforms.
-Source and destination carry independent pairs, so one plan can gather, scatter, or transpose.
+| Name | Purpose |
+|------|---------|
+| `axis_plan(span<const size_t> shape, size_t axis, bool forward, const options& = {})` | Plan for one axis of a tensor of the given shape. |
+| `execute(complex<T>* data, span<const size_t> lo, span<const size_t> hi, optional<T> fct = {})` | Transforms the sub-box `[lo, hi)`. Empty bounds mean the full extent. |
+| `execute_bands(complex<T>* data, span<const size_t> lo, span<const size_t> hi, size_t lo2_last, size_t hi2_last, optional<T> fct = {})` | Runs the plan on two disjoint bands of the last dimension in one call. |
 
-```cpp
-// Transforms every column of a row-major (rows x cols) matrix and writes column-major.
-admiral::strides_plan<double> columns(/*len=*/rows, /*nbatch=*/cols,
-                                      /*in_stride=*/cols, /*in_dist=*/1,
-                                      /*out_stride=*/1,   /*out_dist=*/rows);
-columns.forward(src.data(), dst.data());
-```
+## strides_plan
 
-The input geometry alone picks the kernel, so a given source produces bit-identical results for every output
-layout. A unit input dist runs the batched SIMD column pass, a unit input stride runs one contiguous transform
-per line, and any other pair moves groups of columns through scratch. At `src == dst` the transform runs in
-place and the two layouts must match. `float` and `double` only, because the strided kernels are SIMD
-([example](../examples/strided_lines.cpp)).
+| Name | Purpose |
+|------|---------|
+| `strides_plan(size_t len, size_t nbatch, size_t in_stride, size_t in_dist, size_t out_stride, size_t out_dist, const options& = {})` | Plan for `nbatch` lines of `len` elements with FFTW's `plan_many` geometry. |
+| `forward(const complex<T>* src, complex<T>* dst, optional<T> fct = {})` | Forward transform. `src == dst` needs equal layouts. |
+| `inverse(const complex<T>* src, complex<T>* dst, optional<T> fct = {})` | Inverse transform. |
+| `size()` | Element count the plan expects. |
+
+## options
+
+| Field | Default | Purpose |
+|-------|---------|---------|
+| `nthreads` | `0` | Worker threads. `0` selects automatically, `1` forces serial, `n` forces `n`. |
+| `eff` | `effort::estimate` | Route selection of the plan classes. `automatic` and `measure` time the top candidates at construction. One-shots always use `estimate`. |
+| `debug` | `0` | Stderr trace per execute, level `0` to `3`. |
+| `pin_threads` | `false` | Binds each pool worker to one physical core. Linux only. |
 
 ## Errors
-Every failure the caller can cause derives from `admiral::error` and carries an `error_code`:
 
-```cpp
-try {
-    admiral::plan<double> p(0);            // zero size
-} catch (const admiral::error& e) {
-    assert(e.code() == admiral::error_code::invalid_size);
-}
-```
-
-- `size_error` (`invalid_size`): zero extents, span/plan size mismatches, out-of-range axes.
-- `unsupported_error` (`unsupported`): a forced route the size cannot take.
-- `internal_error` (`internal`): an invariant break, never a bad argument.
-- Allocation failure stays `std::bad_alloc`.
-
-Any plan or one-shot takes `{.nthreads = N, .eff = .., .debug = ..}`. [usage.md](usage.md#options) has the
-field table and the [C](usage.md#c) and [FFTW](usage.md#fftw) interfaces, and
-[build-options.md](build-options.md) has the CMake options.
+| Name | Purpose |
+|------|---------|
+| `error` | Base class. Derives from `std::runtime_error`. `code()` returns an `error_code`. |
+| `size_error` | `invalid_size`: zero extent, size mismatch, axis out of range. |
+| `unsupported_error` | `unsupported`: a forced route that the size does not allow. |
+| `internal_error` | `internal`: a broken invariant, not a bad argument. |
+| `error_code` | Enum: `invalid_size`, `unsupported`, `internal`. |

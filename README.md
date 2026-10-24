@@ -70,9 +70,8 @@ find_package(admiral REQUIRED)   # needs CMAKE_PREFIX_PATH=/your/prefix
 target_link_libraries(app PRIVATE admiral::admiral)
 ```
 
-The CMake targets are in [docs/install.md](docs/install.md), which also covers `FetchContent`, `add_subdirectory`
-and the static-link rules. [docs/usage.md](docs/usage.md) covers the data layout, the scaling, the runtime
-options, the C API and the FFTW shim. [docs/](docs/README.md) is the docs index.
+[docs/cpp-api.md](docs/cpp-api.md) is the C++ API reference. [docs/build-options.md](docs/build-options.md)
+lists the CMake options.
 
 The engine is compiled, so the C++ API creates plans for `std::complex<float>`, `std::complex<double>` and
 `std::complex<long double>` only. The long-double transform covers `plan`, `plan_r2c` and the one-shots. In an

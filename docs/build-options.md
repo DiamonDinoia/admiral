@@ -1,42 +1,40 @@
-# Build and runtime options
-The defaults ship a fast library: `Release`, `-march=native`, fast math, threads, and plan-time measurement
-all on. Change the defaults when packaging, cross-compiling, or debugging. Every option is a CMake cache
-variable: pass `-DNAME=value` on the configure line.
+# Build options
 
-## User-facing build options
-| Option | What it does, and when to change it | Default |
-|--------|-------------------------------------|---------|
-| `ADM_BUILD_TESTS` | Builds the Catch2 test suite (see `test/`). Turn off for an install-only build | `ON` as top-level project |
-| `ADM_BUILD_BENCHMARKS` | Builds `admiral_benchmark`, which fetches ducc0 and nanobench. Only needed to measure performance; see `benchmark/` | `ON` as top-level project |
-| `ADM_BUILD_EXAMPLES` | Builds the runnable examples in `examples/` and registers them with ctest | `ON` as top-level project |
-| `ADM_CXX_STANDARD` | The standard the library and its public headers compile at: `17`, `20`, or `23`. The two builds are not link-compatible: `admiral::span` is `std::span` at C++20 and a polyfill at C++17 | `20` |
-| `ADM_ENABLE_THREADS` | `OFF` makes every plan serial regardless of `nthreads` and drops the threads library from the link. Turn off for a single-threaded environment | `ON` |
-| `ADM_MEASURE` | Compiles in plan-time route measurement (`effort::automatic`/`measure`, and FFTW's non-`ESTIMATE` flags). `OFF` keeps the flags accepted but inert: every plan routes by the cost model, so plans become bitwise reproducible across runs | `ON` |
-| `ADM_TARGET_ARCH` | The one `-march` the whole build uses. `native` is fastest on the build machine but the binaries may not run elsewhere; use `x86-64-v3` for portable binaries, `none` for the compiler baseline. Also the build-memory knob: one engine TU peaks near 12 GB at AVX-512 `native` versus ~2 GB at `x86-64-v2`. Do not also pass `-march` in `CMAKE_CXX_FLAGS` | `native` |
-| `ADM_USE_FAST_MATH` | Adds `-ffast-math`: faster transforms, but relaxed IEEE semantics (reassociation, flushed denormals, no errno). Turn off when strict IEEE semantics matter | `ON` |
-| `ADM_GRANULE_ADMIT` | Admits the AoS-granule leaf kernels into the codelet routes. `OFF` removes the granule arms at compile time (`if constexpr`), so the SoA fallback runs; the default build is byte-identical to a pre-knob tree | `ON` |
-| `ADM_BENCH_FFTW` | Adds an FFTW reference arm to `admiral_benchmark`. Needs the system `fftw3` and `fftw3f`, found through pkg-config | `OFF` |
-| `ADM_BENCH_THREADS` | Threads the benchmark reference libraries too (ducc0's pool, FFTW's `fftw3_threads` companions) | `OFF` |
+Pass each option as `-DNAME=value` on the CMake configure line.
 
-## Development options
-These options face maintainers. The seven presets in `CMakePresets.json` cover the common combinations
-(`debug`, `asan`, `tsan`, `coverage`, `dev`, `release`, `relwithdebinfo`), and `scripts/validate.sh` sweeps
-them. Every preset except `release` has a matching test preset; `release` builds no tests
-(`ADM_BUILD_TESTS=OFF`, and `-DADM_BUILD_TESTS=ON` enables the full suite), so `ctest
---preset dev` is the test entry point. `dev` is the same optimized build with tests on and benchmarks off.
+| Option | Default | Values | Effect |
+|--------|---------|--------|--------|
+| `ADM_BUILD_TESTS` | `ON` as top-level project | `ON`, `OFF` | Builds the Catch2 test suite. |
+| `ADM_BUILD_BENCHMARKS` | `ON` as top-level project | `ON`, `OFF` | Builds `admiral_benchmark`. Downloads ducc0 and nanobench. |
+| `ADM_BUILD_EXAMPLES` | `ON` as top-level project | `ON`, `OFF` | Builds the programs in `examples/` and registers them with ctest. |
+| `ADM_CXX_STANDARD` | `20` | `17`, `20`, `23` | C++ standard of the library and its public headers. The builds are not link-compatible. |
+| `ADM_ENABLE_THREADS` | `ON` | `ON`, `OFF` | `OFF` makes every plan serial and drops the threads library from the link. |
+| `ADM_MEASURE` | `ON` | `ON`, `OFF` | Compiles in plan-time route measurement. `OFF` makes `effort::automatic` and `effort::measure` inert. |
+| `ADM_TARGET_ARCH` | `native` | `native`, `none`, an architecture or CPU name | Sets the target CPU. `none` adds no flag on every compiler. `native` on a cross build adds no flag. GCC and Clang get `-mcpu=` in two cases. One case is a processor name that starts with `arm`, `powerpc` or `ppc`. The other is `arm64` or `aarch64` on Apple. They get `-march=` otherwise, including Linux aarch64. MSVC on x86 and AMD64 gets `/arch:AVX2` for any other value. Other combinations, such as MSVC on ARM64, get no flag. Use `x86-64-v3` for portable binaries. |
+| `ADM_ENABLE_WARNINGS_AS_ERRORS` | `ON` | `ON`, `OFF` | Adds `-Werror` (`/WX` on MSVC) to the compile of the admiral targets. Applies as a subproject too, because the default is `ON` there. Set `OFF` before `add_subdirectory` to disable it. Consumer targets are not affected. |
+| `ADM_ENABLE_LTO` | `OFF` | `ON`, `OFF` | Turns on interprocedural optimization for Release, RelWithDebInfo and MinSizeRel builds when the compiler supports it. Not for shipping: the installed archives link only with the exact compiler. |
+| `ADM_ENABLE_PCH` | `OFF` | `ON`, `OFF` | Precompiles `xsimd/xsimd.hpp` and `poet/poet.hpp` for the engine and codelet targets. |
+| `ADM_SANITIZER` | `none` | `none`, `address`, `undefined`, `address+undefined`, `thread` | Adds `-fsanitize=` to compile and link. Needs GCC or Clang. Other values and compilers stop the configure. A sanitizer build also trims the codelet catalog to sizes up to 16, plus 45, and ignores `ADM_CODELET_MAX_N` and `ADM_CODELET_EXTRA_SIZES`. |
+| `ADM_USE_FAST_MATH` | `ON` | `ON`, `OFF` | Adds `-ffast-math`. `OFF` keeps strict IEEE semantics. |
+| `ADM_GRANULE_ADMIT` | `ON` | `ON`, `OFF` | `OFF` removes the AoS-granule leaf kernels at compile time. |
+| `ADM_CODELET_MIN_N` | `2` | integer, at least 2 | Smallest size that gets a compiled straight-line codelet. |
+| `ADM_CODELET_MAX_N` | `64` | integer, at least `ADM_CODELET_MIN_N` | Largest size that gets a compiled straight-line codelet. |
+| `ADM_CODELET_EXCLUDE_SIZES` | empty | list separated by `;` | Sizes that the generated codelet catalog leaves out. |
+| `ADM_CODELET_EXTRA_SIZES` | `120;65;85;143;100;360` | list separated by `;` | Sizes that the catalog adds beyond `ADM_CODELET_MIN_N` to `ADM_CODELET_MAX_N`. |
+| `ADM_EXTRA_C_FLAGS` | not set | flag string | Adds these flags to every C compile of the admiral targets. |
+| `ADM_EXTRA_CXX_FLAGS` | not set | flag string | Adds these flags to every C++ compile of the admiral targets. |
+| `ADM_BENCH_FFTW` | `OFF` | `ON`, `OFF` | Adds an FFTW reference to `admiral_benchmark`. Requires system `fftw3` and `fftw3f`. |
+| `ADM_BENCH_THREADS` | `OFF` | `ON`, `OFF` | Threads the benchmark reference libraries (ducc0, FFTW). |
 
-| Option | What it does | Default |
-|--------|--------------|---------|
-| `ADM_ENABLE_WARNINGS_AS_ERRORS` | `-Werror` profile on the library targets | `ON` |
-| `ADM_SANITIZER` | One of `none`, `address`, `undefined`, `address+undefined`, `thread`, checked at configure time. Needs GCC or Clang; the `asan` preset pins Clang | `none` |
-| `ADM_ENABLE_LTO` | Link-time optimization across the engine TUs | `OFF` |
-| `ADM_ENABLE_PCH` | Precompiled headers for the library targets | `OFF` |
-| `ADM_FIT_COST_MODEL` | Exposes the `admiral_cost_sweep` and `admiral_cost_model` targets that re-measure and regenerate the routing cost-model header | `OFF` |
-| `ADM_COST_MODEL_DATA` | Directory of BASECOST receipts the `admiral_cost_model` refit reads | `${source_dir}/bench-results` |
-| `ADM_COST_MODEL_TAG` | Name of the receipt the `admiral_cost_sweep` target writes. The default encodes compiler, arch, and flags | derived from the build |
-| `ADM_COST_MODEL_OUT` | Header the refit writes. Point elsewhere to dry-run without dirtying the checkout | the tracked header in `include/` |
+## Development
 
-## Runtime options
-Every plan and one-shot takes an optional `admiral::options` aggregate (`adm_options` by pointer in C). The
-fields are `nthreads`, `eff`, `debug`, and `pin_threads`. [usage.md](usage.md) documents each. The library
-reads no environment variables.
+| Option | Default | Values | Effect |
+|--------|---------|--------|--------|
+| `ADM_PIN_1D` | `OFF` | `ON`, `OFF` | Pins floating-point contraction and reassociation in the 1-D engine instantiation TUs. |
+| `ADM_PIN_PLAN_ESTIMATE` | `OFF` | `ON`, `OFF` | Resolves every plan route as `effort::estimate`, even at `measure` and `automatic`. |
+| `ADM_ENABLE_CLANG_TIDY` | `OFF` | `ON`, `OFF` | Runs clang-tidy on the admiral sources during the build. |
+| `ADM_ENABLE_CPPCHECK` | `OFF` | `ON`, `OFF` | Runs cppcheck on the admiral sources during the build. |
+| `ADM_FIT_COST_MODEL` | `OFF` | `ON`, `OFF` | Adds the targets that re-measure and refit the routing cost model. The next three options need it. |
+| `ADM_COST_MODEL_DATA` | `bench-results/` in the source tree | path | Directory of receipts that the fit reads. |
+| `ADM_COST_MODEL_OUT` | `include/admiral/detail/base_cost_model.hpp` | path | Header that `admiral_cost_model` regenerates. |
+| `ADM_COST_MODEL_TAG` | `<compiler><major>_<processor>_<hash>`, the hash of the C++ flags and the probed CPU model | string | Name of the receipt that this build writes. |

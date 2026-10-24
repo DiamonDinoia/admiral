@@ -98,8 +98,9 @@ jobs:
         run: grep -q 'LAUNCHER = ccache' build/build.ninja
       - run: cmake --build build
       - run: ctest --test-dir build --timeout 900 --output-on-failure --no-tests=error
-      # The only cell that links a consumer against the DLL, which is what proves the headers
-      # say dllimport outside the build.
+      # Same consumer project as test/package/run_routes.sh (the prefix route). It stays here
+      # because every compiler and standard cell installs its own build and consumes it without
+      # a second build.
       - name: Install and consume
         run: |
           cmake --install build --prefix "$PWD/prefix"
@@ -385,27 +386,136 @@ jobs:
             cov.profdata
             coverage.lcov
 
-  install:
-    timeout-minutes: 30
+  # The shim (libadmiral_fftw.so) must replace real FFTW in a program that was linked against
+  # FFTW and never rebuilt. run.sh checks the symbol bindings, not only the output. The prefix
+  # sets CMAKE_INSTALL_LIBDIR=lib because run.sh reads $PREFIX/lib.
+  preload:
+    timeout-minutes: 60
+    name: LD_PRELOAD ${{ matrix.cxx }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {cxx: g++-14, generator: Ninja Multi-Config}
+          - {cxx: clang++-18, generator: Ninja}
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build libfftw3-dev pkg-config g++-14
+      # The build uses ADM_TARGET_ARCH=native, so objects depend on the runner CPU. The action
+      # restores any cache whose key starts with the given key (restore.ts calls
+      # cache.restoreCache(paths, primaryKey, restoreKeys)), so the CPU hash sits in the key.
+      - name: Hash the CPU
+        id: cpu
+        run: |
+          id=$(grep -m1 '^flags' /proc/cpuinfo)
+          [ -n "$id" ]
+          echo "id=$(printf '%s' "$id" | shasum -a 256 | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: preload-${{ matrix.cxx }}-${{ steps.cpu.outputs.id }}
+      # Compiler, generator and job count come from the environment, so no flag lands on
+      # those lines.
+      - name: Build and install to a prefix
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_LIBDIR=lib -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=OFF -DADM_BUILD_EXAMPLES=OFF
+          cmake --build build --parallel --config Release
+          cmake --install build --prefix "$PREFIX" --config Release
+        env:
+          CXX: ${{ matrix.cxx }}
+          CMAKE_GENERATOR: ${{ matrix.generator }}
+          CMAKE_BUILD_PARALLEL_LEVEL: 4
+          PREFIX: ${{ github.workspace }}/prefix
+      - name: Run an unmodified FFTW program on the shim
+        run: test/preload/run.sh "$PREFIX" "$RUNNER_TEMP/preload"
+        env:
+          PREFIX: ${{ github.workspace }}/prefix
+
+  # Every way a downstream project can get admiral. The git routes redirect the GitHub URL to
+  # the checkout under test, and clone the dependencies once (network).
+  install-routes:
+    timeout-minutes: 60
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - run: sudo apt-get update && sudo apt-get install -y g++-14 ninja-build
       - uses: hendrikmuhs/ccache-action@v1
         with:
-          key: install
-      - name: Install to a prefix
+          key: install-routes
+      - name: All routes
+        run: test/package/run_routes.sh "$PWD" "$RUNNER_TEMP/routes"
+        env: {CXX: g++-14}
+
+  # The installed-prefix routes (find_package) on the other two platforms. The routes that read
+  # the source tree or clone from GitHub (subdir, fetch_dir, fetch_git, cpm) run on Linux only.
+  # cc_fftw skips Windows: it needs a plain cc with -L and an rpath.
+  # macOS builds at ADM_TARGET_ARCH=native, so its cache key holds a chip hash. Windows resolves
+  # to /arch:AVX2 and needs none.
+  install-routes-other:
+    timeout-minutes: 90
+    name: prefix routes ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: macos-15, launcher: ccache, routes: 'prefix_shared prefix_static c_only cc_fftw relocated'}
+          - {os: windows-2025, launcher: sccache, routes: 'prefix_shared prefix_static c_only relocated'}
+    runs-on: ${{ matrix.os }}
+    env:
+      CMAKE_CXX_COMPILER_LAUNCHER: ${{ matrix.launcher }}
+      CMAKE_C_COMPILER_LAUNCHER: ${{ matrix.launcher }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aminya/setup-cpp@v1
+        with:
+          compiler: ${{ runner.os == 'Windows' && 'msvc' || 'apple-clang' }}
+          cmake: true
+          ninja: true
+          vcvarsall: ${{ runner.os == 'Windows' }}
+          cache-tools: true
+      - if: runner.os != 'Windows'
+        name: Hash the CPU
+        id: cpu
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DADM_TARGET_ARCH=x86-64-v2 \
-            -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=OFF \
-            -DCMAKE_INSTALL_PREFIX=$PWD/prefix
-          cmake --build build --target install
-      - name: Consume the prefix through find_package
+          id=$(sysctl -n machdep.cpu.brand_string)
+          [ -n "$id" ]
+          echo "id=$(printf '%s' "$id" | shasum -a 256 | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - uses: hendrikmuhs/ccache-action@v1
+        with:
+          variant: ${{ matrix.launcher }}
+          key: install-routes-${{ matrix.os }}-${{ steps.cpu.outputs.id }}
+      # run_routes.sh takes the generator from CMAKE_GENERATOR, and NMake (the vcvarsall default)
+      # rejects the arch option.
+      - name: Prefix routes
+        run: test/package/run_routes.sh "$PWD" "$RUNNER_TEMP/routes" ${{ matrix.routes }}
+        env: {CMAKE_GENERATOR: Ninja}
+
+  # check_readme.sh is awk-based, and awk differs between systems. The fixtures run once with
+  # gawk and once with mawk, whatever awk the image ships.
+  readme-check:
+    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y gawk mawk
+      - name: Fixtures, gawk
         run: |
-          cmake -S test/package -B build-pkg -G Ninja -DCMAKE_PREFIX_PATH=$PWD/prefix
-          cmake --build build-pkg
-          ctest --test-dir build-pkg --timeout 900 --output-on-failure --no-tests=error
+          mkdir -p "$RUNNER_TEMP/gawk-bin"
+          ln -sf "$(command -v gawk)" "$RUNNER_TEMP/gawk-bin/awk"
+          export PATH="$RUNNER_TEMP/gawk-bin:$PATH"
+          # The shim must win, or this step runs another awk.
+          [ "$(readlink -f "$(command -v awk)")" = "$(readlink -f "$(command -v gawk)")" ]
+          test/readme_check/run.sh
+      - name: Fixtures, mawk
+        run: |
+          mkdir -p "$RUNNER_TEMP/mawk-bin"
+          ln -sf "$(command -v mawk)" "$RUNNER_TEMP/mawk-bin/awk"
+          export PATH="$RUNNER_TEMP/mawk-bin:$PATH"
+          [ "$(readlink -f "$(command -v awk)")" = "$(readlink -f "$(command -v mawk)")" ]
+          test/readme_check/run.sh
 
   v4-sde:
     timeout-minutes: 60

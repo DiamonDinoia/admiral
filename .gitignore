@@ -73,7 +73,6 @@ _deps/
 .DS_Store
 Thumbs.db
 
-docs/_build/
 report/
 
 # Knowledge-graph artifacts (generated, never committed)

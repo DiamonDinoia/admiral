@@ -114,6 +114,10 @@ adm_add_surface(admiral_fftw
     SOURCE fftw_compat.cpp
     VERSION_SCRIPT admiral_fftw.map
     EXPORT_NAME fftw)
+# fftw_compat.cpp calls dlsym on POSIX. CMAKE_DL_LIBS is empty on Windows.
+target_link_libraries(admiral_fftw PRIVATE ${CMAKE_DL_LIBS})
+target_link_libraries(admiral_fftw_static PUBLIC ${CMAKE_DL_LIBS})
+target_link_libraries(admiral_fftw_objects INTERFACE ${CMAKE_DL_LIBS})
 
 # One shared library, built once from the engine objects, linked by every consumer in this
 # tree. As an archive it pasted the whole engine into each consumer instead.

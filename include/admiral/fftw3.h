@@ -52,13 +52,24 @@ FFTW_C_API fftw_plan fftw_plan_dft(int rank, const int* n, fftw_complex* in,
 
 // `fftw_execute` reuses the plan-time `in`/`out`, so two concurrent calls race on that one output
 // array; `fftw_execute_dft` takes fresh buffers. Either runs in place at `in == out`.
-// `fftw_destroy_plan` accepts NULL.
+// `fftw_destroy_plan` accepts NULL. A plan made by another FFTW (under LD_PRELOAD) goes to the
+// next FFTW through dlsym(RTLD_NEXT). On Linux, if that finds none, the call goes to the first
+// library loaded after the shim that defines the function, with any soname and in any scope, so
+// an FFTW that a plugin opens with RTLD_LOCAL gets its plans. The first FFTW found gets the plans
+// of every other FFTW. If no search finds a library, the call prints a line to stderr and aborts.
+// Windows has no dlsym(RTLD_NEXT) and no search, so a plan from another FFTW aborts there. A call
+// that the next FFTW sends back to the shim, as a second copy of the shim can, aborts too. The
+// same holds for the `fftwf_` calls.
+// Under LD_PRELOAD, any FFTW function that this header does not declare crashes on a shim plan.
+// The Fortran `dfftw_*` API crashes only where libfftw3 calls its own planners through the PLT:
+// the FFTW 3.3.8 of RHEL 9 does, the 3.3.10 of Ubuntu 24.04 does not.
 FFTW_C_API void fftw_execute(const fftw_plan p) ADM_FFTW_NOEXCEPT;
 FFTW_C_API void fftw_execute_dft(const fftw_plan p, fftw_complex* in, fftw_complex* out)
     ADM_FFTW_NOEXCEPT;
 FFTW_C_API void fftw_destroy_plan(fftw_plan p);
 
-// `fftw_malloc` returns memory aligned for the SIMD engine, or NULL. `fftw_cleanup` is a no-op.
+// `fftw_malloc` returns memory aligned for the SIMD engine, or NULL. `fftw_cleanup` frees
+// nothing here and calls the next FFTW's `fftw_cleanup` if one is loaded.
 FFTW_C_API void*         fftw_malloc(size_t n);
 FFTW_C_API void          fftw_free(void* p);
 FFTW_C_API double*       fftw_alloc_real(size_t n);

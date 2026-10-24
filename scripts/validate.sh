@@ -110,7 +110,7 @@ arm_catalog() {
 # The shipped arm runs under the banked upper-bound waiver
 # test/digest/golden/allowed-movers-wi4a-2026-09-17.txt: the shipped dialect keys
 # vector-arm dispatch on pointer alignment, so the address-sensitive case class
-# (receipt wi4a-nd-scratch-tls) moves on ANY allocation-layout change; a mover outside
+# (address-allocation-layout class) moves on ANY allocation-layout change; a mover outside
 # the bank fails the arm, an unexercised entry is an improvement. The strict arm and
 # the --ulp positive control stay zero-tolerance exact-match, plus a strict-arm mover
 # must also be a shipped-arm mover (the strict build never moves a case alone; cases a
@@ -151,8 +151,8 @@ arm_digest() {
             { echo "  FAILED: $sub configure/build (see $log)"; failed+=("digest"); return; }
         # cat puts stdout in the 4096-blksize class: a direct 1 MiB-blksize NFS file
         # sink scales the stdio first heap alloc, which shifts the Bluestein/Rader
-        # buffers' alignment class and flips prime>11 1-D cases (9 spurious movers,
-        # 2026-09-15). pipefail (line 3) keeps the binary's rc through the pipe.
+        # buffers' alignment class and flips prime>11 1-D cases (9 spurious movers).
+        # pipefail (line 3) keeps the binary's rc through the pipe.
         if "$dir/test/admiral_digest" 2>>"$log" | cat >"$gen/$sub.txt"; then
             echo "--- $sub: $(wc -l <"$gen/$sub.txt") cases" >>"$log"
         else
@@ -302,7 +302,7 @@ run_static_analysis_arm() {
 arm_tidy() { run_static_analysis_arm tidy clang-tidy clang++ ADM_ENABLE_CLANG_TIDY; }
 arm_cppcheck() { run_static_analysis_arm cppcheck cppcheck g++ ADM_ENABLE_CPPCHECK; }
 
-# Constants-with-receipt coupling (WI-0b): a commit touching a hand-fit- or probe-fit
+# Constants-with-receipt coupling: a commit touching a hand-fit- or probe-fit
 # constants header must name its derivation receipt. The scan is
 # scripts/receipt_coupling_check.sh over ${ADM_VALIDATE_BASE:-HEAD~1}..HEAD (an empty
 # range passes trivially and says so); the control runs first, so a scan that cannot
@@ -332,7 +332,7 @@ arm_receipt-coupling() {
     esac
 }
 
-# WI-0c-ii granule admission A/B. Builds the tree four times (x86-64-v4/v3 crossed with
+# Granule admission A/B. Builds the tree four times (x86-64-v4/v3 crossed with
 # ADM_GRANULE_ADMIT ON/OFF; Release, tests off, benchmarks on, the bench_granule_ab target
 # only), asserts the knob arrive per build via check_flags plus the CMake cache and a
 # symbol-level control (ON libadmiral_internal instantiates the granule drivers, OFF none).
@@ -391,7 +391,7 @@ arm_granule-admission() {
 
     # Timing: six rounds of on/off/ctl per ISA, start order rotated across rounds.
     # ctl re-runs the ON binary: the per-round on/ctl spread is the identity floor.
-    # The 4x4x4/8x8x8 cells are the fast3d cube payloads (WI-1a); they are judged by the
+    # The 4x4x4/8x8x8 cells are the fast3d cube payloads; they are judged by the
     # same WIN/LOSS/FLAT rule as the rows/cols squares.
     local cells="12x12:f32 12x12:f64 16x16:f32 24x24:f32 24x24:f64 4x4x4:f32 4x4x4:f64 8x8x8:f32 8x8x8:f64 9x9:f64 10x10:f32 10x10:f64 11x11:f64 13x13:f32 13x13:f64 14x14:f32 14x14:f64 15x15:f32 15x15:f64"
     local r order arm bin tsv

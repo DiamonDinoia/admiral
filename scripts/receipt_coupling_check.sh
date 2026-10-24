@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# The receipt-coupling scan (WI-0b). A commit that touches a hand-fit- or probe-fit
-# constants header must carry "receipt:" (any case) in its message: a fitted or
-# hand-derived constant and the receipt it was read from are one artifact (the
-# four_step_large admission lines are hand-fit measured crossovers), so the constants
-# set below is whole headers, not symbols inside them.
+# The receipt-coupling scan. A receipt is the sweep output or measurement a constant was
+# read from. A commit that touches a hand-fit- or probe-fit constants header must carry
+# "receipt:" (any case) in its message: a fitted or hand-derived constant and its receipt
+# are one artifact. Some constants are the measured prior and fallback of a runtime probe
+# (plan_impl<T>::probe_large_route_serial), so the set below is whole headers, not symbols.
 # A constants move that names no receipt is exactly the cohort-tuned-constant disease:
 # the number survives, the derivation does not, and the next host cohort silently reads
 # a misfit value.
@@ -21,7 +21,7 @@ range=${2:-HEAD~1..HEAD}
 
 # base_cost_model.hpp is GENERATED, and a coefficients move IS a constants move;
 # nd_plan.hpp is header-level over-coupled by design (its named constants share the
-# header with the route gates they were fitted against; see the wi0b receipt).
+# header with the route gates they were fitted against).
 constants=(
     include/admiral/detail/four_step_large.hpp
     include/admiral/detail/granule_codelet.hpp

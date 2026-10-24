@@ -4,7 +4,7 @@
 # The set below enables the checks that catch real defects reachable in this code.
 # Every check that is OFF gets a one-line reason here or in CheckOptions below.
 #
-# Run with llvm/19.1.7 and the clang compile_commands.json (sa-audit build).
+# Run with llvm/19.1.7 and the clang compile_commands.json (the clang build tree).
 # The validate.sh `tidy` arm reproduces this exactly.
 
 Checks:

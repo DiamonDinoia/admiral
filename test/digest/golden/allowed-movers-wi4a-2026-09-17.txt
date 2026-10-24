@@ -1,18 +1,16 @@
 # Allowed digest movers, SHIPPED arm only -- an upper bound, not an exact prediction.
 # Host class: ccmlin075 (Xeon w5-3435X, SPR), gcc 14.2.0, x86-64-v3 Release,
-# branch math-clarity-2026-09-16 tip 37cd1c0, banked 2026-09-17.
+# commit 37cd1c0, banked 2026-09-17.
 #
-# Receipt: beat-standings/wi4a-nd-scratch-tls.md. Every entry is a member of the
-# address-allocation-layout roulette class (1-D lengths with a prime factor > 11
-# change bits even with the col pin on):
-# the shipped arm's contract-reassociate codegen keys vector-arm dispatch on pointer
-# alignment, so a change to the construction-time allocation sequence re-draws which
-# address-sensitive cases move. The class pool: 1-D lengths with a prime factor > 11
-# (Bluestein/Rader arms), the pow2-dif surface {96, 128, 160, 192, 256, 320}
-# (beat-standings/phase7-plan-storage.md), and the N-D 96x96 line. This list is the
-# 2026-09-17 draw at the branch tip: 89 prime-factor>11 ids + 256xI (id 1181) +
-# 96x96xF (id 1320). The strict dialect is address-insensitive (0 movers in every
-# experiment), so the strict arm and the --ulp 700 control stay zero-tolerance.
+# Every entry is a member of the address-allocation-layout class: the shipped arm's
+# contract-reassociate codegen keys vector-arm dispatch on pointer alignment, so a change
+# to the construction-time allocation sequence re-draws which address-sensitive cases
+# move. The class pool is 1-D lengths with a prime factor > 11 (Bluestein/Rader arms,
+# which change bits even with the col pin on), the lengths {96, 128, 160, 192, 256, 320}
+# (the 1-D engine's output bits depend on data alignment there), and the N-D 96x96 line.
+# This list is the 2026-09-17 draw at that commit: 89 prime-factor>11 ids + 256xI
+# (id 1181) + 96x96xF (id 1320). The strict dialect is address-insensitive (0 movers in
+# every experiment), so the strict arm and the --ulp 700 control stay zero-tolerance.
 # A mover id not listed here fails the arm; ids that stop moving are an improvement
 # (delete the entry, and the file when the class is fixed).
 130

@@ -40,7 +40,7 @@ endif()
 target_link_libraries(admiral_benchmark PRIVATE admiral_optimization_flags)
 adm_apply_build_profile(admiral_benchmark)
 
-# bench_granule_ab stays its OWN executable (WI-0c-ii): the granule-admission arm in
+# bench_granule_ab stays its OWN executable: the granule-admission arm in
 # scripts/validate.sh builds it under both knob states and A/Bs the two binaries, so it
 # joins neither the admiral_benchmark registry contract (bench_pass.hpp) nor its
 # ducc0/nanobench linkage. It includes src/granule_apply.hpp the way test_granule does:
@@ -50,8 +50,8 @@ target_include_directories(bench_granule_ab PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(bench_granule_ab PRIVATE admiral_internal)
 adm_apply_build_profile(bench_granule_ab)
 
-# bench_large_route stays its OWN executable (WI-2c / P-2c-D): the kLargeRoute* re-derivation
-# wave runs it stand-alone on cluster nodes, so it joins neither the admiral_benchmark
+# bench_large_route stays its OWN executable: the kLargeRoute* re-derivation
+# runs it stand-alone on cluster nodes, so it joins neither the admiral_benchmark
 # registry contract (bench_pass.hpp) nor its ducc0/nanobench linkage. It includes
 # detail/plan.hpp the way test_route_forced.cpp does: the forced-route plan_impl constructor
 # is the hook, and admission gates the engine chooser, never the drivers.
@@ -60,7 +60,7 @@ target_link_libraries(bench_large_route PRIVATE admiral_internal)
 adm_apply_build_profile(bench_large_route)
 
 # Identity baked into the binary's stderr header; the header's consumers are per-host class
-# receipts, so the sha and the arch string must survive a copied binary.
+# result files, so the sha and the arch string must survive a copied binary.
 find_package(Git QUIET)
 set(_blr_sha "unknown")
 if(Git_FOUND)

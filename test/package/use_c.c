@@ -1,6 +1,7 @@
-/* Installed C interface, compiled as C. This is also the test for the README's
- * "project(app C CXX)" note: the archive is C++ behind a C API, so if the export set
- * ever stops carrying the C++ runtime this link fails. */
+/* Installed C interface, compiled as C. The static archive is C++ behind a C API, so a
+ * C consumer project that links it must enable CXX: project(app C CXX). The link step needs the
+ * C++ runtime, and only the CXX language makes CMake link with it. If the export set stops
+ * carrying that runtime, this link fails. */
 #include <admiral/admiral.h>
 
 #include <float.h>

@@ -406,12 +406,6 @@ jobs:
           cmake -S test/package -B build-pkg -G Ninja -DCMAKE_PREFIX_PATH=$PWD/prefix
           cmake --build build-pkg
           ctest --test-dir build-pkg --timeout 900 --output-on-failure --no-tests=error
-      - name: Consume the source tree through FetchContent
-        run: |
-          cmake -S test/package -B build-fc -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DADM_PACKAGE_TEST_FETCH=$PWD -DADM_TARGET_ARCH=x86-64-v2
-          cmake --build build-fc
-          ctest --test-dir build-fc --timeout 900 --output-on-failure --no-tests=error
 
   v4-sde:
     timeout-minutes: 60

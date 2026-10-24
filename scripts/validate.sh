@@ -108,7 +108,7 @@ arm_catalog() {
 # (ADM_USE_FAST_MATH=OFF) -- runs test/digest's positional case sweep on both, and diffs
 # each against the committed goldens in test/digest/golden with scripts/check_digest.sh.
 # The shipped arm runs under the banked upper-bound waiver
-# test/digest/golden/allowed-movers-wi4a-2026-09-17.txt: the shipped dialect keys
+# test/digest/golden/allowed-movers-2026-09-17.txt: the shipped dialect keys
 # vector-arm dispatch on pointer alignment, so the address-sensitive case class
 # (address-allocation-layout class) moves on ANY allocation-layout change; a mover outside
 # the bank fails the arm, an unexercised entry is an improvement. The strict arm and
@@ -119,7 +119,7 @@ arm_catalog() {
 # predicts zero movers.
 arm_digest() {
     local gen=$out/digest log=$out/digest.log rc=0 sub waiver_used=
-    local waiver=${ADM_DIGEST_WAIVER:-$src/test/digest/golden/allowed-movers-wi4a-2026-09-17.txt}
+    local waiver=${ADM_DIGEST_WAIVER:-$src/test/digest/golden/allowed-movers-2026-09-17.txt}
     echo "=== digest"
     if [[ -n ${ADM_DIGEST_WAIVER:-} && ! ( -r $waiver && -s $waiver ) ]]; then
         echo "  FAILED: ADM_DIGEST_WAIVER=$waiver unreadable or empty"; failed+=("digest"); return

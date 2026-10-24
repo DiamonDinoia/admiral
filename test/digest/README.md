@@ -7,7 +7,7 @@ scripts/validate.sh digest
 
 The `shipped` arm builds with fast math. The `strict` arm builds with `-DADM_USE_FAST_MATH=OFF`. A mover is a case whose hash differs from the golden.
 
-The `shipped` arm fails on a mover that `golden/allowed-movers-wi4a-2026-09-17.txt` does not list. Ids in that file can move on a clean tree. The `strict` arm and the `--ulp` control accept no mover. A strict mover must also be a shipped mover.
+The `shipped` arm fails on a mover that `golden/allowed-movers-2026-09-17.txt` does not list. Ids in that file can move on a clean tree. The `strict` arm and the `--ulp` control accept no mover. A strict mover must also be a shipped mover.
 
 The goldens come from gcc 14.2.0 on a Xeon w5-3435X (16 cores, 2 MiB L2 per core, 45 MiB L3). Route selection reads the host cache sizes. A host with other sizes can show movers with no code change. Regenerate on a host of the same class.
 

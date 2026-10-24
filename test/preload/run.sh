@@ -39,9 +39,8 @@ if [ ! -f "$shim" ]; then
     exit 1
 fi
 
-cp "$here/app.c" "$work/app.c"
 cd "$work"
-cc -o app app.c $(pkg-config --cflags --libs fftw3 fftw3f) -lm
+cc -o app "$here/app.c" "${fftw_cflibs[@]}" -lm
 pass "built app against real FFTW"
 
 plain_out=$work/plain.out
@@ -53,8 +52,11 @@ pre_log=$work/preload.log
 # timeout turns a hang into a failure.
 timeout 60 env LD_DEBUG=bindings ./app >"$plain_out" 2>"$plain_log"
 # A crash under the preload is a result, not a reason to stop: report it and go on.
+# README.md copies the line in the here-document, so sh runs that line.
 rc=0
-timeout 60 env LD_PRELOAD="$shim" LD_DEBUG=bindings ./app >"$pre_out" 2>"$pre_log" || rc=$?
+timeout 60 env PREFIX="$PREFIX" LD_DEBUG=bindings sh >"$pre_out" 2>"$pre_log" <<'EOF' || rc=$?
+LD_PRELOAD=$PREFIX/lib/libadmiral_fftw.so ./app
+EOF
 if [ "$rc" -eq 0 ]; then
     pass "ran app plain and with LD_PRELOAD=$shim"
 else

@@ -414,8 +414,9 @@ jobs:
       - uses: hendrikmuhs/ccache-action@v1
         with:
           key: preload-${{ matrix.cxx }}-${{ steps.cpu.outputs.id }}
-      # Compiler, generator and job count come from the environment, so no flag lands on
-      # those lines.
+      # The README quotes the three commands of the first step. The environment sets compiler,
+      # generator and job count, so the lines carry no flag for them. The ADM_BUILD_* flags skip
+      # the tests, benchmarks and examples, so the configure downloads only xsimd, poet and snmalloc.
       - name: Build and install to a prefix
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_LIBDIR=lib -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=OFF -DADM_BUILD_EXAMPLES=OFF
@@ -516,6 +517,8 @@ jobs:
           export PATH="$RUNNER_TEMP/mawk-bin:$PATH"
           [ "$(readlink -f "$(command -v awk)")" = "$(readlink -f "$(command -v mawk)")" ]
           test/readme_check/run.sh
+      - name: Check the README code blocks
+        run: scripts/check_readme.sh README.md
 
   v4-sde:
     timeout-minutes: 60

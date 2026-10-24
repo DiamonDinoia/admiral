@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # The receipt-coupling scan (WI-0b). A commit that touches a hand-fit- or probe-fit
 # constants header must carry "receipt:" (any case) in its message: a fitted or
-# hand-derived constant and the receipt it was read from are one artifact (CLAUDE.md,
-# "The four_step_large admission lines are hand-fit, and they are measured
-# crossovers"), so the constants set below is whole headers, not symbols inside them.
+# hand-derived constant and the receipt it was read from are one artifact (the
+# four_step_large admission lines are hand-fit measured crossovers), so the constants
+# set below is whole headers, not symbols inside them.
 # A constants move that names no receipt is exactly the cohort-tuned-constant disease:
 # the number survives, the derivation does not, and the next host cohort silently reads
 # a misfit value.

@@ -3,7 +3,8 @@
 # branch math-clarity-2026-09-16 tip 37cd1c0, banked 2026-09-17.
 #
 # Receipt: beat-standings/wi4a-nd-scratch-tls.md. Every entry is a member of the
-# address-allocation-layout roulette class (CLAUDE.md "Bitwise stability" open item):
+# address-allocation-layout roulette class (1-D lengths with a prime factor > 11
+# change bits even with the col pin on):
 # the shipped arm's contract-reassociate codegen keys vector-arm dispatch on pointer
 # alignment, so a change to the construction-time allocation sequence re-draws which
 # address-sensitive cases move. The class pool: 1-D lengths with a prime factor > 11

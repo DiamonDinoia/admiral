@@ -97,7 +97,7 @@ Checks:
   - 'portability-std-allocator-const'
   - '-portability-simd-intrinsics'
   # OFF: the library targets xsimd which abstracts SIMD, and project policy bans
-  # direct intrinsic use (CLAUDE.md). The check is irrelevant.
+  # raw intrinsics (include/ and src/ hold no _mm*_ call). The check is irrelevant.
 
   # ---- CERT (selected: avoid duplicating bugprone; skip C-file-IO rules) ----
   - 'cert-dcl50-cpp'

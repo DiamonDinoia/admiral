@@ -1,0 +1,4 @@
+<!-- from: /etc/hostname -->
+```
+x
+```

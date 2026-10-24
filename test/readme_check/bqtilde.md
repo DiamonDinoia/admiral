@@ -1,0 +1,4 @@
+<!-- from: source.txt -->
+> ~~~
+> XXX
+> ~~~

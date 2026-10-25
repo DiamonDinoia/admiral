@@ -95,13 +95,13 @@ jobs:
         if: matrix.arch != 'none'
         run: |
           grep -qF -- '=${{ matrix.arch }}' build/compile_commands.json
-          ! grep -qF -- '=native' build/compile_commands.json
+          if grep -qF -- '=native' build/compile_commands.json; then exit 1; fi
           grep -qF -- '-std=c++${{ matrix.std || 20 }}' build/compile_commands.json
           # A Debug cell debugs at -Og. -O0 pays the same template instantiation cost and then
           # runs the tests several times slower.
           if [ '${{ matrix.build_type || 'Release' }}' = Debug ]; then
             grep -qF -- '-Og' build/compile_commands.json
-            ! grep -qF -- '-O0' build/compile_commands.json
+            if grep -qF -- '-O0' build/compile_commands.json; then exit 1; fi
           fi
       # compile_commands.json omits the launcher under Ninja, so build.ninja is the only witness.
       - name: Assert the compiler launcher arrived
@@ -270,9 +270,9 @@ jobs:
           grep -qF -- '-fsanitize=' build/${{ matrix.preset }}/compile_commands.json
           grep -qF -- '-O1' build/${{ matrix.preset }}/compile_commands.json
           # The preset pins the level, so the Debug arm's -Og must not reach a sanitized TU.
-          ! grep -qF -- '-Og' build/${{ matrix.preset }}/compile_commands.json
+          if grep -qF -- '-Og' build/${{ matrix.preset }}/compile_commands.json; then exit 1; fi
           grep -qF -- '=x86-64-v2' build/${{ matrix.preset }}/compile_commands.json
-          ! grep -qF -- '=native' build/${{ matrix.preset }}/compile_commands.json
+          if grep -qF -- '=native' build/${{ matrix.preset }}/compile_commands.json; then exit 1; fi
       - run: cmake --build --preset ${{ matrix.preset }}
       - run: ctest --preset ${{ matrix.preset }} --timeout 900 --no-tests=error
         env: {TSAN_OPTIONS: "handle_segv=0"}
@@ -363,7 +363,7 @@ jobs:
       - name: Assert the flags arrived
         run: |
           grep -qF -- '-fcoverage-mapping' build/coverage/compile_commands.json
-          ! grep -qF -- '=native' build/coverage/compile_commands.json
+          if grep -qF -- '=native' build/coverage/compile_commands.json; then exit 1; fi
       - run: cmake --build --preset coverage
       - name: Test
         run: |
@@ -544,7 +544,7 @@ jobs:
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DCMAKE_CROSSCOMPILING_EMULATOR=/usr/local/bin/sde-spr
           grep -qF -- '=x86-64-v4' build/compile_commands.json
-          ! grep -qF -- '=native' build/compile_commands.json
+          if grep -qF -- '=native' build/compile_commands.json; then exit 1; fi
           cmake --build build
       - name: Test under SDE
         run: |

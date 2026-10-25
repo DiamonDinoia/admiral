@@ -23,7 +23,9 @@ concurrency:
 env:
   CMAKE_CXX_COMPILER_LAUNCHER: ccache
   CMAKE_C_COMPILER_LAUNCHER: ccache
-  # x64 runners have 2 physical cores. 2 compiles x 3.4 GiB (worst TU) fit in 75% of 16 GiB.
+  # x64 runners have 2 physical cores and 15 GiB of memory (free -g, rounded down). The limit is
+  # 75% of that, 11520 MiB. A level of 2 fits every measured job except the Debug cells of the
+  # build job. The tightest fit is asan g++-14: 2 x 5716 MiB (inst_dif_thunks_f) = 11432 MiB.
   CMAKE_BUILD_PARALLEL_LEVEL: 2
 
 jobs:
@@ -32,6 +34,10 @@ jobs:
   # until that one is in the matrix.
   build:
     timeout-minutes: 45
+    # The Debug test_granule TU peaks at 9123 MiB (gcc-14) and 7682 MiB (llvm-21). Two of them
+    # exceed the limit, so Debug cells compile one TU at a time.
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: ${{ matrix.build_type == 'Debug' && 1 || 2 }}
     strategy:
       fail-fast: false
       matrix:

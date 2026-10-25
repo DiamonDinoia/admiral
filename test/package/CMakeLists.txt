@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.25)
-project(admiral_package_test C CXX)
+# OFF makes a C-only project with only the C consumers.
+option(ADM_PACKAGE_CXX "Enable C++ in the consumer" ON)
+project(admiral_package_test C)
+if(ADM_PACKAGE_CXX)
+    enable_language(CXX)
+endif()
 
 # One set of sources, seven ways to get admiral. ADM_PACKAGE_ROUTE selects the way. Every route
 # must produce the same admiral::* targets. run_routes.sh sets the route and its inputs.
@@ -40,7 +45,19 @@ if(NOT ADM_LIBM)
     set(ADM_LIBM "")
 endif()
 
-include(${CMAKE_CURRENT_LIST_DIR}/stage_dlls.cmake)
+# Windows resolves a DLL from the executable's own directory, so a consumer that links the
+# shared surface needs it copied there before ctest runs.
+function(adm_stage_dlls target)
+    if(WIN32)
+        # The list is empty for the static links, and `copy` with no source is an error, so the
+        # command itself is selected by whether there is anything to copy.
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E
+                    $<IF:$<BOOL:$<TARGET_RUNTIME_DLLS:${target}>>,copy,true>
+                    $<TARGET_RUNTIME_DLLS:${target}> $<TARGET_FILE_DIR:${target}>
+            COMMAND_EXPAND_LISTS)
+    endif()
+endfunction()
 
 foreach(row "use_cxx;use_cxx.cpp;admiral;admiral_static"
             "use_c;use_c.c;admiral_c;admiral_c_static"
@@ -49,6 +66,9 @@ foreach(row "use_cxx;use_cxx.cpp;admiral;admiral_static"
     list(GET row 1 src)
     list(GET row 2 shared_link)
     list(GET row 3 static_link)
+    if(src MATCHES "\\.cpp$" AND NOT ADM_PACKAGE_CXX)
+        continue()
+    endif()
     foreach(kind ${ADM_PACKAGE_LINKS})
         set(link ${${kind}_link})
         string(TOUPPER ${kind} KIND)

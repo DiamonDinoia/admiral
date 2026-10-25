@@ -1,7 +1,7 @@
-/* Installed C interface, compiled as C. The static archive is C++ behind a C API, so a
- * C consumer project that links it must enable CXX: project(app C CXX). The link step needs the
- * C++ runtime, and only the CXX language makes CMake link with it. If the export set stops
- * carrying that runtime, this link fails. */
+/* Installed C interface, compiled as C. The static archive is C++ behind a C API. With GCC, Clang
+ * or Apple Clang, a C project that links it must enable CXX: project(app C CXX). CXX adds the
+ * C++ runtime. If the export set stops naming CXX as the link language, this link fails. For MSVC,
+ * CXX is not necessary: each object in the archive names the C++ runtime for link.exe. */
 #include <admiral/admiral.h>
 
 #include <float.h>

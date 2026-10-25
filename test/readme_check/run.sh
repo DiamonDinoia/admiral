@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 # Positive controls for scripts/check_readme.sh. Fixture markers resolve against this directory.
-set -uo pipefail
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+set -u
+here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=test/check.sh
+. "$here/../check.sh"
 chk=$here/../../scripts/check_readme.sh
 export ADM_README_ROOT=$here
-fail=0
-# expect NAME OUTCOME REASON-PATTERN CLAIM
-expect() {
-    local out rc
-    out=$(bash "$chk" "$here/$1.md" 2>&1); rc=$?
-    if [[ $2 == pass && $rc -eq 0 && $out == *"$3"* ]] || [[ $2 == fail && $rc -ne 0 && $out == *"$3"* ]]; then
-        echo "ok   $1.md: $4"
-    else
-        echo "FAIL $1.md: expected $2 ($3), got exit=$rc: $out"; fail=1
-    fi
+# says <pass|fail> <text> <readme>: check_readme gives the status that the first argument names,
+# and its output holds the text.
+says() {
+    local out rc=0
+    out=$(bash "$chk" "$3" 2>&1) || rc=$?
+    case $1:$rc in pass:0 | fail:[1-9]*) [[ $out == *"$2"* ]] && return ;; esac
+    echo "status $rc: $out"
+    return 1
 }
+# expect <fixture> <pass|fail> <text> <claim>
+expect() { check "$1.md: $4" says "$2" "$3" "$here/$1.md"; }
 expect good pass "1 blocks checked against 1 files" "verbatim block with indentation change passes"
 expect crlf pass "1 blocks checked against 1 files" "CRLF README against LF source passes"
 expect nested pass "1 blocks checked against 1 files" "four-backtick block holding a three-backtick pair passes"
@@ -46,13 +48,14 @@ expect bqtilde fail "cannot parse" "blockquote tilde fence fails"
 expect list fail "cannot parse" "list item fence fails"
 expect empty fail "no fenced blocks" "zero blocks is a failure"
 # README that cannot be read: a directory, and a file with mode 000 (skipped as root).
-out=$(bash "$chk" "$here" 2>&1); rc=$?
-if [[ $rc -ne 0 && $out == check_readme:*"cannot read"* ]]; then echo "ok   directory README: fails with a check_readme message"; else echo "FAIL directory README: exit=$rc: $out"; fail=1; fi
+check "directory README: fails with a check_readme message" \
+    says fail "check_readme: cannot read" "$here"
 tmp=$(mktemp -d); : > "$tmp/r.md"; chmod 000 "$tmp/r.md"
-if [[ -r $tmp/r.md ]]; then echo "skip unreadable README: file stays readable (root)"
+if [[ -r $tmp/r.md ]]; then
+    echo "SKIP: unreadable README: file stays readable (root)"
 else
-    out=$(bash "$chk" "$tmp/r.md" 2>&1); rc=$?
-    if [[ $rc -ne 0 && $out == check_readme:*"cannot read"* ]]; then echo "ok   unreadable README: fails with a check_readme message"; else echo "FAIL unreadable README: exit=$rc: $out"; fail=1; fi
+    check "unreadable README: fails with a check_readme message" \
+        says fail "check_readme: cannot read" "$tmp/r.md"
 fi
 chmod 600 "$tmp/r.md"; rm -rf "$tmp"
-exit $fail
+finish

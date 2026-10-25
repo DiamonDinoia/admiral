@@ -34,7 +34,6 @@ An option takes `ON` or `OFF` unless its description lists other values.
 - GCC and Clang get `-mcpu=` for a processor name that starts with `arm`, `powerpc` or `ppc`, and for `arm64` or `aarch64` on Apple.
 - GCC and Clang get `-march=` for all other values, including Linux aarch64.
 - MSVC on x86 and AMD64 gets `/arch:AVX2` for any other value. Other MSVC combinations, such as ARM64, get no flag.
-- Use `x86-64-v3` for portable binaries.
 
 ## Sanitizer builds
 

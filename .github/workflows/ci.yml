@@ -454,7 +454,7 @@ jobs:
           key: install-routes
       - name: All routes
         run: test/package/run_routes.sh "$PWD" "$RUNNER_TEMP/routes"
-        env: {CXX: g++-14}
+        env: {CXX: g++-14, CMAKE_GENERATOR: Ninja}
 
   # The installed-prefix routes (find_package) on the other two platforms. The routes that read
   # the source tree or clone from GitHub (subdir, fetch_dir, fetch_git, cpm) run on Linux only.
@@ -497,8 +497,7 @@ jobs:
         with:
           variant: ${{ matrix.launcher }}
           key: install-routes-${{ matrix.os }}-${{ steps.cpu.outputs.id }}
-      # run_routes.sh takes the generator from CMAKE_GENERATOR, and NMake (the vcvarsall default)
-      # rejects the arch option.
+      # NMake (the vcvarsall default) rejects the arch option.
       - name: Prefix routes
         run: test/package/run_routes.sh "$PWD" "$RUNNER_TEMP/routes" ${{ matrix.routes }}
         env: {CMAKE_GENERATOR: Ninja}

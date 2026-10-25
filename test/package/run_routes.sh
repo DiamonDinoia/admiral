@@ -2,7 +2,8 @@
 # Usage: run_routes.sh <admiral-src> <work-dir> [route...]
 # Builds and runs the consumer in this directory once per way a downstream project can get
 # admiral. No route name means all routes. Needs a C++20 compiler on PATH, cmake and git. The
-# caller loads the modules. CMAKE_BUILD_PARALLEL_LEVEL sets the number of parallel compiles.
+# caller loads the modules. CMAKE_GENERATOR picks the generator and CMAKE_BUILD_PARALLEL_LEVEL sets
+# the number of parallel compiles.
 # The git routes test the committed HEAD of <admiral-src>, not its working tree. They clone
 # xsimd, poet and snmalloc from GitHub into <work-dir>/mirrors once.
 set -eu
@@ -37,19 +38,8 @@ unset NINJA_STATUS
 cfg=Release
 lib_opts=()
 case $(uname -m) in
-    x86_64 | amd64) lib_opts+=("-DADM_TARGET_ARCH=${ADM_PACKAGE_ARCH:-x86-64-v2}") ;;
+    x86_64 | amd64) lib_opts+=(-DADM_TARGET_ARCH=x86-64-v2) ;;
 esac
-gen=()
-if [ -z "${CMAKE_GENERATOR:-}" ] && command -v ninja >/dev/null; then gen=(-G Ninja); fi
-nice_run() {
-    if command -v ionice >/dev/null; then
-        nice -n 19 ionice -c 3 "$@"
-    elif command -v nice >/dev/null; then
-        nice -n 19 "$@"
-    else
-        "$@"
-    fi
-}
 
 # Print the tail of the log of the step that failed in $1. The steps run in the order ctest,
 # install, build, configure, and a step that did not run left no log, so the newest step with a
@@ -72,9 +62,9 @@ penv=()
 consume() {
     local dir=$1; shift
     # No set -e inside a condition, so every step is chained.
-    nice_run ${penv[@]+"${penv[@]}"} cmake -S "$dir/project" -B "$dir/build" ${gen[@]+"${gen[@]}"} -DCMAKE_BUILD_TYPE=$cfg "$@" \
+    ${penv[@]+"${penv[@]}"} cmake -S "$dir/project" -B "$dir/build" -DCMAKE_BUILD_TYPE=$cfg "$@" \
             >"$dir/configure.log" 2>&1 &&
-        nice_run ${penv[@]+"${penv[@]}"} cmake --build "$dir/build" --config $cfg \
+        ${penv[@]+"${penv[@]}"} cmake --build "$dir/build" --config $cfg \
             >"$dir/build.log" 2>&1 &&
         ctest --test-dir "$dir/build" -C $cfg --timeout 900 --output-on-failure --no-tests=error \
             >"$dir/ctest.log" 2>&1 || return 1
@@ -218,11 +208,11 @@ fi
 if want prefix_shared || want prefix_static || want c_only || want cc_fftw || want relocated; then
     inst=$work/install
     rm -rf "$inst" "$work/prefix" "$work/moved"; mkdir -p "$inst"
-    if ! { nice_run cmake -S "$src" -B "$inst/build" ${gen[@]+"${gen[@]}"} -DCMAKE_BUILD_TYPE=$cfg ${lib_opts[@]+"${lib_opts[@]}"} \
+    if ! { cmake -S "$src" -B "$inst/build" -DCMAKE_BUILD_TYPE=$cfg ${lib_opts[@]+"${lib_opts[@]}"} \
                 -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=OFF -DADM_BUILD_EXAMPLES=OFF \
                 -DCMAKE_INSTALL_LIBDIR=lib \
                 -DCMAKE_INSTALL_PREFIX="$work/prefix" >"$inst/configure.log" 2>&1 &&
-            nice_run cmake --build "$inst/build" --config $cfg >"$inst/build.log" 2>&1 &&
+            cmake --build "$inst/build" --config $cfg >"$inst/build.log" 2>&1 &&
             cmake --install "$inst/build" --config $cfg >"$inst/install.log" 2>&1; }; then
         echo "FAIL: install into $work/prefix"
         show_tail "$inst"

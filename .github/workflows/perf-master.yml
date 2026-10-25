@@ -5,6 +5,10 @@ on:
     branches: [master]
   workflow_dispatch:
 
+# Same number of parallel compiles as ci.yml.
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: 2
+
 jobs:
   fftw-snapshot:
     runs-on: ubuntu-24.04
@@ -14,7 +18,7 @@ jobs:
       - run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DADM_TARGET_ARCH=x86-64-v3 -DADM_BUILD_TESTS=OFF -DCMAKE_CXX_COMPILER=g++-14 -DADM_BENCH_FFTW=ON
-          cmake --build build -j "$(nproc)"
+          cmake --build build
       - name: admiral vs FFTW_MEASURE (interleaved, in-process)
         run: |
           build/benchmark/admiral_benchmark --fftw-ab \

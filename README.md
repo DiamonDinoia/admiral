@@ -23,8 +23,8 @@ cmake --build build --config Release
 cmake --install build --prefix "$PREFIX" --config Release
 ```
 
-Set `CMAKE_BUILD_PARALLEL_LEVEL` to fit the memory of the machine. One gcc compile at the default
-native arch can use about 3.5 GB.
+`CMAKE_BUILD_PARALLEL_LEVEL` sets the number of parallel compiles. One GCC compile at the default
+native arch can use 3.4 GiB. Keep the number of compiles x 3.4 GiB below 75% of the memory.
 
 ## Use from CMake
 

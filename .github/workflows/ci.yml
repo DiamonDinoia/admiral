@@ -23,6 +23,8 @@ concurrency:
 env:
   CMAKE_CXX_COMPILER_LAUNCHER: ccache
   CMAKE_C_COMPILER_LAUNCHER: ccache
+  # x64 runners have 2 physical cores. 2 compiles x 3.4 GiB (worst TU) fit in 75% of 16 GiB.
+  CMAKE_BUILD_PARALLEL_LEVEL: 2
 
 jobs:
   # One cell per (toolchain, build type). The compiler axis is the point: gcc and clang disagree
@@ -263,7 +265,7 @@ jobs:
           ! grep -qF -- '-Og' build/${{ matrix.preset }}/compile_commands.json
           grep -qF -- '=x86-64-v2' build/${{ matrix.preset }}/compile_commands.json
           ! grep -qF -- '=native' build/${{ matrix.preset }}/compile_commands.json
-      - run: cmake --build --preset ${{ matrix.preset }} -- -j 4
+      - run: cmake --build --preset ${{ matrix.preset }}
       - run: ctest --preset ${{ matrix.preset }} --timeout 900 --no-tests=error
         env: {TSAN_OPTIONS: "handle_segv=0"}
 
@@ -414,11 +416,9 @@ jobs:
       - uses: hendrikmuhs/ccache-action@v1
         with:
           key: preload-${{ matrix.cxx }}-${{ steps.cpu.outputs.id }}
-      # The README quotes the three commands of the first step. The environment sets compiler,
-      # generator and job count, so the lines carry no flag for them. The job count is 3. At the
-      # native x86-64-v4 arch, one gcc compile takes up to 3.5 GB, and 3 of them stay under 75% of
-      # the 16 GB runner. The ADM_BUILD_* flags skip the tests, benchmarks and examples, so the
-      # configure downloads only xsimd, poet and snmalloc.
+      # The README quotes these three commands, so the environment sets the compiler, the generator
+      # and the number of parallel compiles. The ADM_BUILD_* flags skip tests, benchmarks and
+      # examples.
       - name: Build and install to a prefix
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_LIBDIR=lib -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=OFF -DADM_BUILD_EXAMPLES=OFF
@@ -427,7 +427,6 @@ jobs:
         env:
           CXX: ${{ matrix.cxx }}
           CMAKE_GENERATOR: ${{ matrix.generator }}
-          CMAKE_BUILD_PARALLEL_LEVEL: 3
           PREFIX: ${{ github.workspace }}/prefix
       - name: Run an unmodified FFTW program on the shim
         run: test/preload/run.sh "$PREFIX" "$RUNNER_TEMP/preload"
@@ -543,7 +542,7 @@ jobs:
             -DCMAKE_CROSSCOMPILING_EMULATOR=/usr/local/bin/sde-spr
           grep -qF -- '=x86-64-v4' build/compile_commands.json
           ! grep -qF -- '=native' build/compile_commands.json
-          cmake --build build -j "$(nproc)"
+          cmake --build build
       - name: Test under SDE
         run: |
           ctest --test-dir build --output-on-failure --no-tests=error -j "$(nproc)" --timeout 1800

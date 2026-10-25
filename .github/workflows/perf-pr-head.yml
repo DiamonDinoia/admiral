@@ -11,6 +11,10 @@ concurrency:
   group: perf-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+# Same number of parallel compiles as ci.yml.
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: 2
+
 jobs:
   ab:
     runs-on: ubuntu-24.04
@@ -36,7 +40,7 @@ jobs:
             cp -r base/benchmark base/scripts pr/
             cmake -S $side -B build-$side -G Ninja -DCMAKE_BUILD_TYPE=Release \
               -DADM_TARGET_ARCH=x86-64-v3 -DADM_BUILD_TESTS=OFF -DCMAKE_CXX_COMPILER=g++-14
-            cmake --build build-$side -j "$(nproc)"
+            cmake --build build-$side
           done
       - name: Interleaved A/B
         run: |

@@ -7,8 +7,8 @@ that library. On Linux, a program can also use it through `LD_PRELOAD`.
 ## Build and install
 
 Use CMake 3.25 or newer, and a C++20 compiler: GCC 13, Clang 18, Apple Clang or MSVC. The first
-configure downloads xsimd, poet and snmalloc, so it needs network access. The three
-`ADM_BUILD_*` flags below skip the tests, benchmarks and examples, which download more.
+configure downloads xsimd, poet and snmalloc, so it needs network access. The flags below skip the
+tests and the benchmarks, which download more. The examples download nothing.
 A native GCC or Clang build targets the build CPU by default. For a binary that runs on other
 machines, add `-DADM_TARGET_ARCH=<cpu>`, for example `x86-64-v3`. For other compilers and cross
 builds, read [docs/build-options.md](docs/build-options.md).
@@ -84,10 +84,14 @@ Link `admiral::fftw`. On Linux, `LD_PRELOAD` can also inject the shim into an FF
 LD_PRELOAD=$PREFIX/lib/libadmiral_fftw.so ./app
 ```
 
-The shim has the complex-to-complex planners. The shim sends every plan from another FFTW to the
-first other FFTW it finds. `include/admiral/fftw3.h` gives the search order and the other limits.
+The shim has the complex-to-complex planners. A call with a plan that another FFTW made goes to the
+first other FFTW that the shim finds. On Windows, or when the shim finds no other FFTW, such a call
+prints a line to stderr and aborts. `include/admiral/fftw3.h` gives the search order and the other
+limits.
 
 ## Reference
+
+The hosted documentation is at <http://diamondinoia.com/admiral/>.
 
 - [docs/cpp-api.md](docs/cpp-api.md): the C++ API.
 - [docs/build-options.md](docs/build-options.md): the CMake options.

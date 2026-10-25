@@ -14,7 +14,7 @@ An option takes `ON` or `OFF` unless its description lists other values.
 | `ADM_MEASURE` | `ON` | Compiles in plan-time route measurement. `OFF` makes `effort::automatic` and `effort::measure` inert. |
 | `ADM_TARGET_ARCH` | `native` | Sets the target CPU. Values: `native`, `none`, an architecture or CPU name. See the rules below the table. |
 | `ADM_ENABLE_WARNINGS_AS_ERRORS` | `ON`, also as a subproject | Adds `-Werror` (`/WX` on MSVC) to the admiral targets. Set `OFF` before `add_subdirectory`. Consumer targets keep their own flags. |
-| `ADM_ENABLE_LTO` | `OFF` | Enables interprocedural optimization for Release, RelWithDebInfo and MinSizeRel builds when the compiler supports it. Do not use it for release builds. The installed archives link only with the same compiler. |
+| `ADM_ENABLE_LTO` | `OFF` | Sets `CMAKE_INTERPROCEDURAL_OPTIMIZATION` for Release, RelWithDebInfo and MinSizeRel when `check_ipo_supported` succeeds. With `OFF`, this project sets it for no build type. GCC writes GIMPLE into the installed archives, so only the same compiler can link them. Use `OFF` for a shipped install. |
 | `ADM_ENABLE_PCH` | `OFF` | Precompiles `xsimd/xsimd.hpp` and `poet/poet.hpp` for the engine and codelet targets. |
 | `ADM_SANITIZER` | `none` | Adds `-fsanitize=` to compile and link. Requires GCC or Clang. Values: `none`, `address`, `undefined`, `address+undefined`, `thread`. Any other value or compiler stops the configure. See the section below the table. |
 | `ADM_USE_FAST_MATH` | `ON` | Adds `-ffast-math`. `OFF` keeps strict IEEE semantics. |
@@ -31,9 +31,10 @@ An option takes `ON` or `OFF` unless its description lists other values.
 ## Rules for `ADM_TARGET_ARCH`
 
 - `none` adds no flag on any compiler. `native` on a cross build adds no flag.
-- GCC and Clang get `-mcpu=` for a processor name that starts with `arm`, `powerpc` or `ppc`, and for `arm64` or `aarch64` on Apple.
-- GCC and Clang get `-march=` for all other values, including Linux aarch64.
-- MSVC on x86 and AMD64 gets `/arch:AVX2` for any other value. Other MSVC combinations, such as ARM64, get no flag.
+- GCC and Clang read `CMAKE_SYSTEM_PROCESSOR` to choose the flag. The flag gets the option value unchanged.
+- The flag is `-mcpu=` when `CMAKE_SYSTEM_PROCESSOR` starts with `arm`, `powerpc` or `ppc`, and for `aarch64` on Apple.
+- The flag is `-march=` for all other processors, including `aarch64` on Linux. With `native`, `-mtune=native` is also added.
+- MSVC gets `/arch:AVX2` when `CMAKE_SYSTEM_PROCESSOR` is x86 or AMD64. Other MSVC combinations, such as ARM64, get no flag.
 
 ## Sanitizer builds
 

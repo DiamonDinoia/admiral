@@ -19,9 +19,12 @@ Set `PREFIX` to the install directory. `-DCMAKE_INSTALL_LIBDIR=lib` puts the FFT
 <!-- from: .github/workflows/ci.yml -->
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_LIBDIR=lib -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=OFF -DADM_BUILD_EXAMPLES=OFF
-cmake --build build --parallel --config Release
+cmake --build build --config Release
 cmake --install build --prefix "$PREFIX" --config Release
 ```
+
+Set `CMAKE_BUILD_PARALLEL_LEVEL` to fit the memory of the machine. One gcc compile at the default
+native arch can use about 3.5 GB.
 
 ## Use from CMake
 

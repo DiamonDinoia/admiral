@@ -415,17 +415,19 @@ jobs:
         with:
           key: preload-${{ matrix.cxx }}-${{ steps.cpu.outputs.id }}
       # The README quotes the three commands of the first step. The environment sets compiler,
-      # generator and job count, so the lines carry no flag for them. The ADM_BUILD_* flags skip
-      # the tests, benchmarks and examples, so the configure downloads only xsimd, poet and snmalloc.
+      # generator and job count, so the lines carry no flag for them. The job count is 3. At the
+      # native x86-64-v4 arch, one gcc compile takes up to 3.5 GB, and 3 of them stay under 75% of
+      # the 16 GB runner. The ADM_BUILD_* flags skip the tests, benchmarks and examples, so the
+      # configure downloads only xsimd, poet and snmalloc.
       - name: Build and install to a prefix
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_LIBDIR=lib -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=OFF -DADM_BUILD_EXAMPLES=OFF
-          cmake --build build --parallel --config Release
+          cmake --build build --config Release
           cmake --install build --prefix "$PREFIX" --config Release
         env:
           CXX: ${{ matrix.cxx }}
           CMAKE_GENERATOR: ${{ matrix.generator }}
-          CMAKE_BUILD_PARALLEL_LEVEL: 4
+          CMAKE_BUILD_PARALLEL_LEVEL: 3
           PREFIX: ${{ github.workspace }}/prefix
       - name: Run an unmodified FFTW program on the shim
         run: test/preload/run.sh "$PREFIX" "$RUNNER_TEMP/preload"

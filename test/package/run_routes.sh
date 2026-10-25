@@ -319,14 +319,17 @@ if want c_only; then
     cdir=$here/c_only
     run_route c_only 2 admiral_dir "$(config_dir "$work/prefix")" exact -DCMAKE_PREFIX_PATH="$work/prefix"
     cdir=
-    # The README says a C-only project needs C++ to link a static twin. MSVC is not measured: its
-    # objects may bring the C++ runtime in themselves.
-    if is_windows; then
-        echo "SKIP c_only static control: MSVC is not measured"
+    # The README says a C-only project needs C++ to link a static twin. MSVC links it: each
+    # object of the archive carries /DEFAULTLIB:msvcprt, and link.exe obeys it.
+    # CMake keeps the compiler id in CMakeCCompiler.cmake of the build above, not in CMakeCache.txt.
+    cid=$(sed -n 's/^set(CMAKE_C_COMPILER_ID "\(.*\)")$/\1/p' "$work"/c_only/build/CMakeFiles/*/CMakeCCompiler.cmake)
+    [ -n "$cid" ] || { echo "no C compiler id under $work/c_only/build" >&2; exit 1; }
+    if [ "$cid" = MSVC ]; then
+        control "MSVC links a static C target into a C-only project" pass c_only_static OFF
     else
         control "a C-only project cannot link a static C target" fail c_only_static OFF
-        control "the same project links it once C++ is enabled" pass c_only_static ON
     fi
+    control "the same project links it once C++ is enabled" pass c_only_static ON
 fi
 if want cc_fftw; then
     # Plain compiler, no CMake: the way most FFTW programs build.

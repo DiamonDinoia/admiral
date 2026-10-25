@@ -319,10 +319,12 @@ if want c_only; then
     cdir=$here/c_only
     run_route c_only 2 admiral_dir "$(config_dir "$work/prefix")" exact -DCMAKE_PREFIX_PATH="$work/prefix"
     cdir=
-    # The README says a C-only project needs C++ to link a static twin. MSVC is not measured: its
-    # objects may bring the C++ runtime in themselves.
+    # The README says a C-only project needs C++ to link a static twin. That holds where the C
+    # driver links no C++ runtime. MSVC links it anyway: each object of the archive names
+    # msvcprt in a /DEFAULTLIB directive, and link.exe obeys it.
     if is_windows; then
-        echo "SKIP c_only static control: MSVC is not measured"
+        control "MSVC links a static C target into a C-only project" pass c_only_static OFF
+        control "the same project links it once C++ is enabled" pass c_only_static ON
     else
         control "a C-only project cannot link a static C target" fail c_only_static OFF
         control "the same project links it once C++ is enabled" pass c_only_static ON

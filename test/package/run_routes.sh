@@ -126,6 +126,13 @@ git_env() { # route directory
     penv+=("GIT_CONFIG_COUNT=$n")
 }
 
+# blocked <command...>: the command fails and stderr holds the git transport error. An offline host
+# fails with another text, so this does not pass for it.
+blocked() {
+    local err
+    ! err=$("$@" 2>&1 >/dev/null) && [[ $err == *"transport 'https' not allowed"* ]]
+}
+
 # clean <dir> <path...>: no file in the directory holds any of the paths. Prints the files
 # that do.
 clean() {
@@ -200,7 +207,8 @@ if want fetch_git || want cpm; then
     git_env "$c/git"
     check "control: the redirect serves master = $sha" test "$("${penv[@]}" git ls-remote \
         https://github.com/DiamonDinoia/admiral.git refs/heads/master | cut -f1)" = "$sha"
-    check "control: a missed redirect is blocked, not fetched" not "${penv[@]}" GIT_CONFIG_COUNT=0 \
+    check "control: a missed redirect fails with the git transport error, not a network error" \
+        blocked "${penv[@]}" GIT_CONFIG_COUNT=0 \
         git ls-remote https://github.com/DiamonDinoia/admiral.git refs/heads/master
     penv=()
 fi

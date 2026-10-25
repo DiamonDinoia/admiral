@@ -114,15 +114,6 @@ void* later_definition(const char* name) noexcept {
 }
 #endif
 
-// What next_fftw searched, for the abort message.
-#if defined(__linux__)
-constexpr const char* kSearched = "no library loaded after this one defines";
-#elif !defined(_WIN32)
-constexpr const char* kSearched = "dlsym(RTLD_NEXT) does not find";
-#else
-constexpr const char* kSearched = "this platform does not look for";
-#endif
-
 // The next FFTW's `name`: dlsym(RTLD_NEXT), then on Linux later_definition.
 // With none found: null, or a message and abort when `required`.
 template<typename F>
@@ -137,8 +128,7 @@ F* next_fftw(const char* name, bool required = true) {
     // Windows has no RTLD_NEXT. A program can import planners from libfftw3-3.dll and execute
     // from admiral_fftw.dll, so a foreign plan can arrive there too and it aborts.
     if (!required) return nullptr;
-    std::fprintf(stderr, "admiral_fftw: %s got a plan this library did not create, and %s %s\n",
-                 name, kSearched, name);
+    std::fprintf(stderr, "admiral_fftw: %s got a plan this library did not create\n", name);
     std::abort();
 }
 

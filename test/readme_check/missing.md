@@ -1,4 +1,0 @@
-<!-- from: absent.txt -->
-```
-x
-```

@@ -503,26 +503,15 @@ jobs:
         run: test/package/run_routes.sh "$PWD" "$RUNNER_TEMP/routes" ${{ matrix.routes }}
         env: {CMAKE_GENERATOR: Ninja}
 
-  # check_readme.sh is awk-based, and awk differs between systems. The fixtures run once with
-  # gawk and once with mawk, whatever awk the image ships.
+  # Each README code block must match the file that it copies. The fixtures prove that the checker
+  # fails on a drifted block.
   readme-check:
     timeout-minutes: 10
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - run: sudo apt-get update && sudo apt-get install -y gawk mawk
-      - name: Fixtures, gawk and mawk
-        run: |
-          for a in gawk mawk; do
-            mkdir -p "$RUNNER_TEMP/$a"
-            ln -sf "$(command -v "$a")" "$RUNNER_TEMP/$a/awk"
-            # The link must win, or the fixtures run another awk.
-            (export PATH="$RUNNER_TEMP/$a:$PATH"
-             [ "$(readlink -f "$(command -v awk)")" = "$(readlink -f "$(command -v "$a")")" ]
-             test/readme_check/run.sh)
-          done
-      - name: Check the README code blocks
-        run: scripts/check_readme.sh
+      - run: test/readme_check/run.sh
+      - run: scripts/check_readme.sh
 
   v4-sde:
     timeout-minutes: 60

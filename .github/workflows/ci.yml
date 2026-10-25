@@ -27,6 +27,8 @@ env:
   # 75% of that, 11520 MiB. A level of 2 fits every measured job except the Debug cells of the
   # build job. The tightest fit is asan g++-14: 2 x 5716 MiB (inst_dif_thunks_f) = 11432 MiB.
   CMAKE_BUILD_PARALLEL_LEVEL: 2
+  # ctest reads this variable too, so no ctest call carries -j. GitHub jobs use at most 2 cores.
+  CTEST_PARALLEL_LEVEL: 2
 
 jobs:
   # One cell per (toolchain, build type). The compiler axis is the point: gcc and clang disagree
@@ -546,7 +548,7 @@ jobs:
           cmake --build build
       - name: Test under SDE
         run: |
-          ctest --test-dir build --output-on-failure --no-tests=error -j "$(nproc)" --timeout 1800
+          ctest --test-dir build --output-on-failure --no-tests=error --timeout 1800
           sde-spr build/benchmark/admiral_benchmark --verify
 
   catalog:

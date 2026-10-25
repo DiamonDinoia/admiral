@@ -503,23 +503,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y gawk mawk
-      - name: Fixtures, gawk
+      - name: Fixtures, gawk and mawk
         run: |
-          mkdir -p "$RUNNER_TEMP/gawk-bin"
-          ln -sf "$(command -v gawk)" "$RUNNER_TEMP/gawk-bin/awk"
-          export PATH="$RUNNER_TEMP/gawk-bin:$PATH"
-          # The shim must win, or this step runs another awk.
-          [ "$(readlink -f "$(command -v awk)")" = "$(readlink -f "$(command -v gawk)")" ]
-          test/readme_check/run.sh
-      - name: Fixtures, mawk
-        run: |
-          mkdir -p "$RUNNER_TEMP/mawk-bin"
-          ln -sf "$(command -v mawk)" "$RUNNER_TEMP/mawk-bin/awk"
-          export PATH="$RUNNER_TEMP/mawk-bin:$PATH"
-          [ "$(readlink -f "$(command -v awk)")" = "$(readlink -f "$(command -v mawk)")" ]
-          test/readme_check/run.sh
+          for a in gawk mawk; do
+            mkdir -p "$RUNNER_TEMP/$a"
+            ln -sf "$(command -v "$a")" "$RUNNER_TEMP/$a/awk"
+            # The link must win, or the fixtures run another awk.
+            (export PATH="$RUNNER_TEMP/$a:$PATH"
+             [ "$(readlink -f "$(command -v awk)")" = "$(readlink -f "$(command -v "$a")")" ]
+             test/readme_check/run.sh)
+          done
       - name: Check the README code blocks
-        run: scripts/check_readme.sh README.md
+        run: scripts/check_readme.sh
 
   v4-sde:
     timeout-minutes: 60

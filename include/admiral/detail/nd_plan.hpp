@@ -181,7 +181,7 @@ template<typename T>
                                                   std::size_t inner, std::size_t run_len,
                                                   std::size_t nthreads) {
     if (!st.dif) return line_route::transposed;
-    // Col/transposed flip at a 2*W budget block. the earlier max(16, 2*W) widening of
+    // Col/transposed flip at a 2*W budget block. The earlier max(16, 2*W) widening of
     // the page branch was fitted before the 2048 B col floor re-priced col_dif; with the floor,
     // both measured W=4 flips favor col_dif (rome 2d_1024 0.86, SPR-v3 2d_4096 0.92). The
     // forms coincide wherever a precision's W >= 8; below that (f64 W=2, f32 W=4:

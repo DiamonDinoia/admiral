@@ -15,7 +15,7 @@ The commands skip the tests, the benchmarks and the examples.
 ```
 
 `CMAKE_BUILD_PARALLEL_LEVEL` sets the number of parallel compiles.
-One GCC compile at the default native arch can use 3.4 GiB.
+One GCC 14 compile of `inst_col_f_inv.cpp` at `x86-64-v4` in a Release build peaked at 3.4 GiB (3497 MiB).
 Keep the number of compiles x 3.4 GiB below 75% of the memory.
 
 A native GCC or Clang build targets the build CPU.

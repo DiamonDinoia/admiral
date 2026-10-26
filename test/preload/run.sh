@@ -91,7 +91,7 @@ lookups() {
 cc -o app "$here/app.c" "${fftw_cflags[@]}" "${fftw_libs[@]}" -lm
 # One run gives both outputs: the program writes stdout, LD_DEBUG writes stderr.
 timeout 60 env LD_DEBUG=bindings ./app >plain.out 2>plain.log
-# README.md copies the line in the here-document, so sh runs that line.
+# README.md and the docs copy the line in the here-document, so sh runs that line.
 check "app runs under LD_PRELOAD=$shim" exits 0 preload.out preload.log \
     env PREFIX="$PREFIX" LD_DEBUG=bindings sh <<'EOF'
 # [doc:ld-preload]

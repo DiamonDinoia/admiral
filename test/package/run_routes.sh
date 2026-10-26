@@ -237,7 +237,7 @@ fi
 if want c_only; then
     # A C-only project links the shared C targets. It needs no C++ language of its own.
     prefix_route c_only "$work/prefix" 2 prefix_shared -DADM_PACKAGE_CXX=OFF
-    # The README says: to link a static twin from C, use project(x C CXX). For MSVC, CXX is not
+    # The docs say: to link a static twin from C, use project(x C CXX). For MSVC, CXX is not
     # necessary: each object of the archive carries /DEFAULTLIB:msvcprt, and link.exe obeys it.
     cid=$(sed -n 's/^-- The C compiler identification is \([^ ]*\).*/\1/p' \
         "$work/c_only/configure.log")

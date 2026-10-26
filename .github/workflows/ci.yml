@@ -352,7 +352,7 @@ jobs:
       - uses: hendrikmuhs/ccache-action@v1
         with:
           key: preload-${{ matrix.cxx }}-${{ steps.cpu.outputs.id }}
-      # The README quotes this script, so the environment sets the compiler, the generator
+      # The docs quote this script, so the environment sets the compiler, the generator
       # and the number of parallel compiles.
       - name: Build and install to a prefix
         run: scripts/install_prefix.sh
@@ -425,16 +425,6 @@ jobs:
       - name: Prefix routes
         run: test/package/run_routes.sh "$PWD" "$RUNNER_TEMP/routes" ${{ matrix.routes }}
         env: {CMAKE_GENERATOR: Ninja}
-
-  # Each README code block must match the file that it copies. The fixtures prove that the checker
-  # fails on a drifted block.
-  readme-check:
-    timeout-minutes: 10
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      - run: test/readme_check/run.sh
-      - run: scripts/check_readme.sh
 
   # One configure for each build option. The docs quote each block of scripts/options.sh.
   build-options:

@@ -7,6 +7,14 @@ unset NINJA_STATUS
 export CMAKE_GENERATOR=Ninja
 trap 'rm -rf build' EXIT
 
+# Control for the three BUILD_* blocks: they expect a target to be absent, so a wrong name would
+# pass. At the default configure each of these targets must exist.
+cmake -S . -B build >/dev/null
+for t in test_api_fftw admiral_benchmark example_quickstart; do
+    test "$(cmake --build build --target help | grep -c "^$t:")" -eq 1 ||
+        { echo "FAIL: the default configure has no target $t"; exit 1; }
+done
+
 rm -rf build
 # [doc:opt-ADM_BUILD_TESTS]
 cmake -S . -B build -DADM_BUILD_TESTS=OFF

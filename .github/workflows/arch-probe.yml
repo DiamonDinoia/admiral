@@ -1,76 +1,74 @@
 name: Arch probe
 
-# Measurement, not a candidate. Builds and tests admiral at the baseline ISA of every
-# architecture numpy supports (numpy v2.5.4, meson_cpu/meson.build:98-108). The library has no
-# runtime dispatch yet, so each cell shows what the baseline build does alone.
-# Route: cross compile on the x86 runner and run ctest through qemu-user, except where the
-# runner runs the binary itself (x86-64, i686 with -m32, aarch64 on the arm runner).
-# wasm32 uses emscripten and node.
+# Measurement, not a candidate. Builds and tests admiral on the numpy wheel targets that no
+# earlier probe ran (numpy v2.5.4 wheels.yml:39-45, windows.yml:79-80): musllinux_1_2 x86_64 and
+# aarch64, Windows ARM64 (cl and clang-cl) and Windows x86. x86_64 glibc is the control.
+# The musl cells run inside the pypa musllinux_1_2 image through `docker exec`, not `container:`,
+# because the runner has no musl node for JavaScript actions on arm64.
+# The Windows cells use Ninja under vcvars. `amd64_x86` is the toolset `-A Win32` picks on a
+# 64-bit host, and Ninja compiles in parallel where the Visual Studio generator does not.
 on:
   push:
-    branches: ['probe/arch-matrix']
+    branches: ['probe/port-extra']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  CMAKE_CXX_COMPILER_LAUNCHER: ccache
-  CMAKE_C_COMPILER_LAUNCHER: ccache
-
 jobs:
   probe:
-    # Public runners have 16 GiB. Worst Release TU peak is 3.4 GiB, so -j2 stays under
-    # 0.75 x 16 GiB = 12 GiB (2 x 3.4 = 6.8 GiB).
-    timeout-minutes: 220
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Baseline ISA per numpy: X86_V2.
-          - {name: x86_64, os: ubuntu-24.04, kind: native, pkgs: g++-14, arch: x86-64-v2, expect: '-march=x86-64-v2'}
-          # X86_V2 without CX16, SSE math. The x86-64 kernel runs 32-bit ELF directly.
-          - {name: i686, os: ubuntu-24.04, kind: native, pkgs: g++-14-multilib, arch: none, flags: '-m32 -msse4.2 -mpopcnt -msahf -mfpmath=sse', expect: '-m32'}
-          # ASIMD is the armv8-a baseline.
-          - {name: aarch64, os: ubuntu-24.04-arm, kind: native, pkgs: g++-14, arch: armv8-a, expect: '-march=armv8-a'}
-          # numpy baseline: none. Compiler default, no NEON.
-          - {name: armhf, os: ubuntu-24.04, kind: qemu, triple: arm-linux-gnueabihf, proc: arm, qemu: qemu-arm, arch: none}
-          # numpy baseline: VSX2 on little endian, which is POWER8.
-          - {name: ppc64le, os: ubuntu-24.04, kind: qemu, triple: powerpc64le-linux-gnu, proc: ppc64le, qemu: qemu-ppc64le, arch: power8, expect: '-mcpu=power8'}
-          # numpy baseline: none. QEMU only, by standing decision.
-          - {name: s390x, os: ubuntu-24.04, kind: qemu, triple: s390x-linux-gnu, proc: s390x, qemu: qemu-s390x, arch: none}
-          # Scalar only, by standing decision.
-          - {name: riscv64, os: ubuntu-24.04, kind: qemu, triple: riscv64-linux-gnu, proc: riscv64, qemu: qemu-riscv64, arch: none}
-          # numpy baseline: LSX.
-          - {name: loongarch64, os: ubuntu-24.04, kind: qemu, triple: loongarch64-linux-gnu, proc: loongarch64, qemu: qemu-loongarch64, arch: none, flags: '-mlsx', expect: '-mlsx'}
-          # numpy baseline: none. No threads: the pool is the serial no-op pool.
-          - {name: wasm32, os: ubuntu-24.04, kind: wasm, arch: none}
+          # Control. Baseline ISA per numpy: X86_V2.
+          - {name: x86_64-glibc, os: ubuntu-24.04, kind: native, arch: x86-64-v2, expect: '-march=x86-64-v2'}
+          - {name: x86_64-musl, os: ubuntu-24.04, kind: musl, image: quay.io/pypa/musllinux_1_2_x86_64, arch: x86-64-v2, expect: '-march=x86-64-v2'}
+          - {name: aarch64-musl, os: ubuntu-24.04-arm, kind: musl, image: quay.io/pypa/musllinux_1_2_aarch64, arch: armv8-a, expect: '-march=armv8-a'}
+          # cl has no per-level arch switch on ARM64. Its default is armv8.0 with NEON.
+          - {name: arm64-msvc, os: windows-11-arm, kind: win, vcarch: arm64, cxx: cl, arch: none, cpu: ARM64}
+          - {name: arm64-clang-cl, os: windows-11-arm, kind: win, vcarch: arm64, cxx: clang-cl, arch: armv8-a, cpu: ARM64, expect: '-march=armv8-a'}
+          # numpy's baseline on 32-bit cl is /arch:SSE2 (meson_cpu/x86/meson.build:83), the cl default.
+          - {name: x86-msvc, os: windows-2022, kind: win, vcarch: amd64_x86, cxx: cl, arch: none, cpu: X86}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
-      - name: Install toolchain
-        if: matrix.kind != 'wasm'
+      - name: Install toolchain (glibc)
+        if: matrix.kind == 'native'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build g++-14
+      - name: Start musl container
+        if: matrix.kind == 'musl'
         run: |
           set -eu
-          pkgs="${{ matrix.pkgs }}"
-          if [ '${{ matrix.kind }}' = qemu ]; then
-            pkgs="g++-14-${{ matrix.triple }} qemu-user"
-          fi
-          sudo apt-get update
-          sudo apt-get install -y ninja-build ccache $pkgs
-      - uses: mymindstorm/setup-emsdk@v14
-        if: matrix.kind == 'wasm'
+          docker run -d --name musl -v /home/runner/work:/home/runner/work \
+            -w "$GITHUB_WORKSPACE" '${{ matrix.image }}' sleep infinity
+          docker exec musl apk add --no-cache samurai
+          docker exec musl sh -c 'cat /etc/alpine-release; gcc --version | head -1; ldd 2>&1 | head -1'
+          echo "X=docker exec -w $GITHUB_WORKSPACE musl" >> "$GITHUB_ENV"
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: matrix.kind == 'win'
         with:
-          version: 4.0.10
-      - name: Install wasm tools
-        if: matrix.kind == 'wasm'
+          arch: ${{ matrix.vcarch }}
+      - name: Locate clang-cl
+        if: matrix.cxx == 'clang-cl'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build ccache
-      - uses: hendrikmuhs/ccache-action@v1
-        with:
-          key: probe-${{ matrix.name }}
+          set -eu
+          for d in "$(cygpath -u "$VCINSTALLDIR")/Tools/Llvm/ARM64/bin" "/c/Program Files/LLVM/bin"; do
+            if [ -x "$d/clang-cl.exe" ]; then
+              cygpath -w "$d" >> "$GITHUB_PATH"
+              "$d/clang-cl.exe" --version
+              exit 0
+            fi
+          done
+          echo "no clang-cl on this image"
+          exit 1
       - name: Configure
         run: |
           set -eu
@@ -79,35 +77,12 @@ jobs:
                 -DADM_TARGET_ARCH=${{ matrix.arch }}
                 -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF
                 -DCMAKE_EXPORT_COMPILE_COMMANDS=ON)
-          flags='${{ matrix.flags }}'
           case '${{ matrix.kind }}' in
-            native)
-              args+=(-DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14)
-              launcher=() ;;
-            qemu)
-              t='${{ matrix.triple }}'
-              cat > "$RUNNER_TEMP/tc.cmake" <<TC
-          set(CMAKE_SYSTEM_NAME Linux)
-          set(CMAKE_SYSTEM_PROCESSOR ${{ matrix.proc }})
-          set(CMAKE_C_COMPILER $t-gcc-14)
-          set(CMAKE_CXX_COMPILER $t-g++-14)
-          set(CMAKE_CROSSCOMPILING_EMULATOR "${{ matrix.qemu }};-L;/usr/$t")
-          set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
-          TC
-              args+=(-DCMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/tc.cmake"
-                     -DCMAKE_CATCH_DISCOVER_TESTS_DISCOVERY_MODE=PRE_TEST) ;;
-            wasm)
-              flags='-fexceptions'
-              args+=(-DCMAKE_TOOLCHAIN_FILE="$EMSDK/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake"
-                     -DADM_ENABLE_THREADS=OFF
-                     -DCMAKE_CATCH_DISCOVER_TESTS_DISCOVERY_MODE=PRE_TEST
-                     "-DCMAKE_EXE_LINKER_FLAGS=-fexceptions -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=268435456 -sMAXIMUM_MEMORY=2147483648 -sSTACK_SIZE=4194304") ;;
+            native) args+=(-DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14) ;;
+            win) args+=(-DCMAKE_C_COMPILER=${{ matrix.cxx }} -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}) ;;
           esac
-          if [ -n "$flags" ]; then
-            args+=("-DCMAKE_C_FLAGS=$flags" "-DCMAKE_CXX_FLAGS=$flags")
-          fi
           unset NINJA_STATUS
-          if ! cmake "${args[@]}" > logs/configure.log 2>&1; then
+          if ! ${X:-} cmake "${args[@]}" > logs/configure.log 2>&1; then
             grep -n -m3 -E 'CMake Error|Error' logs/configure.log || true
             tail -n 40 logs/configure.log
             exit 1
@@ -120,28 +95,31 @@ jobs:
             grep -qF -- '${{ matrix.expect }}' build/compile_commands.json
           fi
           ! grep -qF -- '=native' build/compile_commands.json
-          grep -qF -- '-O3' build/compile_commands.json || grep -qF -- '-O2' build/compile_commands.json
-          grep -q 'LAUNCHER = ccache' build/build.ninja
+          if [ -n '${{ matrix.cpu }}' ]; then
+            grep -h 'COMPILER_ARCHITECTURE_ID' build/CMakeFiles/*/CMakeCXXCompiler.cmake
+            grep -q 'CMAKE_CXX_COMPILER_ARCHITECTURE_ID ${{ matrix.cpu }})' build/CMakeFiles/*/CMakeCXXCompiler.cmake
+          fi
       - name: Build
         run: |
           set -u
           unset NINJA_STATUS
           rc=0
-          cmake --build build -j2 -- -k 0 > logs/build.log 2>&1 || rc=$?
+          ${X:-} cmake --build build -j${{ matrix.kind == 'win' && 4 || 3 }} -- -k 0 > logs/build.log 2>&1 || rc=$?
           if [ "$rc" -ne 0 ]; then
             echo "failed TUs: $(grep -c '^FAILED' logs/build.log)"
             echo "first error:"
-            grep -n -m5 -E 'error:|Error [0-9]|FAILED:' logs/build.log || true
+            grep -n -m5 -E 'error|FAILED:' logs/build.log || true
             tail -n 40 logs/build.log
           fi
-          ccache -s || true
           exit "$rc"
       - name: Test
         run: |
           set -u
           rc=0
-          ctest --test-dir build -j2 --timeout 1800 --output-on-failure --no-tests=error \
+          start=$(date +%s)
+          ${X:-} ctest --test-dir build -j2 --timeout 1800 --output-on-failure --no-tests=error \
             > logs/ctest.log 2>&1 || rc=$?
+          echo "ctest wall: $(( $(date +%s) - start )) s"
           grep -E 'tests passed|tests failed|Total Test time' logs/ctest.log || true
           if [ "$rc" -ne 0 ]; then
             grep -E '\*\*\*|Failed|Timeout|Not Run' logs/ctest.log | head -n 30 || true

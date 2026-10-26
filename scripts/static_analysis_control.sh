@@ -58,14 +58,12 @@ while read -r cmd; do
     if [[ $kind == clang-tidy ]]; then
         check_roster "$bin" || rc=1
     fi
-    run "$kind" "$cmd" "$good"
-    if (($? != 0)); then
+    if ! run "$kind" "$cmd" "$good"; then
         echo "control: $kind reports on a CLEAN file; its verdict on the library is meaningless"
         rc=1
         continue
     fi
-    run "$kind" "$cmd" "$bad"
-    if (($? == 0)); then
+    if run "$kind" "$cmd" "$bad"; then
         echo "control: $kind is SILENT on the known-bad file; the gate is dead"
         rc=1
     else

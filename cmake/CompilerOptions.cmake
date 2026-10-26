@@ -118,14 +118,6 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     endif()
 endif()
 
-if(DEFINED ADM_EXTRA_C_FLAGS)
-    separate_arguments(ADM_EXTRA_C_FLAGS_LIST UNIX_COMMAND "${ADM_EXTRA_C_FLAGS}")
-    target_compile_options(admiral_optimization_flags INTERFACE
-        $<$<COMPILE_LANGUAGE:C>:${ADM_EXTRA_C_FLAGS_LIST}>
-    )
-    message(STATUS "Custom C flags: ${ADM_EXTRA_C_FLAGS}")
-endif()
-
 if(DEFINED ADM_EXTRA_CXX_FLAGS)
     separate_arguments(ADM_EXTRA_CXX_FLAGS_LIST UNIX_COMMAND "${ADM_EXTRA_CXX_FLAGS}")
     target_compile_options(admiral_optimization_flags INTERFACE

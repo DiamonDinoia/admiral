@@ -39,11 +39,11 @@ inline constexpr bool kGranuleFmaddsub = XSIMD_WITH_FMA3_SSE || XSIMD_WITH_FMA3_
                                          || XSIMD_WITH_AVX512F;
 
 // Admission: an entry is true only where the dialect was measured for that precision.
-// 16 f64 is a measured LOSS (aos-sweep-n16 0.87x/0.93x) and stays out; N < 9 stays with
+// 16 f64 is a measured LOSS (0.87x and 0.93x) and stays out; N < 9 stays with
 // the flat arms; N > 24 waits on register-cliff work. Long double never compiles here.
 //
-// ADM_GRANULE_ADMIT_OFF (CMake -DADM_GRANULE_ADMIT=OFF, WI-0a's per-class transfer
-// audit) forces every entry false: admission is if constexpr, so the granule arms drop
+// ADM_GRANULE_ADMIT_OFF (CMake -DADM_GRANULE_ADMIT=OFF)
+// forces every entry false: admission is if constexpr, so the granule arms drop
 // out at compile time and the SoA fallback runs. The knob serves one decision rule: an
 // admission that does not beat OFF beyond 2x the in-job control spread on every node
 // class goes OFF globally. The default-ON arm is textually the pre-knob predicate, so a

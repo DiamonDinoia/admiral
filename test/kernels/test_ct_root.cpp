@@ -70,7 +70,7 @@ struct root_lattice_bad {
 // Sweep policy per precision: double carries the full lattice (every Num < Den); float and
 // long double full-sweep the shipped denominators, every den divisible by 8 (all octant
 // grids) and everything <= 64, and spot elsewhere. Keeps the constexpr-fold cost of this TU
-// on gcc inside a normal test build (times recorded in the wave receipt).
+// on gcc inside a normal test build.
 template<typename F>
 constexpr bool lattice_swept(std::size_t den, std::size_t num) {
     if (std::is_same_v<F, double>) return true;

@@ -1,6 +1,6 @@
 #pragma once
 
-// Wave-A DAG census node pool (math-clarity campaign D4c): the runtime store behind the
+// DAG census node pool: the runtime store behind the
 // symbolic V of sym_dag.hpp. One node per dynamically issued plane op; leaves are plane
 // inputs (plane/layout/index plus a provenance tag that reporting reads and equality
 // never does) and constants (memcpy'd T bits). A post-pass tagger turns cplain into cturn
@@ -15,7 +15,7 @@
 // relabel for the kernel-boundary re/im swap, constant conjugation for dialects that
 // fold direction into the twiddles.
 //
-// Test-local (test/ only): no shipped TU includes this header, so wave A moves zero
+// Test-local (test/ only): no shipped TU includes this header, so it moves zero
 // shipped objects. C++17/C++20 dual-valid: no concepts, no consteval, no templated
 // lambdas, no class-type NTTPs, no std::bit_cast, no spans.
 

@@ -17,19 +17,7 @@ pass=0
 declare -a failed=()
 declare -a skipped=()
 
-check_flags() {
-    local dir=$1 spec pat n rc=0
-    shift
-    for spec in "$@"; do
-        pat=${spec#*:}
-        n=$(grep -c -F -- "$pat" "$dir/compile_commands.json" 2>/dev/null || true)
-        case ${spec%%:*} in
-            want) ((n > 0)) || { echo "  FLAG MISSING: $pat"; rc=1; } ;;
-            not)  ((n == 0)) || { echo "  FLAG PRESENT: $pat ($n TUs)"; rc=1; } ;;
-        esac
-    done
-    return $rc
-}
+check_flags() { "$src/scripts/check_flags.sh" "$@"; }
 
 run_arm() {
     local name=$1 dir log; shift
@@ -41,6 +29,7 @@ run_arm() {
     rm -rf "$dir"
     step() { local what=$1; shift; "$@" >>"$log" 2>&1 || { echo "  FAILED: $what (see $log)"; return 1; }; }
     : >"$log"
+    # shellcheck disable=SC2015  # the || arm is the failure handler of the whole chain
     step configure cmake -S "$src" -B "$dir" -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON "$@" &&
         check_flags "$dir" "${checks[@]}" &&
         step build cmake --build "$dir" -j "$jobs" &&
@@ -108,9 +97,9 @@ arm_catalog() {
 # (ADM_USE_FAST_MATH=OFF) -- runs test/digest's positional case sweep on both, and diffs
 # each against the committed goldens in test/digest/golden with scripts/check_digest.sh.
 # The shipped arm runs under the banked upper-bound waiver
-# test/digest/golden/allowed-movers-wi4a-2026-09-17.txt: the shipped dialect keys
+# test/digest/golden/allowed-movers-2026-09-17.txt: the shipped dialect keys
 # vector-arm dispatch on pointer alignment, so the address-sensitive case class
-# (receipt wi4a-nd-scratch-tls) moves on ANY allocation-layout change; a mover outside
+# (address-allocation-layout class) moves on ANY allocation-layout change; a mover outside
 # the bank fails the arm, an unexercised entry is an improvement. The strict arm and
 # the --ulp positive control stay zero-tolerance exact-match, plus a strict-arm mover
 # must also be a shipped-arm mover (the strict build never moves a case alone; cases a
@@ -119,7 +108,7 @@ arm_catalog() {
 # predicts zero movers.
 arm_digest() {
     local gen=$out/digest log=$out/digest.log rc=0 sub waiver_used=
-    local waiver=${ADM_DIGEST_WAIVER:-$src/test/digest/golden/allowed-movers-wi4a-2026-09-17.txt}
+    local waiver=${ADM_DIGEST_WAIVER:-$src/test/digest/golden/allowed-movers-2026-09-17.txt}
     echo "=== digest"
     if [[ -n ${ADM_DIGEST_WAIVER:-} && ! ( -r $waiver && -s $waiver ) ]]; then
         echo "  FAILED: ADM_DIGEST_WAIVER=$waiver unreadable or empty"; failed+=("digest"); return
@@ -142,6 +131,7 @@ arm_digest() {
             checks+=("want:-ffast-math")
         fi
         echo "--- $sub: configure/build" >>"$log"
+        # shellcheck disable=SC2015  # the || arm is the failure handler of the whole chain
         cmake -S "$src" -B "$dir" -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             "${cfg[@]}" >>"$log" 2>&1 &&
             check_flags "$dir" "${checks[@]}" &&
@@ -151,8 +141,8 @@ arm_digest() {
             { echo "  FAILED: $sub configure/build (see $log)"; failed+=("digest"); return; }
         # cat puts stdout in the 4096-blksize class: a direct 1 MiB-blksize NFS file
         # sink scales the stdio first heap alloc, which shifts the Bluestein/Rader
-        # buffers' alignment class and flips prime>11 1-D cases (9 spurious movers,
-        # 2026-09-15). pipefail (line 3) keeps the binary's rc through the pipe.
+        # buffers' alignment class and flips prime>11 1-D cases (9 spurious movers).
+        # pipefail (line 3) keeps the binary's rc through the pipe.
         if "$dir/test/admiral_digest" 2>>"$log" | cat >"$gen/$sub.txt"; then
             echo "--- $sub: $(wc -l <"$gen/$sub.txt") cases" >>"$log"
         else
@@ -208,6 +198,7 @@ arm_valgrind() {
     echo "=== valgrind"
     command -v valgrind >/dev/null || { echo "  skipped: valgrind not on PATH"; skipped+=(valgrind); return; }
     rm -rf "$dir"; : >"$log"
+    # shellcheck disable=SC2015  # the || arm is the failure handler of the whole chain
     cmake -S "$src" -B "$dir" -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
         -DCMAKE_BUILD_TYPE=RelWithDebInfo -DADM_TARGET_ARCH=x86-64-v2 \
         -DADM_USE_FAST_MATH=OFF -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF >>"$log" 2>&1 &&
@@ -217,13 +208,14 @@ arm_valgrind() {
     # WILL_FAIL binaries (the poison twins in test/CMakeLists.txt) exit nonzero by design,
     # and this loop runs the binaries directly, where ctest's WILL_FAIL inversion never
     # applies. The exclusion set must come from ctest's own test metadata.
-    local wf_json wf_names='' ok=1
+    local wf_json wf_names='' all_bins='' ok=1
     wf_json=$(ctest --test-dir "$dir" --show-only=json-v1 2>>"$log") || ok=0
     if ((ok == 1)); then
         local wf_expr='.tests[] | select(any(.properties[]?; .name == "WILL_FAIL" and'
         wf_expr+=' .value == true)) | .name'
         if command -v jq >/dev/null; then
             wf_names=$(jq -r "$wf_expr" <<<"$wf_json") || ok=0
+            all_bins=$(jq -r '.tests[].command[0] | split("/")[-1]' <<<"$wf_json" | sort -u | grep '^test_') || ok=0
         elif command -v python3 >/dev/null; then
             wf_names=$(python3 -c '
 import json, sys
@@ -231,6 +223,10 @@ for t in json.load(sys.stdin)["tests"]:
     if any(p.get("name") == "WILL_FAIL" and p.get("value") is True
            for p in t.get("properties", [])):
         print(t["name"])' <<<"$wf_json") || ok=0
+            all_bins=$(python3 -c '
+import json, sys
+for t in json.load(sys.stdin)["tests"]:
+    print(t["command"][0].rsplit("/", 1)[-1])' <<<"$wf_json" | sort -u | grep '^test_') || ok=0
         else
             echo "  no jq and no python3 on PATH for ctest test metadata" >>"$log"
             ok=0
@@ -239,7 +235,15 @@ for t in json.load(sys.stdin)["tests"]:
     ((ok == 1)) || { echo "  FAILED: ctest WILL_FAIL metadata (see $log)"; failed+=("valgrind"); return; }
     # A WILL_FAIL test's name is its binary's basename (add_test(NAME test_x COMMAND test_x)).
     local -A wffail=()
-    local t
+    local t ran=0
+    local -A ran_bins=()
+    # test_alloc replaces global operator new/delete; valgrind redirects the same symbols
+    # and the counter misreads (6f130b4). CI's valgrind job skips it the same way.
+    local memcheck_skips=' test_long_double test_alloc '
+    # valgrind runs x87 long double at 53 bits, so two test_ulp cases that compare against an
+    # exact long-double reference fail there with no memcheck error: the c2r case (bound is 64
+    # long-double epsilons) and the factored-reference case (pure long-double arithmetic).
+    local -A memcheck_filter=([test_ulp]='~[longdouble]~"ULP: c2r*"~"ULP: the factored*"')
     for t in $wf_names; do wffail[$t]=1; done
     if ((${#wffail[@]} > 0)); then
         local -a wf_sorted
@@ -248,11 +252,7 @@ for t in json.load(sys.stdin)["tests"]:
     fi
     for bin in "$dir"/test/test_*; do
         [[ -x $bin && ! -d $bin ]] || continue
-        [[ $(basename "$bin") == test_ulp ]] && continue
-        [[ $(basename "$bin") == test_long_double ]] && continue
-        # test_alloc replaces global operator new/delete; valgrind redirects the same symbols
-        # and the counter misreads (6f130b4). CI's valgrind job skips it the same way.
-        [[ $(basename "$bin") == test_alloc ]] && continue
+        [[ $memcheck_skips == *" $(basename "$bin") "* ]] && continue
         [[ -n ${wffail[$(basename "$bin")]:-} ]] &&
             { echo "  skip (WILL_FAIL): $(basename "$bin")" | tee -a "$log"; continue; }
         echo "--- $(basename "$bin")" >>"$log"
@@ -260,11 +260,25 @@ for t in json.load(sys.stdin)["tests"]:
         # Valgrind serialises threads and costs 50-100x, so a deadlocked binary never returns.
         # Slowest measured binary is test_threads at 642 s (ccmlin075, 22 binaries, 2026-09-12).
         timeout 1800 valgrind --error-exitcode=1 --errors-for-leak-kinds=definite \
-            --leak-check=full "$bin" '~[ulp]' '~[longdouble]' >>"$log" 2>&1
+            --leak-check=full \
+            "$bin" "${memcheck_filter[$(basename "$bin")]:-~[longdouble]}" >>"$log" 2>&1
         vrc=$?
         ((vrc == 124)) && echo "  TIMEOUT after 1800s: $(basename "$bin")" >>"$log"
-        ((vrc == 0)) || { echo "  ERRORS: $(basename "$bin")$( ((vrc == 124)) && printf ' (timeout)')"; rc=1; }
+        ((vrc == 0)) || { echo "  ERRORS: $(basename "$bin")$( ((vrc == 124)) && printf ' (timeout)')"; tail -n 40 "$log"; rc=1; }
+        ((ran++)); ran_bins[$(basename "$bin")]=1
     done
+    # The test_* binaries that ctest registers, less the named skips and the WILL_FAIL twins, must
+    # all have run. An empty expected set is a bug (an unmatched glob walks zero binaries).
+    local expected=0
+    for t in $all_bins; do
+        [[ $memcheck_skips == *" $t "* ]] && continue
+        [[ -z ${wffail[$t]:-} ]] || continue
+        ((expected++))
+        [[ -n ${ran_bins[$t]:-} ]] || { echo "  NOT RUN: $t" | tee -a "$log"; rc=1; }
+    done
+    echo "  memcheck ran $ran binaries, $expected expected from ctest" | tee -a "$log"
+    echo "  memcheck ran: $(printf '%s\n' "${!ran_bins[@]}" | LC_ALL=C sort | tr '\n' ' ')" | tee -a "$log"
+    ((expected > 0)) || rc=1
     ((rc == 0)) && { echo "  OK"; ((pass++)); rm -rf "$dir"; } || failed+=("valgrind")
 }
 
@@ -280,6 +294,9 @@ run_static_analysis_arm() {
         echo "  skipped: $tool not on PATH"; skipped+=("$name"); return
     fi
     if [[ $name == tidy ]]; then
+        # Tidy parses with the clang++ that ships beside it, so the two versions match.
+        cxx=$(dirname "$(readlink -f "$(command -v clang-tidy)")")/clang++
+        echo "  tidy compiler: $cxx"
         grep -q 'HeaderFilterRegex' "$src/.clang-tidy" ||
             { echo "  MISSING: HeaderFilterRegex in .clang-tidy"; failed+=("$name"); return; }
     fi
@@ -294,15 +311,17 @@ run_static_analysis_arm() {
     fi
     cmake --build "$dir" --target admiral -j "$jobs" >>"$log" 2>&1 ||
         { echo "  FAILED: $tool (see $log)"; failed+=("$name"); return; }
-    "$src/scripts/static_analysis_control.sh" "$dir" >>"$log" 2>&1 &&
-        { echo "  OK"; ((pass++)); rm -rf "$dir"; } ||
-        { echo "  FAILED: positive control (see $log)"; failed+=("$name"); }
+    if "$src/scripts/static_analysis_control.sh" "$dir" >>"$log" 2>&1; then
+        echo "  OK"; ((pass++)); rm -rf "$dir"
+    else
+        echo "  FAILED: positive control (see $log)"; failed+=("$name")
+    fi
 }
 
-arm_tidy() { run_static_analysis_arm tidy clang-tidy clang++ ADM_ENABLE_CLANG_TIDY; }
-arm_cppcheck() { run_static_analysis_arm cppcheck cppcheck g++ ADM_ENABLE_CPPCHECK; }
+arm_tidy() { run_static_analysis_arm tidy clang-tidy "" ADM_ENABLE_CLANG_TIDY; }
+arm_cppcheck() { run_static_analysis_arm cppcheck cppcheck "${CXX:-g++}" ADM_ENABLE_CPPCHECK; }
 
-# Constants-with-receipt coupling (WI-0b): a commit touching a hand-fit- or probe-fit
+# Constants-with-receipt coupling: a commit touching a hand-fit- or probe-fit
 # constants header must name its derivation receipt. The scan is
 # scripts/receipt_coupling_check.sh over ${ADM_VALIDATE_BASE:-HEAD~1}..HEAD (an empty
 # range passes trivially and says so); the control runs first, so a scan that cannot
@@ -332,7 +351,7 @@ arm_receipt-coupling() {
     esac
 }
 
-# WI-0c-ii granule admission A/B. Builds the tree four times (x86-64-v4/v3 crossed with
+# Granule admission A/B. Builds the tree four times (x86-64-v4/v3 crossed with
 # ADM_GRANULE_ADMIT ON/OFF; Release, tests off, benchmarks on, the bench_granule_ab target
 # only), asserts the knob arrive per build via check_flags plus the CMake cache and a
 # symbol-level control (ON libadmiral_internal instantiates the granule drivers, OFF none).
@@ -391,7 +410,7 @@ arm_granule-admission() {
 
     # Timing: six rounds of on/off/ctl per ISA, start order rotated across rounds.
     # ctl re-runs the ON binary: the per-round on/ctl spread is the identity floor.
-    # The 4x4x4/8x8x8 cells are the fast3d cube payloads (WI-1a); they are judged by the
+    # The 4x4x4/8x8x8 cells are the fast3d cube payloads; they are judged by the
     # same WIN/LOSS/FLAT rule as the rows/cols squares.
     local cells="12x12:f32 12x12:f64 16x16:f32 24x24:f32 24x24:f64 4x4x4:f32 4x4x4:f64 8x8x8:f32 8x8x8:f64 9x9:f64 10x10:f32 10x10:f64 11x11:f64 13x13:f32 13x13:f64 14x14:f32 14x14:f64 15x15:f32 15x15:f64"
     local r order arm bin tsv
@@ -504,7 +523,7 @@ arm_granule-admission() {
                 }
                 exit(n == 0)
             }' "$root/candidates-$isa.tsv" | sort -t$'\t' -k3 | tee "$root/transfer-$isa.txt" >/dev/null
-        ((${PIPESTATUS[0]} == 0 && ${PIPESTATUS[1]} == 0)) || rc=1
+        ((PIPESTATUS[0] == 0 && PIPESTATUS[1] == 0)) || rc=1
     done
     if ((rc == 0)); then
         echo "  OK"; ((pass++))
@@ -527,5 +546,8 @@ done
 echo
 echo "validate: $pass passed, ${#failed[@]} failed, ${#skipped[@]} skipped"
 ((${#skipped[@]} == 0)) || printf 'skipped: %s\n' "${skipped[*]}"
+for arm in "${failed[@]}"; do
+    [[ ! -r $out/$arm.log ]] || { echo "---- tail of $arm.log"; tail -n 40 "$out/$arm.log"; }
+done
 ((pass > 0)) || { echo "validate: no arm reported success"; exit 1; }
 ((${#failed[@]} == 0)) || { printf 'failed: %s\n' "${failed[@]}"; exit 1; }

@@ -23,6 +23,18 @@ concurrency:
 env:
   CMAKE_CXX_COMPILER_LAUNCHER: ccache
   CMAKE_C_COMPILER_LAUNCHER: ccache
+  # x64 runners have 2 physical cores and 15 GiB of memory (free -g, rounded down). The limit is
+  # 75% of that, 11520 MiB. A level of 2 fits every measured job except the Debug cells of the
+  # build job. The tightest fit is asan g++-14: 2 x 5716 MiB (inst_dif_thunks_f) = 11432 MiB.
+  # The peaks are measured, per cell, on the runners (arm, macOS and Windows in runs 40359790304
+  # and 40363745014, 2026-10-26; the rest through a /usr/bin/time wrapper). arm64 fits at
+  # 2 x 2552 MiB and macOS at 2 x 1690 MiB (inst_col_*), windows clang-cl at 2 x 4005 MiB.
+  # Known limit: MSVC test_ct_root.cpp.obj peaks at 16-21 GiB of commit charge (16231 MiB on
+  # windows-2025, 20854 on windows-2022; commit is an upper bound of working set). The goal fails
+  # at every level there; cl pages through it. The next-largest MSVC TU is 2550 MiB.
+  CMAKE_BUILD_PARALLEL_LEVEL: 2
+  # ctest reads this variable too, so no ctest call carries -j. GitHub jobs use at most 2 cores.
+  CTEST_PARALLEL_LEVEL: 2
 
 jobs:
   # One cell per (toolchain, build type). The compiler axis is the point: gcc and clang disagree
@@ -30,6 +42,10 @@ jobs:
   # until that one is in the matrix.
   build:
     timeout-minutes: 45
+    # The Debug test_granule TU peaks at 9123 MiB (gcc-14) and 7682 MiB (llvm-21). Two of them
+    # exceed the limit, so Debug cells compile one TU at a time.
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: ${{ matrix.build_type == 'Debug' && 1 || 2 }}
     strategy:
       fail-fast: false
       matrix:
@@ -53,19 +69,26 @@ jobs:
           - {os: ubuntu-24.04, toolchain: llvm-21, arch: x86-64-v3, std: 17}
           # Other targets.
           - {os: ubuntu-24.04-arm, toolchain: gcc-14, arch: armv8-a}
-          - {os: macos-14, toolchain: apple-clang, arch: none}
           - {os: macos-15, toolchain: apple-clang, arch: none}
     name: ${{ matrix.toolchain }} ${{ matrix.arch }} c++${{ matrix.std || 20 }} ${{ matrix.build_type || 'Release' }}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: aminya/setup-cpp@v1
+      - uses: actions/checkout@v7.0.1
+      # setup-cpp imports the gcc-15 PPA key into a keyring path relative to the working directory.
+      # gpg does not create the parent directory, and setup-cpp reports the failure as a warning only.
+      - name: Create the PPA keyring directory
+        if: matrix.toolchain == 'gcc-15'
+        run: mkdir keyserver.ubuntu.com
+      - uses: aminya/setup-cpp@v1.10.1
         with:
           compiler: ${{ matrix.toolchain }}
           cmake: true
           ninja: true
           cache-tools: true
-      - uses: hendrikmuhs/ccache-action@v1
+      - name: Assert the PPA key arrived
+        if: matrix.toolchain == 'gcc-15'
+        run: test -s keyserver.ubuntu.com/ubuntu-toolchain-r-test.gpg
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: ${{ matrix.os }}-${{ matrix.toolchain }}-${{ matrix.arch }}-${{ matrix.std || 20 }}-${{ matrix.build_type || 'Release' }}
       - name: Print versions
@@ -83,23 +106,22 @@ jobs:
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
       - name: Assert the flags arrived
         if: matrix.arch != 'none'
-        run: |
-          grep -qF -- '=${{ matrix.arch }}' build/compile_commands.json
-          ! grep -qF -- '=native' build/compile_commands.json
-          grep -qF -- '-std=c++${{ matrix.std || 20 }}' build/compile_commands.json
-          # A Debug cell debugs at -Og. -O0 pays the same template instantiation cost and then
-          # runs the tests several times slower.
-          if [ '${{ matrix.build_type || 'Release' }}' = Debug ]; then
-            grep -qF -- '-Og' build/compile_commands.json
-            ! grep -qF -- '-O0' build/compile_commands.json
-          fi
+        # A Debug cell debugs at -Og. -O0 pays the same template instantiation cost and then
+        # runs the tests several times slower. `=x86-64 ` would also match `=x86-64-v2/v3`, so
+        # the v1 cell carries its own denial: a silent higher level must not pass here.
+        run: >
+          scripts/check_flags.sh build want:=${{ matrix.arch }} not:=native
+          want:-std=c++${{ matrix.std || 20 }}
+          ${{ matrix.build_type == 'Debug' && 'want:-Og not:-O0' || '' }}
+          ${{ matrix.arch == 'x86-64' && 'not:-march=x86-64-v' || '' }}
       # compile_commands.json omits the launcher under Ninja, so build.ninja is the only witness.
       - name: Assert the compiler launcher arrived
         run: grep -q 'LAUNCHER = ccache' build/build.ninja
       - run: cmake --build build
       - run: ctest --test-dir build --timeout 900 --output-on-failure --no-tests=error
-      # The only cell that links a consumer against the DLL, which is what proves the headers
-      # say dllimport outside the build.
+      # Same consumer project as test/package/run_routes.sh (the prefix route). It stays here
+      # because every compiler and standard cell installs its own build and consumes it without
+      # a second build.
       - name: Install and consume
         run: |
           cmake --install build --prefix "$PWD/prefix"
@@ -109,7 +131,7 @@ jobs:
           ctest --test-dir build-pkg --timeout 900 --output-on-failure --no-tests=error
       - name: Upload logs
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: logs-${{ matrix.os }}-${{ matrix.toolchain }}-${{ matrix.arch }}-${{ matrix.std || 20 }}-${{ matrix.build_type || 'Release' }}
           path: build/Testing/**
@@ -141,8 +163,8 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v7
-      - uses: aminya/setup-cpp@v1
+      - uses: actions/checkout@v7.0.1
+      - uses: aminya/setup-cpp@v1.10.1
         with:
           compiler: ${{ matrix.toolchain }}
           cmake: true
@@ -150,7 +172,7 @@ jobs:
           vcvarsall: true
           cache-tools: true
       # sccache, not ccache: ccache has no MSVC support.
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           variant: sccache
           key: ${{ matrix.os }}-${{ matrix.toolchain }}
@@ -169,7 +191,7 @@ jobs:
       - run: ctest --test-dir build --timeout 900 --output-on-failure --no-tests=error
       - name: Upload logs
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: logs-${{ matrix.os }}-${{ matrix.toolchain }}
           path: build/Testing/**
@@ -185,11 +207,11 @@ jobs:
       matrix:
         preset: [debug, asan, tsan, coverage, dev, release, relwithdebinfo]
     steps:
-      - uses: actions/checkout@v7
-      - uses: aminya/setup-cpp@v1
+      - uses: actions/checkout@v7.0.1
+      - uses: aminya/setup-cpp@v1.10.1
         with: {compiler: llvm-19, cmake: true, ninja: true, cache-tools: true}
       # Configure-only, but the compiler ABI check try_compiles through the launcher.
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: presets-${{ matrix.preset }}
       - run: cmake --preset ${{ matrix.preset }}
@@ -199,8 +221,8 @@ jobs:
     timeout-minutes: 60
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: aminya/setup-cpp@v1
+      - uses: actions/checkout@v7.0.1
+      - uses: aminya/setup-cpp@v1.10.1
         with:
           compiler: llvm-19
           clangtidy: "19"
@@ -208,31 +230,16 @@ jobs:
           cmake: true
           ninja: true
           cache-tools: true
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with: {key: static-analysis}
       - name: Print versions
         run: |
           clang-tidy --version
           cppcheck --version
-      - name: clang-tidy
-        run: |
-          cmake -S . -B build/tidy -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_COMPILER="$CXX" -DADM_TARGET_ARCH=x86-64-v3 \
-            -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=OFF -DADM_BUILD_EXAMPLES=OFF \
-            -DADM_ENABLE_CLANG_TIDY=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-          grep -q 'HeaderFilterRegex' .clang-tidy
-          cmake --build build/tidy --target admiral
-      - name: clang-tidy positive control
-        run: ./scripts/static_analysis_control.sh build/tidy
-      - name: cppcheck
-        run: |
-          cmake -S . -B build/cppcheck -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_COMPILER="$CXX" -DADM_TARGET_ARCH=x86-64-v3 \
-            -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=OFF -DADM_BUILD_EXAMPLES=OFF \
-            -DADM_ENABLE_CPPCHECK=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-          cmake --build build/cppcheck --target admiral
-      - name: cppcheck positive control
-        run: ./scripts/static_analysis_control.sh build/cppcheck
+      # Each arm builds the library under its tool, then runs the positive control.
+      - name: clang-tidy and cppcheck
+        run: scripts/validate.sh tidy cppcheck
+        env: {ADM_VALIDATE_JOBS: 2}
 
   sanitizers:
     timeout-minutes: 90
@@ -246,23 +253,20 @@ jobs:
     name: ${{ matrix.preset }} ${{ matrix.cxx }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - run: sudo apt-get update && sudo apt-get install -y ninja-build
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: san-${{ matrix.preset }}-${{ matrix.cxx }}
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
           -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} -DADM_TARGET_ARCH=x86-64-v2
+      # The preset pins the level, so the Debug arm's -Og must not reach a sanitized TU.
       - name: Assert the flags arrived
-        run: |
-          grep -qF -- '-fsanitize=' build/${{ matrix.preset }}/compile_commands.json
-          grep -qF -- '-O1' build/${{ matrix.preset }}/compile_commands.json
-          # The preset pins the level, so the Debug arm's -Og must not reach a sanitized TU.
-          ! grep -qF -- '-Og' build/${{ matrix.preset }}/compile_commands.json
-          grep -qF -- '=x86-64-v2' build/${{ matrix.preset }}/compile_commands.json
-          ! grep -qF -- '=native' build/${{ matrix.preset }}/compile_commands.json
-      - run: cmake --build --preset ${{ matrix.preset }} -- -j 4
+        run: >
+          scripts/check_flags.sh build/${{ matrix.preset }}
+          want:-fsanitize= want:-O1 not:-Og want:=x86-64-v2 not:=native
+      - run: cmake --build --preset ${{ matrix.preset }}
       - run: ctest --preset ${{ matrix.preset }} --timeout 900 --no-tests=error
         env: {TSAN_OPTIONS: "handle_segv=0"}
 
@@ -270,9 +274,9 @@ jobs:
     timeout-minutes: 90
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - run: sudo apt-get update && sudo apt-get install -y valgrind ninja-build
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with: {key: valgrind}
       - name: Free runner disk
         run: |
@@ -280,67 +284,19 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
                       /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
-      - name: Configure and build
-        run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DCMAKE_CXX_COMPILER=g++-14 -DADM_TARGET_ARCH=x86-64-v2 -DADM_USE_FAST_MATH=OFF \
-            -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF
-          cmake --build build
+      # The arm skips the WILL_FAIL binaries by ctest metadata and runs each other binary directly,
+      # so one timeout per binary replaces ctest's.
       - name: Memcheck
-        run: |
-          ran=0
-          # WILL_FAIL binaries (the poison twins in test/CMakeLists.txt) exit nonzero by
-          # design, and this loop runs the binaries directly, where ctest's WILL_FAIL
-          # inversion never applies. The exclusion set comes from ctest's own metadata
-          # (same mechanism as scripts/validate.sh's valgrind arm, 37cd1c0); a metadata
-          # failure fails closed instead of running unfiltered.
-          wf_json=$(ctest --test-dir build --show-only=json-v1) || exit 1
-          # A WILL_FAIL test's name is its binary's basename (add_test(NAME test_x ...)).
-          wf_expr='.tests[] | select(any(.properties[]?; .name == "WILL_FAIL" and'
-          wf_expr+=' .value == true)) | .name'
-          if command -v jq >/dev/null; then
-            wf_names=$(jq -r "$wf_expr" <<<"$wf_json") || exit 1
-          elif command -v python3 >/dev/null; then
-            wf_names=$(python3 -c "import json,sys;[print(t['name']) for t in json.load(sys.stdin)['tests'] if any(p.get('name')=='WILL_FAIL' and p.get('value') is True for p in t.get('properties',[]))]" <<<"$wf_json") || exit 1
-          else
-            echo "no jq and no python3 on PATH for ctest test metadata"
-            exit 1
-          fi
-          wffail=" $(echo "$wf_names" | tr '\n' ' ')"
-          for t in build/test/test_*; do
-            [ -x "$t" ] || continue
-            [ "$(basename "$t")" = test_ulp ] && continue
-            [ "$(basename "$t")" = test_long_double ] && continue
-            # test_alloc replaces global operator new/delete; valgrind redirects the same
-            # symbols, so its counter and block families are meaningless under memcheck.
-            [ "$(basename "$t")" = test_alloc ] && continue
-            case "$wffail" in *" $(basename "$t") "*)
-              echo "--- $t (skipped, WILL_FAIL)"
-              continue;;
-            esac
-            echo "--- $t"
-            # The loop walks the binaries directly, so no ctest --timeout reaches them, and a
-            # deadlocked binary under valgrind never returns. Slowest measured binary is
-            # test_threads at 642 s (ccmlin075, 22 binaries, 2026-09-12).
-            timeout 1800 valgrind --error-exitcode=1 --leak-check=full \
-              --errors-for-leak-kinds=definite "$t" '~[longdouble]' || {
-                rc=$?
-                [ "$rc" = 124 ] && echo "TIMEOUT after 1800s: $t"
-                exit 1
-              }
-            ran=$((ran + 1))
-          done
-          # An unmatched glob walks zero binaries and reports success.
-          echo "memcheck ran $ran binaries"
-          [ "$ran" -ge 15 ]
+        run: scripts/validate.sh valgrind
+        env: {CXX: g++-14, ADM_VALIDATE_JOBS: 2}
 
   coverage:
     timeout-minutes: 60
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - run: sudo apt-get update && sudo apt-get install -y clang-18 llvm-18 ninja-build
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with: {key: coverage}
       - name: Free runner disk
         run: |
@@ -350,9 +306,7 @@ jobs:
           df -h /
       - run: cmake --preset coverage -DCMAKE_CXX_COMPILER=clang++-18
       - name: Assert the flags arrived
-        run: |
-          grep -qF -- '-fcoverage-mapping' build/coverage/compile_commands.json
-          ! grep -qF -- '=native' build/coverage/compile_commands.json
+        run: scripts/check_flags.sh build/coverage want:-fcoverage-mapping not:=native
       - run: cmake --build --preset coverage
       - name: Test
         run: |
@@ -373,53 +327,139 @@ jobs:
           llvm-cov-18 report $args -instr-profile=cov.profdata
           llvm-cov-18 export $args -instr-profile=cov.profdata -format=lcov > coverage.lcov
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage.lcov
           fail_ci_if_error: false
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage
           path: |
             cov.profdata
             coverage.lcov
 
-  install:
+  # The shim (libadmiral_fftw.so) must replace real FFTW in a program that was linked against
+  # FFTW and never rebuilt. run.sh checks the symbol bindings, not only the output. The prefix
+  # sets CMAKE_INSTALL_LIBDIR=lib because run.sh reads $PREFIX/lib.
+  preload:
+    timeout-minutes: 60
+    name: LD_PRELOAD ${{ matrix.cxx }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {cxx: g++-14, generator: Ninja Multi-Config}
+          - {cxx: clang++-18, generator: Ninja}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build libfftw3-dev pkg-config g++-14
+      # The build uses ADM_TARGET_ARCH=native, so objects depend on the runner CPU. The action
+      # restores any cache whose key starts with the given key (restore.ts calls
+      # cache.restoreCache(paths, primaryKey, restoreKeys)), so the CPU hash sits in the key.
+      - name: Hash the CPU
+        id: cpu
+        run: |
+          id=$(grep -m1 '^flags' /proc/cpuinfo)
+          [ -n "$id" ]
+          echo "id=$(printf '%s' "$id" | shasum -a 256 | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - uses: hendrikmuhs/ccache-action@v1.2.24
+        with:
+          key: preload-${{ matrix.cxx }}-${{ steps.cpu.outputs.id }}
+      # The docs quote this script, so the environment sets the compiler, the generator
+      # and the number of parallel compiles.
+      - name: Build and install to a prefix
+        run: scripts/install_prefix.sh
+        env:
+          CXX: ${{ matrix.cxx }}
+          CMAKE_GENERATOR: ${{ matrix.generator }}
+          PREFIX: ${{ github.workspace }}/prefix
+      - name: Run an unmodified FFTW program on the shim
+        run: test/preload/run.sh "$PREFIX" "$RUNNER_TEMP/preload"
+        env:
+          PREFIX: ${{ github.workspace }}/prefix
+
+  # Every way a downstream project can get admiral. The git routes redirect the GitHub URL to
+  # the checkout under test, and clone the dependencies once (network).
+  install-routes:
+    timeout-minutes: 60
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - run: sudo apt-get update && sudo apt-get install -y g++-14 ninja-build
+      - uses: hendrikmuhs/ccache-action@v1.2.24
+        with:
+          key: install-routes
+      - name: All routes
+        run: test/package/run_routes.sh "$PWD" "$RUNNER_TEMP/routes"
+        env: {CXX: g++-14, CMAKE_GENERATOR: Ninja}
+
+  # The installed-prefix routes (find_package) on the other two platforms. The routes that read
+  # the source tree or clone from GitHub (subdir, fetch_dir, fetch_git, cpm) run on Linux only.
+  # cc_fftw skips Windows: it needs a plain cc with -L and an rpath.
+  # macOS builds at ADM_TARGET_ARCH=native, so its cache key holds a chip hash. Windows resolves
+  # to /arch:AVX2 and needs none.
+  install-routes-other:
+    timeout-minutes: 90
+    name: prefix routes ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: macos-15, launcher: ccache, routes: 'prefix_shared prefix_static c_only cc_fftw relocated'}
+          - {os: windows-2025, launcher: sccache, routes: 'prefix_shared prefix_static c_only relocated'}
+    runs-on: ${{ matrix.os }}
+    env:
+      CMAKE_CXX_COMPILER_LAUNCHER: ${{ matrix.launcher }}
+      CMAKE_C_COMPILER_LAUNCHER: ${{ matrix.launcher }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: aminya/setup-cpp@v1.10.1
+        with:
+          compiler: ${{ runner.os == 'Windows' && 'msvc' || 'apple-clang' }}
+          cmake: true
+          ninja: true
+          vcvarsall: ${{ runner.os == 'Windows' }}
+          cache-tools: true
+      - if: runner.os != 'Windows'
+        name: Hash the CPU
+        id: cpu
+        run: |
+          id=$(sysctl -n machdep.cpu.brand_string)
+          [ -n "$id" ]
+          echo "id=$(printf '%s' "$id" | shasum -a 256 | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - uses: hendrikmuhs/ccache-action@v1.2.24
+        with:
+          variant: ${{ matrix.launcher }}
+          key: install-routes-${{ matrix.os }}-${{ steps.cpu.outputs.id }}
+      # NMake (the vcvarsall default) rejects the arch option.
+      - name: Prefix routes
+        run: test/package/run_routes.sh "$PWD" "$RUNNER_TEMP/routes" ${{ matrix.routes }}
+        env: {CMAKE_GENERATOR: Ninja}
+
+  # One configure for each build option. The docs quote each block of scripts/options.sh.
+  build-options:
     timeout-minutes: 30
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - run: sudo apt-get update && sudo apt-get install -y ninja-build
-      - uses: hendrikmuhs/ccache-action@v1
-        with:
-          key: install
-      - name: Install to a prefix
-        run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DADM_TARGET_ARCH=x86-64-v2 \
-            -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=OFF \
-            -DCMAKE_INSTALL_PREFIX=$PWD/prefix
-          cmake --build build --target install
-      - name: Consume the prefix through find_package
-        run: |
-          cmake -S test/package -B build-pkg -G Ninja -DCMAKE_PREFIX_PATH=$PWD/prefix
-          cmake --build build-pkg
-          ctest --test-dir build-pkg --timeout 900 --output-on-failure --no-tests=error
-      - name: Consume the source tree through FetchContent
-        run: |
-          cmake -S test/package -B build-fc -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DADM_PACKAGE_TEST_FETCH=$PWD -DADM_TARGET_ARCH=x86-64-v2
-          cmake --build build-fc
-          ctest --test-dir build-fc --timeout 900 --output-on-failure --no-tests=error
+      - uses: actions/checkout@v7.0.1
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build clang-tidy cppcheck libfftw3-dev pkg-config
+      - uses: hendrikmuhs/ccache-action@v1.2.24
+        with: {key: build-options}
+      - run: scripts/options.sh
+        env: {CPM_SOURCE_CACHE: "${{ runner.temp }}/cpm"}
 
   v4-sde:
     timeout-minutes: 60
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with: {key: v4-sde}
       - uses: petarpetrovt/setup-sde@6d2773bc0ef3005fd52e0ae0bb91782321793aec  # v6.0
       - name: SDE wrapper
@@ -432,21 +472,20 @@ jobs:
             -DCMAKE_CXX_COMPILER=g++-14 -DADM_TARGET_ARCH=x86-64-v4 \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DCMAKE_CROSSCOMPILING_EMULATOR=/usr/local/bin/sde-spr
-          grep -qF -- '=x86-64-v4' build/compile_commands.json
-          ! grep -qF -- '=native' build/compile_commands.json
-          cmake --build build -j "$(nproc)"
+          scripts/check_flags.sh build want:=x86-64-v4 not:=native
+          cmake --build build
       - name: Test under SDE
         run: |
-          ctest --test-dir build --output-on-failure --no-tests=error -j "$(nproc)" --timeout 1800
+          ctest --test-dir build --output-on-failure --no-tests=error --timeout 1800
           sde-spr build/benchmark/admiral_benchmark --verify
 
   catalog:
     timeout-minutes: 30
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with: {key: catalog}
       - run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
@@ -458,9 +497,9 @@ jobs:
     timeout-minutes: 30
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with: {key: nothreads}
       - run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
@@ -472,9 +511,9 @@ jobs:
     timeout-minutes: 30
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with: {key: bench-verify}
       - run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \

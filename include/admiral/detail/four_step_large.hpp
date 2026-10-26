@@ -411,7 +411,7 @@ using large_split = four_step_split;
     return best;
 }
 
-// --- threaded law (host-independent; WI-2c threaded grid, same sweep) ---
+// --- threaded law (host-independent; threaded grid of the same sweep) ---
 //
 // At nt in {2..32} f64 and {4..8} f32 the crossover sits inside [2^14, 2^15] ELEMENTS for
 // both precisions on every measured class, so the floor is element-keyed: the byte floor
@@ -457,8 +457,8 @@ inline constexpr std::size_t kLargeRouteThreadCapBytes = 1482910;  // [1, 2] MiB
 
 // --- serial lines: probed on the host, not keyed on it ---
 //
-// The WI-2c sweep (beat-standings runs/wi2c-{rome,icelake,genoa}-da86113, reduced in
-// wi2c-large1d.md) puts the serial f64 crossover inside [8, 16] MiB on rome and icelake
+// A sweep of forced dif against forced four_step_large serial plans on rome, icelake
+// and genoa puts the serial f64 crossover inside [8, 16] MiB on rome and icelake
 // but [4, 8] MiB on genoa, and the f32 lower edge inside [8, 16] / [16, 32] / [64, 128]
 // MiB respectively. No constant key reads that spread: rome and genoa carry the same
 // 4 MiB of L3 per physical core and their f64 crossovers move in opposite directions

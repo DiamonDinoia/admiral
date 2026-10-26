@@ -1,7 +1,7 @@
 #pragma once
 
 // Flat tiny row codelets: the flat_row shape pushed below N = 16. A whole
-// N <= 8 complex row is 2N fp lanes, so at the campaign widths it sits in K = 2N/W in
+// N <= 8 complex row is 2N fp lanes, so at W in {2, 4, 8, 16} it sits in K = 2N/W in
 // {1, 2, 4, 8} registers. The batched incumbent (many_gather_x + kernel_batched +
 // many_scatter_x) pays two W x W lane transposes per W-row block; here the inter-register DIF
 // stages are
@@ -28,16 +28,16 @@
 namespace admiral {
 namespace detail {
 
-// Admission: an equality whitelist per (N, W, sizeof(T)). The w2 static census
-// (evidence w2-tiny-census-{master,on}.txt) kept every (N, W, T) whose shuffles+spills
-// fell against the batched incumbent; the r5 wave A/B then cut the default-on set by
-// measured floor (team-r5-shared/ab/w2/, reroll mds), landing on f64 at W <= 4 only:
+// Admission: an equality whitelist per (N, W, sizeof(T)). A static census kept every
+// (N, W, T) whose shuffles+spills fell against the batched incumbent; a measured
+// A/B then cut the default-on set by measured floor, landing on f64 at
+// W <= 4 only:
 //   ADMIT:  N in {4, 8}, sizeof(T) == 8, W in {2, 4}.
 //   EXCLUDED W = 8 f64 (v4 class): ice 3d_8 -3.3% WIN vs genoa +3.1% REAL-REGRESSION
-//     (reroll-icelake.md:14 / reroll-genoa.md:14, dir-consistent both instruments) —
-//     same (N, W, T), opposite sign, no geometry key separates them; 3d_4 at-best-noise
+//     (the sign agrees on both instruments of each host).
+//     Same (N, W, T), opposite sign, no geometry key separates them; 3d_4 at-best-noise
 //     both hosts (ice +2.0% / genoa -0.9%, under the 2% lottery tolerance).
-//   EXCLUDED all f32: never reached a beyond-floor wave measurement; static-only wins stay
+//   EXCLUDED all f32: never reached a beyond-floor measurement; static-only wins stay
 //     off by default.
 //   Census losers excluded at that stage: N4 W8 f32 (48 = 48 sh per block, +15% instr),
 //   N8 W16 (sh 64 -> 96 UP).

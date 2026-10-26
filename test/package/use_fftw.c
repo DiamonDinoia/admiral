@@ -9,12 +9,15 @@
 #define N 512
 #define Q 5
 
+/* M_PI is not ISO C: MSVC and strict-mode glibc hide it. */
+static const double kPi = 3.14159265358979323846;
+
 int main(void) {
     fftw_complex* in = fftw_alloc_complex(N);
     fftw_complex* out = fftw_alloc_complex(N);
     if (!in || !out) return 1;
     for (int i = 0; i < N; ++i) {
-        const double phase = 2.0 * M_PI * (double)Q * (double)i / (double)N;
+        const double phase = 2.0 * kPi * (double)Q * (double)i / (double)N;
         in[i][0] = cos(phase);
         in[i][1] = sin(phase);
     }
@@ -36,7 +39,7 @@ int main(void) {
     fftw_plan q = fftw_plan_dft_1d(N, out, in, FFTW_BACKWARD, FFTW_ESTIMATE);
     fftw_execute(q);
     for (int i = 0; i < N; ++i) {
-        const double phase = 2.0 * M_PI * (double)Q * (double)i / (double)N;
+        const double phase = 2.0 * kPi * (double)Q * (double)i / (double)N;
         const double e = hypot(in[i][0] - (double)N * cos(phase), in[i][1] - (double)N * sin(phase));
         if (e > worst) worst = e;
     }

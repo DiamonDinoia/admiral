@@ -1,6 +1,7 @@
-/* Installed C interface, compiled as C. This is also the test for the README's
- * "project(app C CXX)" note: the archive is C++ behind a C API, so if the export set
- * ever stops carrying the C++ runtime this link fails. */
+/* Installed C interface, compiled as C. The static archive is C++ behind a C API. With GCC, Clang
+ * or Apple Clang, a C project that links it must enable CXX: project(app C CXX). CXX adds the
+ * C++ runtime. If the export set stops naming CXX as the link language, this link fails. For MSVC,
+ * CXX is not necessary: each object in the archive names the C++ runtime for link.exe. */
 #include <admiral/admiral.h>
 
 #include <float.h>
@@ -11,11 +12,14 @@
 #define N 1024
 #define Q 3
 
+/* M_PI is not ISO C: MSVC and strict-mode glibc hide it. */
+static const double kPi = 3.14159265358979323846;
+
 int main(void) {
     adm_complex* x = malloc(N * sizeof *x);
     if (!x) return 1;
     for (size_t i = 0; i < N; ++i) {
-        const double phase = 2.0 * M_PI * (double)Q * (double)i / (double)N;
+        const double phase = 2.0 * kPi * (double)Q * (double)i / (double)N;
         x[i].real = cos(phase);
         x[i].imag = sin(phase);
     }
@@ -41,7 +45,7 @@ int main(void) {
     s = adm_plan_execute_inverse(p, x);
     if (s != ADM_SUCCESS) { printf("inverse: %s\n", adm_error_string(s)); return 1; }
     for (size_t i = 0; i < N; ++i) {
-        const double phase = 2.0 * M_PI * (double)Q * (double)i / (double)N;
+        const double phase = 2.0 * kPi * (double)Q * (double)i / (double)N;
         const double e = hypot(x[i].real - cos(phase), x[i].imag - sin(phase));
         if (e > worst) worst = e;
     }

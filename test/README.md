@@ -1,35 +1,15 @@
 # Tests
-Catch2 v3. One executable per source file, so a fix rebuilds and relinks one small binary, not a suite.
-`catch_discover_tests` registers each binary with ctest.
+Catch2 v3 tests. Each source file makes one executable, and ctest runs each one.
 
-## Run
 ```bash
 cmake --preset dev
 cmake --build --preset dev
-ctest --preset dev              # or: ctest --test-dir build/dev --output-on-failure
+ctest --preset dev
+build/dev/test/test_api_fftw "[fftw]"    # one binary, Catch2 tag filter
 ```
 
-Any test-enabled preset works (`debug`, `asan`, `tsan`, `coverage`, `relwithdebinfo`). The `release` preset
-builds no tests; `-DADM_BUILD_TESTS=ON` enables the full suite. `scripts/validate.sh`
-runs the whole matrix of ISAs, compilers, sanitizers, and valgrind. See its header comment for the arm list.
-Filter with Catch2: `ctest --test-dir build/dev -R test_route`, or run one binary directly:
-`build/dev/test/test_plan "*[fftw]*"`.
+The `release` preset has no tests. Use `-DADM_BUILD_TESTS=ON` to add them. `scripts/validate.sh` runs the full matrix of ISAs, compilers and sanitizers.
 
-## Layout
-- `api/`: the public interfaces: C++, C, FFTW compatibility.
-- `kernels/`: codelets, the iterative DIF driver, factor planning, ct_math.
-- `transforms/`: plan selection and routing, N-D, axis, fct, threads, alignment.
-- `accuracy/`: ULP bounds, analytical closed forms, exhaustive sweeps.
-- `utils/`: the shared reference DFT, tolerance model, and Catch2 matchers, included as `"utils/<file>"`.
-- `package/`: consumes an *installed* admiral (the export set, the installed headers). Standalone by design:
-
-  ```bash
-  cmake --install build/release --prefix /tmp/adm
-  cmake -S test/package -B build-pkg -DCMAKE_PREFIX_PATH=/tmp/adm
-  cmake --build build-pkg && ctest --test-dir build-pkg
-  ```
-
-## ABI gate
-The `exported_symbols.*` tests run `nm` over each installed shared library and check the export list against
-the public pattern of that interface (`admiral`, `adm_`/`admf_`, `fftw_`/`fftwf_`). The tests gate on the ELF
-`--version-script` linker feature, so they skip on Mach-O. The configure log says when.
+`test/package/run_routes.sh <src> <work> [route...]` builds the package consumers through every install route.
+`test/preload/run.sh <prefix> <work>` runs an unmodified FFTW program on the shim through `LD_PRELOAD`.
+`test/digest` holds the bit-identity digest (see its README).

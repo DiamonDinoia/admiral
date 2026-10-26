@@ -1,10 +1,10 @@
-// Granule-admission A/B runner (WI-0c-ii). scripts/validate.sh's granule-admission arm
+// Granule-admission A/B runner. scripts/validate.sh's granule-admission arm
 // builds this binary twice per ISA (ADM_GRANULE_ADMIT ON/OFF) and interleaves invocations
 // on one pinned core; the arm owns the verdict, this binary only measures and prints TSV.
 //
 // Two modes:
 //   default:     public-engine cells over the admitted set ({12,24}^2 x {f32,f64} plus
-//                {16}^2 f32, and the WI-1a fast3d cube set {4,4,4}/{8,8,8} x {f32,f64}).
+//                {16}^2 f32, and the fast3d cube set {4,4,4}/{8,8,8} x {f32,f64}).
 //                One out-of-place plan forward call engages both codelet choke points
 //                where the knob lives on the square cells (rows through
 //                codelet_apply_many_oop, cols through col_codelet_apply) and the fast3d

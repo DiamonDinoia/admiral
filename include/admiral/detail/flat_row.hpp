@@ -39,8 +39,8 @@ namespace detail {
 // the equality set is exactly pow2-K-at-most-8 — and MSVC's C4296 fires on a folded
 // relational compare, never on `==`. XSIMD_TARGET_X86 caps admission to the measured family:
 // the header compiles generically, but no build leg ever compiled or ran it off-x86, so
-// other families keep today's code until a cross-compile sweep flips the clause (follow-up
-// campaign item).
+// other families keep today's code until a cross-compile sweep
+// flips the clause.
 template<unsigned N, typename V>
 [[nodiscard]] ADM_CONSTEVAL bool fr_shape() {
     constexpr std::size_t K = 2u * N / V::size;

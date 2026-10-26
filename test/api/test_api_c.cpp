@@ -382,3 +382,102 @@ TEST_CASE("C API threaded plans (double)", "[c_api][plan][threads]") {
     adm_plan_destroy(pa);
     adm_plan_destroy(pn);
 }
+
+namespace {
+
+// Tone x[n] = exp(+2*pi*i*sum_d k_d*n_d/N_d). With the forward kernel exp(-2*pi*i*k*n/N)
+// (include/admiral/admiral.hpp:82), the unscaled forward spectrum is N at bin k and 0 elsewhere.
+// `fwd` and `inv` run one transform in place. The shape {N_d} may have rank 1.
+template <typename T, typename C, typename Fwd, typename Inv>
+void check_tone(const std::vector<size_t>& shape, const std::vector<size_t>& k, Fwd fwd, Inv inv) {
+    const size_t Ntot = shape_product(shape);
+    std::vector<C> x(Ntot);
+    size_t kbin = 0;
+    for (size_t d = 0; d < shape.size(); ++d) kbin = kbin * shape[d] + k[d];
+    for (size_t i = 0; i < Ntot; ++i) {
+        long double turns = 0;
+        size_t rem = i;
+        for (size_t d = shape.size(); d-- > 0;) {
+            turns += turn_fraction(k[d], rem % shape[d], shape[d]);
+            rem /= shape[d];
+        }
+        const auto p = unit_phasor<T>(turns);
+        x[i].real = p.real();
+        x[i].imag = p.imag();
+    }
+    const std::vector<C> tone = x;
+
+    REQUIRE(fwd(x.data()) == ADM_SUCCESS);
+    const double tol = fft_tol<T>() * static_cast<double>(Ntot);
+    for (size_t i = 0; i < Ntot; ++i) {
+        CAPTURE(i, Ntot);
+        REQUIRE(std::abs(static_cast<double>(x[i].real) - (i == kbin ? double(Ntot) : 0.0)) <= tol);
+        REQUIRE(std::abs(static_cast<double>(x[i].imag)) <= tol);
+    }
+
+    REQUIRE(inv(x.data()) == ADM_SUCCESS);
+    require_close_c(x.data(), tone.data(), Ntot, fft_tol<T>());
+}
+
+}  // namespace
+
+TEST_CASE("C API pins direction and scale on a tone", "[c_api][plan][nd]") {
+    // Ntot 24 matches no single extent of {4, 6}; k is neither 0 nor N/2, so -k is a different bin.
+    const std::vector<size_t> shape1 = {24}, k1 = {5};
+    const std::vector<size_t> shape2 = {4, 6}, k2 = {1, 2};
+
+    SECTION("double 1-D one-shot") {
+        check_tone<double, adm_complex>(
+            shape1, k1, [&](adm_complex* d) { return adm_forward(d, 24, nullptr); },
+            [&](adm_complex* d) { return adm_inverse(d, 24, nullptr); });
+    }
+    SECTION("float 1-D one-shot") {
+        check_tone<float, admf_complex>(
+            shape1, k1, [&](admf_complex* d) { return admf_forward(d, 24, nullptr); },
+            [&](admf_complex* d) { return admf_inverse(d, 24, nullptr); });
+    }
+    SECTION("double 1-D plan") {
+        adm_plan plan = nullptr;
+        REQUIRE(adm_plan_1d(&plan, 24, nullptr) == ADM_SUCCESS);
+        check_tone<double, adm_complex>(
+            shape1, k1, [&](adm_complex* d) { return adm_plan_execute_forward(plan, d); },
+            [&](adm_complex* d) { return adm_plan_execute_inverse(plan, d); });
+        adm_plan_destroy(plan);
+    }
+    SECTION("float 1-D plan") {
+        adm_plan plan = nullptr;
+        REQUIRE(admf_plan_1d(&plan, 24, nullptr) == ADM_SUCCESS);
+        check_tone<float, admf_complex>(
+            shape1, k1, [&](admf_complex* d) { return admf_plan_execute_forward(plan, d); },
+            [&](admf_complex* d) { return admf_plan_execute_inverse(plan, d); });
+        adm_plan_destroy(plan);
+    }
+    SECTION("double N-D plan") {
+        adm_plan plan = nullptr;
+        REQUIRE(adm_plan_nd(&plan, shape2.data(), shape2.size(), nullptr) == ADM_SUCCESS);
+        check_tone<double, adm_complex>(
+            shape2, k2, [&](adm_complex* d) { return adm_plan_execute_forward(plan, d); },
+            [&](adm_complex* d) { return adm_plan_execute_inverse(plan, d); });
+        adm_plan_destroy(plan);
+    }
+    SECTION("float N-D plan") {
+        adm_plan plan = nullptr;
+        REQUIRE(admf_plan_nd(&plan, shape2.data(), shape2.size(), nullptr) == ADM_SUCCESS);
+        check_tone<float, admf_complex>(
+            shape2, k2, [&](admf_complex* d) { return admf_plan_execute_forward(plan, d); },
+            [&](admf_complex* d) { return admf_plan_execute_inverse(plan, d); });
+        adm_plan_destroy(plan);
+    }
+    SECTION("double N-D one-shot") {
+        check_tone<double, adm_complex>(
+            shape2, k2,
+            [&](adm_complex* d) { return adm_forward_nd(d, shape2.data(), 2, nullptr); },
+            [&](adm_complex* d) { return adm_inverse_nd(d, shape2.data(), 2, nullptr); });
+    }
+    SECTION("float N-D one-shot") {
+        check_tone<float, admf_complex>(
+            shape2, k2,
+            [&](admf_complex* d) { return admf_forward_nd(d, shape2.data(), 2, nullptr); },
+            [&](admf_complex* d) { return admf_inverse_nd(d, shape2.data(), 2, nullptr); });
+    }
+}

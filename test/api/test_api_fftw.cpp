@@ -237,6 +237,8 @@ TEST_CASE("fftw shim: null plans and null arrays are no-ops, malloc(0) is valid"
     REQUIRE_NOTHROW(fftwf_execute(nullptr));
     REQUIRE_NOTHROW(fftw_execute_dft(nullptr, nullptr, nullptr));
     REQUIRE_NOTHROW(fftwf_execute_dft(nullptr, nullptr, nullptr));
+    REQUIRE_NOTHROW(fftw_destroy_plan(nullptr));
+    REQUIRE_NOTHROW(fftwf_destroy_plan(nullptr));
 
     fftw_complex* in = static_cast<fftw_complex*>(fftw_malloc(32 * sizeof(fftw_complex)));
     fftw_complex* out = static_cast<fftw_complex*>(fftw_malloc(32 * sizeof(fftw_complex)));
@@ -446,5 +448,80 @@ TEST_CASE("fftw shim: an execute-time engine failure aborts under noexcept", "[f
     }
     REQUIRE(WIFSIGNALED(status));
     REQUIRE(WTERMSIG(status) == SIGABRT);
+}
+#endif
+
+#if !defined(_WIN32)
+namespace {
+// Stands in for a plan from another FFTW. It does not start with the shim's tag.
+alignas(16) unsigned char foreign_plan_bytes[64] = {};
+
+// Intel SDE reports a death by SIGABRT to the parent as exit code 127. So the child catches
+// SIGABRT: it writes kAbortMark to the pipe and exits with kAbortExit.
+constexpr char kAbortMark[] = "child got SIGABRT\n";
+constexpr int kAbortExit = 128 + SIGABRT;
+
+// Calls entry point `which` on the foreign plan with no other FFTW loaded. It never returns
+// normally: the shim must abort, so exit code 0 means the call did not.
+[[noreturn]] void foreign_plan_child(int which, int err_fd) {
+    dup2(err_fd, STDERR_FILENO);
+    std::signal(SIGABRT, [](int) {
+        const bool wrote = write(STDERR_FILENO, kAbortMark, sizeof kAbortMark - 1) > 0;
+        _exit(wrote ? kAbortExit : 1);
+    });
+    auto* p = reinterpret_cast<fftw_plan>(foreign_plan_bytes);
+    auto* pf = reinterpret_cast<fftwf_plan>(foreign_plan_bytes);
+    fftw_complex z[1] = {};
+    fftwf_complex zf[1] = {};
+    switch (which) {
+    case 0: fftw_execute(p); break;
+    case 1: fftw_execute_dft(p, z, z); break;
+    case 2: fftw_destroy_plan(p); break;
+    case 3: fftwf_execute(pf); break;
+    case 4: fftwf_execute_dft(pf, zf, zf); break;
+    case 5: fftwf_destroy_plan(pf); break;
+    default: {
+        // A float plan of this library is foreign to the double entry points.
+        fftwf_plan own = fftwf_plan_dft_1d(8, zf, zf, FFTW_FORWARD, FFTW_ESTIMATE);
+        fftw_execute(reinterpret_cast<fftw_plan>(own));
+    }
+    }
+    _exit(0);
+}
+}
+
+TEST_CASE("fftw shim: a plan from another FFTW aborts when no other FFTW is loaded", "[fftw]") {
+    const char* names[] = {"fftw_execute",  "fftw_execute_dft",  "fftw_destroy_plan",
+                           "fftwf_execute", "fftwf_execute_dft", "fftwf_destroy_plan"};
+    for (int which = 0; which < 7; ++which) {
+        int fds[2];
+        REQUIRE(pipe(fds) == 0);
+        const pid_t pid = fork();
+        REQUIRE(pid != -1);
+        if (pid == 0) {
+            close(fds[0]);
+            foreign_plan_child(which, fds[1]);
+        }
+        close(fds[1]);
+        std::string err;
+        char buf[256];
+        for (ssize_t n; (n = read(fds[0], buf, sizeof buf)) > 0;)
+            err.append(buf, static_cast<size_t>(n));
+        close(fds[0]);
+        int status = 0;
+        REQUIRE(waitpid(pid, &status, 0) == pid);
+        const std::string name = which < 6 ? names[which] : "fftw_execute";
+        CAPTURE(name, status, err);
+        REQUIRE(WIFEXITED(status));
+        REQUIRE(WEXITSTATUS(status) == kAbortExit);
+        REQUIRE(err.find(kAbortMark) != std::string::npos);
+        REQUIRE(err.find("admiral_fftw: " + name + " got a plan this library did not create") !=
+                std::string::npos);
+    }
+}
+
+TEST_CASE("fftw shim: cleanup with no other FFTW loaded returns", "[fftw]") {
+    fftw_cleanup();
+    fftwf_cleanup();
 }
 #endif

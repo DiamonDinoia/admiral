@@ -451,8 +451,8 @@ TEMPLATE_TEST_CASE("choose_line_route narrow-run criterion", "[nd][route]", floa
 }
 
 TEMPLATE_TEST_CASE("choose_line_route page-strip gate is 2W", "[nd][route]", float, double) {
-    // SP3-GATE-ROME: the col/transposed gate is 2*W columns of budget block at page
-    // geometry (inner * 16 >= 4096) too. The 2026-09-05 widening to max(16, 2W) was
+    // The col/transposed gate is 2*W columns of budget block at page
+    // geometry (inner * 16 >= 4096) too. The widening to max(16, 2W) was
     // fitted before the 2048 B col-dif floor existed; it flipped rome's 2d_1024 to the
     // strip route for +14.1%, and once the floor re-priced col_dif both measurable W=4
     // flips (rome 2d_1024, SPR-v3 2d_4096) favored col_dif instead. The [2W, 16) block

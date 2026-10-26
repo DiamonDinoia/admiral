@@ -27,7 +27,7 @@ namespace detail {
 // per (T [, Forward] [, PW]) instead of one closure type per enclosing pass instantiation.
 // The texts duplicated across passes (mid-pass twiddle stores : batch, piece and masked;
 // terminal scale+interleave : piece and masked) collapse to one functor per shape; every
-// capture is a call argument, never member state (2026-08-06 SRA rejection). The
+// capture is a call argument, never member state (member state defeats gcc's SRA). The
 // piece_fma/piece_fnma spellings are the baseline's, token-wise: the inst_col_* numerics pin
 // blocks compiler contraction, so the source fixes the FMA form.
 template<typename T>
@@ -664,7 +664,7 @@ inline constexpr std::size_t kColdifFirstMinLen = 128;
 // The last-pass store policies as named stateless functors, the invoke-table idiom: one type
 // per T instead of one closure type per pass instantiation (the trio was cloned in
 // dif_col_pass_last and dif_col_pass_last_staged). The peel/suffix count is a call argument,
-// never member state: value-carrying functor objects defeat gcc's SRA (2026-08-06 rejection).
+// never member state: value-carrying functor objects defeat gcc's SRA.
 template<typename T>
 struct col_store_peel_t {
     template<typename V>

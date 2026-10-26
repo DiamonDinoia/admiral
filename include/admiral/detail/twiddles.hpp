@@ -895,8 +895,9 @@ template<typename T>
                     }
                 }
                 s.packed_pair[p] = std::move(packed);
-                s.passes[p] = {};
-                s.passes[p + 1u] = {};
+                // `= {}` on a pair of vectors is ambiguous in libc++ (Emscripten).
+                s.passes[p] = typename decltype(s.passes)::value_type{};
+                s.passes[p + 1u] = typename decltype(s.passes)::value_type{};
             }
             lp *= ip1;
         }

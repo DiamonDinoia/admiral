@@ -208,13 +208,14 @@ arm_valgrind() {
     # WILL_FAIL binaries (the poison twins in test/CMakeLists.txt) exit nonzero by design,
     # and this loop runs the binaries directly, where ctest's WILL_FAIL inversion never
     # applies. The exclusion set must come from ctest's own test metadata.
-    local wf_json wf_names='' ok=1
+    local wf_json wf_names='' all_bins='' ok=1
     wf_json=$(ctest --test-dir "$dir" --show-only=json-v1 2>>"$log") || ok=0
     if ((ok == 1)); then
         local wf_expr='.tests[] | select(any(.properties[]?; .name == "WILL_FAIL" and'
         wf_expr+=' .value == true)) | .name'
         if command -v jq >/dev/null; then
             wf_names=$(jq -r "$wf_expr" <<<"$wf_json") || ok=0
+            all_bins=$(jq -r '.tests[].command[0] | split("/")[-1]' <<<"$wf_json" | sort -u | grep '^test_') || ok=0
         elif command -v python3 >/dev/null; then
             wf_names=$(python3 -c '
 import json, sys
@@ -222,6 +223,10 @@ for t in json.load(sys.stdin)["tests"]:
     if any(p.get("name") == "WILL_FAIL" and p.get("value") is True
            for p in t.get("properties", [])):
         print(t["name"])' <<<"$wf_json") || ok=0
+            all_bins=$(python3 -c '
+import json, sys
+for t in json.load(sys.stdin)["tests"]:
+    print(t["command"][0].rsplit("/", 1)[-1])' <<<"$wf_json" | sort -u | grep '^test_') || ok=0
         else
             echo "  no jq and no python3 on PATH for ctest test metadata" >>"$log"
             ok=0
@@ -231,6 +236,10 @@ for t in json.load(sys.stdin)["tests"]:
     # A WILL_FAIL test's name is its binary's basename (add_test(NAME test_x COMMAND test_x)).
     local -A wffail=()
     local t ran=0
+    local -A ran_bins=()
+    # test_alloc replaces global operator new/delete; valgrind redirects the same symbols
+    # and the counter misreads (6f130b4). CI's valgrind job skips it the same way.
+    local memcheck_skips=' test_ulp test_long_double test_alloc '
     for t in $wf_names; do wffail[$t]=1; done
     if ((${#wffail[@]} > 0)); then
         local -a wf_sorted
@@ -239,11 +248,7 @@ for t in json.load(sys.stdin)["tests"]:
     fi
     for bin in "$dir"/test/test_*; do
         [[ -x $bin && ! -d $bin ]] || continue
-        [[ $(basename "$bin") == test_ulp ]] && continue
-        [[ $(basename "$bin") == test_long_double ]] && continue
-        # test_alloc replaces global operator new/delete; valgrind redirects the same symbols
-        # and the counter misreads (6f130b4). CI's valgrind job skips it the same way.
-        [[ $(basename "$bin") == test_alloc ]] && continue
+        [[ $memcheck_skips == *" $(basename "$bin") "* ]] && continue
         [[ -n ${wffail[$(basename "$bin")]:-} ]] &&
             { echo "  skip (WILL_FAIL): $(basename "$bin")" | tee -a "$log"; continue; }
         echo "--- $(basename "$bin")" >>"$log"
@@ -255,11 +260,19 @@ for t in json.load(sys.stdin)["tests"]:
         vrc=$?
         ((vrc == 124)) && echo "  TIMEOUT after 1800s: $(basename "$bin")" >>"$log"
         ((vrc == 0)) || { echo "  ERRORS: $(basename "$bin")$( ((vrc == 124)) && printf ' (timeout)')"; tail -n 40 "$log"; rc=1; }
-        ((ran++))
+        ((ran++)); ran_bins[$(basename "$bin")]=1
     done
-    # An unmatched glob walks zero binaries and reports success.
-    echo "  memcheck ran $ran binaries" | tee -a "$log"
-    ((ran >= 15)) || rc=1
+    # The test_* binaries that ctest registers, less the named skips and the WILL_FAIL twins, must
+    # all have run. An empty expected set is a bug (an unmatched glob walks zero binaries).
+    local expected=0
+    for t in $all_bins; do
+        [[ $memcheck_skips == *" $t "* ]] && continue
+        [[ -z ${wffail[$t]:-} ]] || continue
+        ((expected++))
+        [[ -n ${ran_bins[$t]:-} ]] || { echo "  NOT RUN: $t" | tee -a "$log"; rc=1; }
+    done
+    echo "  memcheck ran $ran binaries, $expected expected from ctest" | tee -a "$log"
+    ((expected > 0)) || rc=1
     ((rc == 0)) && { echo "  OK"; ((pass++)); rm -rf "$dir"; } || failed+=("valgrind")
 }
 
@@ -275,6 +288,8 @@ run_static_analysis_arm() {
         echo "  skipped: $tool not on PATH"; skipped+=("$name"); return
     fi
     if [[ $name == tidy ]]; then
+        # Tidy parses with the clang++ that ships beside it, so the two versions match.
+        cxx=$(dirname "$(readlink -f "$(command -v clang-tidy)")")/clang++
         grep -q 'HeaderFilterRegex' "$src/.clang-tidy" ||
             { echo "  MISSING: HeaderFilterRegex in .clang-tidy"; failed+=("$name"); return; }
     fi
@@ -296,7 +311,7 @@ run_static_analysis_arm() {
     fi
 }
 
-arm_tidy() { run_static_analysis_arm tidy clang-tidy "${CXX:-clang++}" ADM_ENABLE_CLANG_TIDY; }
+arm_tidy() { run_static_analysis_arm tidy clang-tidy "" ADM_ENABLE_CLANG_TIDY; }
 arm_cppcheck() { run_static_analysis_arm cppcheck cppcheck "${CXX:-g++}" ADM_ENABLE_CPPCHECK; }
 
 # Constants-with-receipt coupling: a commit touching a hand-fit- or probe-fit

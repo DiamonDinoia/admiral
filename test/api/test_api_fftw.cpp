@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <climits>
+#include <cstdint>
 #include <cmath>
 #include <complex>
 #include <vector>
@@ -321,7 +322,12 @@ void rlimit_probes_or_skip() {
         // 2^60 fails on every runtime (mmap is hard-bounded far below it, whatever the
         // overcommit policy), and stays below gcc's max-object-size diagnostic and below
         // clang's compile-time constant array size limit (2^62 elements exceeds it).
-        char* probe = new char[std::size_t{1} << 60];
+#if INTPTR_MAX > INT32_MAX
+        constexpr std::size_t kHugeBytes = std::size_t{1} << 60;
+#else
+        constexpr std::size_t kHugeBytes = static_cast<std::size_t>(PTRDIFF_MAX);  // largest object
+#endif
+        char* probe = new char[kHugeBytes];
         // A volatile store through the result: the new cannot be elided or assumed
         // non-null. A plain store is dead to clang, which elides the allocation at -O2
         // and would make the skip path fire on every plain clang release build.

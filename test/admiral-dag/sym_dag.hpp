@@ -5,8 +5,8 @@
 // xsimd:: calls whose lookup binds at each template's definition point, so a shim declared
 // after an admiral header is invisible there (probe negative control:
 // /tmp/adm-dag-probe/probe_order_neg.cpp hard-errors out of simd_swizzle.hpp). This
-// header includes xsimd itself, then dag_pool, then declares the namespace-xsimd shims;
-// the including TU puts every admiral include after it.
+// header includes xsimd through admiral's simd.hpp (no kernel text there), then dag_pool,
+// then declares the namespace-xsimd shims; the including TU puts every admiral include after it.
 
 #include <array>
 #include <cstdint>
@@ -14,7 +14,7 @@
 #include <map>
 #include <vector>
 
-#include <xsimd/xsimd.hpp>
+#include <admiral/detail/simd.hpp>
 
 #include "dag_pool.hpp"
 

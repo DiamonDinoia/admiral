@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <cstddef>
 #include <limits>
 #include <numeric>
@@ -10,7 +11,7 @@
 namespace admiral {
 namespace detail {
 
-// A T wider than long double is its own fold type: the double-double of dd_fft.hpp.
+// A T wider than long double is its own fold type, ct_dd below included.
 template<typename T>
 using ct_real_t = std::conditional_t<
     (std::numeric_limits<T>::digits > 64), T,
@@ -28,6 +29,90 @@ struct ct_sincos_v {
     F c;
 };
 using ct_sincos_t = ct_sincos_v<double>;
+
+// A double-double, hi + lo with |lo| <= ulp(hi) / 2: the fold type of the engine's constants
+// (ct_real_t<ct_dd> is ct_dd). Every operation is an error-free transformation (Dekker, Numer.
+// Math. 18 (1971) 224), so one text folds the butterfly constants at compile time and builds
+// the twiddle tables at run time, both to about 2^-100.
+struct ct_dd {
+    double hi = 0, lo = 0;
+    ct_dd() = default;
+    constexpr ct_dd(double h, double l) : hi(h), lo(l) {}
+    // Exact: the integers the series and the folds use stay below 2^53.
+    template<typename A,
+             std::enable_if_t<std::is_integral_v<A> || std::is_same_v<A, double>, int> = 0>
+    constexpr ct_dd(A a) : hi(static_cast<double>(a)) {}
+};
+
+constexpr ct_dd dd_two_sum(double a, double b) {
+    const double s = a + b, bb = s - a;
+    return {s, (a - (s - bb)) + (b - bb)};
+}
+
+constexpr ct_dd dd_fast_two_sum(double a, double b) {
+    const double s = a + b;
+    return {s, b - (s - a)};
+}
+
+// Dekker's split at compile time, one fma at run time: -ffp-contract=fast fuses the split's
+// multiply into ta - a and breaks it. The run time callers are the dd engine, which needs kFusedFma.
+constexpr ct_dd dd_two_prod(double a, double b) {
+    if (!ADM_IS_CONSTANT_EVALUATED()) {
+        const double p = a * b;
+        return {p, std::fma(a, b, -p)};
+    }
+    constexpr double split = 0x1p27 + 1;
+    const double ta = split * a, ah = ta - (ta - a), al = a - ah;
+    const double tb = split * b, bh = tb - (tb - b), bl = b - bh;
+    const double p = a * b;
+    return {p, ((ah * bh - p) + ah * bl + al * bh) + al * bl};
+}
+
+constexpr ct_dd operator-(ct_dd a) { return {-a.hi, -a.lo}; }
+
+constexpr ct_dd operator+(ct_dd a, ct_dd b) {
+    const ct_dd s = dd_two_sum(a.hi, b.hi), t = dd_two_sum(a.lo, b.lo);
+    const ct_dd u = dd_fast_two_sum(s.hi, s.lo + t.hi);
+    return dd_fast_two_sum(u.hi, u.lo + t.lo);
+}
+
+constexpr ct_dd operator-(ct_dd a, ct_dd b) { return a + -b; }
+
+constexpr ct_dd operator*(ct_dd a, ct_dd b) {
+    const ct_dd p = dd_two_prod(a.hi, b.hi);
+    return dd_fast_two_sum(p.hi, p.lo + (a.hi * b.lo + a.lo * b.hi));
+}
+
+constexpr ct_dd operator/(ct_dd a, ct_dd b) {
+    const double q1 = a.hi / b.hi;
+    const ct_dd r1 = a - b * q1;
+    const double q2 = r1.hi / b.hi;
+    const ct_dd r2 = r1 - b * q2;
+    return dd_fast_two_sum(q1, q2) + r2.hi / b.hi;
+}
+
+constexpr ct_dd& operator+=(ct_dd& a, ct_dd b) { return a = a + b; }
+constexpr ct_dd& operator*=(ct_dd& a, ct_dd b) { return a = a * b; }
+constexpr bool operator<(ct_dd a, ct_dd b) { return a.hi < b.hi || (a.hi == b.hi && a.lo < b.lo); }
+constexpr bool operator<=(ct_dd a, ct_dd b) { return !(b < a); }
+
+template<>
+inline constexpr ct_dd ct_pi<ct_dd>{0x1.921fb54442d18p+1, 0x1.1a62633145c07p-53};
+template<>
+inline constexpr ct_dd ct_sqrt2<ct_dd>{0x1.6a09e667f3bcdp+0, -0x1.bdd3413b26456p-54};
+
+}
+}
+
+template<>
+struct std::numeric_limits<admiral::detail::ct_dd> {
+    static constexpr bool is_specialized = true;
+    static constexpr int digits = 104;
+    static constexpr admiral::detail::ct_dd epsilon() { return {0x1p-104, 0}; }
+};
+
+namespace admiral {
+namespace detail {
 
 // The series and the octant fold below run at compile time through the consteval names; the
 // double-double engine also runs them to build its twiddle tables.

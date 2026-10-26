@@ -296,6 +296,7 @@ run_static_analysis_arm() {
     if [[ $name == tidy ]]; then
         # Tidy parses with the clang++ that ships beside it, so the two versions match.
         cxx=$(dirname "$(readlink -f "$(command -v clang-tidy)")")/clang++
+        echo "  tidy compiler: $cxx"
         grep -q 'HeaderFilterRegex' "$src/.clang-tidy" ||
             { echo "  MISSING: HeaderFilterRegex in .clang-tidy"; failed+=("$name"); return; }
     fi

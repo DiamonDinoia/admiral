@@ -63,7 +63,6 @@ jobs:
           - {os: ubuntu-24.04, toolchain: llvm-21, arch: x86-64-v3, std: 17}
           # Other targets.
           - {os: ubuntu-24.04-arm, toolchain: gcc-14, arch: armv8-a}
-          - {os: macos-14, toolchain: apple-clang, arch: none}
           - {os: macos-15, toolchain: apple-clang, arch: none}
     name: ${{ matrix.toolchain }} ${{ matrix.arch }} c++${{ matrix.std || 20 }} ${{ matrix.build_type || 'Release' }}
     runs-on: ${{ matrix.os }}

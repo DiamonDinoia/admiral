@@ -436,6 +436,18 @@ jobs:
       - run: test/readme_check/run.sh
       - run: scripts/check_readme.sh
 
+  # One configure for each build option. The docs quote each block of scripts/options.sh.
+  build-options:
+    timeout-minutes: 30
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build clang-tidy cppcheck libfftw3-dev pkg-config
+      - uses: hendrikmuhs/ccache-action@v1
+        with: {key: build-options}
+      - run: scripts/options.sh
+        env: {CPM_SOURCE_CACHE: "${{ runner.temp }}/cpm"}
+
   v4-sde:
     timeout-minutes: 60
     runs-on: ubuntu-24.04

@@ -2,22 +2,15 @@ project = "Admiral"
 copyright = "2026, Marco Barbone"
 author = "Marco Barbone"
 
-extensions = [
-    "myst_parser",
-    "sphinx_rtd_theme",
-]
+extensions = ["myst_parser"]
 
 exclude_patterns = ["_build"]
 
-html_theme = "sphinx_rtd_theme"
-html_theme_options = {
-    "collapse_navigation": False,
-}
+highlight_language = "bash"
 
-html_context = {
-    "display_github": True,
-    "github_user": "DiamonDinoia",
-    "github_repo": "admiral",
-    "github_version": "master",
-    "conf_py_path": "/docs/",
+html_theme = "furo"
+html_theme_options = {
+    "source_repository": "https://github.com/DiamonDinoia/admiral/",
+    "source_branch": "master",
+    "source_directory": "docs/",
 }

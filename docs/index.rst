@@ -1,11 +1,13 @@
 Admiral
 =======
 
-This site documents the C++ API and the CMake build options of Admiral, an FFT library.
-The `repository README <https://github.com/DiamonDinoia/admiral>`_ covers the C API, the FFTW shim, install and use.
+Admiral is an FFT library with a C++ API, a C API and an FFTW3 shim.
+The `repository <https://github.com/DiamonDinoia/admiral>`_ has the source and the README.
 
 .. toctree::
    :maxdepth: 1
 
+   install
+   fftw
    cpp-api
    build-options

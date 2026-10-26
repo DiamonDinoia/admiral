@@ -142,9 +142,26 @@ template<typename F = double>
     return sincos_small_eval<F>(x);
 }
 
+// v to 106 bits. q is the 106-bit ulp of hi's binade: lo rounds to q, so F(hi) + F(lo) is exact.
+template<typename F>
+[[nodiscard]] constexpr F dd_round(ct_dd v) {
+    const double a = v.hi < 0 ? -v.hi : v.hi;
+    double q = 0x1p-105;
+    while (a != 0 && a < q * 0x1p105) q /= 2;
+    while (a >= q * 0x1p106) q *= 2;
+    const double t = v.lo / q, big = t < 0 ? -0x1p52 : 0x1p52;
+    return F(v.hi) + F(((t + big) - big) * q);
+}
+
 template<typename F>
 [[nodiscard]] constexpr ct_sincos_v<F> sincos_turns_eval(bool conjugate, std::size_t num,
                                                          std::size_t den) {
+    // gcc folds an F that is a pair of doubles (IBM double-double) only where the exact result
+    // fits 106 bits (fold-const.cc, MODE_COMPOSITE_P), so that F folds at ct_dd.
+    if constexpr (std::numeric_limits<F>::digits == 2 * std::numeric_limits<double>::digits) {
+        const ct_sincos_v<ct_dd> w = sincos_turns_eval<ct_dd>(conjugate, num, den);
+        return {dd_round<F>(w.s), dd_round<F>(w.c)};
+    }
     num %= den;
     if (conjugate && num != 0) num = den - num;
     const std::size_t oct = (8 * num) / den;

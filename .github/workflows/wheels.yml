@@ -1,0 +1,30 @@
+name: Wheels
+
+# Prototype: builds the five wheels and tests each one. Nothing is uploaded.
+on:
+  push:
+    branches: [wheel-proto]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  wheel:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15-intel, macos-15, windows-2025]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pypa/cibuildwheel@v4.3.4
+      - name: Record wheel sizes
+        shell: bash
+        run: ls -l wheelhouse
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel-${{ matrix.os }}
+          path: wheelhouse/*.whl

@@ -1,19 +1,37 @@
 #!/usr/bin/env bash
 # Configure once for each build option and assert the effect. docs/build-options.md quotes each
-# block. Run it from the source root. It builds nothing and removes ./build on exit.
+# block. Run it from the source root. It builds nothing. It needs ./build free, creates it and
+# removes it on exit. A missing clang-tidy or cppcheck skips its block, except under CI.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 unset NINJA_STATUS
 export CMAKE_GENERATOR=Ninja
+[[ ! -e build ]] || { echo "FAIL: ./build exists, this script would delete it. Move it first."; exit 1; }
 trap 'rm -rf build' EXIT
+
+skipped=()
+skip() { echo "SKIP: $2"; skipped+=("$1"); }
+# tool OPTION TOOL: true if TOOL exists. Otherwise skip OPTION, or fail under CI.
+tool() {
+    command -v "$2" >/dev/null && return 0
+    [[ -z ${CI:-} ]] || { echo "FAIL: $1 needs $2, not found"; exit 1; }
+    skip "$1" "$1 needs $2, not found"
+    return 1
+}
 
 # Control for the three BUILD_* blocks: they expect a target to be absent, so a wrong name would
 # pass. At the default configure each of these targets must exist.
-cmake -S . -B build >/dev/null
+cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON >/dev/null
 for t in test_api_fftw admiral_benchmark example_quickstart; do
     test "$(cmake --build build --target help | grep -c "^$t:")" -eq 1 ||
         { echo "FAIL: the default configure has no target $t"; exit 1; }
 done
+# Control for the want: checks below: the default configure must carry none of their patterns.
+# The col TUs carry -ffp-contract=on at the default, so the ADM_PIN_1D pattern is scoped to a TU
+# that only the pin changes.
+scripts/check_flags.sh build not:-flto not:cmake_pch not:-DADM_GRANULE_ADMIT_OFF
+! grep inst_dif_d_fwd.cpp build/compile_commands.json | grep -qF -- -ffp-contract=on ||
+    { echo "FAIL: the default configure pins inst_dif_d_fwd.cpp"; exit 1; }
 
 rm -rf build
 # [doc:opt-ADM_BUILD_TESTS]
@@ -51,11 +69,15 @@ cmake -S . -B build -DADM_MEASURE=OFF
 grep -F 'adm_measure = 0 != 0' build/src/generated/include/admiral/detail/config.hpp
 # [doc:opt-ADM_MEASURE-end]
 
+if [[ $(uname -m) = x86_64 ]]; then
 rm -rf build
 # [doc:opt-ADM_TARGET_ARCH]
 cmake -S . -B build -DADM_TARGET_ARCH=x86-64-v3
 scripts/check_flags.sh build want:-march=x86-64-v3 not:-march=native
 # [doc:opt-ADM_TARGET_ARCH-end]
+else
+    skip ADM_TARGET_ARCH "ADM_TARGET_ARCH example uses an x86-64 name"
+fi
 
 rm -rf build
 # [doc:opt-ADM_ENABLE_WARNINGS_AS_ERRORS]
@@ -145,17 +167,21 @@ cmake -S . -B build -DADM_PIN_PLAN_ESTIMATE=ON
 scripts/check_flags.sh build want:-DADM_PIN_PLAN_ESTIMATE
 # [doc:opt-ADM_PIN_PLAN_ESTIMATE-end]
 
+if tool ADM_ENABLE_CLANG_TIDY clang-tidy; then
 rm -rf build
 # [doc:opt-ADM_ENABLE_CLANG_TIDY]
 cmake -S . -B build -DADM_ENABLE_CLANG_TIDY=ON
 grep -m1 -o -- --tidy= build/build.ninja
 # [doc:opt-ADM_ENABLE_CLANG_TIDY-end]
+fi
 
+if tool ADM_ENABLE_CPPCHECK cppcheck; then
 rm -rf build
 # [doc:opt-ADM_ENABLE_CPPCHECK]
 cmake -S . -B build -DADM_ENABLE_CPPCHECK=ON
 grep -m1 -o -- --cppcheck= build/build.ninja
 # [doc:opt-ADM_ENABLE_CPPCHECK-end]
+fi
 
 rm -rf build
 # [doc:opt-ADM_FIT_COST_MODEL]
@@ -180,3 +206,7 @@ rm -rf build
 cmake -S . -B build -DADM_FIT_COST_MODEL=ON -DADM_COST_MODEL_TAG=mine
 cmake -LA -N build | grep -F ADM_COST_MODEL_TAG:STRING=mine
 # [doc:opt-ADM_COST_MODEL_TAG-end]
+
+total=$(grep -c '^# \[doc:opt-[A-Za-z0-9_]*\]$' "${BASH_SOURCE[0]}")
+((total > 0))
+echo "PASS: $((total - ${#skipped[@]})) options checked, ${#skipped[@]} skipped (${skipped[*]:-none})"

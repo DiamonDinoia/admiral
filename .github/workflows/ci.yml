@@ -75,7 +75,7 @@ jobs:
           cmake: true
           ninja: true
           cache-tools: true
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: ${{ matrix.os }}-${{ matrix.toolchain }}-${{ matrix.arch }}-${{ matrix.std || 20 }}-${{ matrix.build_type || 'Release' }}
       - name: Print versions
@@ -157,7 +157,7 @@ jobs:
           vcvarsall: true
           cache-tools: true
       # sccache, not ccache: ccache has no MSVC support.
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           variant: sccache
           key: ${{ matrix.os }}-${{ matrix.toolchain }}
@@ -196,7 +196,7 @@ jobs:
       - uses: aminya/setup-cpp@v1
         with: {compiler: llvm-19, cmake: true, ninja: true, cache-tools: true}
       # Configure-only, but the compiler ABI check try_compiles through the launcher.
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: presets-${{ matrix.preset }}
       - run: cmake --preset ${{ matrix.preset }}
@@ -215,7 +215,7 @@ jobs:
           cmake: true
           ninja: true
           cache-tools: true
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with: {key: static-analysis}
       - name: Print versions
         run: |
@@ -240,7 +240,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y ninja-build
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: san-${{ matrix.preset }}-${{ matrix.cxx }}
       - name: Configure
@@ -261,7 +261,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y valgrind ninja-build
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with: {key: valgrind}
       - name: Free runner disk
         run: |
@@ -281,7 +281,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y clang-18 llvm-18 ninja-build
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with: {key: coverage}
       - name: Free runner disk
         run: |
@@ -349,7 +349,7 @@ jobs:
           id=$(grep -m1 '^flags' /proc/cpuinfo)
           [ -n "$id" ]
           echo "id=$(printf '%s' "$id" | shasum -a 256 | cut -c1-16)" >> "$GITHUB_OUTPUT"
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: preload-${{ matrix.cxx }}-${{ steps.cpu.outputs.id }}
       # The docs quote this script, so the environment sets the compiler, the generator
@@ -373,7 +373,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y g++-14 ninja-build
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: install-routes
       - name: All routes
@@ -417,7 +417,7 @@ jobs:
           id=$(sysctl -n machdep.cpu.brand_string)
           [ -n "$id" ]
           echo "id=$(printf '%s' "$id" | shasum -a 256 | cut -c1-16)" >> "$GITHUB_OUTPUT"
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           variant: ${{ matrix.launcher }}
           key: install-routes-${{ matrix.os }}-${{ steps.cpu.outputs.id }}
@@ -433,7 +433,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y ninja-build clang-tidy cppcheck libfftw3-dev pkg-config
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with: {key: build-options}
       - run: scripts/options.sh
         env: {CPM_SOURCE_CACHE: "${{ runner.temp }}/cpm"}
@@ -444,7 +444,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with: {key: v4-sde}
       - uses: petarpetrovt/setup-sde@6d2773bc0ef3005fd52e0ae0bb91782321793aec  # v6.0
       - name: SDE wrapper
@@ -470,7 +470,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with: {key: catalog}
       - run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
@@ -484,7 +484,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with: {key: nothreads}
       - run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
@@ -498,7 +498,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@v1.2.24
         with: {key: bench-verify}
       - run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \

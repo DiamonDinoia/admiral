@@ -67,13 +67,13 @@ jobs:
     name: ${{ matrix.toolchain }} ${{ matrix.arch }} c++${{ matrix.std || 20 }} ${{ matrix.build_type || 'Release' }}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       # setup-cpp imports the gcc-15 PPA key into a keyring path relative to the working directory.
       # gpg does not create the parent directory, and setup-cpp reports the failure as a warning only.
       - name: Create the PPA keyring directory
         if: matrix.toolchain == 'gcc-15'
         run: mkdir keyserver.ubuntu.com
-      - uses: aminya/setup-cpp@v1
+      - uses: aminya/setup-cpp@v1.10.1
         with:
           compiler: ${{ matrix.toolchain }}
           cmake: true
@@ -123,7 +123,7 @@ jobs:
           ctest --test-dir build-pkg --timeout 900 --output-on-failure --no-tests=error
       - name: Upload logs
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: logs-${{ matrix.os }}-${{ matrix.toolchain }}-${{ matrix.arch }}-${{ matrix.std || 20 }}-${{ matrix.build_type || 'Release' }}
           path: build/Testing/**
@@ -155,8 +155,8 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v7
-      - uses: aminya/setup-cpp@v1
+      - uses: actions/checkout@v7.0.1
+      - uses: aminya/setup-cpp@v1.10.1
         with:
           compiler: ${{ matrix.toolchain }}
           cmake: true
@@ -183,7 +183,7 @@ jobs:
       - run: ctest --test-dir build --timeout 900 --output-on-failure --no-tests=error
       - name: Upload logs
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: logs-${{ matrix.os }}-${{ matrix.toolchain }}
           path: build/Testing/**
@@ -199,8 +199,8 @@ jobs:
       matrix:
         preset: [debug, asan, tsan, coverage, dev, release, relwithdebinfo]
     steps:
-      - uses: actions/checkout@v7
-      - uses: aminya/setup-cpp@v1
+      - uses: actions/checkout@v7.0.1
+      - uses: aminya/setup-cpp@v1.10.1
         with: {compiler: llvm-19, cmake: true, ninja: true, cache-tools: true}
       # Configure-only, but the compiler ABI check try_compiles through the launcher.
       - uses: hendrikmuhs/ccache-action@v1.2.24
@@ -213,8 +213,8 @@ jobs:
     timeout-minutes: 60
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: aminya/setup-cpp@v1
+      - uses: actions/checkout@v7.0.1
+      - uses: aminya/setup-cpp@v1.10.1
         with:
           compiler: llvm-19
           clangtidy: "19"
@@ -245,7 +245,7 @@ jobs:
     name: ${{ matrix.preset }} ${{ matrix.cxx }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - run: sudo apt-get update && sudo apt-get install -y ninja-build
       - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
@@ -266,7 +266,7 @@ jobs:
     timeout-minutes: 90
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - run: sudo apt-get update && sudo apt-get install -y valgrind ninja-build
       - uses: hendrikmuhs/ccache-action@v1.2.24
         with: {key: valgrind}
@@ -286,7 +286,7 @@ jobs:
     timeout-minutes: 60
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - run: sudo apt-get update && sudo apt-get install -y clang-18 llvm-18 ninja-build
       - uses: hendrikmuhs/ccache-action@v1.2.24
         with: {key: coverage}
@@ -319,12 +319,12 @@ jobs:
           llvm-cov-18 report $args -instr-profile=cov.profdata
           llvm-cov-18 export $args -instr-profile=cov.profdata -format=lcov > coverage.lcov
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage.lcov
           fail_ci_if_error: false
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage
           path: |
@@ -345,7 +345,7 @@ jobs:
           - {cxx: g++-14, generator: Ninja Multi-Config}
           - {cxx: clang++-18, generator: Ninja}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - run: sudo apt-get update && sudo apt-get install -y ninja-build libfftw3-dev pkg-config g++-14
       # The build uses ADM_TARGET_ARCH=native, so objects depend on the runner CPU. The action
       # restores any cache whose key starts with the given key (restore.ts calls
@@ -378,7 +378,7 @@ jobs:
     timeout-minutes: 60
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - run: sudo apt-get update && sudo apt-get install -y g++-14 ninja-build
       - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
@@ -409,8 +409,8 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v7
-      - uses: aminya/setup-cpp@v1
+      - uses: actions/checkout@v7.0.1
+      - uses: aminya/setup-cpp@v1.10.1
         with:
           compiler: ${{ runner.os == 'Windows' && 'msvc' || 'apple-clang' }}
           cmake: true
@@ -438,7 +438,7 @@ jobs:
     timeout-minutes: 30
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - run: sudo apt-get update && sudo apt-get install -y ninja-build clang-tidy cppcheck libfftw3-dev pkg-config
       - uses: hendrikmuhs/ccache-action@v1.2.24
         with: {key: build-options}
@@ -449,7 +449,7 @@ jobs:
     timeout-minutes: 60
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build
       - uses: hendrikmuhs/ccache-action@v1.2.24
         with: {key: v4-sde}
@@ -475,7 +475,7 @@ jobs:
     timeout-minutes: 30
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build
       - uses: hendrikmuhs/ccache-action@v1.2.24
         with: {key: catalog}
@@ -489,7 +489,7 @@ jobs:
     timeout-minutes: 30
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build
       - uses: hendrikmuhs/ccache-action@v1.2.24
         with: {key: nothreads}
@@ -503,7 +503,7 @@ jobs:
     timeout-minutes: 30
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build
       - uses: hendrikmuhs/ccache-action@v1.2.24
         with: {key: bench-verify}

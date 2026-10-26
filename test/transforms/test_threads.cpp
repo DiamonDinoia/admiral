@@ -26,6 +26,7 @@
 #if defined(__linux__)
 #include <dirent.h>
 #include <dlfcn.h>
+#include <pthread.h>
 #include <sched.h>
 #endif
 
@@ -212,6 +213,35 @@ TEST_CASE("parallel_for with fewer units than threads leaves workers idle", "[th
     REQUIRE(ran.load() == 2);
     REQUIRE(sum.load() == 1);
 }
+
+#if defined(__linux__)
+// musl starts a thread with 128 KiB. Set that default here, on any libc, and read the stack of
+// each worker: the pool must not inherit it.
+TEST_CASE("pool workers get kWorkerStackBytes under a 128 KiB thread default", "[threads]") {
+    pthread_attr_t def, small;
+    REQUIRE(pthread_getattr_default_np(&def) == 0);
+    REQUIRE(pthread_attr_init(&small) == 0);
+    REQUIRE(pthread_attr_setstacksize(&small, std::size_t{128} << 10) == 0);
+    REQUIRE(pthread_setattr_default_np(&small) == 0);
+    std::vector<std::size_t> bytes(4, 0);
+    {
+        admiral::detail::thread_pool pool(4);
+        pool.parallel_for(4, [&](std::size_t, std::size_t, std::size_t tid) {
+            pthread_attr_t self;
+            if (pthread_getattr_np(pthread_self(), &self) != 0) return;
+            pthread_attr_getstacksize(&self, &bytes[tid]);
+            pthread_attr_destroy(&self);
+        });
+    }
+    REQUIRE(pthread_setattr_default_np(&def) == 0);
+    pthread_attr_destroy(&small);
+    pthread_attr_destroy(&def);
+    for (std::size_t tid = 0; tid < 3; ++tid) {  // tid 3 is the calling thread
+        INFO("worker " << tid << " stack " << bytes[tid]);
+        CHECK(bytes[tid] >= admiral::detail::kWorkerStackBytes);
+    }
+}
+#endif
 
 TEST_CASE("threaded unfused four_step_large agrees across nthreads (double)",
           "[threads][fourstep]") {

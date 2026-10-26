@@ -34,11 +34,16 @@ inline void cpu_relax() noexcept {
 #include <exception>
 #include <fstream>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
+#include <system_error>
 #include <vector>
 #if defined(__linux__)
 #include <sched.h>
+#endif
+#if !defined(_WIN32)
+#include <pthread.h>
 #endif
 #endif
 
@@ -334,6 +339,40 @@ struct wake_family_row {
 
 inline constexpr std::uint32_t kSpinIters = 2048;
 
+// soa_scratch frames reach 161 KiB, and musl starts a thread with 128 KiB. A worker gets at least
+// 1 MiB, the Windows default, and never less than the libc default.
+inline constexpr std::size_t kWorkerStackBytes = std::size_t{1} << 20;
+
+#if defined(_WIN32)
+using worker_thread = std::thread;
+template<typename F>
+std::thread start_worker(F f) { return std::thread(std::move(f)); }
+inline void join_worker(std::thread& t) { t.join(); }
+#else
+using worker_thread = pthread_t;
+template<typename F>
+pthread_t start_worker(F f) {
+    F* run = new F(std::move(f));
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    std::size_t bytes = 0;
+    pthread_attr_getstacksize(&attr, &bytes);
+    if (bytes < kWorkerStackBytes) pthread_attr_setstacksize(&attr, kWorkerStackBytes);
+    pthread_t t;
+    const int rc = pthread_create(&t, &attr, [](void* p) -> void* {
+        (*std::unique_ptr<F>(static_cast<F*>(p)))();
+        return nullptr;
+    }, run);
+    pthread_attr_destroy(&attr);
+    if (rc != 0) {
+        delete run;
+        throw std::system_error(rc, std::generic_category(), "pthread_create");
+    }
+    return t;
+}
+inline void join_worker(pthread_t t) { pthread_join(t, nullptr); }
+#endif
+
 class thread_pool {
 public:
     // `pin` (options::pin_threads) pins each spawned worker to one physical core; the calling
@@ -341,11 +380,12 @@ public:
     explicit thread_pool(std::size_t nthreads, bool pin = false)
         : nthreads_(std::max(nthreads, std::size_t{1})) {
         try {
+            workers_.reserve(nthreads_ - 1);
             for (std::size_t tid = 0; tid + 1 < nthreads_; ++tid)
-                workers_.emplace_back([this, tid, pin] {
+                workers_.push_back(start_worker([this, tid, pin] {
                     if (pin) pool_pin_worker(tid, nthreads_);
                     worker_loop(tid);
-                });
+                }));
         } catch (...) {
             stop_and_join();
             throw;
@@ -399,7 +439,7 @@ private:
     void stop_and_join() {
         { std::lock_guard lk(mtx_); stopping_.store(true, std::memory_order_release); }
         cv_.notify_all();
-        for (auto& w : workers_) w.join();
+        for (auto& w : workers_) join_worker(w);
     }
 
     void worker_loop(std::size_t tid) {
@@ -427,7 +467,7 @@ private:
     }
 
     std::size_t nthreads_;
-    std::vector<std::thread> workers_;
+    std::vector<worker_thread> workers_;
 
     alignas(kCacheLine) std::function<void(std::size_t)> job_;
     std::atomic<std::uint64_t> epoch_{0};

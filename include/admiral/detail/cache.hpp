@@ -8,6 +8,7 @@
 #if defined(__linux__)
 #include <unistd.h>
 #include <cstdio>
+#include <cstdlib>
 #elif defined(__APPLE__)
 #include <sys/sysctl.h>
 #endif
@@ -56,6 +57,26 @@ inline void for_each_sysfs_cpu(const char* path, F&& visit) {
     std::fclose(f);
     return !ok || first == cpu;
 }
+
+// Bytes of the cpu0 data or unified cache at `level`, from sysfs, or 0 when sysfs has none.
+// sysfs is the same on every libc, and musl has no _SC_LEVEL*_CACHE_SIZE names.
+[[nodiscard]] inline std::size_t sysfs_cache_bytes(unsigned level) {
+    const auto attr = [](unsigned i, const char* leaf, char (&buf)[32]) {
+        char path[96];
+        std::snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu0/cache/index%u/%s", i, leaf);
+        std::FILE* f = std::fopen(path, "re");
+        if (!f) return false;
+        const bool ok = std::fscanf(f, "%31s", buf) == 1;
+        std::fclose(f);
+        return ok;
+    };
+    char lv[32], type[32], size[32];
+    for (unsigned i = 0; attr(i, "level", lv); ++i)
+        if (std::strtoul(lv, nullptr, 10) == level && attr(i, "type", type) && type[0] != 'I' &&
+            attr(i, "size", size))
+            return std::strtoul(size, nullptr, 10) << 10;  // the kernel prints "<n>K"
+    return 0;
+}
 #endif
 
 // `l3_cores` counts logical cpus sharing the L3 and answers contention questions. `l3_phys_cores`
@@ -66,10 +87,17 @@ struct cache_bytes { std::size_t l2, l3, l3_cores, l3_phys_cores, l1d; };
     static const cache_bytes c = [] {
         cache_bytes d{kFallbackL2Bytes, kFallbackL3Bytes, 0, 0, kFallbackL1DBytes};
 #if defined(__linux__)
+#if defined(_SC_LEVEL1_DCACHE_SIZE)
         const auto pos = [](long v, std::size_t fb) { return v > 0 ? std::size_t(v) : fb; };
         d.l2  = pos(::sysconf(_SC_LEVEL2_CACHE_SIZE),  d.l2);
         d.l3  = pos(::sysconf(_SC_LEVEL3_CACHE_SIZE),  d.l3);
         d.l1d = pos(::sysconf(_SC_LEVEL1_DCACHE_SIZE), d.l1d);
+#else
+        const auto pos = [](std::size_t v, std::size_t fb) { return v ? v : fb; };
+        d.l2  = pos(sysfs_cache_bytes(2), d.l2);
+        d.l3  = pos(sysfs_cache_bytes(3), d.l3);
+        d.l1d = pos(sysfs_cache_bytes(1), d.l1d);
+#endif
         for_each_sysfs_cpu("/sys/devices/system/cpu/cpu0/cache/index3/shared_cpu_list",
                            [&d](unsigned cpu) {
                                ++d.l3_cores;

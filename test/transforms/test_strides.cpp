@@ -9,9 +9,11 @@
 #include <algorithm>
 #include <complex>
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <iterator>
 #include <limits>
+#include <utility>
 #include <vector>
 
 using admiral::span;
@@ -154,6 +156,32 @@ TEMPLATE_TEST_CASE("column codelet route admission and narrow width",
     CHECK(admiral::detail::make_nd_axis_state<T>(64, 17, true, false).col_codelet ==
           (e2_len_cap() == 64 && admiral::detail::is_codelet_catalog(64)));
 }
+
+#if defined(__linux__)
+// cpu_cache() reads sysfs where the libc has no _SC_LEVEL* names (musl). The reader runs on every
+// Linux libc, so a glibc host checks the musl path against glibc's own answer.
+TEST_CASE("sysfs cache sizes match the libc", "[transforms][strides]") {
+    using admiral::detail::sysfs_cache_bytes;
+    std::FILE* f = std::fopen("/sys/devices/system/cpu/cpu0/cache/index0/level", "re");
+    if (!f) SKIP("the kernel exports no cache topology in sysfs");
+    std::fclose(f);
+    const std::size_t l1d = sysfs_cache_bytes(1), l2 = sysfs_cache_bytes(2);
+    const std::size_t l3 = sysfs_cache_bytes(3);
+    INFO("sysfs l1d " << l1d << " l2 " << l2 << " l3 " << l3);
+    CHECK(l1d >= (std::size_t{4} << 10));
+    CHECK(l1d < l2);
+    CHECK((l3 == 0 || l2 < l3));
+    CHECK(sysfs_cache_bytes(7) == 0);
+#if defined(_SC_LEVEL1_DCACHE_SIZE)
+    // shortcut: glibc reads the core it starts on and sysfs reads cpu0, so a hybrid host can
+    // differ on l1d and l2. Compare only l3 there if this fails on one.
+    for (const auto& [name, bytes] : {std::pair{_SC_LEVEL1_DCACHE_SIZE, l1d},
+                                     std::pair{_SC_LEVEL2_CACHE_SIZE, l2},
+                                     std::pair{_SC_LEVEL3_CACHE_SIZE, l3}})
+        if (const long v = ::sysconf(name); v > 0) CHECK(static_cast<std::size_t>(v) == bytes);
+#endif
+}
+#endif
 
 TEMPLATE_TEST_CASE("column codelet lens <= 64 match per-line plan, tails included",
                    "[transforms][strides][numerics]", float, double) {

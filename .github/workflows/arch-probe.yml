@@ -126,6 +126,12 @@ jobs:
           else
             echo "xsimd include kind: NOT SYSTEM"
           fi
+      - name: Minimal xsimd lsx repro
+        if: matrix.name == 'loongarch64'
+        run: |
+          t='${{ matrix.triple }}'
+          $t-g++-14 -std=c++20 -O3 -mlsx -Wall -Wextra -Werror -isystem build/_deps/xsimd-src/include \
+            -c .github/lsx_repro.cpp -o /dev/null 2>&1 | tee logs/repro.log || true
       - name: Build
         run: |
           set -u
@@ -140,12 +146,6 @@ jobs:
           fi
           ccache -s || true
           exit "$rc"
-      - name: Minimal xsimd lsx repro
-        if: matrix.name == 'loongarch64'
-        run: |
-          t='${{ matrix.triple }}'
-          $t-g++-14 -std=c++20 -O3 -mlsx -Wall -Wextra -Werror -isystem build/_deps/xsimd-src/include \
-            -c .github/lsx_repro.cpp -o /dev/null 2>&1 | tee logs/repro.log || true
       - name: Test
         run: |
           set -u

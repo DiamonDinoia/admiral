@@ -232,7 +232,7 @@ TEST_CASE("the threaded large-route law's shape: floor, knees, rise to the share
           "[route][four_step_large][gate]") {
     using namespace admiral::detail;
     // Absolute values on purpose, same discipline as the serial pins: the law and the
-    // measured grid it was read from (beat-standings/wi2c-large1d.md) are one artifact.
+    // measured crossover grid it was read from are one artifact.
     REQUIRE(kLargeRouteThreadFloorF64Bytes == 370727);  // [256, 512] KiB geo-mid
     REQUIRE(kLargeRouteThreadFloorF32Bytes == 185363);  // [128, 256] KiB geo-mid
     REQUIRE(kLargeRouteThreadKneeF64Nt == 32);
@@ -392,7 +392,7 @@ TEST_CASE("serial four_step_large admission follows the injected line and the fa
         REQUIRE_FALSE(routes_large<double>(524288, 1));   //  8 MiB, likewise
         REQUIRE(routes_large<double>(2097152, 1));        // 32 MiB, above
         // f32's lower edge. The 32 MiB cap that used to close its window above is deleted
-        // (the WI-2c sweep measured four_step winning at every rung past it on every
+        // (a forced-route sweep measured four_step winning at every rung past it on every
         // class), so there is no upper f32 line to pin against.
         REQUIRE_FALSE(routes_large<float>(1048576, 1));   //  8 MiB, below the f32 fallback
         REQUIRE(routes_large<float>(4194304, 1));         // 32 MiB, above the 16 MiB - 1

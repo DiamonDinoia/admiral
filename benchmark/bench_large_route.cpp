@@ -1,4 +1,4 @@
-// Forced-route 1-D driver (WI-2c tooling): executes the serial iterative-DIF chain or
+// Forced-route 1-D driver: executes the serial iterative-DIF chain or
 // four_step_large at sizes where the shipped picker elects the other, so the hand-fit
 // kLargeRoute* lines in include/admiral/detail/four_step_large.hpp can be re-derived per host
 // class by A/B over the byte range instead of nudged. No in-tree constant is changed: the

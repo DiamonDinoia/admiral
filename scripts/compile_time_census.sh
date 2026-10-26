@@ -21,7 +21,7 @@
 #     (counts + summed microseconds), and the top instantiation details so a family
 #     verdict never rests on a regex alone.
 #   control BUILD_DIR
-#     Print the measurement-control block the receipts quote: ccache resolution,
+#     Print the measurement-control block of a timing run: ccache resolution,
 #     CMAKE compiler-launcher cache entries, and a `ninja -t commands` grep proving
 #     no launcher sits between ninja and the compile. CCACHE_DISABLE=1 is expected
 #     in the environment of every measured build; this script checks, not assumes.

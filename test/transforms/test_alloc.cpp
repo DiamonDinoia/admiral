@@ -143,7 +143,7 @@ TEST_CASE("soa_scratch: small-n execute uses zero heap allocations; large-n uses
 // plan allocates nothing through the seam no matter how big the per-axis scratch is. The
 // shapes below each exceed the SBO on at least one col_dif axis on every supported host
 // (3d_128 read 129 heap allocs per execute, 3d_32 and 2d_128 one each, before the arena
-// existed -- see the wi3b-diag-d5 receipt). The positive control is the 1-D case above,
+// existed). The positive control is the 1-D case above,
 // which proves the counter fires on this build.
 TEST_CASE("nd plans reach zero steady-state scratch allocations", "[alloc][scratch]") {
     for (std::vector<std::size_t> shape :

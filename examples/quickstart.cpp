@@ -12,9 +12,11 @@ int main() {
         x[i] = {std::sin(0.01 * double(i)), std::cos(0.02 * double(i))};
     const auto input = x;
 
+    // [doc:quickstart]
     admiral::plan<double> p(x.size());
     p.forward(x);
     p.inverse(x);
+    // [doc:quickstart-end]
 
     admiral::plan<double> p2d({64, 64});
     admiral::plan<double> p8(1 << 20, {.nthreads = 8});

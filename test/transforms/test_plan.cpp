@@ -514,7 +514,7 @@ TEMPLATE_TEST_CASE("effort::measure elects the same route under concurrent first
 
 // Auto (`nthreads=0`) resolves to serial below the thread gate, so it must elect the route the
 // same way `nthreads=1` does. Returning the cost-model estimate instead makes effort::measure
-// behave as effort::estimate, which cost up to 1.46x on the 2026-09-11 standings sweep.
+// behave as effort::estimate, which cost up to 1.46x on a forced-route sweep.
 // The election is a race, so the observable is a bitwise change in the output. Two controls keep
 // it honest: every transform writes the SAME buffer, because the codelet's aligned arm makes the
 // bits depend on the output's alignment class, and the estimate-versus-estimate pair asserts that

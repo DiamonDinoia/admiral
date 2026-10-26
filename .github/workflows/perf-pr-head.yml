@@ -11,17 +11,21 @@ concurrency:
   group: perf-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+# Same number of parallel compiles as ci.yml.
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: 2
+
 jobs:
   ab:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout base
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: base
       - name: Checkout PR head
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           path: pr
@@ -36,7 +40,7 @@ jobs:
             cp -r base/benchmark base/scripts pr/
             cmake -S $side -B build-$side -G Ninja -DCMAKE_BUILD_TYPE=Release \
               -DADM_TARGET_ARCH=x86-64-v3 -DADM_BUILD_TESTS=OFF -DCMAKE_CXX_COMPILER=g++-14
-            cmake --build build-$side -j "$(nproc)"
+            cmake --build build-$side
           done
       - name: Interleaved A/B
         run: |
@@ -50,7 +54,7 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           (echo "pr_number=$PR_NUMBER"; echo "pr_head_sha=$PR_HEAD_SHA") > meta.txt
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: perf-pr
           retention-days: 7

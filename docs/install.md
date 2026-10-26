@@ -1,80 +1,82 @@
-# Installation
-Requirements: CMake 3.25+, Ninja (or Make), and a C++20 compiler. GCC 14+ or Clang 19+ is recommended. Older
-C++20 compilers build and pass the tests but generate slower code. `-DADM_CXX_STANDARD=17` builds the same
-library at C++17. CMake fetches xsimd and poet automatically. They are the only dependencies of the library
-itself.
+# Install and use
 
-## Build and install
-```bash
-cmake --preset release
-cmake --build --preset release
-cmake --install build/release --prefix /your/prefix
+Admiral needs CMake 3.25 or newer and a C++20 compiler: GCC 13, Clang 18, Apple Clang or MSVC.
+GCC 14 or Clang 19 is recommended; older compilers build slower codelets, and CMake shows a warning.
+The first configure downloads xsimd, poet and snmalloc, so it needs network access.
+
+## Install to a prefix
+
+Set `PREFIX` to the install directory.
+The commands skip the tests, the benchmarks and the examples.
+`-DCMAKE_INSTALL_LIBDIR=lib` puts the FFTW shim in `$PREFIX/lib`.
+
+```{literalinclude} ../scripts/install_prefix.sh
+:start-after: [doc:install-prefix]
+:end-before: [doc:install-prefix-end]
 ```
 
-For an install-only build (no tests, benchmarks, or examples) with portable binaries, configure without a
-preset:
+`CMAKE_BUILD_PARALLEL_LEVEL` sets the number of parallel compiles.
+One GCC 14 compile of `inst_col_f_inv.cpp` at `x86-64-v4` in a Release build peaked at 3.4 GiB (3498 MiB).
+Keep the number of compiles x 3.4 GiB below 75% of the memory.
 
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-      -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=OFF -DADM_BUILD_EXAMPLES=OFF \
-      -DADM_TARGET_ARCH=x86-64-v3
+A native GCC or Clang build targets the build CPU.
+For a binary that runs on other machines, set `ADM_TARGET_ARCH`.
+See [Build options](build-options.md).
+
+## Use from CMake
+
+To use an installed prefix, put `$PREFIX` in `CMAKE_PREFIX_PATH`.
+
+```{literalinclude} ../test/package/CMakeLists.txt
+:start-after: [doc:find-package]
+:end-before: [doc:find-package-end]
+:dedent:
+:language: cmake
 ```
 
-`ADM_TARGET_ARCH` defaults to `native`: the fastest binaries for the build machine, but they may not run
-elsewhere ([build-options.md](build-options.md) lists every option).
+To use a source tree at `./admiral`, add it as a subdirectory.
 
-## Consume the installed package
-```cmake
-find_package(admiral REQUIRED)   # needs CMAKE_PREFIX_PATH=/your/prefix
-target_link_libraries(app PRIVATE admiral::admiral)
+```{literalinclude} ../test/package/CMakeLists.txt
+:start-after: [doc:add-subdirectory]
+:end-before: [doc:add-subdirectory-end]
+:dedent:
+:language: cmake
 ```
 
-| Interface | Header | Link |
-|-----------|--------|------|
-| C++ | `<admiral/admiral.hpp>` | `admiral::admiral` or `admiral::admiral_static` |
-| C | `<admiral/admiral.h>` | `admiral::admiral_c` or `admiral::admiral_c_static` |
-| FFTW | `<admiral/fftw3.h>` | `admiral::fftw` or `admiral::fftw_static` |
+To fetch the source with FetchContent, declare it.
 
-The exported targets compile at the configured `ADM_CXX_STANDARD`. The C++20 and C++17 builds are not
-link-compatible: `admiral::span` is `std::span` at C++20 and a polyfill at C++17. The shared libraries record
-their own dependency on libstdc++, so a plain C project links `admiral::admiral_c` and runs. The static
-archives are C++ behind a C API, so a C-only project must enable C++ to link them:
-
-```cmake
-project(app C CXX)       # or enable_language(CXX) before find_package
+```{literalinclude} ../test/package/CMakeLists.txt
+:start-after: [doc:fetchcontent]
+:end-before: [doc:fetchcontent-end]
+:dedent:
+:language: cmake
 ```
 
-Code that calls `<math.h>` functions still links libm itself (`target_link_libraries(app PRIVATE m)`). Some
-linkers (mold) do not pull libm in implicitly.
+To fetch the source with CPM, add the package.
 
-## Consume the checkout without installing
-A vendored checkout builds as a subproject (`add_subdirectory`), or CMake can fetch the repository
-(`FetchContent`):
-
-```cmake
-add_subdirectory(extern/admiral)
-target_link_libraries(app PRIVATE admiral::admiral)
+```{literalinclude} ../test/package/CMakeLists.txt
+:start-after: [doc:cpm]
+:end-before: [doc:cpm-end]
+:dedent:
+:language: cmake
 ```
 
-```cmake
-include(FetchContent)
-FetchContent_Declare(
-  admiral
-  GIT_REPOSITORY https://github.com/DiamonDinoia/admiral.git
-  GIT_TAG master
-)
-FetchContent_MakeAvailable(admiral)
-target_link_libraries(app PRIVATE admiral::admiral)
+All four routes give the same targets: `admiral::admiral` (C++), `admiral::admiral_c` (C) and `admiral::fftw` (FFTW shim).
+Each target has a static twin with the suffix `_static`.
+To link a static twin from C, use `project(x C CXX)`.
+
+## C++ example
+
+Include `<admiral/admiral.hpp>`.
+Here `x` is a `std::vector<std::complex<double>>`.
+
+```{literalinclude} ../examples/quickstart.cpp
+:start-after: [doc:quickstart]
+:end-before: [doc:quickstart-end]
+:dedent:
+:language: cpp
 ```
 
-Either way, as a subproject Admiral turns its tests, benchmarks, and examples off by default.
-
-## Build these docs locally
-```bash
-cd docs
-uv venv .venv && . .venv/bin/activate      # or python -m venv
-uv pip install -r requirements.txt         # or pip install
-sphinx-build -b html . _build/html
-```
-
-Doxygen must be on `PATH`. Sphinx runs it itself. Open `_build/html/index.html`.
+The C API is in `include/admiral/admiral.h`.
+`examples/c_api.c` shows its use.
+The [C++ API](cpp-api.md) page lists the types.

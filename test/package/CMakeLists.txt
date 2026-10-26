@@ -1,16 +1,51 @@
 cmake_minimum_required(VERSION 3.25)
-project(admiral_package_test C CXX)
-
-# Two consumption paths, one set of sources. ADM_PACKAGE_TEST_FETCH points at a source tree and
-# selects the FetchContent path; unset, the project consumes an installed prefix through
-# find_package. Both must produce the same admiral::* targets.
-if(ADM_PACKAGE_TEST_FETCH)
-    include(FetchContent)
-    FetchContent_Declare(admiral SOURCE_DIR ${ADM_PACKAGE_TEST_FETCH})
-    FetchContent_MakeAvailable(admiral)
-else()
-    find_package(admiral REQUIRED)
+# OFF makes a C-only project with only the C consumers.
+option(ADM_PACKAGE_CXX "Enable C++ in the consumer" ON)
+project(admiral_package_test C)
+if(ADM_PACKAGE_CXX)
+    enable_language(CXX)
 endif()
+
+# One set of sources, seven ways to get admiral. ADM_PACKAGE_ROUTE selects the way. Every route
+# must produce the same admiral::* targets. run_routes.sh sets the route and its inputs.
+#   prefix_shared, prefix_static  find_package on an installed prefix (CMAKE_PREFIX_PATH), one linkage
+#   prefix                        the same, both linkages
+#   subdir                        add_subdirectory of a source tree placed at ./admiral
+#   fetch_git                     FetchContent from GitHub
+#   fetch_dir                     the same lines, with FETCHCONTENT_SOURCE_DIR_ADMIRAL set
+#   cpm                           CPMAddPackage from GitHub, with the CPM.cmake of ADM_PACKAGE_SRC
+# The git routes name GitHub. The driver redirects that URL to the commit under test.
+set(ADM_PACKAGE_ROUTE prefix CACHE STRING "How the consumer gets admiral")
+set(ADM_PACKAGE_LINKS shared static)
+if(ADM_PACKAGE_ROUTE MATCHES "_(shared|static)$")
+    set(ADM_PACKAGE_LINKS ${CMAKE_MATCH_1})
+endif()
+
+if(ADM_PACKAGE_ROUTE MATCHES "^prefix")
+    # [doc:find-package]
+    find_package(admiral REQUIRED CONFIG)
+    # [doc:find-package-end]
+elseif(ADM_PACKAGE_ROUTE STREQUAL "subdir")
+    # [doc:add-subdirectory]
+    add_subdirectory(admiral)
+    # [doc:add-subdirectory-end]
+elseif(ADM_PACKAGE_ROUTE MATCHES "^fetch_")
+    # [doc:fetchcontent]
+    include(FetchContent)
+    FetchContent_Declare(admiral GIT_REPOSITORY https://github.com/DiamonDinoia/admiral.git GIT_TAG master)
+    FetchContent_MakeAvailable(admiral)
+    # [doc:fetchcontent-end]
+elseif(ADM_PACKAGE_ROUTE STREQUAL "cpm")
+    include(${ADM_PACKAGE_SRC}/cmake/CPM.cmake)
+    # [doc:cpm]
+    CPMAddPackage("gh:DiamonDinoia/admiral#master")
+    # [doc:cpm-end]
+else()
+    message(FATAL_ERROR "ADM_PACKAGE_ROUTE=${ADM_PACKAGE_ROUTE} is not a route")
+endif()
+# The driver reads this line to check that the route came from where it was asked to.
+message(STATUS "adm_package: route=${ADM_PACKAGE_ROUTE} admiral_dir=${admiral_DIR} "
+               "source_dir=${admiral_SOURCE_DIR}")
 enable_testing()
 
 find_library(ADM_LIBM m)
@@ -39,7 +74,16 @@ foreach(row "use_cxx;use_cxx.cpp;admiral;admiral_static"
     list(GET row 1 src)
     list(GET row 2 shared_link)
     list(GET row 3 static_link)
-    foreach(link ${shared_link} ${static_link})
+    if(src MATCHES "\\.cpp$" AND NOT ADM_PACKAGE_CXX)
+        continue()
+    endif()
+    foreach(kind ${ADM_PACKAGE_LINKS})
+        set(link ${${kind}_link})
+        string(TOUPPER ${kind} KIND)
+        get_target_property(type admiral::${link} TYPE)
+        if(NOT type STREQUAL ${KIND}_LIBRARY)
+            message(FATAL_ERROR "admiral::${link} is ${type}, the ${kind} route needs ${KIND}_LIBRARY")
+        endif()
         add_executable(${stem}_${link} ${src})
         target_link_libraries(${stem}_${link} PRIVATE admiral::${link} ${ADM_LIBM})
         adm_stage_dlls(${stem}_${link})

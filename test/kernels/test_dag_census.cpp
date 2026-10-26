@@ -1,4 +1,4 @@
-// Wave-A DAG census pilot (math-clarity campaign D4c): trace the shipped dif_butterfly /
+// DAG census pilot: trace the shipped dif_butterfly /
 // dif_butterfly_terminal / kernel_batched text through the symbolic V of
 // test/admiral-dag and REQUIRE the op census against the shipped closed forms. The
 // oracle never re-decides contraction: it reads kFusedFma from the shipped header and
@@ -8,8 +8,8 @@
 //
 // ORDER CONTRACT: sym_dag.hpp must precede every admiral include in this TU -- the
 // namespace-xsimd fma/fnma/fms shims it declares must be visible at the kernel templates'
-// definition points (see that header's top comment; probe negative control
-// /tmp/adm-dag-probe/probe_order_neg.cpp). The admiral includes come after it.
+// definition points (see that header's top comment).
+// The admiral includes come after it.
 
 #include "admiral-dag/sym_dag.hpp"
 

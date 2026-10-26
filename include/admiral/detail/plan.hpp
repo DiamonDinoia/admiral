@@ -585,7 +585,7 @@ plan_impl<T>::measure_route(std::size_t size, bool is_forward, std::size_t nthre
     // (large_route_serial_bytes), so the admission question the line cannot answer --
     // which side of the crossover TODAY's kernels sit on at this exact size -- is again
     // decision-shaped: the line only gates, and the race beyond it is the re-check. The
-    // 32 MiB f32 cap that once closed a window here is deleted: the WI-2c sweep measured
+    // 32 MiB f32 cap that once closed a window here is deleted: a forced-route sweep measured
     // four_step winning at every rung past it on every class. The shape predicate is the
     // one the elected plan would carry: fused serially, n1 | n2 threaded.
     if (size > BASE_MODEL_NMAX) {
@@ -666,7 +666,7 @@ plan_impl<T>::measure_route(std::size_t size, bool is_forward, std::size_t nthre
         // challenger takes the line's answer only by kMeasureRejectRatio, the bar the rep
         // loop's early break already uses: a bare argmin flipped to the dif arm on one noisy
         // sample past the serial line, reading 7+ sweep cells at dif times where the forced
-        // ladder had four_step 1.2-2.05x ahead (fi/wi3d large-1-D tail, 2026-09-15/16).
+        // ladder had four_step 1.2-2.05x ahead.
         const bool better = tail_race ? ns * kMeasureRejectRatio < best_ns : ns < best_ns;
         if (better) { best_ns = ns; pick.route = cands[c]; }
     }

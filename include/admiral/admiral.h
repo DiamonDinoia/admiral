@@ -52,6 +52,8 @@ typedef struct {
 // Never returns NULL; an unrecognised `status` yields "Unknown error".
 ADM_NODISCARD ADM_C_API const char* adm_error_string(adm_status status);
 
+// Forward is unscaled. Inverse divides by the element count, so a round trip returns the input.
+// The C API has no scale argument.
 ADM_NODISCARD ADM_C_API adm_status admf_forward(admf_complex* data, size_t size,
                                                 const adm_options* opts);
 ADM_NODISCARD ADM_C_API adm_status adm_forward(adm_complex* data, size_t size,

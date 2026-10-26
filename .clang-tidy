@@ -4,7 +4,7 @@
 # The set below enables the checks that catch real defects reachable in this code.
 # Every check that is OFF gets a one-line reason here or in CheckOptions below.
 #
-# Run with llvm/19.1.7 and the clang compile_commands.json (sa-audit build).
+# Run with llvm/19.1.7 and the clang compile_commands.json (the clang build tree).
 # The validate.sh `tidy` arm reproduces this exactly.
 
 Checks:
@@ -97,7 +97,7 @@ Checks:
   - 'portability-std-allocator-const'
   - '-portability-simd-intrinsics'
   # OFF: the library targets xsimd which abstracts SIMD, and project policy bans
-  # direct intrinsic use (CLAUDE.md). The check is irrelevant.
+  # raw intrinsics (include/ and src/ hold no _mm*_ call). The check is irrelevant.
 
   # ---- CERT (selected: avoid duplicating bugprone; skip C-file-IO rules) ----
   - 'cert-dcl50-cpp'

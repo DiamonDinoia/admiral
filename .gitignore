@@ -73,13 +73,7 @@ _deps/
 .DS_Store
 Thumbs.db
 
-# Documentation build (exhale writes api/ and _doxygen/ into the source dir)
 docs/_build/
-docs/api/
-docs/_doxygen/
-docs/.venv/
-docs/html/
-docs/latex/
 report/
 
 # Knowledge-graph artifacts (generated, never committed)

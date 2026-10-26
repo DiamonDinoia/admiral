@@ -5,16 +5,20 @@ on:
     branches: [master]
   workflow_dispatch:
 
+# Same number of parallel compiles as ci.yml.
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: 2
+
 jobs:
   fftw-snapshot:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build libfftw3-dev python3
       - run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DADM_TARGET_ARCH=x86-64-v3 -DADM_BUILD_TESTS=OFF -DCMAKE_CXX_COMPILER=g++-14 -DADM_BENCH_FFTW=ON
-          cmake --build build -j "$(nproc)"
+          cmake --build build
       - name: admiral vs FFTW_MEASURE (interleaved, in-process)
         run: |
           build/benchmark/admiral_benchmark --fftw-ab \
@@ -28,7 +32,7 @@ jobs:
           python3 scripts/ci_perf_ab.py build/benchmark/admiral_benchmark \
             build/benchmark/admiral_benchmark --rounds 4 --grid ci \
             --json self.json | tee self_table.txt
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: perf-master
           retention-days: 90

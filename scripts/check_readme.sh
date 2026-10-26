@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Usage: check_readme.sh [README]
-# Each fenced block in README follows a line "<!-- from: PATH -->". PATH is relative to the repo
-# root. The block lines must appear in PATH as consecutive lines, ignoring leading whitespace.
+# Each fenced block in README follows a line "<!-- from: PATH#NAME -->". PATH is relative to the
+# repo root. The block must equal the lines of PATH between "[doc:NAME]" and "[doc:NAME-end]",
+# ignoring leading whitespace. The docs pull the same lines in with literalinclude.
 # Any line with a fence marker opens a block, so an unmarked or unusual fence fails.
 set -euo pipefail
 
@@ -9,15 +10,19 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 awk '
 function strip(s) { sub(/^[ \t]+/, "", s); return s }
 function bad(line, why) { printf "%s:%d: %s\n", FILENAME, line, why }
-function check(    i, j, n, l) {
+function check(    i, n, l, on, m) {
     if (marker == "") return bad(start, "no marker")
-    while ((getline l < marker) > 0) src[++n] = strip(l)
-    close(marker)
-    for (i = 1; blen > 0 && i + blen - 1 <= n; i++) {
-        for (j = 1; j <= blen && src[i + j - 1] == body[j]; j++) ;
-        if (j > blen) { checked++; return }
+    split(marker, m, "#")
+    while ((getline l < m[1]) > 0) {
+        if (index(l, "[doc:" m[2] "-end]")) on = 0
+        if (on) src[++n] = strip(l)
+        if (index(l, "[doc:" m[2] "]")) on = 1
     }
-    bad(start, "text not found in " marker)
+    close(m[1])
+    if (n == 0) return bad(start, "no tagged lines " m[2] " in " m[1])
+    for (i = 1; i <= n && i <= blen && src[i] == body[i]; i++) ;
+    if (i > n && n == blen) { checked++; return }
+    bad(start, "text differs from " marker)
 }
 inblock {
     if ($0 ~ /^[ \t>]*(```|~~~)+[ \t]*$/) { inblock = 0; check() } else body[++blen] = strip($0)

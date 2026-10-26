@@ -16,7 +16,7 @@ builds, read [docs/build-options.md](docs/build-options.md).
 Set `PREFIX` to the install directory. `-DCMAKE_INSTALL_LIBDIR=lib` puts the FFTW shim in
 `$PREFIX/lib`.
 
-<!-- from: scripts/install_prefix.sh -->
+<!-- from: scripts/install_prefix.sh#install-prefix -->
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_LIBDIR=lib -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=OFF -DADM_BUILD_EXAMPLES=OFF
 cmake --build build --config Release
@@ -30,21 +30,21 @@ native arch can use 3.4 GiB. Keep the number of compiles x 3.4 GiB below 75% of 
 
 To use an installed prefix, put `$PREFIX` in `CMAKE_PREFIX_PATH`.
 
-<!-- from: test/package/CMakeLists.txt -->
+<!-- from: test/package/CMakeLists.txt#find-package -->
 ```cmake
 find_package(admiral REQUIRED CONFIG)
 ```
 
 To use a source tree at `./admiral`, add it as a subdirectory.
 
-<!-- from: test/package/CMakeLists.txt -->
+<!-- from: test/package/CMakeLists.txt#add-subdirectory -->
 ```cmake
 add_subdirectory(admiral)
 ```
 
 To fetch the source with FetchContent, declare it.
 
-<!-- from: test/package/CMakeLists.txt -->
+<!-- from: test/package/CMakeLists.txt#fetchcontent -->
 ```cmake
 include(FetchContent)
 FetchContent_Declare(admiral GIT_REPOSITORY https://github.com/DiamonDinoia/admiral.git GIT_TAG master)
@@ -53,7 +53,7 @@ FetchContent_MakeAvailable(admiral)
 
 To fetch the source with CPM, add the package.
 
-<!-- from: test/package/CMakeLists.txt -->
+<!-- from: test/package/CMakeLists.txt#cpm -->
 ```cmake
 CPMAddPackage("gh:DiamonDinoia/admiral#master")
 ```
@@ -66,7 +66,7 @@ All routes give the same targets: `admiral::admiral` (C++), `admiral::admiral_c`
 
 Include `<admiral/admiral.hpp>`. Here `x` is a `std::vector<std::complex<double>>`.
 
-<!-- from: examples/quickstart.cpp -->
+<!-- from: examples/quickstart.cpp#quickstart -->
 ```cpp
 admiral::plan<double> p(x.size());
 p.forward(x);
@@ -79,7 +79,7 @@ The C API is in `include/admiral/admiral.h`. `examples/c_api.c` shows its use.
 
 Link `admiral::fftw`. On Linux, `LD_PRELOAD` can also inject the shim into an FFTW program.
 
-<!-- from: test/preload/run.sh -->
+<!-- from: test/preload/run.sh#ld-preload -->
 ```sh
 LD_PRELOAD=$PREFIX/lib/libadmiral_fftw.so ./app
 ```

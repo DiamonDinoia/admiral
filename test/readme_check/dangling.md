@@ -1,6 +1,6 @@
-<!-- from: test/readme_check/source.txt -->
+<!-- from: test/readme_check/source.txt#sample -->
 
 ```cpp
 int main() {
 ```
-<!-- from: test/readme_check/source.txt -->
+<!-- from: test/readme_check/source.txt#sample -->

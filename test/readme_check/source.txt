@@ -1,4 +1,6 @@
+// [doc:sample]
 int main() {
     return 0;
 }
+// [doc:sample-end]
 other line

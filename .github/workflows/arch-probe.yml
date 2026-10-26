@@ -6,9 +6,11 @@ name: Arch probe
 # Route: cross compile on the x86 runner and run ctest through qemu-user, except where the
 # runner runs the binary itself (x86-64, i686 with -m32, aarch64 on the arm runner).
 # wasm32 uses emscripten and node.
+# This branch: ppc64le (IBM double-double long double) with x87 (x86_64) and binary128
+# (aarch64) controls. ppc64le-control folds the IBM twiddles at double and must fail.
 on:
   push:
-    branches: ['probe/arch-matrix']
+    branches: ['probe/port-ppc-ld']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -29,22 +31,11 @@ jobs:
         include:
           # Baseline ISA per numpy: X86_V2.
           - {name: x86_64, os: ubuntu-24.04, kind: native, pkgs: g++-14, arch: x86-64-v2, expect: '-march=x86-64-v2'}
-          # X86_V2 without CX16, SSE math. The x86-64 kernel runs 32-bit ELF directly.
-          - {name: i686, os: ubuntu-24.04, kind: native, pkgs: g++-14-multilib, arch: none, flags: '-m32 -msse4.2 -mpopcnt -msahf -mfpmath=sse', expect: '-m32'}
           # ASIMD is the armv8-a baseline.
           - {name: aarch64, os: ubuntu-24.04-arm, kind: native, pkgs: g++-14, arch: armv8-a, expect: '-march=armv8-a'}
-          # numpy baseline: none. Compiler default, no NEON.
-          - {name: armhf, os: ubuntu-24.04, kind: qemu, triple: arm-linux-gnueabihf, proc: arm, qemu: qemu-arm, arch: none}
           # numpy baseline: VSX2 on little endian, which is POWER8.
           - {name: ppc64le, os: ubuntu-24.04, kind: qemu, triple: powerpc64le-linux-gnu, proc: ppc64le, qemu: qemu-ppc64le, arch: power8, expect: '-mcpu=power8'}
-          # numpy baseline: none. QEMU only, by standing decision.
-          - {name: s390x, os: ubuntu-24.04, kind: qemu, triple: s390x-linux-gnu, proc: s390x, qemu: qemu-s390x, arch: none}
-          # Scalar only, by standing decision.
-          - {name: riscv64, os: ubuntu-24.04, kind: qemu, triple: riscv64-linux-gnu, proc: riscv64, qemu: qemu-riscv64, arch: none}
-          # numpy baseline: LSX.
-          - {name: loongarch64, os: ubuntu-24.04, kind: qemu, triple: loongarch64-linux-gnu, proc: loongarch64, qemu: qemu-loongarch64, arch: none, flags: '-mlsx', expect: '-mlsx'}
-          # numpy baseline: none. No threads: the pool is the serial no-op pool.
-          - {name: wasm32, os: ubuntu-24.04, kind: wasm, arch: none}
+          - {name: ppc64le-control, os: ubuntu-24.04, kind: qemu, triple: powerpc64le-linux-gnu, proc: ppc64le, qemu: qemu-ppc64le, arch: power8, expect: '-mcpu=power8', control: true}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     steps:
@@ -68,6 +59,30 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build ccache
+      - name: Repro, gcc constant folding of long double
+        if: matrix.kind != 'wasm'
+        run: |
+          set -u
+          cxx=g++-14
+          if [ '${{ matrix.kind }}' = qemu ]; then cxx=${{ matrix.triple }}-g++-14; fi
+          mant=$(echo __LDBL_MANT_DIG__ | $cxx -E -P -x c++ - | tail -n 1)
+          echo "LDBL_MANT_DIG=$mant"
+          fold() { echo "constexpr long double x = $1;" | $cxx -std=c++20 -fsyntax-only -x c++ - 2>/dev/null; }
+          for e in '1.0L / 2' '1.0L / 3' '0.1L * 0.1L' '1.0L + 0x1p-100L' '1.0L + 0x1p-200L' \
+                   '(long double)0.1' '__LDBL_EPSILON__ / 2'; do
+            if fold "$e"; then echo "folds:   $e"; else echo "refused: $e"; fi
+          done
+          fold '1.0L / 2'
+          if [ "$mant" = 106 ]; then ! fold '1.0L / 3'; else fold '1.0L / 3'; fi
+      - name: Positive control, fold the IBM twiddles at double
+        if: matrix.control
+        run: |
+          set -eu
+          f=include/admiral/detail/ct_math.hpp
+          sed -i -e 's/const ct_sincos_v<ct_dd> w = sincos_turns_eval<ct_dd>(/const ct_sincos_v<double> w = sincos_turns_eval<double>(/' \
+                 -e 's/return {dd_round<F>(w.s), dd_round<F>(w.c)};/return {F(w.s), F(w.c)};/' "$f"
+          git diff -- "$f"
+          test "$(git diff --numstat -- "$f" | cut -f1)" = 2
       - uses: hendrikmuhs/ccache-action@v1
         with:
           key: probe-${{ matrix.name }}
@@ -127,7 +142,9 @@ jobs:
           set -u
           unset NINJA_STATUS
           rc=0
-          cmake --build build -j2 -- -k 0 > logs/build.log 2>&1 || rc=$?
+          targets=()
+          if [ -n '${{ matrix.control }}' ]; then targets=(--target test_ct_math test_long_double); fi
+          cmake --build build -j2 "${targets[@]}" -- -k 0 > logs/build.log 2>&1 || rc=$?
           if [ "$rc" -ne 0 ]; then
             echo "failed TUs: $(grep -c '^FAILED' logs/build.log)"
             echo "first error:"
@@ -139,6 +156,17 @@ jobs:
       - name: Test
         run: |
           set -u
+          if [ -n '${{ matrix.control }}' ]; then
+            run="${{ matrix.qemu }} -L /usr/${{ matrix.triple }}"
+            fired=0
+            $run build/test/test_ct_math '[longdouble]' > logs/control-ct_math.log 2>&1 || fired=$((fired + 1))
+            $run build/test/test_long_double > logs/control-long_double.log 2>&1 || fired=$((fired + 1))
+            grep -h -E -B2 -A4 'FAILED|with expansion' logs/control-*.log | head -n 60
+            tail -n 4 logs/control-*.log
+            echo "the double fold failed $fired of 2 accuracy executables"
+            test "$fired" = 2
+            exit 0
+          fi
           rc=0
           ctest --test-dir build -j2 --timeout 1800 --output-on-failure --no-tests=error \
             > logs/ctest.log 2>&1 || rc=$?

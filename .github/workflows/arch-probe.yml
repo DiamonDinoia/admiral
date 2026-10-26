@@ -32,7 +32,7 @@ jobs:
           # X86_V2 without CX16, SSE math. The x86-64 kernel runs 32-bit ELF directly.
           - {name: i686, os: ubuntu-24.04, kind: native, pkgs: g++-14-multilib, arch: none, flags: '-m32 -msse4.2 -mpopcnt -msahf -mfpmath=sse', expect: '-m32'}
           # ASIMD is the armv8-a baseline.
-          - {name: aarch64, os: ubuntu-24.04-arm, kind: native, pkgs: g++-14, arch: armv8-a, expect: '-mcpu=armv8-a'}
+          - {name: aarch64, os: ubuntu-24.04-arm, kind: native, pkgs: g++-14, arch: armv8-a, expect: '-march=armv8-a'}
           # numpy baseline: none. Compiler default, no NEON.
           - {name: armhf, os: ubuntu-24.04, kind: qemu, triple: arm-linux-gnueabihf, proc: arm, qemu: qemu-arm, arch: none}
           # numpy baseline: VSX2 on little endian, which is POWER8.
@@ -127,8 +127,9 @@ jobs:
           set -u
           unset NINJA_STATUS
           rc=0
-          cmake --build build -j2 > logs/build.log 2>&1 || rc=$?
+          cmake --build build -j2 -- -k 0 > logs/build.log 2>&1 || rc=$?
           if [ "$rc" -ne 0 ]; then
+            echo "failed TUs: $(grep -c '^FAILED' logs/build.log)"
             echo "first error:"
             grep -n -m5 -E 'error:|Error [0-9]|FAILED:' logs/build.log || true
             tail -n 40 logs/build.log

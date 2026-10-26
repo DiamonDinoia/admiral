@@ -1,6 +1,7 @@
 # Install and use
 
 Admiral needs CMake 3.25 or newer and a C++20 compiler: GCC 13, Clang 18, Apple Clang or MSVC.
+GCC 14 or Clang 19 is recommended; older compilers build slower codelets, and CMake shows a warning.
 The first configure downloads xsimd, poet and snmalloc, so it needs network access.
 
 ## Install to a prefix

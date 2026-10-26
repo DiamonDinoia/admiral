@@ -26,6 +26,12 @@ env:
   # x64 runners have 2 physical cores and 15 GiB of memory (free -g, rounded down). The limit is
   # 75% of that, 11520 MiB. A level of 2 fits every measured job except the Debug cells of the
   # build job. The tightest fit is asan g++-14: 2 x 5716 MiB (inst_dif_thunks_f) = 11432 MiB.
+  # The peaks are measured, per cell, on the runners (arm, macOS and Windows in runs 40359790304
+  # and 40363745014, 2026-10-26; the rest through a /usr/bin/time wrapper). arm64 fits at
+  # 2 x 2552 MiB and macOS at 2 x 1690 MiB (inst_col_*), windows clang-cl at 2 x 4005 MiB.
+  # Known limit: MSVC test_ct_root.cpp.obj peaks at 16-21 GiB of commit charge (16231 MiB on
+  # windows-2025, 20854 on windows-2022; commit is an upper bound of working set). The goal fails
+  # at every level there; cl pages through it. The next-largest MSVC TU is 2550 MiB.
   CMAKE_BUILD_PARALLEL_LEVEL: 2
   # ctest reads this variable too, so no ctest call carries -j. GitHub jobs use at most 2 cores.
   CTEST_PARALLEL_LEVEL: 2
@@ -101,11 +107,13 @@ jobs:
       - name: Assert the flags arrived
         if: matrix.arch != 'none'
         # A Debug cell debugs at -Og. -O0 pays the same template instantiation cost and then
-        # runs the tests several times slower.
+        # runs the tests several times slower. `=x86-64 ` would also match `=x86-64-v2/v3`, so
+        # the v1 cell carries its own denial: a silent higher level must not pass here.
         run: >
           scripts/check_flags.sh build want:=${{ matrix.arch }} not:=native
           want:-std=c++${{ matrix.std || 20 }}
           ${{ matrix.build_type == 'Debug' && 'want:-Og not:-O0' || '' }}
+          ${{ matrix.arch == 'x86-64' && 'not:-march=x86-64-v' || '' }}
       # compile_commands.json omits the launcher under Ninja, so build.ninja is the only witness.
       - name: Assert the compiler launcher arrived
         run: grep -q 'LAUNCHER = ccache' build/build.ninja

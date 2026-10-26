@@ -79,7 +79,7 @@ The flag follows these rules.
 
 ### `ADM_ENABLE_WARNINGS_AS_ERRORS`
 
-Default: `ON`, also as a subproject. Adds `-Werror` (`/WX` on MSVC) to the admiral targets. Set `OFF` before `add_subdirectory`. Consumer targets keep their own flags.
+Default: `ON`. Adds `-Werror` (`/WX` on MSVC) to the admiral targets. Set `OFF` before `add_subdirectory`. Consumer targets keep their own flags.
 
 ```{literalinclude} ../scripts/options.sh
 :start-after: [doc:opt-ADM_ENABLE_WARNINGS_AS_ERRORS]

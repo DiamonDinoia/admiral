@@ -4,10 +4,6 @@ Admiral is an FFT library with a C++20 API, a C API and a library that exports t
 complex-to-complex API. A program links the FFTW library at build time. On Linux, a program can also
 use it at run time through `LD_PRELOAD`.
 
-```sh
-LD_PRELOAD=$PREFIX/lib/libadmiral_fftw.so ./app
-```
-
-Install, build options and the API are in the documentation at <http://diamondinoia.com/admiral/>.
+Install, build options and the API are in the documentation at <https://diamondinoia.com/admiral/>.
 
 BSD 3-Clause Attribution License, see [LICENSE](LICENSE).

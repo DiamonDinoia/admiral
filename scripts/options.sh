@@ -102,6 +102,12 @@ rm -rf build
 cmake -S . -B build -DADM_SANITIZER=address+undefined
 scripts/check_flags.sh build want:-fsanitize=address,undefined
 # [doc:opt-ADM_SANITIZER-end]
+# The sanitizer build trims the codelet catalog to sizes up to 16, plus 45, and ignores the
+# catalog size options.
+grep -F '14, 15, 16, 45' build/src/generated/include/admiral/detail/codelet_max.hpp
+rm -rf build
+cmake -S . -B build -DADM_SANITIZER=address+undefined -DADM_CODELET_MAX_N=8 '-DADM_CODELET_EXTRA_SIZES=99'
+grep -F '14, 15, 16, 45' build/src/generated/include/admiral/detail/codelet_max.hpp
 
 rm -rf build
 # [doc:opt-ADM_USE_FAST_MATH]
@@ -120,6 +126,10 @@ rm -rf build
 cmake -S . -B build -DADM_CODELET_MIN_N=4
 grep -F '4, 5, 6' build/src/generated/include/admiral/detail/codelet_max.hpp
 # [doc:opt-ADM_CODELET_MIN_N-end]
+# Values below 2 stop the configure.
+rm -rf build
+out=$(cmake -S . -B build -DADM_CODELET_MIN_N=1 2>&1) && { echo "FAIL: ADM_CODELET_MIN_N=1 configured"; exit 1; }
+grep -F 'ADM_CODELET_MIN_N must be >= 2' <<<"$out"
 
 rm -rf build
 # [doc:opt-ADM_CODELET_MAX_N]
@@ -188,6 +198,10 @@ rm -rf build
 cmake -S . -B build -DADM_FIT_COST_MODEL=ON
 cmake --build build --target help | grep '^admiral_cost_model:'
 # [doc:opt-ADM_FIT_COST_MODEL-end]
+# The documented defaults of the three cost-model options.
+cmake -LA -N build | grep -E 'ADM_COST_MODEL_DATA:PATH=.*/bench-results$'
+cmake -LA -N build | grep -E 'ADM_COST_MODEL_OUT:FILEPATH=.*/include/admiral/detail/base_cost_model\.hpp$'
+cmake -LA -N build | grep -E 'ADM_COST_MODEL_TAG:STRING=[A-Za-z]+[0-9]+_[A-Za-z0-9_]+_[0-9a-f]{8,}$'
 
 rm -rf build
 # [doc:opt-ADM_COST_MODEL_DATA]

@@ -1,0 +1,73 @@
+name: msvc-ctroot-probe
+
+# Measurement only. Peak commit and peak working set of cl.exe on test_ct_root.
+on:
+  push:
+    branches: ['probe/msvc-ctroot']
+
+jobs:
+  probe:
+    timeout-minutes: 330
+    name: ${{ matrix.os }} ${{ matrix.shard }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+        shard: [s1, s2, s3]
+        include:
+          - {shard: s1, variants: 'full: empty:PROBE_PREC=0 f:PROBE_PREC=1 ld:PROBE_PREC=4 d:PROBE_PREC=2'}
+          - {shard: s2, variants: 'dc0:PROBE_PREC=2,PROBE_LO=0,PROBE_HI=1 dc1:PROBE_PREC=2,PROBE_LO=1,PROBE_HI=2 dc2:PROBE_PREC=2,PROBE_LO=2,PROBE_HI=3 dc3:PROBE_PREC=2,PROBE_LO=3,PROBE_HI=4 d03:PROBE_PREC=2,PROBE_LO=0,PROBE_HI=4 d7root:PROBE_PREC=2,PROBE_LO=7,PROBE_HI=8,PROBE_MODE=1'}
+          - {shard: s3, variants: 'dc4:PROBE_PREC=2,PROBE_LO=4,PROBE_HI=5 dc5:PROBE_PREC=2,PROBE_LO=5,PROBE_HI=6 dc6:PROBE_PREC=2,PROBE_LO=6,PROBE_HI=7 dc7:PROBE_PREC=2,PROBE_LO=7,PROBE_HI=8 d47:PROBE_PREC=2,PROBE_LO=4,PROBE_HI=8 d7fold:PROBE_PREC=2,PROBE_LO=7,PROBE_HI=8,PROBE_MODE=2'}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - name: Runner facts
+        run: |
+          powershell -NoProfile -Command "Get-CimInstance Win32_ComputerSystem | Format-List TotalPhysicalMemory,NumberOfLogicalProcessors"
+          powershell -NoProfile -Command "Get-CimInstance Win32_PageFileUsage | Format-List AllocatedBaseSize,PeakUsage"
+          echo "PROBE=${RUNNER_TEMP//\\//}" >> "$GITHUB_ENV"
+          echo "ADM_PROBE_LOG=${RUNNER_TEMP//\\//}/tu.log" >> "$GITHUB_ENV"
+      - name: Positive control, 1 GiB
+        run: |
+          ADM_PROBE_LOG="$PROBE/ctl.log" python .github/probe/launcher.py python .github/probe/alloc.py
+          cat "$PROBE/ctl.log"
+          python - "$PROBE/ctl.log" <<'PY' | tee "$PROBE/control.txt"
+          import sys
+          f = open(sys.argv[1]).read().split("\t")
+          g = 2**20
+          errs = [abs(int(f[i]) / g - 1) * 100 for i in (0, 1, 2, 3)]
+          print("CONTROL touched 1 GiB, errors %% job=%.2f commit_max=%.2f ws_max=%.2f ws_child=%.2f" % tuple(errs))
+          sys.exit(0 if max(errs) <= 5 else "control outside 5%")
+          PY
+      - uses: aminya/setup-cpp@v1
+        with:
+          compiler: msvc
+          cmake: true
+          ninja: true
+          vcvarsall: true
+          cache-tools: true
+      - name: Configure
+        env: {CMAKE_GENERATOR: Ninja}
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DADM_TARGET_ARCH=x86-64-v3
+          -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF -DADM_BUILD_EXAMPLES=OFF
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+      - name: Probe
+        run: python .github/probe/run.py build/compile_commands.json "$ADM_PROBE_LOG" ${{ matrix.variants }}
+      - name: Report
+        if: always()
+        run: |
+          { echo '```'; echo "${{ matrix.os }} ${{ matrix.shard }}"; echo "job_commit_KiB commit_max_KiB ws_max_KiB ws_child_KiB s image object"; cat "$ADM_PROBE_LOG" "$PROBE/control.txt"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: probe-${{ matrix.os }}-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/tu.log
+            ${{ runner.temp }}/control.txt
+          if-no-files-found: warn

@@ -251,7 +251,7 @@ for t in json.load(sys.stdin)["tests"]:
         # Valgrind serialises threads and costs 50-100x, so a deadlocked binary never returns.
         # Slowest measured binary is test_threads at 642 s (ccmlin075, 22 binaries, 2026-09-12).
         timeout 1800 valgrind --error-exitcode=1 --errors-for-leak-kinds=definite \
-            --leak-check=full "$bin" '~[ulp]' '~[longdouble]' >>"$log" 2>&1
+            --leak-check=full "$bin" '~[longdouble]' >>"$log" 2>&1
         vrc=$?
         ((vrc == 124)) && echo "  TIMEOUT after 1800s: $(basename "$bin")" >>"$log"
         ((vrc == 0)) || { echo "  ERRORS: $(basename "$bin")$( ((vrc == 124)) && printf ' (timeout)')"; tail -n 40 "$log"; rc=1; }

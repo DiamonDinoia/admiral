@@ -234,7 +234,8 @@ extern "C" {
     T*       PREFIX##_alloc_real(size_t n)             { return static_cast<T*>(aligned_malloc(n * sizeof(T))); } \
     COMPLEX_T* PREFIX##_alloc_complex(size_t n)        { return static_cast<COMPLEX_T*>(aligned_malloc(n * sizeof(COMPLEX_T))); } \
     void PREFIX##_cleanup(void) { \
-        static const auto next = next_fftw<void()>(#PREFIX "_cleanup", false); \
+        /* Not cached: an FFTW that loads later must be found. Each hit keeps one dlopen reference. */ \
+        const auto next = next_fftw<void()>(#PREFIX "_cleanup", false); \
         if (next != nullptr) forward(next, #PREFIX "_cleanup"); \
     }
 

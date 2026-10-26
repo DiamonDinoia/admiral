@@ -204,6 +204,17 @@ check "unload: the plugin unloads after dlclose" exits 0 /dev/null unload.err \
 check "control: unload exits 3 when the plugin stays loaded" exits 3 /dev/null unload.err \
     env LD_PRELOAD="$shim" python3 -I -c "$unload" keep
 
+# fftw_cleanup before any other FFTW loads has nothing to forward to. The call after the stand-in
+# loads must reach it, so the shim must not remember the first lookup.
+cleanup='import ctypes, os, sys
+shim = ctypes.CDLL(None)
+shim.fftw_cleanup()
+lib = ctypes.CDLL("./plugin_standin.so", os.RTLD_LOCAL)
+shim.fftw_cleanup()
+sys.exit(lib.standin_cleanups() != 1)'
+check "cleanup: fftw_cleanup reaches an FFTW that loaded after the first call" \
+    exits 0 /dev/null cleanup.err env LD_PRELOAD="$shim" python3 -I -c "$cleanup"
+
 # plugin.so loads real FFTW first. plugin_shim_real.so links the shim and that FFTW, so the FFTW
 # loads before the shim, and only dlsym(RTLD_NEXT) in the shim finds it.
 cc -shared -fPIC -o plugin_shim_real.so "$here/plugin.c" "${fftw_cflags[@]}" \

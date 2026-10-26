@@ -5,7 +5,8 @@
  * With SEND_BACK=1, execute calls the first fftw_execute in the global scope instead. Under
  * LD_PRELOAD that is the shim, so the plan goes back to the shim, as from a second shim copy.
  * With SEND_BACK=2, the first execute makes that call from a new thread and joins it, then runs
- * the plan. The first thread is still inside the shim, so the shim must take the second call. */
+ * the plan. The first thread is still inside the shim, so the shim must take the second call.
+ * standin_cleanups counts the calls to its fftw_cleanup and fftwf_cleanup. */
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <fftw3.h>
@@ -15,6 +16,9 @@
 #ifndef SEND_BACK
 #define SEND_BACK 0
 #endif
+
+static int cleanups;
+int standin_cleanups(void) { return cleanups; }
 
 #define DEFINE_STANDIN(TYPE, PFX)                                                             \
     struct PFX##_plan_s {                                                                     \
@@ -50,6 +54,7 @@
         p->out[0][0] = s;                                                                     \
         p->out[0][1] = 0;                                                                     \
     }                                                                                         \
+    void PFX##_cleanup(void) { ++cleanups; }                                                  \
     void PFX##_destroy_plan(PFX##_plan p) { free(p); }
 
 DEFINE_STANDIN(double, fftw)

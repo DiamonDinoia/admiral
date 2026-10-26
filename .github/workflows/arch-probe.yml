@@ -107,6 +107,7 @@ jobs:
           set(CMAKE_C_COMPILER $t-gcc-14)
           set(CMAKE_CXX_COMPILER $t-g++-14)
           set(CMAKE_CROSSCOMPILING_EMULATOR "${{ matrix.qemu }};-L;/usr/$t")
+          set(CMAKE_FIND_ROOT_PATH /usr/$t)
           set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
           TC
               args+=(-DCMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/tc.cmake"

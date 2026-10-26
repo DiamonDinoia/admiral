@@ -325,7 +325,7 @@ void rlimit_probes_or_skip() {
 #if INTPTR_MAX > INT32_MAX
         constexpr std::size_t kHugeBytes = std::size_t{1} << 60;
 #else
-        constexpr std::size_t kHugeBytes = static_cast<std::size_t>(PTRDIFF_MAX);  // largest object
+        constexpr std::size_t kHugeBytes = static_cast<std::size_t>(PTRDIFF_MAX) - 4096;
 #endif
         char* probe = new char[kHugeBytes];
         // A volatile store through the result: the new cannot be elided or assumed

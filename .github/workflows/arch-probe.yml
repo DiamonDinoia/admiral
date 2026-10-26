@@ -8,7 +8,7 @@ name: Arch probe
 # wasm32 uses emscripten and node.
 on:
   push:
-    branches: ['probe/arch-matrix']
+    branches: ['probe/port-small']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -32,17 +32,14 @@ jobs:
           # X86_V2 without CX16, SSE math. The x86-64 kernel runs 32-bit ELF directly.
           - {name: i686, os: ubuntu-24.04, kind: native, pkgs: g++-14-multilib, arch: none, flags: '-m32 -msse4.2 -mpopcnt -msahf -mfpmath=sse', expect: '-m32'}
           # ASIMD is the armv8-a baseline.
-          - {name: aarch64, os: ubuntu-24.04-arm, kind: native, pkgs: g++-14, arch: armv8-a, expect: '-march=armv8-a'}
           # numpy baseline: none. Compiler default, no NEON.
-          - {name: armhf, os: ubuntu-24.04, kind: qemu, triple: arm-linux-gnueabihf, proc: arm, qemu: qemu-arm, arch: none}
           # numpy baseline: VSX2 on little endian, which is POWER8.
-          - {name: ppc64le, os: ubuntu-24.04, kind: qemu, triple: powerpc64le-linux-gnu, proc: ppc64le, qemu: qemu-ppc64le, arch: power8, expect: '-mcpu=power8'}
           # numpy baseline: none. QEMU only, by standing decision.
-          - {name: s390x, os: ubuntu-24.04, kind: qemu, triple: s390x-linux-gnu, proc: s390x, qemu: qemu-s390x, arch: none}
           # Scalar only, by standing decision.
-          - {name: riscv64, os: ubuntu-24.04, kind: qemu, triple: riscv64-linux-gnu, proc: riscv64, qemu: qemu-riscv64, arch: none}
           # numpy baseline: LSX.
           - {name: loongarch64, os: ubuntu-24.04, kind: qemu, triple: loongarch64-linux-gnu, proc: loongarch64, qemu: qemu-loongarch64, arch: none, flags: '-mlsx', expect: '-mlsx'}
+          # Diagnostic only: shows what fails after the xsimd warning.
+          - {name: loongarch64-nowerr, os: ubuntu-24.04, kind: qemu, triple: loongarch64-linux-gnu, proc: loongarch64, qemu: qemu-loongarch64, arch: none, flags: '-mlsx -Wno-error=maybe-uninitialized', expect: '-mlsx'}
           # numpy baseline: none. No threads: the pool is the serial no-op pool.
           - {name: wasm32, os: ubuntu-24.04, kind: wasm, arch: none}
     name: ${{ matrix.name }}
@@ -122,6 +119,13 @@ jobs:
           ! grep -qF -- '=native' build/compile_commands.json
           grep -qF -- '-O3' build/compile_commands.json || grep -qF -- '-O2' build/compile_commands.json
           grep -q 'LAUNCHER = ccache' build/build.ninja
+      - name: Show xsimd include kind
+        run: |
+          if grep -qE -- '-isystem [^ ]*xsimd' build/compile_commands.json; then
+            echo "xsimd include kind: SYSTEM"
+          else
+            echo "xsimd include kind: NOT SYSTEM"
+          fi
       - name: Build
         run: |
           set -u
@@ -136,6 +140,12 @@ jobs:
           fi
           ccache -s || true
           exit "$rc"
+      - name: Minimal xsimd lsx repro
+        if: matrix.name == 'loongarch64'
+        run: |
+          t='${{ matrix.triple }}'
+          $t-g++-14 -std=c++20 -O3 -mlsx -Wall -Wextra -Werror -isystem build/_deps/xsimd-src/include \
+            -c .github/lsx_repro.cpp -o /dev/null 2>&1 | tee logs/repro.log || true
       - name: Test
         run: |
           set -u

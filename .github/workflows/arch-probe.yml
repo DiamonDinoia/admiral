@@ -122,6 +122,44 @@ jobs:
             grep -E '\*\*\*|Failed|Timeout|Not Run' logs/ctest.log | head -n 30 || true
           fi
           exit "$rc"
+      # xsimd gap: on cl ARM64 every NEON type is __n128 and vreinterpretq_* is the identity, so
+      # neon64 swizzle<float|double> returns batch<uint8_t>. This step fails while the gap is open.
+      - name: xsimd repro (cl ARM64 swizzle)
+        if: always() && matrix.name == 'arm64-msvc'
+        run: |
+          set -eu
+          cat > logs/xsimd_swizzle_repro.cpp <<'EOF'
+          #include <xsimd/xsimd.hpp>
+          using A = xsimd::default_arch;
+          xsimd::batch<float, A> f(xsimd::batch<float, A> x) {
+              return xsimd::swizzle(x, xsimd::batch_constant<uint32_t, A, 0, 2, 0, 2>{});
+          }
+          xsimd::batch<double, A> d(xsimd::batch<double, A> x) {
+              return xsimd::swizzle(x, xsimd::batch_constant<uint64_t, A, 0, 0>{});
+          }
+          EOF
+          # Git Bash rewrites a /flag argument into a path unless told not to.
+          MSYS_NO_PATHCONV=1 cl /nologo /std:c++20 /EHsc /O2 /c /Ibuild/_deps/xsimd-src/include \
+            /Fologs/xsimd_swizzle_repro.obj logs/xsimd_swizzle_repro.cpp
+      # cl 14.51 ARM64 ICE (C1001) in snmalloc freelist.h:934, scratch_alloc.cpp. Recompile that TU
+      # at each optimization level. The first row is the control and must reproduce the ICE.
+      - name: snmalloc ICE probe (cl ARM64)
+        if: always() && matrix.name == 'arm64-msvc'
+        run: |
+          python - <<'EOF'
+          import json, subprocess, sys
+          e = next(e for e in json.load(open('build/compile_commands.json'))
+                   if e['file'].endswith('scratch_alloc.cpp'))
+          ice = {}
+          for opt in ['/O2 /Ob2', '/O2 /Ob1', '/O2 /Ob0', '/O1', '/Od']:
+              r = subprocess.run(e['command'].replace(' /O2 /Ob2 ', f' {opt} ', 1),
+                                 cwd=e['directory'], capture_output=True, text=True)
+              out = r.stdout + r.stderr
+              ice[opt] = 'C1001' in out
+              first = next((l for l in out.splitlines() if 'error' in l), '')
+              print(f'{opt}: exit={r.returncode} C1001={ice[opt]} {first[:160]}')
+          sys.exit(0 if ice['/O2 /Ob2'] else 'control did not reproduce the ICE')
+          EOF
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v7

@@ -239,7 +239,11 @@ for t in json.load(sys.stdin)["tests"]:
     local -A ran_bins=()
     # test_alloc replaces global operator new/delete; valgrind redirects the same symbols
     # and the counter misreads (6f130b4). CI's valgrind job skips it the same way.
-    local memcheck_skips=' test_ulp test_long_double test_alloc '
+    local memcheck_skips=' test_long_double test_alloc '
+    # valgrind runs x87 long double at 53 bits, so two test_ulp cases that compare against an
+    # exact long-double reference fail there with no memcheck error: the c2r case (bound is 64
+    # long-double epsilons) and the factored-reference case (pure long-double arithmetic).
+    local -A memcheck_filter=([test_ulp]='~[longdouble]~"ULP: c2r*"~"ULP: the factored*"')
     for t in $wf_names; do wffail[$t]=1; done
     if ((${#wffail[@]} > 0)); then
         local -a wf_sorted
@@ -256,7 +260,8 @@ for t in json.load(sys.stdin)["tests"]:
         # Valgrind serialises threads and costs 50-100x, so a deadlocked binary never returns.
         # Slowest measured binary is test_threads at 642 s (ccmlin075, 22 binaries, 2026-09-12).
         timeout 1800 valgrind --error-exitcode=1 --errors-for-leak-kinds=definite \
-            --leak-check=full "$bin" '~[longdouble]' >>"$log" 2>&1
+            --leak-check=full \
+            "$bin" "${memcheck_filter[$(basename "$bin")]:-~[longdouble]}" >>"$log" 2>&1
         vrc=$?
         ((vrc == 124)) && echo "  TIMEOUT after 1800s: $(basename "$bin")" >>"$log"
         ((vrc == 0)) || { echo "  ERRORS: $(basename "$bin")$( ((vrc == 124)) && printf ' (timeout)')"; tail -n 40 "$log"; rc=1; }
@@ -272,6 +277,7 @@ for t in json.load(sys.stdin)["tests"]:
         [[ -n ${ran_bins[$t]:-} ]] || { echo "  NOT RUN: $t" | tee -a "$log"; rc=1; }
     done
     echo "  memcheck ran $ran binaries, $expected expected from ctest" | tee -a "$log"
+    echo "  memcheck ran: $(printf '%s\n' "${!ran_bins[@]}" | LC_ALL=C sort | tr '\n' ' ')" | tee -a "$log"
     ((expected > 0)) || rc=1
     ((rc == 0)) && { echo "  OK"; ((pass++)); rm -rf "$dir"; } || failed+=("valgrind")
 }

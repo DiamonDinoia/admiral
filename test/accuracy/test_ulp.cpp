@@ -202,7 +202,7 @@ TEST_CASE("ULP: the factored reference agrees with the naive one", "[accuracy][u
         for (const int sign : {-1, +1}) {
             const auto want = naive_dft(x, sign);
             const auto got = factored_dft(x, n1, n2, sign);
-            constexpr double oracle_eps = double(std::numeric_limits<long double>::epsilon());
+            constexpr double oracle_eps = digits_eps<long double>();
             const double err = relerrtwonorm(want, got) / oracle_eps;
             CAPTURE(n, n1, n2, sign, err);
             REQUIRE(err <= 32.0);
@@ -353,7 +353,7 @@ TEMPLATE_TEST_CASE("ULP: c2r matches a long-double inverse DFT", "[accuracy][ulp
 
         ld err = 0, nrm = 0;
         for (std::size_t i = 0; i < n; ++i) {
-            REQUIRE(std::fabs(xr[i].imag()) <= 64.0L * std::numeric_limits<ld>::epsilon());
+            REQUIRE(std::fabs(xr[i].imag()) <= 64 * static_cast<ld>(digits_eps<ld>()));
             const ld d = ld(got[i]) - xr[i].real();
             err += d * d;
             nrm += xr[i].real() * xr[i].real();

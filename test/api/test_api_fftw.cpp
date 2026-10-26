@@ -319,15 +319,11 @@ void rlimit_probes_or_skip() {
     std::signal(SIGABRT, SIG_DFL);
     std::signal(SIGSEGV, SIG_DFL);
     try {
-        // 2^60 fails on every runtime (mmap is hard-bounded far below it, whatever the
+        // 2^60 fails on every 64-bit runtime (mmap is hard-bounded far below it, whatever the
         // overcommit policy), and stays below gcc's max-object-size diagnostic and below
-        // clang's compile-time constant array size limit (2^62 elements exceeds it).
-#if INTPTR_MAX > INT32_MAX
-        constexpr std::size_t kHugeBytes = std::size_t{1} << 60;
-#else
-        constexpr std::size_t kHugeBytes = static_cast<std::size_t>(PTRDIFF_MAX);  // largest object
-#endif
-        char* probe = new char[kHugeBytes];
+        // clang's compile-time constant array size limit (2^62 elements exceeds it). On 32-bit
+        // no size gcc accepts fails everywhere (armhf limit 2^31 - 8); 2^28 can map, and it skips.
+        char* probe = new char[std::size_t{1} << (std::numeric_limits<std::size_t>::digits - 4)];
         // A volatile store through the result: the new cannot be elided or assumed
         // non-null. A plain store is dead to clang, which elides the allocation at -O2
         // and would make the skip path fire on every plain clang release build.

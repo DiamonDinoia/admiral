@@ -68,7 +68,9 @@ function(adm_add_surface name)
         target_compile_features(${lib} PUBLIC cxx_std_${ADM_CXX_STANDARD})
     endforeach()
 
-    target_link_libraries(${name} PRIVATE admiral_codelets ${ADM_THREADS_LIB})
+    # BUILD_INTERFACE keeps the codelets out of the export set. Emscripten turns SHARED into
+    # STATIC, and a static PRIVATE dependency would otherwise reach the installed targets file.
+    target_link_libraries(${name} PRIVATE $<BUILD_INTERFACE:admiral_codelets> ${ADM_THREADS_LIB})
     target_link_libraries(${name}_static PUBLIC ${ADM_THREADS_LIB})
     # A consumer of the archive must not see dllimport; the shared target's consumers must.
     target_compile_definitions(${name}_static INTERFACE ADM_STATIC_DEFINE)

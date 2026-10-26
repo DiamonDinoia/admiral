@@ -67,6 +67,11 @@ else()
     message(STATUS "Target arch: ${ADM_TARGET_ARCH} not expressible for this compiler, using default")
 endif()
 
+# xsimd selects its wasm arch from __EMSCRIPTEN__ alone, and every wasm kernel needs simd128.
+if(EMSCRIPTEN)
+    target_compile_options(admiral_optimization_flags INTERFACE -msimd128)
+endif()
+
 if(ADM_ENABLE_LTO)
     include(CheckIPOSupported)
     check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)

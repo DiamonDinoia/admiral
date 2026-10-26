@@ -11,10 +11,7 @@ on:
   push:
     branches: ['probe/port-extra']
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
+# No concurrency group: a fix pushed during a two-hour Windows run must not cancel it.
 jobs:
   probe:
     timeout-minutes: 240

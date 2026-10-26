@@ -139,8 +139,14 @@ function(adm_add_test name source)
     endif()
 
     # The probe-smoke case reads up to 23.4 s under sanitizers, valgrind and sde; 90 s bounds it.
+    # Under qemu-user the same probe measured 66.5 s solo on s390x with xsimd::emulated, and ctest
+    # -j2 contention carries it past 90 s; 600 s bounds it there.
     if(name STREQUAL "test_route_forced")
-        catch_discover_tests(${name} PROPERTIES TIMEOUT 90)
+        if(CMAKE_CROSSCOMPILING)
+            catch_discover_tests(${name} PROPERTIES TIMEOUT 600)
+        else()
+            catch_discover_tests(${name} PROPERTIES TIMEOUT 90)
+        endif()
     else()
         catch_discover_tests(${name})
     endif()

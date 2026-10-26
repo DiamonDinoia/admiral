@@ -97,7 +97,7 @@ jobs:
           ! grep -qF -- '=native' build/compile_commands.json
           if [ -n '${{ matrix.cpu }}' ]; then
             grep -h 'COMPILER_ARCHITECTURE_ID' build/CMakeFiles/*/CMakeCXXCompiler.cmake
-            grep -q 'CMAKE_CXX_COMPILER_ARCHITECTURE_ID "${{ matrix.cpu }}")' build/CMakeFiles/*/CMakeCXXCompiler.cmake
+            grep -qE 'CMAKE_CXX_COMPILER_ARCHITECTURE_ID "?${{ matrix.cpu }}"?\)' build/CMakeFiles/*/CMakeCXXCompiler.cmake
           fi
       - name: Build
         run: |

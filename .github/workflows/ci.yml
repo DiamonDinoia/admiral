@@ -93,16 +93,12 @@ jobs:
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
       - name: Assert the flags arrived
         if: matrix.arch != 'none'
-        run: |
-          grep -qF -- '=${{ matrix.arch }}' build/compile_commands.json
-          if grep -qF -- '=native' build/compile_commands.json; then exit 1; fi
-          grep -qF -- '-std=c++${{ matrix.std || 20 }}' build/compile_commands.json
-          # A Debug cell debugs at -Og. -O0 pays the same template instantiation cost and then
-          # runs the tests several times slower.
-          if [ '${{ matrix.build_type || 'Release' }}' = Debug ]; then
-            grep -qF -- '-Og' build/compile_commands.json
-            if grep -qF -- '-O0' build/compile_commands.json; then exit 1; fi
-          fi
+        # A Debug cell debugs at -Og. -O0 pays the same template instantiation cost and then
+        # runs the tests several times slower.
+        run: >
+          scripts/check_flags.sh build want:=${{ matrix.arch }} not:=native
+          want:-std=c++${{ matrix.std || 20 }}
+          ${{ matrix.build_type == 'Debug' && 'want:-Og not:-O0' || '' }}
       # compile_commands.json omits the launcher under Ninja, so build.ninja is the only witness.
       - name: Assert the compiler launcher arrived
         run: grep -q 'LAUNCHER = ccache' build/build.ninja
@@ -225,25 +221,10 @@ jobs:
         run: |
           clang-tidy --version
           cppcheck --version
-      - name: clang-tidy
-        run: |
-          cmake -S . -B build/tidy -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_COMPILER="$CXX" -DADM_TARGET_ARCH=x86-64-v3 \
-            -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=OFF -DADM_BUILD_EXAMPLES=OFF \
-            -DADM_ENABLE_CLANG_TIDY=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-          grep -q 'HeaderFilterRegex' .clang-tidy
-          cmake --build build/tidy --target admiral
-      - name: clang-tidy positive control
-        run: ./scripts/static_analysis_control.sh build/tidy
-      - name: cppcheck
-        run: |
-          cmake -S . -B build/cppcheck -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_COMPILER="$CXX" -DADM_TARGET_ARCH=x86-64-v3 \
-            -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=OFF -DADM_BUILD_EXAMPLES=OFF \
-            -DADM_ENABLE_CPPCHECK=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-          cmake --build build/cppcheck --target admiral
-      - name: cppcheck positive control
-        run: ./scripts/static_analysis_control.sh build/cppcheck
+      # Each arm builds the library under its tool, then runs the positive control.
+      - name: clang-tidy and cppcheck
+        run: scripts/validate.sh tidy cppcheck
+        env: {ADM_VALIDATE_JOBS: 2}
 
   sanitizers:
     timeout-minutes: 90
@@ -265,14 +246,11 @@ jobs:
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
           -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} -DADM_TARGET_ARCH=x86-64-v2
+      # The preset pins the level, so the Debug arm's -Og must not reach a sanitized TU.
       - name: Assert the flags arrived
-        run: |
-          grep -qF -- '-fsanitize=' build/${{ matrix.preset }}/compile_commands.json
-          grep -qF -- '-O1' build/${{ matrix.preset }}/compile_commands.json
-          # The preset pins the level, so the Debug arm's -Og must not reach a sanitized TU.
-          if grep -qF -- '-Og' build/${{ matrix.preset }}/compile_commands.json; then exit 1; fi
-          grep -qF -- '=x86-64-v2' build/${{ matrix.preset }}/compile_commands.json
-          if grep -qF -- '=native' build/${{ matrix.preset }}/compile_commands.json; then exit 1; fi
+        run: >
+          scripts/check_flags.sh build/${{ matrix.preset }}
+          want:-fsanitize= want:-O1 not:-Og want:=x86-64-v2 not:=native
       - run: cmake --build --preset ${{ matrix.preset }}
       - run: ctest --preset ${{ matrix.preset }} --timeout 900 --no-tests=error
         env: {TSAN_OPTIONS: "handle_segv=0"}
@@ -291,59 +269,11 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
                       /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
-      - name: Configure and build
-        run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DCMAKE_CXX_COMPILER=g++-14 -DADM_TARGET_ARCH=x86-64-v2 -DADM_USE_FAST_MATH=OFF \
-            -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF
-          cmake --build build
+      # The arm skips the WILL_FAIL binaries by ctest metadata and runs each other binary directly,
+      # so one timeout per binary replaces ctest's.
       - name: Memcheck
-        run: |
-          ran=0
-          # WILL_FAIL binaries (the poison twins in test/CMakeLists.txt) exit nonzero by
-          # design, and this loop runs the binaries directly, where ctest's WILL_FAIL
-          # inversion never applies. The exclusion set comes from ctest's own metadata
-          # (same mechanism as scripts/validate.sh's valgrind arm, 37cd1c0); a metadata
-          # failure fails closed instead of running unfiltered.
-          wf_json=$(ctest --test-dir build --show-only=json-v1) || exit 1
-          # A WILL_FAIL test's name is its binary's basename (add_test(NAME test_x ...)).
-          wf_expr='.tests[] | select(any(.properties[]?; .name == "WILL_FAIL" and'
-          wf_expr+=' .value == true)) | .name'
-          if command -v jq >/dev/null; then
-            wf_names=$(jq -r "$wf_expr" <<<"$wf_json") || exit 1
-          elif command -v python3 >/dev/null; then
-            wf_names=$(python3 -c "import json,sys;[print(t['name']) for t in json.load(sys.stdin)['tests'] if any(p.get('name')=='WILL_FAIL' and p.get('value') is True for p in t.get('properties',[]))]" <<<"$wf_json") || exit 1
-          else
-            echo "no jq and no python3 on PATH for ctest test metadata"
-            exit 1
-          fi
-          wffail=" $(echo "$wf_names" | tr '\n' ' ')"
-          for t in build/test/test_*; do
-            [ -x "$t" ] || continue
-            [ "$(basename "$t")" = test_ulp ] && continue
-            [ "$(basename "$t")" = test_long_double ] && continue
-            # test_alloc replaces global operator new/delete; valgrind redirects the same
-            # symbols, so its counter and block families are meaningless under memcheck.
-            [ "$(basename "$t")" = test_alloc ] && continue
-            case "$wffail" in *" $(basename "$t") "*)
-              echo "--- $t (skipped, WILL_FAIL)"
-              continue;;
-            esac
-            echo "--- $t"
-            # The loop walks the binaries directly, so no ctest --timeout reaches them, and a
-            # deadlocked binary under valgrind never returns. Slowest measured binary is
-            # test_threads at 642 s (ccmlin075, 22 binaries, 2026-09-12).
-            timeout 1800 valgrind --error-exitcode=1 --leak-check=full \
-              --errors-for-leak-kinds=definite "$t" '~[longdouble]' || {
-                rc=$?
-                [ "$rc" = 124 ] && echo "TIMEOUT after 1800s: $t"
-                exit 1
-              }
-            ran=$((ran + 1))
-          done
-          # An unmatched glob walks zero binaries and reports success.
-          echo "memcheck ran $ran binaries"
-          [ "$ran" -ge 15 ]
+        run: scripts/validate.sh valgrind
+        env: {CXX: g++-14, ADM_VALIDATE_JOBS: 2}
 
   coverage:
     timeout-minutes: 60
@@ -361,9 +291,7 @@ jobs:
           df -h /
       - run: cmake --preset coverage -DCMAKE_CXX_COMPILER=clang++-18
       - name: Assert the flags arrived
-        run: |
-          grep -qF -- '-fcoverage-mapping' build/coverage/compile_commands.json
-          if grep -qF -- '=native' build/coverage/compile_commands.json; then exit 1; fi
+        run: scripts/check_flags.sh build/coverage want:-fcoverage-mapping not:=native
       - run: cmake --build --preset coverage
       - name: Test
         run: |
@@ -424,14 +352,10 @@ jobs:
       - uses: hendrikmuhs/ccache-action@v1
         with:
           key: preload-${{ matrix.cxx }}-${{ steps.cpu.outputs.id }}
-      # The README quotes these three commands, so the environment sets the compiler, the generator
-      # and the number of parallel compiles. The ADM_BUILD_* flags skip tests, benchmarks and
-      # examples.
+      # The README quotes this script, so the environment sets the compiler, the generator
+      # and the number of parallel compiles.
       - name: Build and install to a prefix
-        run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_LIBDIR=lib -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=OFF -DADM_BUILD_EXAMPLES=OFF
-          cmake --build build --config Release
-          cmake --install build --prefix "$PREFIX" --config Release
+        run: scripts/install_prefix.sh
         env:
           CXX: ${{ matrix.cxx }}
           CMAKE_GENERATOR: ${{ matrix.generator }}
@@ -531,8 +455,7 @@ jobs:
             -DCMAKE_CXX_COMPILER=g++-14 -DADM_TARGET_ARCH=x86-64-v4 \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DCMAKE_CROSSCOMPILING_EMULATOR=/usr/local/bin/sde-spr
-          grep -qF -- '=x86-64-v4' build/compile_commands.json
-          if grep -qF -- '=native' build/compile_commands.json; then exit 1; fi
+          scripts/check_flags.sh build want:=x86-64-v4 not:=native
           cmake --build build
       - name: Test under SDE
         run: |

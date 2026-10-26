@@ -16,7 +16,7 @@ builds, read [docs/build-options.md](docs/build-options.md).
 Set `PREFIX` to the install directory. `-DCMAKE_INSTALL_LIBDIR=lib` puts the FFTW shim in
 `$PREFIX/lib`.
 
-<!-- from: .github/workflows/ci.yml -->
+<!-- from: scripts/install_prefix.sh -->
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_LIBDIR=lib -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=OFF -DADM_BUILD_EXAMPLES=OFF
 cmake --build build --config Release

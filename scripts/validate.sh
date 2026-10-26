@@ -17,19 +17,7 @@ pass=0
 declare -a failed=()
 declare -a skipped=()
 
-check_flags() {
-    local dir=$1 spec pat n rc=0
-    shift
-    for spec in "$@"; do
-        pat=${spec#*:}
-        n=$(grep -c -F -- "$pat" "$dir/compile_commands.json" 2>/dev/null || true)
-        case ${spec%%:*} in
-            want) ((n > 0)) || { echo "  FLAG MISSING: $pat"; rc=1; } ;;
-            not)  ((n == 0)) || { echo "  FLAG PRESENT: $pat ($n TUs)"; rc=1; } ;;
-        esac
-    done
-    return $rc
-}
+check_flags() { "$src/scripts/check_flags.sh" "$@"; }
 
 run_arm() {
     local name=$1 dir log; shift
@@ -239,7 +227,7 @@ for t in json.load(sys.stdin)["tests"]:
     ((ok == 1)) || { echo "  FAILED: ctest WILL_FAIL metadata (see $log)"; failed+=("valgrind"); return; }
     # A WILL_FAIL test's name is its binary's basename (add_test(NAME test_x COMMAND test_x)).
     local -A wffail=()
-    local t
+    local t ran=0
     for t in $wf_names; do wffail[$t]=1; done
     if ((${#wffail[@]} > 0)); then
         local -a wf_sorted
@@ -263,8 +251,12 @@ for t in json.load(sys.stdin)["tests"]:
             --leak-check=full "$bin" '~[ulp]' '~[longdouble]' >>"$log" 2>&1
         vrc=$?
         ((vrc == 124)) && echo "  TIMEOUT after 1800s: $(basename "$bin")" >>"$log"
-        ((vrc == 0)) || { echo "  ERRORS: $(basename "$bin")$( ((vrc == 124)) && printf ' (timeout)')"; rc=1; }
+        ((vrc == 0)) || { echo "  ERRORS: $(basename "$bin")$( ((vrc == 124)) && printf ' (timeout)')"; tail -n 40 "$log"; rc=1; }
+        ((ran++))
     done
+    # An unmatched glob walks zero binaries and reports success.
+    echo "  memcheck ran $ran binaries" | tee -a "$log"
+    ((ran >= 15)) || rc=1
     ((rc == 0)) && { echo "  OK"; ((pass++)); rm -rf "$dir"; } || failed+=("valgrind")
 }
 
@@ -299,8 +291,8 @@ run_static_analysis_arm() {
         { echo "  FAILED: positive control (see $log)"; failed+=("$name"); }
 }
 
-arm_tidy() { run_static_analysis_arm tidy clang-tidy clang++ ADM_ENABLE_CLANG_TIDY; }
-arm_cppcheck() { run_static_analysis_arm cppcheck cppcheck g++ ADM_ENABLE_CPPCHECK; }
+arm_tidy() { run_static_analysis_arm tidy clang-tidy "${CXX:-clang++}" ADM_ENABLE_CLANG_TIDY; }
+arm_cppcheck() { run_static_analysis_arm cppcheck cppcheck "${CXX:-g++}" ADM_ENABLE_CPPCHECK; }
 
 # Constants-with-receipt coupling: a commit touching a hand-fit- or probe-fit
 # constants header must name its derivation receipt. The scan is
@@ -527,5 +519,8 @@ done
 echo
 echo "validate: $pass passed, ${#failed[@]} failed, ${#skipped[@]} skipped"
 ((${#skipped[@]} == 0)) || printf 'skipped: %s\n' "${skipped[*]}"
+for arm in "${failed[@]}"; do
+    [[ ! -r $out/$arm.log ]] || { echo "---- tail of $arm.log"; tail -n 40 "$out/$arm.log"; }
+done
 ((pass > 0)) || { echo "validate: no arm reported success"; exit 1; }
 ((${#failed[@]} == 0)) || { printf 'failed: %s\n' "${failed[@]}"; exit 1; }

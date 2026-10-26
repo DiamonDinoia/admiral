@@ -94,7 +94,9 @@ timeout 60 env LD_DEBUG=bindings ./app >plain.out 2>plain.log
 # README.md copies the line in the here-document, so sh runs that line.
 check "app runs under LD_PRELOAD=$shim" exits 0 preload.out preload.log \
     env PREFIX="$PREFIX" LD_DEBUG=bindings sh <<'EOF'
+# [doc:ld-preload]
 LD_PRELOAD=$PREFIX/lib/libadmiral_fftw.so ./app
+# [doc:ld-preload-end]
 EOF
 check "preloaded output matches plain output" compare plain.out preload.out 24
 

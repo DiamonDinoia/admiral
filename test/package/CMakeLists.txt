@@ -22,16 +22,24 @@ if(ADM_PACKAGE_ROUTE MATCHES "_(shared|static)$")
 endif()
 
 if(ADM_PACKAGE_ROUTE MATCHES "^prefix")
+    # [doc:find-package]
     find_package(admiral REQUIRED CONFIG)
+    # [doc:find-package-end]
 elseif(ADM_PACKAGE_ROUTE STREQUAL "subdir")
+    # [doc:add-subdirectory]
     add_subdirectory(admiral)
+    # [doc:add-subdirectory-end]
 elseif(ADM_PACKAGE_ROUTE MATCHES "^fetch_")
+    # [doc:fetchcontent]
     include(FetchContent)
     FetchContent_Declare(admiral GIT_REPOSITORY https://github.com/DiamonDinoia/admiral.git GIT_TAG master)
     FetchContent_MakeAvailable(admiral)
+    # [doc:fetchcontent-end]
 elseif(ADM_PACKAGE_ROUTE STREQUAL "cpm")
     include(${ADM_PACKAGE_SRC}/cmake/CPM.cmake)
+    # [doc:cpm]
     CPMAddPackage("gh:DiamonDinoia/admiral#master")
+    # [doc:cpm-end]
 else()
     message(FATAL_ERROR "ADM_PACKAGE_ROUTE=${ADM_PACKAGE_ROUTE} is not a route")
 endif()

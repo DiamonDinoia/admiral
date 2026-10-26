@@ -8,7 +8,7 @@ name: Arch probe
 # wasm32 uses emscripten and node.
 on:
   push:
-    branches: ['probe/arch-matrix']
+    branches: ['probe/port-scalar']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -28,23 +28,15 @@ jobs:
       matrix:
         include:
           # Baseline ISA per numpy: X86_V2.
-          - {name: x86_64, os: ubuntu-24.04, kind: native, pkgs: g++-14, arch: x86-64-v2, expect: '-march=x86-64-v2'}
-          # X86_V2 without CX16, SSE math. The x86-64 kernel runs 32-bit ELF directly.
-          - {name: i686, os: ubuntu-24.04, kind: native, pkgs: g++-14-multilib, arch: none, flags: '-m32 -msse4.2 -mpopcnt -msahf -mfpmath=sse', expect: '-m32'}
+          - {name: x86_64, os: ubuntu-24.04, kind: native, pkgs: g++-14, arch: x86-64-v2, expect: '-march=x86-64-v2', xarch: sse4.2}
           # ASIMD is the armv8-a baseline.
-          - {name: aarch64, os: ubuntu-24.04-arm, kind: native, pkgs: g++-14, arch: armv8-a, expect: '-march=armv8-a'}
+          - {name: aarch64, os: ubuntu-24.04-arm, kind: native, pkgs: g++-14, arch: armv8-a, expect: '-march=armv8-a', xarch: arm64+neon}
           # numpy baseline: none. Compiler default, no NEON.
-          - {name: armhf, os: ubuntu-24.04, kind: qemu, triple: arm-linux-gnueabihf, proc: arm, qemu: qemu-arm, arch: none}
-          # numpy baseline: VSX2 on little endian, which is POWER8.
-          - {name: ppc64le, os: ubuntu-24.04, kind: qemu, triple: powerpc64le-linux-gnu, proc: ppc64le, qemu: qemu-ppc64le, arch: power8, expect: '-mcpu=power8'}
+          - {name: armhf, os: ubuntu-24.04, kind: qemu, triple: arm-linux-gnueabihf, proc: arm, qemu: qemu-arm, arch: none, xarch: emulated}
           # numpy baseline: none. QEMU only, by standing decision.
-          - {name: s390x, os: ubuntu-24.04, kind: qemu, triple: s390x-linux-gnu, proc: s390x, qemu: qemu-s390x, arch: none}
+          - {name: s390x, os: ubuntu-24.04, kind: qemu, triple: s390x-linux-gnu, proc: s390x, qemu: qemu-s390x, arch: none, xarch: emulated}
           # Scalar only, by standing decision.
-          - {name: riscv64, os: ubuntu-24.04, kind: qemu, triple: riscv64-linux-gnu, proc: riscv64, qemu: qemu-riscv64, arch: none}
-          # numpy baseline: LSX.
-          - {name: loongarch64, os: ubuntu-24.04, kind: qemu, triple: loongarch64-linux-gnu, proc: loongarch64, qemu: qemu-loongarch64, arch: none, flags: '-mlsx', expect: '-mlsx'}
-          # numpy baseline: none. No threads: the pool is the serial no-op pool.
-          - {name: wasm32, os: ubuntu-24.04, kind: wasm, arch: none}
+          - {name: riscv64, os: ubuntu-24.04, kind: qemu, triple: riscv64-linux-gnu, proc: riscv64, qemu: qemu-riscv64, arch: none, xarch: emulated}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     steps:
@@ -93,6 +85,8 @@ jobs:
           set(CMAKE_CXX_COMPILER $t-g++-14)
           set(CMAKE_CROSSCOMPILING_EMULATOR "${{ matrix.qemu }};-L;/usr/$t")
           set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+          set(CMAKE_FIND_ROOT_PATH /usr/$t)
+          set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
           TC
               args+=(-DCMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/tc.cmake"
                      -DCMAKE_CATCH_DISCOVER_TESTS_DISCOVERY_MODE=PRE_TEST) ;;
@@ -136,6 +130,16 @@ jobs:
           fi
           ccache -s || true
           exit "$rc"
+      - name: Assert the xsimd arch
+        run: |
+          set -eu
+          cxx=$(sed -n 's/^CMAKE_CXX_COMPILER:[A-Z]*=//p' build/CMakeCache.txt)
+          xs=$(grep -o -m1 -- '-isystem [^ ]*xsimd[^ ]*/include' build/compile_commands.json | head -n1 | cut -d' ' -f2)
+          printf '#include <admiral/detail/simd.hpp>\n#include <cstdio>\nint main() { std::puts(xsimd::default_arch::name()); }\n' > arch.cpp
+          "$cxx" -std=c++20 ${{ matrix.expect }} -Iinclude -isystem "$xs" arch.cpp -o arch
+          if [ '${{ matrix.kind }}' = qemu ]; then got=$(${{ matrix.qemu }} -L /usr/${{ matrix.triple }} ./arch); else got=$(./arch); fi
+          echo "admiral's simd.hpp selects xsimd arch '$got' at this cell's flags; expected '${{ matrix.xarch }}'"
+          test "$got" = '${{ matrix.xarch }}'
       - name: Test
         run: |
           set -u

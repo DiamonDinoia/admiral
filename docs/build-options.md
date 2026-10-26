@@ -167,15 +167,6 @@ Default: `120;65;85;143;100;360`. Sizes that the catalog adds beyond `ADM_CODELE
 :end-before: [doc:opt-ADM_CODELET_EXTRA_SIZES-end]
 ```
 
-### `ADM_EXTRA_C_FLAGS`
-
-Default: not set. Adds these flags to the C compile options of the admiral targets. No library source is C code, so no library compile uses them. Values: flag string.
-
-```{literalinclude} ../scripts/options.sh
-:start-after: [doc:opt-ADM_EXTRA_C_FLAGS]
-:end-before: [doc:opt-ADM_EXTRA_C_FLAGS-end]
-```
-
 ### `ADM_EXTRA_CXX_FLAGS`
 
 Default: not set. Adds these flags to every C++ compile of the admiral targets. Values: flag string.

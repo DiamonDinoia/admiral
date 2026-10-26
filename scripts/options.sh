@@ -110,11 +110,6 @@ grep -F '64, 128' build/src/generated/include/admiral/detail/codelet_max.hpp
 # [doc:opt-ADM_CODELET_EXTRA_SIZES-end]
 
 rm -rf build
-# [doc:opt-ADM_EXTRA_C_FLAGS]
-cmake -S . -B build -DADM_EXTRA_C_FLAGS=-DDOC_C | grep -F 'Custom C flags: -DDOC_C'
-# [doc:opt-ADM_EXTRA_C_FLAGS-end]
-
-rm -rf build
 # [doc:opt-ADM_EXTRA_CXX_FLAGS]
 cmake -S . -B build -DADM_EXTRA_CXX_FLAGS=-DDOC_CXX
 scripts/check_flags.sh build want:-DDOC_CXX

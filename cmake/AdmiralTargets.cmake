@@ -82,8 +82,10 @@ function(adm_add_surface name)
     # libadmiral.a beside libadmiral.so. Skipped wherever the shared library's import library
     # would take that exact name -- .lib against .lib on every MSVC-ABI toolchain, clang-cl and
     # clang --target=*-windows-msvc included -- because ninja refuses two rules for one output.
-    # The suffixes are the thing that collides, so they are what the test reads.
-    if(NOT CMAKE_IMPORT_LIBRARY_SUFFIX STREQUAL CMAKE_STATIC_LIBRARY_SUFFIX)
+    # The suffixes are the thing that collides, so they are what the test reads. A target
+    # without shared libraries (Emscripten) builds the shared one static, so both keep their names.
+    get_property(adm_shared_ok GLOBAL PROPERTY TARGET_SUPPORTS_SHARED_LIBS)
+    if(adm_shared_ok AND NOT CMAKE_IMPORT_LIBRARY_SUFFIX STREQUAL CMAKE_STATIC_LIBRARY_SUFFIX)
         set_target_properties(${name}_static PROPERTIES OUTPUT_NAME ${name})
     endif()
 

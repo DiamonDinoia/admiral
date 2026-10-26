@@ -68,12 +68,20 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+      # setup-cpp imports the gcc-15 PPA key into a keyring path relative to the working directory.
+      # gpg does not create the parent directory, and setup-cpp reports the failure as a warning only.
+      - name: Create the PPA keyring directory
+        if: matrix.toolchain == 'gcc-15'
+        run: mkdir keyserver.ubuntu.com
       - uses: aminya/setup-cpp@v1
         with:
           compiler: ${{ matrix.toolchain }}
           cmake: true
           ninja: true
           cache-tools: true
+      - name: Assert the PPA key arrived
+        if: matrix.toolchain == 'gcc-15'
+        run: test -s keyserver.ubuntu.com/ubuntu-toolchain-r-test.gpg
       - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: ${{ matrix.os }}-${{ matrix.toolchain }}-${{ matrix.arch }}-${{ matrix.std || 20 }}-${{ matrix.build_type || 'Release' }}

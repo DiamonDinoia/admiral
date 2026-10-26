@@ -29,6 +29,7 @@ run_arm() {
     rm -rf "$dir"
     step() { local what=$1; shift; "$@" >>"$log" 2>&1 || { echo "  FAILED: $what (see $log)"; return 1; }; }
     : >"$log"
+    # shellcheck disable=SC2015  # the || arm is the failure handler of the whole chain
     step configure cmake -S "$src" -B "$dir" -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON "$@" &&
         check_flags "$dir" "${checks[@]}" &&
         step build cmake --build "$dir" -j "$jobs" &&
@@ -130,6 +131,7 @@ arm_digest() {
             checks+=("want:-ffast-math")
         fi
         echo "--- $sub: configure/build" >>"$log"
+        # shellcheck disable=SC2015  # the || arm is the failure handler of the whole chain
         cmake -S "$src" -B "$dir" -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             "${cfg[@]}" >>"$log" 2>&1 &&
             check_flags "$dir" "${checks[@]}" &&
@@ -196,6 +198,7 @@ arm_valgrind() {
     echo "=== valgrind"
     command -v valgrind >/dev/null || { echo "  skipped: valgrind not on PATH"; skipped+=(valgrind); return; }
     rm -rf "$dir"; : >"$log"
+    # shellcheck disable=SC2015  # the || arm is the failure handler of the whole chain
     cmake -S "$src" -B "$dir" -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
         -DCMAKE_BUILD_TYPE=RelWithDebInfo -DADM_TARGET_ARCH=x86-64-v2 \
         -DADM_USE_FAST_MATH=OFF -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF >>"$log" 2>&1 &&
@@ -286,9 +289,11 @@ run_static_analysis_arm() {
     fi
     cmake --build "$dir" --target admiral -j "$jobs" >>"$log" 2>&1 ||
         { echo "  FAILED: $tool (see $log)"; failed+=("$name"); return; }
-    "$src/scripts/static_analysis_control.sh" "$dir" >>"$log" 2>&1 &&
-        { echo "  OK"; ((pass++)); rm -rf "$dir"; } ||
-        { echo "  FAILED: positive control (see $log)"; failed+=("$name"); }
+    if "$src/scripts/static_analysis_control.sh" "$dir" >>"$log" 2>&1; then
+        echo "  OK"; ((pass++)); rm -rf "$dir"
+    else
+        echo "  FAILED: positive control (see $log)"; failed+=("$name")
+    fi
 }
 
 arm_tidy() { run_static_analysis_arm tidy clang-tidy "${CXX:-clang++}" ADM_ENABLE_CLANG_TIDY; }
@@ -496,7 +501,7 @@ arm_granule-admission() {
                 }
                 exit(n == 0)
             }' "$root/candidates-$isa.tsv" | sort -t$'\t' -k3 | tee "$root/transfer-$isa.txt" >/dev/null
-        ((${PIPESTATUS[0]} == 0 && ${PIPESTATUS[1]} == 0)) || rc=1
+        ((PIPESTATUS[0] == 0 && PIPESTATUS[1] == 0)) || rc=1
     done
     if ((rc == 0)); then
         echo "  OK"; ((pass++))

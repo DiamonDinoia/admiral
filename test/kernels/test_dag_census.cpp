@@ -15,6 +15,7 @@
 
 #include <admiral/detail/butterfly.hpp>
 #include <admiral/detail/codelet.hpp>
+#include <admiral/detail/cxx_compat.hpp>
 #include <admiral/detail/ct_math.hpp>
 #include <admiral/detail/granule_codelet.hpp>
 #include <admiral/detail/simd_swizzle.hpp>
@@ -109,8 +110,9 @@ constexpr std::array<T, 2> fold_vals() {
 template <typename T, std::size_t Num, std::size_t Den, bool Conj>
 void push_turn(std::vector<dag::turn_entry>& v) {
     constexpr std::array<T, 2> cs = fold_vals<T, Num, Den, Conj>();
-    v.push_back(dag::turn_entry{static_cast<std::uint32_t>(Num),
-                                static_cast<std::uint32_t>(Den), Conj, dag::bits_of(cs[0]),
+    v.push_back(dag::turn_entry{width_cast<std::uint32_t>(Num),
+                                width_cast<std::uint32_t>(Den), Conj,
+                                dag::bits_of(cs[0]),
                                 dag::bits_of(cs[1])});
 }
 
@@ -170,7 +172,8 @@ dif_row trace_butterfly(const char* family, dens_list<Dens...> ds) {
     pool.tag_turns(fold_set<T>(ds));
     dag::registry().push_back(
         dag::rung{family, arm_name(Terminal ? terminal_arm(IP) : dif_arm(IP)),
-                  dag::provenance::aligned, prec_char<T>(), static_cast<std::uint32_t>(IP),
+                  dag::provenance::aligned, prec_char<T>(),
+                  width_cast<std::uint32_t>(IP),
                   static_cast<std::uint32_t>(S::size), 1u, pool.op_count()});
     return dif_row{pool.op_count(), pool.created(), pool.intern_dups(), emitted,
                    pool.op_hist()};
@@ -371,7 +374,7 @@ gran_stats trace_granule_sym(const char* family, dens_list<Dens...> ds) {
     s.sunk = ctx.sunk;
     dag::registry().push_back(dag::rung{family, Fwd ? "fwd" : "inv",
                                         dag::provenance::aligned, prec_char<T>(),
-                                        static_cast<std::uint32_t>(IP),
+                                        width_cast<std::uint32_t>(IP),
                                         static_cast<std::uint32_t>(S::size), 1u, s.fp});
     return s;
 }
@@ -445,7 +448,7 @@ stage_row trace_stage() {
         if (nd.o == dag::op::flip) r.flip_mask = nd.bits;
     dag::registry().push_back(dag::rung{"granule_stage_twiddle", root_form_name(r.form),
                                         dag::provenance::aligned, prec_char<T>(),
-                                        static_cast<std::uint32_t>(IP),
+                                        width_cast<std::uint32_t>(IP),
                                         static_cast<std::uint32_t>(S::size), 1u, r.s.fp});
     return r;
 }
@@ -486,7 +489,7 @@ void trace_row_tile(tile_case<T, N, Forward>& tc) {
             for (std::size_t qb = 0; qb < (N + GL - 1) / GL; ++qb)
                 imap.emplace(in.data() + l * 2 * in_stride + qb * DB * GL,
                              dag::input_slot{dag::plane::re, dag::layout::aos,
-                                             static_cast<std::uint32_t>(l * N + qb * GL),
+                                             width_cast<std::uint32_t>(l * N + qb * GL),
                                              dag::provenance::unaligned});
         ctx.m = &imap;
     }
@@ -688,7 +691,7 @@ void rb_run(rb_trace<T, R, N, Dens...>& t, dens_list<Dens...> ds) {
         c.cur_width = rr.width;
         const std::uint64_t before = c.pool.op_count();
         bfly_chunk<R, T, S>(twre.data(), twim.data(), c.fv_re.data(), c.fv_im.data(), M,
-                            rr.j0, sink);
+                            width_cast<std::size_t>(rr.j0), sink);
         t.ticks.push_back(chunk_tick{rr.width, rr.j0, c.pool.op_count() - before});
     }
     c.cur_width = 1;
@@ -929,7 +932,7 @@ TEST_CASE("dag census: granule_stage_twiddle arms follow the ct_root descriptor"
     REQUIRE(bad == 0u);
     // Every shipped form saw at least one lattice point on this sweep.
     const auto seen = [&](root_form f) {
-        std::uint64_t n = 0;
+        unsigned long long n = 0;
         for (const stage_row& r : rows) n += r.form == f;
         return n;
     };
@@ -943,13 +946,13 @@ TEST_CASE("dag census: granule_stage_twiddle arms follow the ct_root descriptor"
     std::printf("stage ladder: %zu rows over IP in {3,4,5,8,9} x Fwd; one=%llu neg1=%llu "
                 "negi=%llu posi=%llu diag=%llu anti=%llu generic=%llu\n",
                 rows.size(),
-                static_cast<unsigned long long>(seen(root_form::one)),
-                static_cast<unsigned long long>(seen(root_form::neg_one)),
-                static_cast<unsigned long long>(seen(root_form::neg_i)),
-                static_cast<unsigned long long>(seen(root_form::pos_i)),
-                static_cast<unsigned long long>(seen(root_form::diag)),
-                static_cast<unsigned long long>(seen(root_form::anti_diag)),
-                static_cast<unsigned long long>(seen(root_form::generic)));
+                seen(root_form::one),
+                seen(root_form::neg_one),
+                seen(root_form::neg_i),
+                seen(root_form::pos_i),
+                seen(root_form::diag),
+                seen(root_form::anti_diag),
+                seen(root_form::generic));
     REQUIRE(dag::sym<double>::uninit_reads() == 0u);
 }
 
@@ -1021,7 +1024,8 @@ void check_ladder(const char* tag, dens_list<Dens...> ds) {
             if (dif_arm(R) == dif_arm_kind::radix_sym)
                 REQUIRE(tk.ops == 6 * (R - 1) + sym_ops_oracle(R));
         } else if (dif_arm(R) == dif_arm_kind::radix_sym) {
-            REQUIRE(tk.ops == sym_ops_oracle(R) + scalar_twiddle_ops(R, N, tk.j));
+            REQUIRE(tk.ops ==
+                    sym_ops_oracle(R) + scalar_twiddle_ops(R, N, width_cast<std::size_t>(tk.j)));
         }
     }
     std::printf("%s N=%-3u r=%u M=%-3zu W=%-2zu nfull=%-2zu rungs=", tag, N, R, L::M, L::W,

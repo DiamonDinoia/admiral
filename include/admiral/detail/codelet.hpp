@@ -253,7 +253,7 @@ void rader_apply(const V* xre, const V* xim, std::size_t xstride, V* yre, V* yim
 template<unsigned N, typename T, bool Forward, typename V = xsimd::batch<T>>
 struct kernel_batched {
     static_assert(Forward, "inverse routes through the swapped-domain specialization");
-    static constexpr unsigned r = static_cast<unsigned>(codelet_radix(N));
+    static constexpr unsigned r = codelet_radix(N);
     static constexpr unsigned M = N / r;
     static_assert(r * M == N, "codelet_radix(N) must divide N exactly");
 

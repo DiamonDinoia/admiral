@@ -630,7 +630,7 @@ struct dif_chain_entry {
     double cost = kDifUnreachable;
     std::size_t radix = 0;
     std::size_t next = 0;
-    std::size_t key = 0;
+    std::uint64_t key = 0;
 };
 
 template<typename T>
@@ -640,7 +640,7 @@ template<typename T>
     if (N >= kDifFuseMinN<T> && (N & (N - 1u)) == 0u) return enumerate_pow2_dif_chains<T>(N, want);
 
     const auto rmix = [](std::size_t r) {
-        std::size_t x = r * 0x9E3779B97F4A7C15ull;
+        std::uint64_t x = r * 0x9E3779B97F4A7C15ull;
         x ^= x >> 31;
         return x * 0xBF58476D1CE4E5B9ull;
     };

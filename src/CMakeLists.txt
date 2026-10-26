@@ -13,7 +13,7 @@ add_library(admiral_engine OBJECT
     scratch_alloc.cpp large_route_probe.cpp)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    set(_adm_col_numerics -ffp-contract=on -fno-associative-math)
+    set(_adm_col_numerics ${adm_clang_arg}-ffp-contract=on ${adm_clang_arg}-fno-associative-math)
     # Overriding -ffast-math here is the whole point of the pin, and newer clangs report it
     # (AppleClang included: its ID is "AppleClang", not "Clang"). Probe for the suppression
     # rather than version-gating so older compilers that do not know it do not choke on it.
@@ -49,13 +49,14 @@ endif()
 # default but defines no __FAST_MATH__, so only this flag, not kDdStrictFp, catches it.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|IntelLLVM")
     set_property(SOURCE inst_api_ld.cpp APPEND PROPERTY COMPILE_OPTIONS
-        -fno-fast-math -ffp-contract=off)
+        ${adm_clang_arg}-fno-fast-math ${adm_clang_arg}-ffp-contract=off)
     # Fast math also kept the x87 engine's complex products inline; without it each one calls
     # __mulxc3, and the x87 lines run at half speed.
     include(CheckCXXCompilerFlag)
-    check_cxx_compiler_flag("-fcx-limited-range" ADM_HAVE_CX_LIMITED_RANGE)
+    check_cxx_compiler_flag("${adm_clang_arg}-fcx-limited-range" ADM_HAVE_CX_LIMITED_RANGE)
     if(ADM_USE_FAST_MATH AND ADM_HAVE_CX_LIMITED_RANGE)
-        set_property(SOURCE inst_api_ld.cpp APPEND PROPERTY COMPILE_OPTIONS -fcx-limited-range)
+        set_property(SOURCE inst_api_ld.cpp APPEND PROPERTY COMPILE_OPTIONS
+            ${adm_clang_arg}-fcx-limited-range)
     endif()
     if(ADM_HAVE_WNO_OVERRIDING_OPTION)
         set_property(SOURCE inst_api_ld.cpp APPEND PROPERTY COMPILE_OPTIONS -Wno-overriding-option)

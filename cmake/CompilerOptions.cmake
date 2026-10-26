@@ -5,6 +5,13 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif()
 
+# clang-cl reads a GNU-spelled option only behind the /clang: escape, and reads -Wall as
+# -Weverything. Every GNU-spelled option that can reach clang-cl carries this prefix.
+set(adm_clang_arg "")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+    set(adm_clang_arg "/clang:")
+endif()
+
 add_library(admiral_optimization_flags INTERFACE)
 if(MSVC)
     # A codelet TU instantiates a few hundred templates, each landing in its own COMDAT section,
@@ -16,9 +23,9 @@ add_library(admiral_fast_math_flags INTERFACE)
 if(ADM_USE_FAST_MATH)
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(admiral_fast_math_flags INTERFACE
-            -ffast-math
-            -fno-math-errno
-            -ffinite-math-only
+            ${adm_clang_arg}-ffast-math
+            ${adm_clang_arg}-fno-math-errno
+            ${adm_clang_arg}-ffinite-math-only
         )
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
         target_compile_options(admiral_fast_math_flags INTERFACE /fp:fast)
@@ -88,7 +95,8 @@ else()
 endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    # Not on the MSVC ABI: cl gets no /Oy here, and Windows ARM64 needs the x29 frame chain.
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
         target_compile_options(admiral_optimization_flags INTERFACE
             -fomit-frame-pointer
         )
@@ -104,11 +112,11 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         # after it on the command line and the sanitizer arms pin -O1 there.
         string(REGEX MATCH "(^| )-O" _adm_flags_opt_level "${CMAKE_CXX_FLAGS}")
         if(NOT _adm_flags_opt_level)
-            target_compile_options(admiral_optimization_flags INTERFACE -Og)
+            target_compile_options(admiral_optimization_flags INTERFACE ${adm_clang_arg}-Og)
         endif()
         target_compile_options(admiral_optimization_flags INTERFACE
-            -g3
-            -fno-omit-frame-pointer
+            ${adm_clang_arg}-g3
+            ${adm_clang_arg}-fno-omit-frame-pointer
         )
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
         target_compile_options(admiral_optimization_flags INTERFACE

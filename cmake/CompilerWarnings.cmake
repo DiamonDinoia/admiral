@@ -44,7 +44,7 @@ function(set_project_warnings target_name)
     )
 
     set(COMMON_WARNINGS
-        -Wall
+        ${adm_clang_arg}-Wall
         -Wextra
         -Wshadow
         -Wnon-virtual-dtor

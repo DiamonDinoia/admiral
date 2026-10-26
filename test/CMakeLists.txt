@@ -60,16 +60,11 @@ set(ADM_TEST_EXTRA_INCLUDES_test_granule_poison ${PROJECT_SOURCE_DIR}/src)
 # clang-cl reads GNU-style -f options only behind the /clang: escape, so excluding Windows
 # left clang-cl on the default budgets and it fails both TUs there.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    set(adm_clang_arg "")
-    if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-        set(adm_clang_arg "/clang:")
-    endif()
     set(ADM_TEST_EXTRA_OPTIONS_test_ct_root ${adm_clang_arg}-fconstexpr-steps=100000000)
     set(ADM_TEST_EXTRA_OPTIONS_test_dag_census ${adm_clang_arg}-fbracket-depth=1024)
     # The poison twins fold the same constructs, so they need the same budgets.
     set(ADM_TEST_EXTRA_OPTIONS_test_ct_root_poison ${ADM_TEST_EXTRA_OPTIONS_test_ct_root})
     set(ADM_TEST_EXTRA_OPTIONS_test_dag_census_poison ${ADM_TEST_EXTRA_OPTIONS_test_dag_census})
-    unset(adm_clang_arg)
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     # The lattice fold busts cl's constexpr step limit too (cl 19.45, C2131); clang's budget.
     set(ADM_TEST_EXTRA_OPTIONS_test_ct_root /constexpr:steps100000000)

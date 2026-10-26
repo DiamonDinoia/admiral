@@ -679,7 +679,9 @@ TEMPLATE_TEST_CASE("col_dif tile row run is floored when the array does not fit 
     constexpr std::size_t W = xsimd::batch<T>::size;
     constexpr std::size_t elem = sizeof(std::complex<T>);
     constexpr std::size_t floor_elems = admiral::detail::kColDifMinRowBytes / elem;
-    const std::size_t big = nd_col_block<T>(4096, 4096, 1, 64);
+    // 4096 x 4096 x 64 elements overflow a 32-bit size_t and no 32-bit process holds the array.
+    constexpr std::size_t big_runs = sizeof(std::size_t) > 4 ? 64 : 8;
+    const std::size_t big = nd_col_block<T>(4096, 4096, 1, big_runs);
     INFO("big " << big << ", floor " << floor_elems);
     REQUIRE(big >= floor_elems);
     REQUIRE(big % W == 0);

@@ -504,11 +504,11 @@ inline constexpr double kLargeRouteProbeAmbigTol = 0.10;
 // division-form corrections below cannot wrap.
 [[nodiscard]] constexpr std::size_t large_route_geo_mid(std::size_t lo, std::size_t hi) {
     if (lo > hi) { const std::size_t t = lo; lo = hi; hi = t; }
-    const std::size_t x = lo * hi;
-    std::size_t r = hi;  // >= sqrt(x) because lo <= hi; the iterates decrease monotonically
+    const std::uint64_t x = std::uint64_t{lo} * hi;  // 64 bit: the product of two byte counts
+    std::uint64_t r = hi;  // >= sqrt(x) because lo <= hi; the iterates decrease monotonically
     while (r > x / r) r = (r + x / r) / 2;
     while (r + 1 <= x / (r + 1)) ++r;
-    return r;
+    return static_cast<std::size_t>(r);
 }
 
 // Byte line from one walked ladder segment: ladder_bytes ascending, dif_side per visited

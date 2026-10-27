@@ -172,7 +172,7 @@ void four_step_block_grid_transpose(std::complex<T>* m, std::size_t rows, std::s
 template<typename T>
 void four_step_transpose_cycles(std::complex<T>* m, std::size_t R, std::size_t C) {
     const std::size_t NM1 = R * C - 1;
-    const auto fwd = [&](std::size_t p) { return p * R % NM1; };
+    const auto fwd = [&](std::size_t p) { return width_cast<std::size_t>(std::uint64_t{p} * R % NM1); };
     for (std::size_t p = 1; p < NM1; ++p) {
         std::size_t q = fwd(p);
         while (q > p) q = fwd(q);
@@ -504,11 +504,11 @@ inline constexpr double kLargeRouteProbeAmbigTol = 0.10;
 // division-form corrections below cannot wrap.
 [[nodiscard]] constexpr std::size_t large_route_geo_mid(std::size_t lo, std::size_t hi) {
     if (lo > hi) { const std::size_t t = lo; lo = hi; hi = t; }
-    const std::size_t x = lo * hi;
-    std::size_t r = hi;  // >= sqrt(x) because lo <= hi; the iterates decrease monotonically
+    const std::uint64_t x = std::uint64_t{lo} * hi;  // 64 bit: the product of two byte counts
+    std::uint64_t r = hi;  // >= sqrt(x) because lo <= hi; the iterates decrease monotonically
     while (r > x / r) r = (r + x / r) / 2;
     while (r + 1 <= x / (r + 1)) ++r;
-    return r;
+    return static_cast<std::size_t>(r);
 }
 
 // Byte line from one walked ladder segment: ladder_bytes ascending, dif_side per visited

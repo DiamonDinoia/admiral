@@ -227,8 +227,10 @@ private:
         explicit blue_state(std::size_t m, std::size_t nthreads)
             : n(m), pad(pad_size(m)), inner(pad, nthreads) {
             chirp.resize(n);
-            for (std::size_t k = 0; k < n; ++k)
-                chirp[k] = scalar_twiddle<T>((k * k) % (2 * n), 2 * n, true);
+            // e steps through k * k mod 2n. The product overflows a 32-bit size_t.
+            std::size_t e = 0;
+            for (std::size_t k = 0; k < n; e = (e + 2 * k + 1) % (2 * n), ++k)
+                chirp[k] = scalar_twiddle<T>(e, 2 * n, true);
             std::vector<std::complex<T>> b(pad);
             for (std::size_t k = 0; k < n; ++k) {
                 b[k] = std::conj(chirp[k]);

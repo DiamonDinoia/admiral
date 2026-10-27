@@ -35,6 +35,9 @@ static_assert(ct_is_prime(65537));
 static_assert(ct_powmod(2, 10, 1000) == 24);
 static_assert(ct_powmod(3, 0, 7) == 1);
 static_assert(ct_powmod(7, 4, 5) == 1);
+// The residues reach m - 1 = 65536 and 65536^2 = 2^32 wraps a 32-bit size_t to 0.
+static_assert(ct_powmod(65536, 2, 65537) == 1);
+static_assert(ct_powmod(65536, 65535, 65537) == 65536);
 
 static_assert(!is_rader_prime(11));
 static_assert(!is_rader_prime(13));
@@ -124,6 +127,7 @@ TEST_CASE("ct_math helpers evaluate at runtime too", "[coverage][ct_math]") {
         volatile std::size_t vb = b, ve = e, vm = m; return ct_powmod(vb, ve, vm);
     };
     REQUIRE(pm(2, 10, 1000) == 24);
+    REQUIRE(pm(65536, 2, 65537) == 1);
 
     auto rp = [](std::size_t n) { volatile std::size_t v = n; return is_rader_prime(v); };
     REQUIRE(rp(17));

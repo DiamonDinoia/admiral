@@ -1,0 +1,118 @@
+name: debug-shell
+
+# Manual dispatch ONLY. This repo is public: a shell on a runner reachable by a push
+# or PR trigger is an open door. The session admits only the dispatcher's GitHub SSH
+# keys (limit-access-to-actor), runs with contents:read, persists no checkout
+# credentials, and dies with the job (120 minute cap). The join string alone, which
+# appears in the public log, grants nothing without one of those keys.
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: Runner image (one per ci.yml family)
+        type: choice
+        required: true
+        options: [ubuntu-24.04, windows-2022, windows-2025, macos-14, macos-15]
+      ref:
+        description: Ref to check out
+        type: string
+        required: false
+        default: master
+      setup:
+        description: Run the matching ci.yml toolchain setup and configure first
+        type: boolean
+        required: false
+        default: true
+      nonce:
+        description: Unique token in the run title so the dispatcher finds its run
+        type: string
+        required: false
+        default: ''
+
+run-name: "debug ${{ inputs.os }} ${{ inputs.nonce }}"
+
+permissions:
+  contents: read
+
+# One live session per (actor, os). A second dispatch queues, it does not steal the
+# runner from the session in flight.
+concurrency:
+  group: debug-shell-${{ github.actor }}-${{ inputs.os }}
+  cancel-in-progress: false
+
+jobs:
+  shell:
+    name: debug ${{ inputs.os }}
+    runs-on: ${{ inputs.os }}
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      # Cell parameters mirror ci.yml: ubuntu builds like the gcc-14 v3 cell, macOS
+      # like the apple-clang cell, Windows like the msvc cell (vcvarsall, Ninja).
+      - name: Resolve the ci.yml cell
+        if: inputs.setup
+        id: cell
+        run: |
+          case '${{ inputs.os }}' in
+            ubuntu-24.04) cc=gcc-14;      arch=x86-64-v3; vcvars=false; cxxenv=1 ;;
+            macos-*)       cc=apple-clang; arch=none;      vcvars=false; cxxenv=1 ;;
+            windows-*)     cc=msvc;        arch=x86-64-v3; vcvars=true;  cxxenv=0 ;;
+          esac
+          { echo "compiler=$cc"; echo "arch=$arch"
+            echo "vcvarsall=$vcvars"; echo "cxxenv=$cxxenv"; } >> "$GITHUB_OUTPUT"
+
+      - if: inputs.setup
+        uses: aminya/setup-cpp@v1
+        with:
+          compiler: ${{ steps.cell.outputs.compiler }}
+          cmake: true
+          ninja: true
+          vcvarsall: ${{ steps.cell.outputs.vcvarsall }}
+          cache-tools: true
+
+      # Same spellings as ci.yml. ADM_BUILD_EXAMPLES=OFF everywhere: one configure,
+      # not the full matrix, is what the shell needs to be build-ready.
+      - name: Configure
+        if: inputs.setup
+        run: |
+          extra=()
+          if [ '${{ steps.cell.outputs.cxxenv }}' = 1 ]; then
+            extra=(-DCMAKE_CXX_COMPILER="$CXX")
+          fi
+          cmake -S . -B build -G Ninja "${extra[@]}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DADM_TARGET_ARCH=${{ steps.cell.outputs.arch }} \
+            -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF -DADM_BUILD_EXAMPLES=OFF \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      # Detached so the next step can publish the join string. wait-timeout counts
+      # from when the last regular step finishes; the first guest disables it.
+      - name: Open the session
+        id: upterm
+        uses: owenthereal/action-upterm@v2.7.0
+        with:
+          detached: true
+          limit-access-to-actor: true
+          wait-timeout-minutes: 30
+
+      # Agents read the artifact with `gh run download` while the run is live; the
+      # notice and summary are the human fallbacks.
+      - name: Publish the join string
+        env:
+          SSH_COMMAND: ${{ steps.upterm.outputs.ssh-command }}
+          JOIN_COMMAND: ${{ steps.upterm.outputs.join-command }}
+        run: |
+          printf '%s\n%s\n' "$SSH_COMMAND" "$JOIN_COMMAND" > session.txt
+          echo "::notice title=debug-shell::$SSH_COMMAND"
+          { echo '### debug shell'; echo "    $SSH_COMMAND"; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debug-shell-session
+          path: session.txt

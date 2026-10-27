@@ -3,6 +3,7 @@
 #include "utils/reference.hpp"
 
 #include <admiral/admiral.hpp>
+#include <admiral/detail/cxx_compat.hpp>
 #include <admiral/detail/dd_fft.hpp>
 #include <admiral/detail/scalar_fft.hpp>
 
@@ -518,7 +519,7 @@ TEST_CASE("long double c2c rounds sampled bins correctly at a large prime length
     std::vector<lc_t> x(n);
     for (auto& v : x) v = {unif(gen), unif(gen)};
     std::vector<std::size_t> bins = {0, 1, n / 3, n / 2, n - 1};
-    while (bins.size() < 12) bins.push_back(gen() % n);
+    while (bins.size() < 12) bins.push_back(admiral::detail::width_cast<std::size_t>(gen() % n));
     admiral::plan<lt_t> p(n);
     admiral::detail::scalar_c2c<lt_t> x87(n);
     rounding_tally t;

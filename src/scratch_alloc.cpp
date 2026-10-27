@@ -20,8 +20,9 @@
 // scratch with snmalloc under asan would drop the redzones from the largest buffers the engine
 // owns, so a kernel overrunning one would stop being reported. The sanitized build therefore
 // takes the global allocator: what has to be checked is admiral's use of the buffer, not the
-// allocator that handed it over.
-#if defined(__SANITIZE_ADDRESS__)
+// allocator that handed it over. snmalloc 511e91a2 has no s390x arch layer (aal.h), so s390x
+// takes the global allocator too.
+#if defined(__SANITIZE_ADDRESS__) || defined(__s390x__)
 #define ADM_SCRATCH_SYSTEM_ALLOC 1
 #elif defined(__has_feature)
 #if __has_feature(address_sanitizer)

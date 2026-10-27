@@ -13,7 +13,12 @@ set(ADM_EXAMPLES
 # where linking a literal `m` fails as `lld-link: could not open 'm.lib'`.
 find_library(ADM_LIBM m)
 if(NOT ADM_LIBM)
-    set(ADM_LIBM "")
+    # find_library searches the 64-bit directories under -m32, so name the library instead.
+    if(WIN32)
+        set(ADM_LIBM "")
+    else()
+        set(ADM_LIBM m)
+    endif()
 endif()
 
 list(LENGTH ADM_EXAMPLES ADM_NEX)

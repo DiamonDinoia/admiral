@@ -494,7 +494,9 @@ ADM_ALWAYS_INLINE void granule_row_tile(const T* in, T* ADM_RESTRICT out,
         constexpr std::size_t r = qb < NF ? GL : NR;
         B b[GL];
         poet::static_for<0, GL>([&](auto l) ADM_LAMBDA_ALWAYS_INLINE {
-            const double* p = reinterpret_cast<const double*>(in + l * 2 * in_stride) + qb * DB * GL;
+            const double* p =
+                static_cast<const double*>(static_cast<const void*>(in + l * 2 * in_stride)) +
+                qb * DB * GL;
             if constexpr (qb < NF) {
                 b[l] = B::load_unaligned(p);
             } else {
@@ -531,7 +533,8 @@ ADM_ALWAYS_INLINE void granule_row_tile(const T* in, T* ADM_RESTRICT out,
         });
         granule_block_transpose<T, V>(b);
         poet::static_for<0, GL>([&](auto l) ADM_LAMBDA_ALWAYS_INLINE {
-            double* p = reinterpret_cast<double*>(out + l * 2 * out_stride) + qb * DB * GL;
+            double* p =
+                static_cast<double*>(static_cast<void*>(out + l * 2 * out_stride)) + qb * DB * GL;
             if constexpr (qb < NF) {
                 b[l].store_unaligned(p);
             } else {

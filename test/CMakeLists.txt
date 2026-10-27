@@ -138,9 +138,24 @@ function(adm_add_test name source)
         return()
     endif()
 
+    # test_nd's 3-D plane-fused and test_ulp's large-1-D cases price their long-double
+    # references at 29-39 min solo under qemu-ppc64le (the ppc64 cells' IBM double-double is the
+    # slowest long double in the arch matrix), so CI's default 1800 s bound trips them on any
+    # ctest contention. 7200 s bounds them under emulation; the property is inert on native.
+    if(CMAKE_CROSSCOMPILING AND (name STREQUAL "test_nd" OR name STREQUAL "test_ulp"))
+        catch_discover_tests(${name} PROPERTIES TIMEOUT 7200)
+        return()
+    endif()
+
     # The probe-smoke case reads up to 23.4 s under sanitizers, valgrind and sde; 90 s bounds it.
+    # Under qemu-user the same probe measured 66.5 s solo on s390x with xsimd::emulated, and ctest
+    # -j2 contention carries it past 90 s; 600 s bounds it there.
     if(name STREQUAL "test_route_forced")
-        catch_discover_tests(${name} PROPERTIES TIMEOUT 90)
+        if(CMAKE_CROSSCOMPILING)
+            catch_discover_tests(${name} PROPERTIES TIMEOUT 600)
+        else()
+            catch_discover_tests(${name} PROPERTIES TIMEOUT 90)
+        endif()
     else()
         catch_discover_tests(${name})
     endif()

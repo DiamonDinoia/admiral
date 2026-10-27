@@ -3,7 +3,7 @@
 #include "utils/reference.hpp"
 
 #include <admiral/admiral.hpp>
-#include <xsimd/xsimd.hpp>
+#include <admiral/detail/simd.hpp>
 #include <admiral/detail/four_step_large.hpp>
 #include <admiral/detail/plan.hpp>
 #include <admiral/detail/scratch.hpp>
@@ -272,10 +272,13 @@ TEST_CASE("streaming transpose band matches the cached one bit for bit", "[large
     CHECK(!four_step_stream_ok<double>(aligned.ptr, n2, 0));
 
     // One T past the base, never dereferenced. Shifting by a whole complex would still be
-    // arch-aligned wherever A is 16, so that control could not fail on SSE.
-    const auto* shifted =
-        reinterpret_cast<const std::complex<double>*>(reinterpret_cast<const double*>(aligned.ptr) + 1);
-    CHECK(!four_step_stream_ok<double>(shifted, n2, huge));
+    // arch-aligned wherever A is 16, so that control could not fail on SSE. Where A is one T
+    // (xsimd's emulated arch) no T address is misaligned, so the control does not exist there.
+    if constexpr (A > sizeof(double)) {
+        const auto* shifted = reinterpret_cast<const std::complex<double>*>(
+            reinterpret_cast<const double*>(aligned.ptr) + 1);
+        CHECK(!four_step_stream_ok<double>(shifted, n2, huge));
+    }
 
     // A row pitch that is not a whole number of arch vectors. It can only fail where an arch
     // vector holds more than one complex, so it is asserted only there.

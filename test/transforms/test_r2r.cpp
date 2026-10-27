@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <admiral/admiral.hpp>
+#include <admiral/detail/cxx_compat.hpp>
 #include "utils/reference.hpp"
 
 namespace {
@@ -90,7 +91,8 @@ TEMPLATE_TEST_CASE("Batched r2r rows equal the same rows one at a time", "[r2r]"
             for (const r2r_kind kind : {r2r_kind::dct2, r2r_kind::dct3, r2r_kind::dst2,
                                         r2r_kind::dst3}) {
                 const auto x =
-                    make_real_input<TestType>(N * rows, 7u + static_cast<unsigned>(N * rows));
+                    make_real_input<TestType>(
+                        N * rows, 7u + admiral::detail::width_cast<unsigned>(N * rows));
                 admiral::plan_r2r<TestType> batched(N, kind, rows);
                 admiral::plan_r2r<TestType> single(N, kind);
                 std::vector<TestType> got(N * rows), want(N * rows);

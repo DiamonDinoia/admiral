@@ -298,5 +298,13 @@ template <class It, class V>
 template <std::size_t N>
 using IC = std::integral_constant<std::size_t, N>;
 
+// A cast between two integer types that are one type on some targets (size_t and unsigned on
+// 32-bit, ptrdiff_t and int). A static_cast written inline is a -Wuseless-cast error there.
+// GCC does not diagnose the cast inside a template whose operand type is dependent.
+template <class To, class From>
+[[nodiscard]] constexpr To width_cast(From v) noexcept {
+    return static_cast<To>(v);
+}
+
 }
 }

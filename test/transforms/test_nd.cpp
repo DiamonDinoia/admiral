@@ -5,6 +5,7 @@
 #include "utils/reference.hpp"
 
 #include <admiral/admiral.hpp>
+#include <admiral/detail/cxx_compat.hpp>
 #include <admiral/detail/nd_plan.hpp>
 #include <admiral/detail/simd_swizzle.hpp>
 
@@ -206,7 +207,7 @@ TEMPLATE_TEST_CASE("1D via nd_plan matches legacy 1D FFT", "[nd][1d]", float, do
     using T = TestType;
     for (std::size_t N : {std::size_t{8}, std::size_t{16}, std::size_t{7},
                           std::size_t{13}, std::size_t{31}, std::size_t{60}}) {
-        const auto in = make_input<T>(N, static_cast<unsigned>(N + 100));
+        const auto in = make_input<T>(N, admiral::detail::width_cast<unsigned>(N + 100));
 
         std::vector<std::complex<T>> legacy(N);
         admiral::forward<T>(admiral::span<const std::complex<T>>(in), admiral::span(legacy));

@@ -179,7 +179,7 @@ grep -E 'tests passed|tests failed|Total Test time' /b/logs/ctest.log || true
 if [ "$K" = linux ]; then
     cmake --install "$b" --prefix /b/prefix >> /b/logs/install.log 2>&1 || { echo "install failed"; exit 1; }
     cmake -S /src/test/package -B /b/build-pkg -G Ninja -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14 \
+        -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX" \
         -DCMAKE_PREFIX_PATH=/b/prefix > /b/logs/configure-pkg.log 2>&1 || { echo "configure-pkg failed"; exit 1; }
     cmake --build /b/build-pkg > /b/logs/build-pkg.log 2>&1 || { echo "build-pkg failed"; exit 1; }
     ctest --test-dir /b/build-pkg -j "$ADM_CI_CTEST_JOBS" --timeout 900 --output-on-failure --no-tests=error \

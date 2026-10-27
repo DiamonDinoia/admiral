@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <cstdint>
 #include <functional>
 #include <iterator>
 #include <limits>
@@ -133,7 +134,12 @@ void require_parseval(const Xv& x, const Xo& X, std::size_t ntot, double scale =
 }
 
 constexpr long double turn_fraction(std::size_t K, std::size_t n, std::size_t N) {
-    return static_cast<long double>((K * n) % N) / static_cast<long double>(N);
+    // The product K * n is too large for a 32-bit size_t (any K, n near N >= 65536).
+    // Multiply in 64 bits so the residue mod N is correct on every target.
+    // width_cast: size_t and uint64_t are one type where size_t is 64 bits.
+    return static_cast<long double>(
+               admiral::detail::width_cast<std::size_t>((std::uint64_t{K} * n) % N))
+           / static_cast<long double>(N);
 }
 
 template<typename T>
@@ -157,7 +163,9 @@ std::vector<std::complex<Out>> reference_dft(const std::vector<std::complex<T>>&
     for (std::size_t k = 0; k < N; ++k) {
         std::complex<long double> acc{0.0L, 0.0L};
         for (std::size_t n = 0; n < N; ++n)
-            acc += std::complex<long double>(x[n]) * w[(k * n) % N];
+            acc += std::complex<long double>(x[n]) *
+                   // Same 32-bit size_t overflow class as turn_fraction: k * n is too large.
+                   w[admiral::detail::width_cast<std::size_t>((std::uint64_t{k} * n) % N)];
         out[k] = {static_cast<Out>(acc.real()), static_cast<Out>(acc.imag())};
     }
     return out;

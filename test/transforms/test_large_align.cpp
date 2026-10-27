@@ -222,7 +222,7 @@ TEMPLATE_TEST_CASE("out-aliased SoA pair equals the 4-plane path", "[dif][align]
 TEMPLATE_TEST_CASE("four_step_transpose_inplace vs naive", "[large][fourstep]", float, double) {
     using T = TestType;
     static constexpr std::size_t shapes[][2] = {{64, 64}, {32, 96}, {96, 32},
-                                                {48, 80}, {49, 128}, {33, 100}};
+                                                {48, 80}, {49, 128}, {33, 100}, {1626, 1627}};
     for (const auto& s : shapes) {
         const std::size_t R = s[0], C = s[1];
         CAPTURE(R, C);

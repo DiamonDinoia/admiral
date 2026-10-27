@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <numeric>
 #include <type_traits>
@@ -279,12 +280,25 @@ template<typename T>
     return true;
 }
 
+[[nodiscard]] constexpr std::size_t ct_mul_mod(std::size_t a, std::size_t b, std::size_t m) {
+    if constexpr (sizeof(std::size_t) <= 4) {
+        // a * b is too large for a 32-bit size_t when m > 65536: the residues reach
+        // m - 1 and (m - 1)^2 >= 2^32 (p = 65537 puts m - 1 at exactly 2^32 mod 2^32 = 0).
+        // Multiply in 64 bits so the residue is correct.
+        return width_cast<std::size_t>((std::uint64_t{a} * b) % m);
+    }
+    // Keep the old form on 64-bit targets: same value, and a constexpr evaluator
+    // counts the same steps as before (apple-clang 16.4 hits its step limit in
+    // make_rader_bhat<97U> when the op sequence changes).
+    return (a * b) % m;
+}
+
 [[nodiscard]] constexpr std::size_t ct_powmod(std::size_t base, std::size_t exp, std::size_t m) {
     std::size_t result = 1 % m;
     base %= m;
     for (; exp != 0; exp >>= 1) {
-        if (exp & 1) result = result * base % m;
-        base = base * base % m;
+        if (exp & 1) result = ct_mul_mod(result, base, m);
+        base = ct_mul_mod(base, base, m);
     }
     return result;
 }

@@ -500,7 +500,9 @@ private:
         explicit blue_state(std::size_t len) : m(len), pad(blue_pad(len)), inner(pad) {
             const dd_roots w(2 * m);
             chirp.resize(m);
-            for (std::size_t k = 0; k < m; ++k) chirp[k] = w(k * k);
+            // ce steps through k * k mod 2m. The product overflows a 32-bit size_t.
+            std::size_t ce = 0;
+            for (std::size_t k = 0; k < m; ce = (ce + 2 * k + 1) % (2 * m), ++k) chirp[k] = w(ce);
             // FFT(b), b the conjugate chirp wrapped around pad, by this engine on a grid that
             // holds |b| <= 1 grown by pad. |FFT(b)| <= 2m - 1 <= pad, so every product constant
             // bmul is at most 1.

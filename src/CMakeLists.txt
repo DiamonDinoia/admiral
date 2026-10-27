@@ -3,6 +3,8 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/CodeletCatalog.cmake)
 
 add_library(admiral_engine OBJECT
     inst_col_f_fwd.cpp inst_col_f_inv.cpp inst_col_d_fwd.cpp inst_col_d_inv.cpp
+    inst_col_first_f_fwd.cpp inst_col_first_f_inv.cpp inst_col_first_d_fwd.cpp
+    inst_col_first_d_inv.cpp inst_col_mid_f.cpp inst_col_mid_d.cpp
     inst_dif_f_fwd.cpp inst_dif_f_inv.cpp inst_dif_d_fwd.cpp inst_dif_d_inv.cpp
     inst_dif_thunks_f.cpp inst_dif_thunks_d.cpp
     inst_dif_thunks_ip_f.cpp inst_dif_thunks_ip_d.cpp
@@ -32,6 +34,8 @@ elseif(ADM_USE_FAST_MATH)
 endif()
 set_source_files_properties(
     inst_col_f_fwd.cpp inst_col_f_inv.cpp inst_col_d_fwd.cpp inst_col_d_inv.cpp
+    inst_col_first_f_fwd.cpp inst_col_first_f_inv.cpp inst_col_first_d_fwd.cpp
+    inst_col_first_d_inv.cpp inst_col_mid_f.cpp inst_col_mid_d.cpp
     PROPERTIES COMPILE_OPTIONS "${_adm_col_numerics}")
 
 # ADM_PIN_1D: extend the same numerics pin to the unpinned 1-D engine instantiation TUs.

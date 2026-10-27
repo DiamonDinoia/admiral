@@ -1,0 +1,170 @@
+name: Arch matrix
+
+# Builds and tests admiral at the baseline ISA of every architecture numpy supports
+# (numpy v2.5.4, meson_cpu/meson.build:98-108). The library has no runtime dispatch yet, so
+# each cell shows what the baseline build does alone.
+# Route: cross compile on the x86 runner and run ctest through qemu-user, except where the
+# runner runs the binary itself (x86-64, aarch64 on the arm runner).
+# ppc64le-control folds the IBM twiddles at double and must fail: it checks that the IBM
+# long double tests can see the bug the plain fold would hide.
+on:
+  push:
+    branches: ['port/integrate', 'master']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CMAKE_CXX_COMPILER_LAUNCHER: ccache
+  CMAKE_C_COMPILER_LAUNCHER: ccache
+
+jobs:
+  arch:
+    # Public runners have 16 GiB. Worst Release TU peak is 3.4 GiB, so -j2 stays under
+    # 0.75 x 16 GiB = 12 GiB (2 x 3.4 = 6.8 GiB).
+    timeout-minutes: 220
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Baseline ISA per numpy: X86_V2.
+          - {name: x86_64, os: ubuntu-24.04, kind: native, pkgs: g++-14, arch: x86-64-v2, expect: '-march=x86-64-v2', xarch: sse4.2}
+          # ASIMD is the armv8-a baseline.
+          - {name: aarch64, os: ubuntu-24.04-arm, kind: native, pkgs: g++-14, arch: armv8-a, expect: '-march=armv8-a', xarch: arm64+neon}
+          # numpy baseline: VSX2 on little endian, which is POWER8. IBM double-double long double.
+          - {name: ppc64le, os: ubuntu-24.04, kind: qemu, triple: powerpc64le-linux-gnu, proc: ppc64le, qemu: qemu-ppc64le, arch: power8, expect: '-mcpu=power8'}
+          - {name: ppc64le-control, os: ubuntu-24.04, kind: qemu, triple: powerpc64le-linux-gnu, proc: ppc64le, qemu: qemu-ppc64le, arch: power8, expect: '-mcpu=power8', control: true}
+          # Big-endian POWER8, same VSX2 and IBM double-double long double as ppc64le.
+          - {name: ppc64, os: ubuntu-24.04, kind: qemu, triple: powerpc64-linux-gnu, proc: ppc64, qemu: qemu-ppc64, arch: power8, expect: '-mcpu=power8'}
+          # numpy baseline: none. Compiler default, no NEON.
+          - {name: armhf, os: ubuntu-24.04, kind: qemu, triple: arm-linux-gnueabihf, proc: arm, qemu: qemu-arm, arch: none, xarch: emulated}
+          # numpy baseline: none. QEMU only, by standing decision.
+          - {name: s390x, os: ubuntu-24.04, kind: qemu, triple: s390x-linux-gnu, proc: s390x, qemu: qemu-s390x, arch: none, xarch: emulated}
+          # Scalar only, by standing decision.
+          - {name: riscv64, os: ubuntu-24.04, kind: qemu, triple: riscv64-linux-gnu, proc: riscv64, qemu: qemu-riscv64, arch: none, xarch: emulated}
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install toolchain
+        run: |
+          set -eu
+          pkgs="${{ matrix.pkgs }}"
+          if [ '${{ matrix.kind }}' = qemu ]; then
+            pkgs="g++-14-${{ matrix.triple }} qemu-user"
+          fi
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache $pkgs
+      - name: Positive control, fold the IBM twiddles at double
+        if: matrix.control
+        run: |
+          set -eu
+          f=include/admiral/detail/ct_math.hpp
+          sed -i -e 's/const ct_sincos_v<ct_dd> w = sincos_turns_eval<ct_dd>(/const ct_sincos_v<double> w = sincos_turns_eval<double>(/' \
+                 -e 's/return {dd_round<F>(w.s), dd_round<F>(w.c)};/return {F(w.s), F(w.c)};/' "$f"
+          git diff -- "$f"
+          test "$(git diff --numstat -- "$f" | cut -f1)" = 2
+      - uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: arch-${{ matrix.name }}
+      - name: Configure
+        run: |
+          set -eu
+          mkdir -p logs
+          args=(-S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+                -DADM_TARGET_ARCH=${{ matrix.arch }}
+                -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF
+                -DCMAKE_EXPORT_COMPILE_COMMANDS=ON)
+          case '${{ matrix.kind }}' in
+            native)
+              args+=(-DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14) ;;
+            qemu)
+              t='${{ matrix.triple }}'
+              cat > "$RUNNER_TEMP/tc.cmake" <<TC
+          set(CMAKE_SYSTEM_NAME Linux)
+          set(CMAKE_SYSTEM_PROCESSOR ${{ matrix.proc }})
+          set(CMAKE_C_COMPILER $t-gcc-14 CACHE FILEPATH "")
+          set(CMAKE_CXX_COMPILER $t-g++-14 CACHE FILEPATH "")
+          set(CMAKE_CROSSCOMPILING_EMULATOR "${{ matrix.qemu }};-L;/usr/$t")
+          set(CMAKE_FIND_ROOT_PATH /usr/$t)
+          set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+          set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+          TC
+              args+=(-DCMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/tc.cmake"
+                     -DCMAKE_CATCH_DISCOVER_TESTS_DISCOVERY_MODE=PRE_TEST) ;;
+          esac
+          unset NINJA_STATUS
+          if ! cmake "${args[@]}" > logs/configure.log 2>&1; then
+            grep -n -m3 -E 'CMake Error|Error' logs/configure.log || true
+            tail -n 40 logs/configure.log
+            exit 1
+          fi
+          tail -n 5 logs/configure.log
+      - name: Assert the flags arrived
+        run: |
+          set -eu
+          if [ -n '${{ matrix.expect }}' ]; then
+            grep -qF -- '${{ matrix.expect }}' build/compile_commands.json
+          fi
+          ! grep -qF -- '=native' build/compile_commands.json
+          grep -qF -- '-O3' build/compile_commands.json || grep -qF -- '-O2' build/compile_commands.json
+          grep -q 'LAUNCHER = ccache' build/build.ninja
+      - name: Build
+        run: |
+          set -u
+          unset NINJA_STATUS
+          rc=0
+          targets=()
+          if [ -n '${{ matrix.control }}' ]; then targets=(--target test_ct_math test_long_double); fi
+          cmake --build build -j2 "${targets[@]}" -- -k 0 > logs/build.log 2>&1 || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "failed TUs: $(grep -c '^FAILED' logs/build.log)"
+            echo "first error:"
+            grep -n -m5 -E 'error:|Error [0-9]|FAILED:' logs/build.log || true
+            tail -n 40 logs/build.log
+          fi
+          ccache -s || true
+          exit "$rc"
+      - name: Assert the xsimd arch
+        if: matrix.xarch
+        run: |
+          set -eu
+          cxx=$(sed -n 's/^CMAKE_CXX_COMPILER:[A-Z]*=//p' build/CMakeCache.txt)
+          xs=$(grep -o -m1 -- '-isystem [^ ]*xsimd[^ ]*/include' build/compile_commands.json | head -n1 | cut -d' ' -f2)
+          printf '#include <admiral/detail/simd.hpp>\n#include <cstdio>\nint main() { std::puts(xsimd::default_arch::name()); }\n' > arch.cpp
+          "$cxx" -std=c++20 ${{ matrix.expect }} -Iinclude -isystem "$xs" arch.cpp -o arch
+          if [ '${{ matrix.kind }}' = qemu ]; then got=$(${{ matrix.qemu }} -L /usr/${{ matrix.triple }} ./arch); else got=$(./arch); fi
+          echo "admiral's simd.hpp selects xsimd arch '$got' at this cell's flags; expected '${{ matrix.xarch }}'"
+          test "$got" = '${{ matrix.xarch }}'
+      - name: Test
+        run: |
+          set -u
+          if [ -n '${{ matrix.control }}' ]; then
+            run="${{ matrix.qemu }} -L /usr/${{ matrix.triple }}"
+            fired=0
+            $run build/test/test_ct_math '[longdouble]' > logs/control-ct_math.log 2>&1 || fired=$((fired + 1))
+            $run build/test/test_long_double > logs/control-long_double.log 2>&1 || fired=$((fired + 1))
+            grep -h -E -B2 -A4 'FAILED|with expansion' logs/control-*.log | head -n 60
+            tail -n 4 logs/control-*.log
+            echo "the double fold failed $fired of 2 accuracy executables"
+            test "$fired" = 2
+            exit 0
+          fi
+          rc=0
+          ctest --test-dir build -j2 --timeout 1800 --output-on-failure --no-tests=error \
+            > logs/ctest.log 2>&1 || rc=$?
+          grep -E 'tests passed|tests failed|Total Test time' logs/ctest.log || true
+          if [ "$rc" -ne 0 ]; then
+            grep -E '\*\*\*|Failed|Timeout|Not Run' logs/ctest.log | head -n 30 || true
+          fi
+          exit "$rc"
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: logs-${{ matrix.name }}
+          path: |
+            logs/**
+            build/Testing/**
+          if-no-files-found: ignore

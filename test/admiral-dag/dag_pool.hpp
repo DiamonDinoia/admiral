@@ -29,6 +29,14 @@
 
 namespace admiral_dag {
 
+// A size_t to uint32_t cast through a template: written inline it is a -Wuseless-cast error
+// where size_t is 32 bits. This header precedes every admiral include, so it cannot use
+// admiral::detail::width_cast.
+template <class From>
+constexpr std::uint32_t u32(From v) noexcept {
+    return static_cast<std::uint32_t>(v);
+}
+
 enum class op : std::uint8_t {
     input,   // plane leaf: (plane, layout, index); load provenance recorded for the registry
     cplain,  // plain constant: rounded T bits, no exact identity attached
@@ -266,7 +274,7 @@ public:
         node n;
         n.o = op::cplain;
         n.bits = fnv1a64(lanes, w * sizeof(T));
-        n.aux = static_cast<std::uint32_t>(aux_.size() + 1);
+        n.aux = u32(aux_.size() + 1);
         for (std::size_t i = 0; i < w; ++i) aux_.push_back(bits_of(lanes[i]));
         return append(n);
     }
@@ -346,7 +354,7 @@ public:
 
 private:
     std::uint32_t append(const node& n) {
-        const std::uint32_t id = static_cast<std::uint32_t>(nodes_.size());
+        const std::uint32_t id = u32(nodes_.size());
         nodes_.push_back(n);
         hist_[static_cast<std::size_t>(n.o)] += 1;
         ++created_;

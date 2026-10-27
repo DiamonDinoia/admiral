@@ -97,17 +97,31 @@ endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        # -O0 buys nothing here: a Debug cell spends its wall clock inside the tests, and every
-        # kernel is a template the front end has to instantiate either way. -Og keeps the frame
-        # pointers, the variable locations and the line table that a debugger needs.
-        # A level spelled in CMAKE_CXX_FLAGS stays authoritative, because target options land
-        # after it on the command line and the sanitizer arms pin -O1 there.
+        # Measured 2026-10-26, gcc 14.2 at x86-64-v3, medians of 3 on the five slowest
+        # Debug TUs (memory/admiral/compile-cost/2026-10-26-g2-flags.md). At -Og -g
+        # -fno-var-tracking-assignments the summed CPU of those TUs is 170.7 s. At 6
+        # parallel jobs the peak RSS is 12.30 GiB. The GH Debug job runs cmake --build
+        # build with no explicit parallel level (ci.yml), so ninja runs its default of 6
+        # jobs on the 4-vCPU ubuntu-24.04 runner. The 16 GiB runner memory holds the peak.
+        # The setting keeps the line table and the local variables. It cuts only the
+        # tracking of the variable locations across assignments. -g3 to -g pays nothing.
+        # clang stays at -Og -g3: its worst TU reads 1.2e6 KB, far under the runner
+        # memory.
+        # A level spelled in CMAKE_CXX_FLAGS stays authoritative, because target options
+        # land after it on the command line and the sanitizer presets pin -O1 there.
         string(REGEX MATCH "(^| )-O" _adm_flags_opt_level "${CMAKE_CXX_FLAGS}")
         if(NOT _adm_flags_opt_level)
             target_compile_options(admiral_optimization_flags INTERFACE -Og)
         endif()
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+            target_compile_options(admiral_optimization_flags INTERFACE
+                -g
+                -fno-var-tracking-assignments
+            )
+        else()
+            target_compile_options(admiral_optimization_flags INTERFACE -g3)
+        endif()
         target_compile_options(admiral_optimization_flags INTERFACE
-            -g3
             -fno-omit-frame-pointer
         )
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")

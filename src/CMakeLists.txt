@@ -5,6 +5,8 @@ add_library(admiral_engine OBJECT
     inst_col_f_fwd.cpp inst_col_f_inv.cpp inst_col_d_fwd.cpp inst_col_d_inv.cpp
     inst_dif_f_fwd.cpp inst_dif_f_inv.cpp inst_dif_d_fwd.cpp inst_dif_d_inv.cpp
     inst_dif_thunks_f.cpp inst_dif_thunks_d.cpp
+    inst_dif_thunks_ip_f.cpp inst_dif_thunks_ip_d.cpp
+    inst_dif_thunks_chip_f.cpp inst_dif_thunks_chip_d.cpp
     inst_plan_f.cpp inst_plan_d.cpp
     inst_gt_f.cpp inst_gt_d.cpp
     inst_nd_f.cpp inst_nd_d.cpp
@@ -40,6 +42,8 @@ if(ADM_PIN_1D)
     set_source_files_properties(
         inst_dif_f_fwd.cpp inst_dif_f_inv.cpp inst_dif_d_fwd.cpp inst_dif_d_inv.cpp
         inst_dif_thunks_f.cpp inst_dif_thunks_d.cpp
+        inst_dif_thunks_ip_f.cpp inst_dif_thunks_ip_d.cpp
+        inst_dif_thunks_chip_f.cpp inst_dif_thunks_chip_d.cpp
         inst_real_f.cpp inst_real_d.cpp inst_api_ld.cpp
         PROPERTIES COMPILE_OPTIONS "${_adm_col_numerics}")
 endif()

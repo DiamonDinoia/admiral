@@ -583,6 +583,11 @@ TEMPLATE_TEST_CASE("effort::measure races the large route serially past the cost
         return std::pair{span, std::string(p.route_name())};
     };
 
+    // The first large plan a process builds pays the allocator's arena setup once (seconds
+    // under memcheck); left in est_ns that one-off stands against the race the case prices.
+    // A discarded build moves it out of the baseline: est_ns is the warm construction the
+    // measure build is compared against.
+    static_cast<void>(build(admiral::effort::estimate));
     const auto [est_ns, est_route] = build(admiral::effort::estimate);
 
     // One transform of the elected route, warmed, is the unit the race spends.

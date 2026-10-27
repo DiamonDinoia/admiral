@@ -41,9 +41,18 @@ double relerrtwonorm(const A& a, const B& b) {
     return nrm > 0.0 ? std::sqrt(err / nrm) : std::sqrt(err);
 }
 
+// 2^(1 - digits). Where long double is a pair of doubles (digits 106), its epsilon() is 2^-1074,
+// not the precision of the format.
+template<typename T>
+constexpr double digits_eps() {
+    double e = 1;
+    for (int i = 1; i < std::numeric_limits<T>::digits; ++i) e /= 2;
+    return e;
+}
+
 template<typename T>
 constexpr double fft_tol(double scale = 1.0) {
-    return 32.0 * scale * static_cast<double>(std::numeric_limits<T>::epsilon());
+    return 32.0 * scale * digits_eps<T>();
 }
 
 template <typename A, typename B>

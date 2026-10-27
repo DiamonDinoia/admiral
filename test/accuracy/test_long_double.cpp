@@ -40,7 +40,7 @@ template<typename V>
 void require_close_lt(const std::vector<V>& ref, const std::vector<V>& got) {
     const long double err = relerr_ld(ref, got);
     INFO("relative L2 error " << static_cast<double>(err) << " = "
-                              << static_cast<double>(err / std::numeric_limits<lt_t>::epsilon())
+                              << static_cast<double>(err) / digits_eps<lt_t>()
                               << " eps");
     REQUIRE(err <= static_cast<long double>(fft_tol<lt_t>()));
 }
@@ -144,7 +144,7 @@ TEST_CASE("long double r2c/c2r with an explicit fct scale every element", "[long
         require_close_lt(plain, scaled);
         for (std::size_t k = 0; k < plain.size(); ++k) {
             CAPTURE(k);
-            REQUIRE(std::abs(plain[k] - scaled[k]) <= 16 * std::numeric_limits<lt_t>::epsilon());
+            REQUIRE(std::abs(plain[k] - scaled[k]) <= 16 * static_cast<lt_t>(digits_eps<lt_t>()));
         }
 
         auto spec = scaled, spec1 = scaled;
@@ -243,7 +243,7 @@ void series_cos_sin(lt_t t, lt_t& c, lt_t& s) {
 
 TEST_CASE("long double: scalar_twiddle phase matches an independent series", "[longdouble]") {
     using admiral::detail::scalar_twiddle;
-    const lt_t eps = std::numeric_limits<lt_t>::epsilon();
+    const lt_t eps = static_cast<lt_t>(digits_eps<lt_t>());
     lt_t worst = 0;
     std::size_t worst_k = 0, worst_n = 0;
     for (const std::size_t n : {31u, 101u, 821u, 1024u, 3939u, 4093u, 8192u}) {
@@ -272,7 +272,7 @@ TEST_CASE("long double: scalar_twiddle phase matches an independent series", "[l
 
 TEST_CASE("long double: scalar_twiddle folds the quadrants exactly", "[longdouble]") {
     using admiral::detail::scalar_twiddle;
-    const lt_t eps = std::numeric_limits<lt_t>::epsilon();
+    const lt_t eps = static_cast<lt_t>(digits_eps<lt_t>());
     for (const std::size_t n : {4u, 8u, 12u, 100u, 4096u, 65536u}) {
         CAPTURE(n);
         REQUIRE(scalar_twiddle<lt_t>(0, n, true) == lc_t(1, 0));

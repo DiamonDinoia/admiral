@@ -79,8 +79,9 @@ constexpr bool lattice_swept(std::size_t den, std::size_t num) {
 }
 
 // gcc caps one constant evaluation at -fconstexpr-ops-limit; a full-precision 1..512
-// sweep busts it, so the lattice folds in 64-den chunks and the chunks merge.
-inline constexpr std::size_t kLatticeChunk = 64;
+// sweep busts it, so the lattice folds in 8-den chunks and the chunks merge. An IBM
+// double-double long double folds through ct_dd: one 16-den chunk there takes over half the cap.
+inline constexpr std::size_t kLatticeChunk = 8;
 static_assert(kLatticeDenMax % kLatticeChunk == 0);
 
 // First lattice point in dens (Chunk*kLatticeChunk, (Chunk+1)*kLatticeChunk] where the

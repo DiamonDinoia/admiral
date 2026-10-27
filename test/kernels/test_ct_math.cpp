@@ -4,6 +4,8 @@
 #include <admiral/detail/ct_math.hpp>
 #include <admiral/detail/math.hpp>
 
+#include "utils/reference.hpp"
+
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -67,7 +69,7 @@ ADM_CONSTEVAL std::array<ct_sincos_v<F>, Den> folded_turns() {
 template<typename F, std::size_t Den>
 F turns_err() {
     constexpr std::array<ct_sincos_v<F>, Den> tab = folded_turns<F, Den>();
-    const F eps = std::numeric_limits<F>::epsilon();
+    const F eps = static_cast<F>(digits_eps<F>());
     F worst = 0;
     for (std::size_t k = 0; k < Den; ++k) {
         const F ang = F(2) * numbers::pi_v<F> * static_cast<F>(k) / static_cast<F>(Den);

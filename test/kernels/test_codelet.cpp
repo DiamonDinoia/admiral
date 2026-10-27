@@ -96,7 +96,9 @@ TEST_CASE("a small non-pow2 codelet takes the flat leaf", "[codelet]") {
 }
 
 TEST_CASE("the scalar flat leaf yields to a larger cofactor", "[codelet]") {
-    if constexpr (poet::vector_register_count() == 32) {
+    // Not if constexpr: in a discarded branch gcc 13 and 14 do not instantiate
+    // cofactor_simd_profitable for flat_leaf ("used before its definition" on VSX, 64 registers).
+    if (poet::vector_register_count() == 32) {
         CHECK(kernel<11, double, true>::flat_leaf);
         CHECK(kernel<12, double, true>::flat_leaf);
         CHECK_FALSE(kernel<10, double, true>::flat_leaf);

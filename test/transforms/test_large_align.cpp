@@ -58,11 +58,7 @@ TEST_CASE("four_step_large forward vs analytical (double)", "[large][fourstep]")
     // The serial line is probed per process; pin the fallback so the route names are the
     // constant this case was written against, not one host's measurement.
     const admiral::detail::large_route_serial_override_scope pin(12 << 20, 0);
-    // 32 bit mis-transforms kNonPow2 (relative L2 1.41135, bit-identical on i686 and armhf).
-    // The i686 wrong-output job owns the bug; drop this guard when it lands.
-    const bool skip_nonpow2 = sizeof(std::size_t) <= 4;
     for (const std::size_t N : {kBelowFuse, kRect2M, kNonPow2}) {
-        if (skip_nonpow2 && N == kNonPow2) continue;
         CAPTURE(N);
         CHECK(std::string(admiral::detail::plan_impl<double>(N, true).route_name())
               == "four_step_large");

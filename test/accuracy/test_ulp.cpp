@@ -249,11 +249,7 @@ TEMPLATE_TEST_CASE("ULP: multi-tone input has a closed-form spectrum", "[accurac
                    float, double) {
     using T = TestType;
     margin mg;
-    // 32 bit mis-transforms 65537 (same i686-bug class as kNonPow2 in test_large_align.cpp).
-    // The i686 wrong-output job owns the fix; drop this guard with it.
-    const bool skip65537 = sizeof(std::size_t) <= 4;
     for (const std::size_t n : {64u, 120u, 243u, 1009u, 4096u, 15120u, 65537u, 65536u, 100000u, 262144u}) {
-        if (skip65537 && n == 65537u) continue;
         std::mt19937 rng(static_cast<std::uint32_t>(n));
         std::uniform_real_distribution<double> amp(-1, 1);
         std::uniform_int_distribution<std::size_t> bin(0, n - 1);

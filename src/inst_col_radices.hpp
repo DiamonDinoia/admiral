@@ -10,7 +10,14 @@
 #if defined(__AVX512F__) || defined(_M_ARM64) || defined(__ARM_NEON) || defined(__ARM_NEON__) ||   \
     defined(__ALTIVEC__) || defined(__mips_msa)
     #define ADM_COL_RADICES(X) X(3) X(4) X(5) X(7) X(8) X(11) X(16) X(32) X(9) X(15) X(25) X(10)
-    #define ADM_COL_STAGED_RADICES(X) X(16) X(32)
+    // A radix stages when its 2R live registers do not fit (dif_staged_radix, butterfly.hpp).
+    // poet counts 64 vector registers on VSX, so 2*16 fits and only radix 32 stages. Every
+    // other 32-register target in this arm stages 16 and 32.
+    #if defined(__VSX__)
+        #define ADM_COL_STAGED_RADICES(X) X(32)
+    #else
+        #define ADM_COL_STAGED_RADICES(X) X(16) X(32)
+    #endif
 #else
     #define ADM_COL_RADICES(X) X(3) X(4) X(5) X(7) X(8) X(11)
     #define ADM_COL_STAGED_RADICES(X)

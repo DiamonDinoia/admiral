@@ -71,10 +71,6 @@ configure_file(
     ${ADM_GENERATED_INCLUDE_DIR}/admiral/detail/codelet_max.hpp
     @ONLY)
 
-set(ADM_MEASURE_01 0)
-if(ADM_MEASURE)
-    set(ADM_MEASURE_01 1)
-endif()
 if(ADM_ENABLE_THREADS)
     set(ADM_THREADS_01 1)
     find_package(Threads REQUIRED)

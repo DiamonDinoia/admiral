@@ -50,12 +50,6 @@ cmake -S . -B build -DADM_ENABLE_THREADS=OFF
 grep -F '#define ADM_THREADS 0' build/src/generated/include/admiral/detail/config.hpp
 # [doc:opt-ADM_ENABLE_THREADS-end]
 
-rm -rf build
-# [doc:opt-ADM_MEASURE]
-cmake -S . -B build -DADM_MEASURE=OFF
-grep -F 'adm_measure = 0 != 0' build/src/generated/include/admiral/detail/config.hpp
-# [doc:opt-ADM_MEASURE-end]
-
 if [[ $(uname -m) = x86_64 ]]; then
 rm -rf build
 # [doc:opt-ADM_TARGET_ARCH]

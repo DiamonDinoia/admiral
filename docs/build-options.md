@@ -51,15 +51,6 @@ Default: `ON`. `OFF` makes every plan serial and drops the threads library from 
 :end-before: [doc:opt-ADM_ENABLE_THREADS-end]
 ```
 
-### `ADM_MEASURE`
-
-Default: `ON`. Compiles in plan-time route measurement. `OFF` makes `effort::automatic` and `effort::measure` inert.
-
-```{literalinclude} ../scripts/options.sh
-:start-after: [doc:opt-ADM_MEASURE]
-:end-before: [doc:opt-ADM_MEASURE-end]
-```
-
 ### `ADM_TARGET_ARCH`
 
 Default: `native`. Sets the target CPU. Values: `native`, `none`, an architecture or CPU name. The example uses an x86-64 name. See the rules below.
@@ -86,7 +77,7 @@ Default: `ON`. Adds `-ffast-math`. `OFF` keeps strict IEEE semantics.
 :end-before: [doc:opt-ADM_USE_FAST_MATH-end]
 ```
 
-## Development options
+## Advanced options
 
 These options are for work on the library itself.
 

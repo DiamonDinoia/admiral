@@ -540,18 +540,16 @@ std::size_t plan_impl<T>::measured_route_memo_size() {
 
 template<typename T>
 typename plan_impl<T>::measured_choice
-plan_impl<T>::measured_route(std::size_t size, [[maybe_unused]] bool is_forward,
+plan_impl<T>::measured_route(std::size_t size, bool is_forward,
                              std::size_t nthreads) {
-    if constexpr (adm_measure) {
-        route_memo& m = memo();
-        const std::lock_guard<std::mutex> lock(m.mu);
-        const auto key = std::make_tuple(size, nthreads, is_forward,
-                                         large_route_serial_override(sizeof(std::complex<T>)));
-        auto it = m.map.find(key);
-        if (it == m.map.end())
-            it = m.map.emplace(key, measure_route(size, is_forward, nthreads)).first;
-        return it->second;
-    } else return measured_choice{select_route(size, nthreads), {}};
+    route_memo& m = memo();
+    const std::lock_guard<std::mutex> lock(m.mu);
+    const auto key = std::make_tuple(size, nthreads, is_forward,
+                                     large_route_serial_override(sizeof(std::complex<T>)));
+    auto it = m.map.find(key);
+    if (it == m.map.end())
+        it = m.map.emplace(key, measure_route(size, is_forward, nthreads)).first;
+    return it->second;
 }
 
 template<typename T>

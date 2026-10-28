@@ -46,7 +46,7 @@ template<typename T> struct r2r_state;
 enum class r2r_kind { dct2, dct3, dst2, dst3 };
 
 // `estimate` routes from the fitted cost model. `automatic` and `measure` also time the top
-// candidates at construction, so the route depends on the host. `ADM_MEASURE=OFF` makes both inert.
+// candidates at construction, so the route depends on the host.
 enum class effort { estimate, automatic, measure };
 
 struct options {

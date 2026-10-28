@@ -58,7 +58,10 @@ struct pinned {
         if (::posix_memalign(&base_, 4096, n * sizeof(T) + ADM_DIGEST_BUF_OFF) != 0)
             throw std::bad_alloc{};
 #endif
-        data_ = reinterpret_cast<T*>(reinterpret_cast<char*>(base_) + ADM_DIGEST_BUF_OFF);
+        // The void* hop keeps -Wcast-align quiet on strict-alignment targets (riscv64,
+        // armhf): alignment is guaranteed by the 4096-aligned base and the offset pin.
+        data_ = static_cast<T*>(static_cast<void*>(reinterpret_cast<char*>(base_) +
+                                                   ADM_DIGEST_BUF_OFF));
     }
     ~pinned() {
 #if defined(_MSC_VER)

@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <complex>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <algorithm>
 #include <numeric>
@@ -19,6 +20,7 @@
 #include <ducc0/fft/fft.h>
 #include <nanobench.h>
 #include <admiral/detail/four_step.hpp>
+#include <admiral/detail/four_step_large.hpp>
 #include <admiral/detail/math.hpp>
 #include <admiral/detail/plan.hpp>
 #include <admiral/detail/twiddles.hpp>
@@ -510,28 +512,55 @@ void print_performance_report() {
     std::cout << "  - Composite: Performance depends on factorization\n";
 }
 
+// Tier A/B driver (D1): out-of-place forward timing through the public plan<T> on 64-byte
+// buffers, no copy in the timed loop, estimate effort, the serial large-route line pinned so
+// large cells do not race their own probe. --extra=P spins P% longer in the timed region: the
+// calibration control of a receipt (band [1.07, 1.13] for --extra=10).
 template<typename T>
-int profile_single_size(std::size_t N, long iters) {
-    std::vector<std::complex<T>> data(N);
-    for (std::size_t i = 0; i < N; ++i) {
-        data[i] = std::complex<T>(std::sin(T(i) * T(0.1)), std::cos(T(i) * T(0.1)));
+static std::complex<T>* alloc64(std::size_t n) {
+    void* p = nullptr;
+    if (posix_memalign(&p, 64, n * sizeof(std::complex<T>)) != 0) std::exit(2);
+    return static_cast<std::complex<T>*>(p);
+}
+
+template<typename T>
+int profile_single_size(const std::vector<std::size_t>& shape, long iters, std::size_t nt,
+                        double extra) {
+    std::size_t n = 1;
+    for (auto e : shape) n *= e;
+    admiral::detail::large_route_serial_override_scope pin(
+        admiral::detail::kLargeRouteSerialF64Bytes, admiral::detail::kLargeRouteSerialF32Bytes);
+    admiral::options o;
+    o.nthreads = nt;
+    o.eff = admiral::effort::estimate;
+    admiral::plan<T> plan(admiral::span<const std::size_t>(shape.data(), shape.size()), o);
+    auto* src = alloc64<T>(n);
+    auto* dst = alloc64<T>(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        src[i] = std::complex<T>(std::sin(T(i) * T(0.1)), std::cos(T(i) * T(0.1)));
+        dst[i] = {};
     }
-    admiral::plan<T> fwd_plan(N);
-    std::vector<std::complex<T>> buf(N);
-    auto t0 = std::chrono::high_resolution_clock::now();
-    for (long it = 0; it < iters; ++it) {
-        std::copy(data.begin(), data.end(), buf.begin());
-        fwd_plan.forward(span(buf));
+    plan.forward(src, dst);
+    auto loop = [&] {
+        auto t0 = std::chrono::steady_clock::now();
+        for (long i = 0; i < iters; ++i) plan.forward(src, dst);
+        return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    };
+    double t_loop = 0;
+    if (extra > 0) t_loop = loop();  // warm loop measures t
+    auto t0 = std::chrono::steady_clock::now();
+    for (long i = 0; i < iters; ++i) plan.forward(src, dst);
+    if (extra > 0) {
+        double spin = extra / 100.0 * t_loop;
+        while (std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() <
+               (t_loop + spin)) {}
     }
-    auto t1 = std::chrono::high_resolution_clock::now();
-    const double total_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    volatile double sink = static_cast<double>(buf[N / 2].real() + buf[N / 2].imag());
+    double total = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    std::printf("per_call_us=%.6f\n", total / static_cast<double>(iters) * 1e6);
+    volatile T sink = dst[n / 2].real();
     (void)sink;
-    std::cout << "size=" << N << " prec=" << ((sizeof(T) == 4) ? "f32" : "f64")
-              << " iters=" << iters
-              << " total_ms=" << std::fixed << std::setprecision(3) << total_ms
-              << " per_call_us=" << std::setprecision(4) << (total_ms * 1e3 / double(iters))
-              << "\n";
+    std::free(src);
+    std::free(dst);
     return 0;
 }
 
@@ -1941,7 +1970,34 @@ int main(int argc, char** argv) {
         if (const auto v = find_arg_size(argc, argv, "--size=")) prof_size = *v;
         if (const auto v = find_arg_long(argc, argv, "--iters=")) prof_iters = *v;
         if (const auto v = find_arg(argc, argv, "--prec=")) prof_prec = *v;
+        std::vector<std::size_t> prof_shape;
+        if (const auto v = find_arg(argc, argv, "--shape=")) {
+            std::string tok;
+            std::istringstream ss(*v);
+            while (std::getline(ss, tok, 'x')) {
+                if (tok.empty()) { std::cerr << "bad --shape=" << *v << "\n"; return 1; }
+                try {
+                    prof_shape.push_back(std::stoull(tok));
+                } catch (const std::invalid_argument&) {
+                    std::cerr << "bad --shape=" << *v << "\n";
+                    return 1;
+                } catch (const std::out_of_range&) {
+                    std::cerr << "bad --shape=" << *v << "\n";
+                    return 1;
+                }
+            }
+        }
+
+        std::size_t prof_nt = 1;
+        if (const auto v = find_arg_size(argc, argv, "--nthreads=")) prof_nt = *v;
+        double prof_extra = 0;
+        if (const auto v = find_arg(argc, argv, "--extra=")) prof_extra = std::stod(*v);
+        if (prof_size == 0 && !prof_shape.empty()) {
+            prof_size = 1;
+            for (auto e : prof_shape) prof_size *= e;
+        }
         if (prof_size > 0) {
+            if (prof_shape.empty()) prof_shape = {prof_size};
             if (prof_iters <= 0) {
                 constexpr long kProfItersTiny = 5000000L;
                 constexpr long kProfItersSmall = 500000L;
@@ -1951,8 +2007,8 @@ int main(int argc, char** argv) {
                            : kProfItersLarge;
             }
             return (prof_prec == "f32" || prof_prec == "float")
-                       ? profile_single_size<float>(prof_size, prof_iters)
-                       : profile_single_size<double>(prof_size, prof_iters);
+                       ? profile_single_size<float>(prof_shape, prof_iters, prof_nt, prof_extra)
+                       : profile_single_size<double>(prof_shape, prof_iters, prof_nt, prof_extra);
         }
     }
 

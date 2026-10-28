@@ -93,13 +93,17 @@ endif()
 function(adm_add_test name source)
     cmake_parse_arguments(ADM_T "ARCH_GATE" "POISON" "" ${ARGN})
 
-    add_executable(${name} ${source})
+    add_executable(${name} ${source} ${CMAKE_CURRENT_SOURCE_DIR}/tier_select.cpp)
     target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
         ${ADM_TEST_EXTRA_INCLUDES_${name}})
     if(ADM_T_POISON)
         target_compile_definitions(${name} PRIVATE ${ADM_T_POISON}=1)
     endif()
     target_compile_options(${name} PRIVATE ${ADM_TEST_EXTRA_OPTIONS_${name}})
+    if(ADM_DISPATCH)
+        target_compile_definitions(${name} PRIVATE ADM_DISPATCH)
+        target_include_directories(${name} PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    endif()
 
     target_link_libraries(${name}
         PRIVATE
@@ -187,6 +191,18 @@ foreach(test_src IN LISTS ADM_TEST_SOURCES)
     get_filename_component(test_name ${test_src} NAME_WE)
     adm_add_test(${test_name} ${test_src})
 endforeach()
+
+# The run-time tier pick: ADM_EXPECT_TIER names the arch the library's own dispatch must
+# choose. CI runs it under the SDE models. Plain add_test: its own main must not be probed by
+# catch_discover_tests.
+if(ADM_DISPATCH)
+    add_executable(test_dispatch api/test_dispatch.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tier_select.cpp)
+    target_include_directories(test_dispatch PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    target_compile_definitions(test_dispatch PRIVATE ADM_DISPATCH)
+    target_link_libraries(test_dispatch PRIVATE admiral_internal)
+    add_test(NAME test_dispatch COMMAND test_dispatch)
+    set_tests_properties(test_dispatch PROPERTIES SKIP_RETURN_CODE 2)
+endif()
 
 # Bit-identity digest driver (test/digest). scripts/validate.sh's `digest` arm builds
 # this target in two builds -- shipped and ADM_USE_FAST_MATH=OFF -- and diffs both

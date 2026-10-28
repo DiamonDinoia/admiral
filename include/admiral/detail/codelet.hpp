@@ -102,6 +102,49 @@ template<typename T, std::size_t Wt = 2>
     else return min_sized_tail_width<T, Wt * 2>();
 }
 
+// Rung-availability policy for the sized-batch ladders below. xsimd's arch ladder can have a
+// HOLE: in an sve512 TU supported_architectures is {sve<512>, neon64, neon}, so the 4-wide
+// double batch (sve<256> is not in the list) and the 8-wide float batch are void there. A
+// synthetic policy with a hole is what the walk test drives, because no shipping target has
+// a hole to test against.
+template<typename T>
+struct sized_rungs {
+    template<std::size_t Wt>
+    [[nodiscard]] static ADM_CONSTEVAL bool live() {
+        return !std::is_void_v<xsimd::make_sized_batch_t<T, Wt>>;
+    }
+};
+
+// Soundness condition for the (rem & rung) bit decomposition at the remainder sites below:
+// scanning rungs wide to narrow over [2, Wt], every dead rung must precede every live one.
+// Dead rungs below the smallest live rung are harmless -- min_sized_tail_width is that rung,
+// so their remainder bits fall into the scalar tail's mask (x86-64 f32 works that way: the
+// 2-wide float batch is void and the smask tail takes the low 2 bits). A dead rung ABOVE a
+// live one is the sve512 hole: the bit decomposition skips the dead rung's whole lane group
+// and the scalar mask never sees it.
+template<typename Rungs, std::size_t Wt, bool SeenDead = false>
+[[nodiscard]] ADM_CONSTEVAL bool sized_ladder_sound() {
+    if constexpr (Wt < 2) return true;
+    else if constexpr (SeenDead && Rungs::template live<Wt>()) return false;
+    else return sized_ladder_sound<Rungs, Wt / 2, SeenDead || !Rungs::template live<Wt>()>();
+}
+
+// Lane cursor a greedy descending walk over rungs (Stop, Wt] reaches on `rem`, starting at
+// lane j: each live rung fires as often as it fits what the rungs above left. With a full
+// ladder this reproduces the bit decomposition; with a hole it takes the next live rung
+// instead of skipping the dead rung's lanes. The scalar tail covers [cover, rem), so walk
+// plus scalars cover every remainder lane whatever the ladder looks like.
+template<typename Rungs, std::size_t Wt, std::size_t Stop = 1>
+[[nodiscard]] ADM_CONSTEVAL std::size_t sized_walk_cover(std::size_t rem, std::size_t j = 0) {
+    if constexpr (Wt >= 2 && Wt > Stop) {
+        if constexpr (Rungs::template live<Wt>())
+            while (j + Wt <= rem) j += Wt;
+        return sized_walk_cover<Rungs, Wt / 2, Stop>(rem, j);
+    } else {
+        return j;
+    }
+}
+
 // Batch width the column codelet serves a block of `ncols` columns with, or 0 for the native batch:
 // the widest sized batch below the native one that DIVIDES the block. Without it a block the native
 // batch does not fill sends its whole remainder down the scalar-staged tail. This is the ONLY route
@@ -150,20 +193,50 @@ ADM_ALWAYS_INLINE void radix_butterfly_ct(T* ADM_RESTRICT yre, T* ADM_RESTRICT y
         }
     }
     constexpr std::size_t rem = M - nfull * W;
-    poet::static_for<1, detail::bit_width(W)>([&](auto S) {
-        constexpr std::size_t Wt = W >> S;
-        using Vt = xsimd::make_sized_batch_t<T, Wt>;
-        if constexpr (Wt >= 2 && !std::is_void_v<Vt> && (rem & Wt) != 0) {
-            bfly_chunk<R, T, Vt>(twre.data(), twim.data(), yre, yim, M,
-                                 nfull * W + (rem & ~(2 * Wt - 1)), sink);
+    // A sized-batch ladder hole ABOVE a live rung (see sized_ladder_sound) turns the bit
+    // decomposition into a silent lane drop. Keep the bit decomposition where the ladder is
+    // sound; with a hole take the greedy cursor walk instead.
+    if constexpr (sized_ladder_sound<sized_rungs<T>, W / 2>()) {
+        poet::static_for<1, detail::bit_width(W)>([&](auto S) {
+            constexpr std::size_t Wt = W >> S;
+            using Vt = xsimd::make_sized_batch_t<T, Wt>;
+            if constexpr (Wt >= 2 && !std::is_void_v<Vt> && (rem & Wt) != 0) {
+                bfly_chunk<R, T, Vt>(twre.data(), twim.data(), yre, yim, M,
+                                     nfull * W + (rem & ~(2 * Wt - 1)), sink);
+            }
+        });
+        constexpr std::size_t smask = min_sized_tail_width<T>() - 1;
+        constexpr std::size_t nscal = rem & smask;
+        constexpr std::size_t jscal = nfull * W + (rem & ~smask);
+        poet::static_for<0, nscal>([&](auto I) {
+            bfly_chunk_scalar_ct<R, N, jscal + I, T>(yre, yim, sink);
+        });
+    } else {
+        // The scalar tail's count is rem minus the walk's cover, so walk plus scalars cover
+        // every lane of [0, rem) exactly once. The static_assert pins the walk side of the
+        // pair: a walk that overruns the remainder (a lane covered twice) fails the build.
+        constexpr std::size_t cover = sized_walk_cover<sized_rungs<T>, W / 2>(rem);
+        static_assert(cover <= rem, "sized-rung walk covers each remainder lane at most once");
+        poet::static_for<1, detail::bit_width(W)>([&](auto S) {
+            constexpr std::size_t Wt = W >> S;
+            using Vt = xsimd::make_sized_batch_t<T, Wt>;
+            constexpr std::size_t j0 = sized_walk_cover<sized_rungs<T>, W / 2, Wt>(rem);
+            constexpr std::size_t nrun =
+                (Wt >= 2 && !std::is_void_v<Vt>) ? (rem - j0) / Wt : 0;
+            if constexpr (nrun > 0) {
+                poet::static_for<0, nrun>([&](auto F) {
+                    bfly_chunk<R, T, Vt>(twre.data(), twim.data(), yre, yim, M,
+                                         nfull * W + j0 + static_cast<std::size_t>(F) * Wt,
+                                         sink);
+                });
+            }
+        });
+        if constexpr (cover < rem) {
+            poet::static_for<0, rem - cover>([&](auto I) {
+                bfly_chunk_scalar_ct<R, N, nfull * W + cover + I, T>(yre, yim, sink);
+            });
         }
-    });
-    constexpr std::size_t smask = min_sized_tail_width<T>() - 1;
-    constexpr std::size_t nscal = rem & smask;
-    constexpr std::size_t jscal = nfull * W + (rem & ~smask);
-    poet::static_for<0, nscal>([&](auto I) {
-        bfly_chunk_scalar_ct<R, N, jscal + I, T>(yre, yim, sink);
-    });
+    }
 }
 
 template<unsigned R, unsigned N, typename T>
@@ -537,20 +610,50 @@ struct kernel {
                     }
                 }
                 constexpr std::size_t C = M - nft * Wc;
-                poet::static_for<1, detail::bit_width(Wc)>([&](auto S) {
-                    constexpr std::size_t Wt = Wc >> S;
-                    using Vt = xsimd::make_sized_batch_t<T, Wt>;
-                    if constexpr (Wt >= 2 && !std::is_void_v<Vt> && (C & Wt) != 0) {
-                        bfly_chunk<r, T, Vt>(twre.data(), twim.data(), yre, yim, M,
-                                             nft * Wc + (C & ~(2 * Wt - 1)), sink);
+                // Same sized-ladder hole guard as in radix_butterfly_ct: the bit
+                // decomposition is kept where the ladder is sound, the cursor walk covers C
+                // wherever xsimd's arch list leaves a dead rung above a live one.
+                if constexpr (sized_ladder_sound<sized_rungs<T>, Wc / 2>()) {
+                    poet::static_for<1, detail::bit_width(Wc)>([&](auto S) {
+                        constexpr std::size_t Wt = Wc >> S;
+                        using Vt = xsimd::make_sized_batch_t<T, Wt>;
+                        if constexpr (Wt >= 2 && !std::is_void_v<Vt> && (C & Wt) != 0) {
+                            bfly_chunk<r, T, Vt>(twre.data(), twim.data(), yre, yim, M,
+                                                 nft * Wc + (C & ~(2 * Wt - 1)), sink);
+                        }
+                    });
+                    constexpr std::size_t smask = min_sized_tail_width<T>() - 1;
+                    constexpr std::size_t nscal = C & smask;
+                    poet::static_for<0, nscal>([&](auto I) {
+                        constexpr std::size_t J = nft * Wc + (C & ~smask) + I;
+                        bfly_chunk_scalar_ct<r, N, J, T>(yre, yim, sink);
+                    });
+                } else {
+                    constexpr std::size_t cover = sized_walk_cover<sized_rungs<T>, Wc / 2>(C);
+                    static_assert(cover <= C,
+                                  "sized-rung walk covers each remainder lane at most once");
+                    poet::static_for<1, detail::bit_width(Wc)>([&](auto S) {
+                        constexpr std::size_t Wt = Wc >> S;
+                        using Vt = xsimd::make_sized_batch_t<T, Wt>;
+                        constexpr std::size_t j0 =
+                            sized_walk_cover<sized_rungs<T>, Wc / 2, Wt>(C);
+                        constexpr std::size_t nrun =
+                            (Wt >= 2 && !std::is_void_v<Vt>) ? (C - j0) / Wt : 0;
+                        if constexpr (nrun > 0) {
+                            poet::static_for<0, nrun>([&](auto F) {
+                                bfly_chunk<r, T, Vt>(
+                                    twre.data(), twim.data(), yre, yim, M,
+                                    nft * Wc + j0 + static_cast<std::size_t>(F) * Wt, sink);
+                            });
+                        }
+                    });
+                    if constexpr (cover < C) {
+                        poet::static_for<0, C - cover>([&](auto I) {
+                            constexpr std::size_t J = nft * Wc + cover + I;
+                            bfly_chunk_scalar_ct<r, N, J, T>(yre, yim, sink);
+                        });
                     }
-                });
-                constexpr std::size_t smask = min_sized_tail_width<T>() - 1;
-                constexpr std::size_t nscal = C & smask;
-                poet::static_for<0, nscal>([&](auto I) {
-                    constexpr std::size_t J = nft * Wc + (C & ~smask) + I;
-                    bfly_chunk_scalar_ct<r, N, J, T>(yre, yim, sink);
-                });
+                }
                 return;
             }
         }

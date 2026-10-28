@@ -373,7 +373,7 @@ TEST_CASE("pool pinning: mapping, and the pin flag pins spawned workers only",
         rc[tid] = sched_getaffinity(0, sizeof rec[tid], &rec[tid]);  // per-tid slot: no race
     };
     const std::vector<std::size_t>& pins = pool_pin_cpus();  // oracle mapping
-    if (pins.size() < 1) {
+    if (pins.empty()) {
         // Unreadable topology or no pinnable core in the affinity mask: nothing to pin the
         // one spawned worker below to (pool(2,...) spawns nthreads-1 == 1 worker), so the
         // exact-affinity check cannot run on this host.
@@ -430,7 +430,7 @@ TEST_CASE("options::pin_threads reaches the large-route pool on a 1-D plan",
     // `opts.pin_threads`. Bits alone (the case above) can't see a scheduling-only bug.
     using admiral::detail::pool_pin_cpus;
     const std::vector<std::size_t>& pins = pool_pin_cpus();
-    if (pins.size() < 1) {
+    if (pins.empty()) {
         WARN("pool pinning unavailable here (pool_pin_cpus() reports " << pins.size()
                                                                         << " cores); skipped");
         return;

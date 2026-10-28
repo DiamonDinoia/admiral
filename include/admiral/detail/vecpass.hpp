@@ -18,7 +18,7 @@ struct pass_info {
 
 template<typename T>
 struct multipass_tables {
-    admiral::detail::dif_factor_plan fp{};
+    admiral::detail::dif_factor_plan fp;
     std::vector<pass_info>       passes;
     std::vector<T>               tw_re, tw_im;
     std::size_t                  M = 0;

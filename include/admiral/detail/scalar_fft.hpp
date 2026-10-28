@@ -296,7 +296,7 @@ public:
         : shape_(shape.begin(), shape.end()), stride_(shape_.size(), 1) {
         if (!extent_product(shape_)) ADM_UNLIKELY
             throw size_error("Plan size must be greater than 0");
-        if (n_axes > shape_.size()) n_axes = shape_.size();
+        n_axes = std::min(n_axes, shape_.size());
         active_ = n_axes;
         total_ = 1;
         for (std::size_t d = shape_.size(); d-- > 0;) {

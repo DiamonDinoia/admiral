@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -159,8 +160,8 @@ Table load(const std::string& data_dir) {
             const std::string prec = m[2];
             if (n < NMIN || n > NMAX) continue;
             if (!env.count(prec))
-                die(fn + ": BASECOST line for prec=" + prec +
-                    " with no BASECOST-ENV (re-sweep, or add the file to LEGACY_ENV)");
+                die(std::string(fn).append(": BASECOST line for prec=").append(prec)
+                    .append(" with no BASECOST-ENV (re-sweep, or add the file to LEGACY_ENV)"));
             T[env[prec]][n][m[3]] = std::stod(m[4]);
         }
     }
@@ -567,13 +568,15 @@ std::map<std::string, Fitted> parse_coef_header(const std::string& path) {
         const std::size_t pos = text.find("struct " + form + " {");
         if (pos == std::string::npos) continue;
         const std::size_t end = text.find("\n};", pos);
-        if (end == std::string::npos) die(path + ": unterminated struct " + form);
+        if (end == std::string::npos)
+            die(std::string(path).append(": unterminated struct ").append(form));
         const std::string blk = text.substr(pos, end - pos);
         std::smatch m;
         if (!std::regex_search(blk, m, bias_re))
-            die(path + ": no bias in struct " + form);
+            die(std::string(path).append(": no bias in struct ").append(form));
         const double bias = std::stod(m[1]);
-        if (!std::regex_search(blk, m, w_re)) die(path + ": no w in struct " + form);
+        if (!std::regex_search(blk, m, w_re))
+            die(std::string(path).append(": no w in struct ").append(form));
         std::vector<double> flat;
         std::stringstream ws(m[1]);
         std::string tok;
@@ -584,8 +587,9 @@ std::map<std::string, Fitted> parse_coef_header(const std::string& path) {
         }
         const std::size_t keep = form_body(form).exprs.size();
         if (flat.size() != keep + 3)
-            die(path + ": struct " + form + " has " + std::to_string(flat.size()) +
-                " coefficients, expected " + std::to_string(keep + 3));
+            die(std::string(path).append(": struct ").append(form).append(" has ")
+                .append(std::to_string(flat.size()))
+                .append(" coefficients, expected ").append(std::to_string(keep + 3)));
         std::vector<double> w(NF, 0.0);
         for (std::size_t i = 0; i < keep; ++i) w[i] = flat[i];
         w[NF - 3] = flat[keep];
@@ -612,8 +616,9 @@ int run_score(const Args& args) {
             for (const auto& [f, c] : hdrs.front().second) a += f + ",";
             for (const auto& [f, c] : hc) b += f + ",";
             if (hdrs.front().second.size() != hc.size() || a != b)
-                die("form set of " + p + " (" + b + ") differs from " +
-                    args.score.front() + " (" + a + ")");
+                die(std::string("form set of ").append(p).append(" (").append(b)
+                    .append(") differs from ").append(args.score.front())
+                    .append(" (").append(a).append(")"));
         }
         hdrs.emplace_back(std::filesystem::path(p).filename().string(), std::move(hc));
     }
@@ -852,26 +857,31 @@ int run(const Args& args) {
 }
 
 int main(int argc, char** argv) {
-    Args args;
-    for (int i = 1; i < argc; ++i) {
-        const std::string a = argv[i];
-        const auto next = [&](const char* name) -> std::string {
-            if (++i >= argc) die(std::string(name) + " expects a value");
-            return argv[i];
-        };
-        if (a == "--data")
-            args.data = next("--data");
-        else if (a == "--out")
-            args.out = next("--out");
-        else if (a == "--alpha")
-            args.alpha = std::stod(next("--alpha"));
-        else if (a == "--score") {
-            std::stringstream ss(next("--score"));
-            std::string tok;
-            while (std::getline(ss, tok, ',')) args.score.push_back(tok);
-        } else
-            die("unknown argument: " + a);
+    try {
+        Args args;
+        for (int i = 1; i < argc; ++i) {
+            const std::string a = argv[i];
+            const auto next = [&](const char* name) -> std::string {
+                if (++i >= argc) die(std::string(name) + " expects a value");
+                return argv[i];
+            };
+            if (a == "--data")
+                args.data = next("--data");
+            else if (a == "--out")
+                args.out = next("--out");
+            else if (a == "--alpha")
+                args.alpha = std::stod(next("--alpha"));
+            else if (a == "--score") {
+                std::stringstream ss(next("--score"));
+                std::string tok;
+                while (std::getline(ss, tok, ',')) args.score.push_back(tok);
+            } else
+                die("unknown argument: " + a);
+        }
+        if (!args.score.empty()) return run_score(args);
+        return run(args);
+    } catch (const std::exception& e) {
+        std::cerr << "fit_cost_model: " << e.what() << '\n';
+        return 1;
     }
-    if (!args.score.empty()) return run_score(args);
-    return run(args);
 }

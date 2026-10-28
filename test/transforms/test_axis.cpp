@@ -35,7 +35,7 @@ void for_each_line(const std::vector<std::size_t>& shape, const std::vector<std:
     if (d == shape.size()) { f(base); return; }
     if (d == axis) { for_each_line(shape, st, lo, hi, axis, d + 1, base, f); return; }
     for (std::size_t i = lo[d]; i < hi[d]; ++i)
-        for_each_line(shape, st, lo, hi, axis, d + 1, base + i * st[d], std::forward<F>(f));
+        for_each_line(shape, st, lo, hi, axis, d + 1, base + i * st[d], f);
 }
 
 template<typename T>

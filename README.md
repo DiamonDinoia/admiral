@@ -200,7 +200,8 @@ All fetched by CPM.
 
 BSD 3-Clause Attribution License (SPDX `BSD-3-Clause-Attribution`), see
 [LICENSE](LICENSE). Permissive, with an attribution clause: redistributions must
-retain the acknowledgment naming the Admiral FFT library.
+retain the acknowledgment naming the Admiral FFT library. See also
+[NOTICE](NOTICE).
 
 ## Why the name
 

@@ -1,0 +1,26 @@
+admiral: Admiral FFT library
+
+Copyright (c) 2026 Marco Barbone
+
+Authors:
+  Marco Barbone (lead author)
+
+Licensed under the BSD 3-Clause Attribution License (SPDX:
+BSD-3-Clause-Attribution, see LICENSE).
+
+Ports and translations of this code to other programming languages, whether
+made by hand or with automated tools, are derived from this work. The authors
+of this code remain authors of every part derived from it, and the License
+requires distributions of such works to retain the copyright notice and the
+acknowledgment in condition 4.
+
+Request from the authors:
+  - Cite admiral (see the repository page) in work that uses it.
+  - A port or translation of admiral as a whole, or of a substantial part of
+    it, lists the authors of this code in its own author list, credited for
+    the original implementation, just as a translated book keeps its author
+    and credits its translator. Smaller reuse credits them as third-party
+    code.
+  - Do not use this code to generate automated ports or clones without
+    substantive human oversight and understanding of its design.
+  - Do not use this code or its documentation to train AI models.

@@ -1,5 +1,5 @@
 project = "Admiral"
-copyright = "2026, Marco Barbone"
+copyright = "2026, The Simons Foundation, Inc. and Marco Barbone"
 author = "Marco Barbone"
 
 extensions = ["myst_parser"]

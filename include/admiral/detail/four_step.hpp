@@ -231,15 +231,11 @@ inline void fsb_dispatch_pack(std::index_sequence<I...>, std::size_t N1, std::si
 }
 
 template<typename T, bool Forward>
-inline void four_step_batched_dispatch([[maybe_unused]] std::size_t N1, [[maybe_unused]] std::size_t N2,
-        [[maybe_unused]] const T* ire, [[maybe_unused]] const T* iim,
-        [[maybe_unused]] T* ore, [[maybe_unused]] T* oim,
-        [[maybe_unused]] const T* twre, [[maybe_unused]] const T* twim,
-        [[maybe_unused]] T* Gre, [[maybe_unused]] T* Gim) {
-    if constexpr (sizeof(T) == 4) {
-        fsb_dispatch_pack<T, Forward>(std::make_index_sequence<fsb_splits.size()>{},
-                                      N1, N2, ire, iim, ore, oim, twre, twim, Gre, Gim);
-    }
+inline void four_step_batched_dispatch(std::size_t N1, std::size_t N2,
+        const T* ire, const T* iim, T* ore, T* oim, const T* twre, const T* twim,
+        T* Gre, T* Gim) {
+    fsb_dispatch_pack<T, Forward>(std::make_index_sequence<fsb_splits.size()>{},
+                                  N1, N2, ire, iim, ore, oim, twre, twim, Gre, Gim);
 }
 
 template<typename T>
@@ -249,26 +245,30 @@ struct four_step_batched_plan {
     std::vector<T> twre, twim;
 
     four_step_batched_plan(std::size_t N, bool fwd) : is_forward(fwd) {
-        const four_step_split sp = fsb_split_for<T>(N);
-        n1 = sp.n1;
-        n2 = sp.n2;
-        constexpr std::size_t W = xsimd::batch<T>::size;
-        const auto tw = fwd ? build_four_step_twiddles_v<T, true>(n1, n2, W)
-                            : build_four_step_twiddles_v<T, false>(n1, n2, W);
-        twre.resize(N);
-        twim.resize(N);
-        for (std::size_t i = 0; i < N; ++i) { twre[i] = tw[i].real(); twim[i] = tw[i].imag(); }
+        if constexpr (sizeof(T) == 4) {
+            const four_step_split sp = fsb_split_for<T>(N);
+            n1 = sp.n1;
+            n2 = sp.n2;
+            constexpr std::size_t W = xsimd::batch<T>::size;
+            const auto tw = fwd ? build_four_step_twiddles_v<T, true>(n1, n2, W)
+                                : build_four_step_twiddles_v<T, false>(n1, n2, W);
+            twre.resize(N);
+            twim.resize(N);
+            for (std::size_t i = 0; i < N; ++i) { twre[i] = tw[i].real(); twim[i] = tw[i].imag(); }
+        }
     }
 
     void execute(const std::complex<T>* in, std::complex<T>* out) const {
-        const std::size_t N = std::size_t(n1) * n2;
-        alignas(xsimd::batch<T>::arch_type::alignment()) T are[FSB_MAX_N], aim[FSB_MAX_N], Gre[FSB_MAX_N], Gim[FSB_MAX_N];
-        for (std::size_t i = 0; i < N; ++i) { are[i] = in[i].real(); aim[i] = in[i].imag(); }
-        if (is_forward)
-            four_step_batched_dispatch<T, true>(n1, n2, are, aim, are, aim, twre.data(), twim.data(), Gre, Gim);
-        else
-            four_step_batched_dispatch<T, false>(n1, n2, are, aim, are, aim, twre.data(), twim.data(), Gre, Gim);
-        for (std::size_t i = 0; i < N; ++i) out[i] = std::complex<T>(are[i], aim[i]);
+        if constexpr (sizeof(T) == 4) {
+            const std::size_t N = std::size_t(n1) * n2;
+            alignas(xsimd::batch<T>::arch_type::alignment()) T are[FSB_MAX_N], aim[FSB_MAX_N], Gre[FSB_MAX_N], Gim[FSB_MAX_N];
+            for (std::size_t i = 0; i < N; ++i) { are[i] = in[i].real(); aim[i] = in[i].imag(); }
+            if (is_forward)
+                four_step_batched_dispatch<T, true>(n1, n2, are, aim, are, aim, twre.data(), twim.data(), Gre, Gim);
+            else
+                four_step_batched_dispatch<T, false>(n1, n2, are, aim, are, aim, twre.data(), twim.data(), Gre, Gim);
+            for (std::size_t i = 0; i < N; ++i) out[i] = std::complex<T>(are[i], aim[i]);
+        }
     }
 };
 

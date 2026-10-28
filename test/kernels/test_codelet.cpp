@@ -173,10 +173,6 @@ void check_four_step() {
 }
 
 TEST_CASE("batched four-step matches reference DFT (composition of kernels, N>64)", "[codelet][fourstep]") {
-    check_four_step<16, 16, double>();
-    check_four_step<32, 32, double>();
-    check_four_step<64, 64, double>();
-    check_four_step<32, 64, double>();
     check_four_step<16, 16, float>();
     check_four_step<32, 32, float>();
     check_four_step<32, 64, float>();

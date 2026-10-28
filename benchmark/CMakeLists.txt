@@ -1,6 +1,5 @@
 add_executable(admiral_benchmark
-    bench_pass_f.cpp
-    bench_pass_d.cpp
+    bench_pass_inst.cpp
     bench_fft.cpp
     bench_nd.cpp
     bench_execute_overhead.cpp

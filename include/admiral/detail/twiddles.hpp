@@ -798,7 +798,7 @@ struct dif_twiddle_set {
 };
 
 template<typename T, bool Forward>
-void dif_build_tape(dif_twiddle_set<T>& s, std::size_t N);
+void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N);
 
 template<typename T>
 [[nodiscard]] dif_twiddle_set<T> build_dif_twiddle_set(std::size_t N,

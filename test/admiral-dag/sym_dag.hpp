@@ -54,7 +54,7 @@ public:
     // double fold. The exact-match overload applies the shipped rounding explicitly,
     // where the implicit double -> float hop through the converting ctor would trip
     // -Wfloat-conversion.
-    template <typename U = T, typename std::enable_if<std::is_same_v<U, float>, int>::type = 0>
+    template <typename U = T, std::enable_if_t<std::is_same_v<U, float>, int> = 0>
     sym(double v) : sym(static_cast<T>(v)) {}
     // Lift from the real-batch seam (the granule dialect's f32 row-tile transpose returns
     // real batches): a leaf, not a computation.
@@ -102,7 +102,7 @@ public:
     static std::uint64_t uninit_reads() { return uninit_counter(); }
     static void reset_counters() { uninit_counter() = 0; }
 
-    std::uint32_t id() const { return id_; }
+    [[nodiscard]] std::uint32_t id() const { return id_; }
 
     // Node makers, one fused node per call: the census counts as shipped and never
     // re-decides contraction. Public because the namespace-xsimd shims call them.
@@ -202,7 +202,7 @@ public:
     sym_int() noexcept = default;
     sym_int(admiral_dag::pool<F>* p, std::uint32_t id) noexcept : p_(p), id_(id) {}
 
-    sym_int make_flip(std::uint64_t mask_hash) const {
+    [[nodiscard]] sym_int make_flip(std::uint64_t mask_hash) const {
         return sym_int(p_, p_->make_flip(id_, mask_hash));
     }
 
@@ -275,12 +275,12 @@ void transpose(admiral_dag::sym<T>* first, admiral_dag::sym<T>* last) {
 
 // Cast views. Same-width: an int-view handle over the same node. Cross-width (the f32
 // tile's out-cast to double): a real-batch sink; the sym side just counts the downcast.
-template <typename To, typename T, typename std::enable_if<sizeof(To) == sizeof(T), int>::type = 0>
+template <typename To, typename T, std::enable_if_t<sizeof(To) == sizeof(T), int> = 0>
 admiral_dag::sym_int<To, T> bitwise_cast(const admiral_dag::sym<T>& v) {
     return admiral_dag::sym_int<To, T>(admiral_dag::sym<T>::pool_of(v),
                                        admiral_dag::sym<T>::id_of(v));
 }
-template <typename To, typename T, typename std::enable_if<sizeof(To) != sizeof(T), int>::type = 0>
+template <typename To, typename T, std::enable_if_t<sizeof(To) != sizeof(T), int> = 0>
 batch<To, typename admiral_dag::sym<T>::arch_type> bitwise_cast(const admiral_dag::sym<T>&) {
     using S = admiral_dag::sym<T>;
     ++S::ctx().sunk;

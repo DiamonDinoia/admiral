@@ -123,7 +123,7 @@ void dif_pass_small_ido(const T* ccre, const T* ccim,
         constexpr std::size_t kL1 = 48u * 1024u;
         std::size_t bt = (kL1 / 2u) / (4u * IP * ido * sizeof(T));
         if (bt == 0) bt = 1;
-        if (bt > l1) bt = l1;
+        bt = std::min(bt, l1);
         for (std::size_t b0 = 0; b0 < l1; b0 += bt) {
             const std::size_t bend = b0 + bt < l1 ? b0 + bt : l1;
             sized_cover<T, W0, true>(0, ido, [&](auto PWc, std::size_t a) {

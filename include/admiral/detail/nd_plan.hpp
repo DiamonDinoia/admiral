@@ -614,8 +614,8 @@ template<typename T>
 class nd_runtime_plan {
     struct M {
         std::vector<std::size_t> shape;
-        bool is_forward;
-        std::size_t total;
+        bool is_forward = false;
+        std::size_t total = 0;
         std::vector<nd_axis_state<T>> axes;
         std::unique_ptr<thread_pool> pool;
         bool fuse_planes = false;

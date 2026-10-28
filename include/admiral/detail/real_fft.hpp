@@ -349,10 +349,10 @@ private:
 
     struct M {
         std::vector<std::size_t> shape;
-        std::size_t inner_len;
-        std::size_t Nh;
-        std::size_t rows;
-        std::size_t total_c;
+        std::size_t inner_len = 0;
+        std::size_t Nh = 0;
+        std::size_t rows = 0;
+        std::size_t total_c = 0;
         // Engaged for the whole lifetime: the ctor emplaces it or throws. Each `rp->` below
         // carries a NOLINT, because a per-function analysis cannot see across a constructor.
         std::optional<real_adm_plan<T>> rp;

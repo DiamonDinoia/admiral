@@ -132,9 +132,9 @@ ADM_ALWAYS_INLINE void dd_twiddle(const dd_const& w, gdd& yr, gdd& yi) {
 // f / div = (fh + fl) * 2^q, to about 2^-104: a long double 1 / div would round the scale first.
 struct dd_grid {
     dd_grid(unsigned emax, std::size_t growth, long double f, int down = 0, std::size_t div = 1)
-        : fct(f / static_cast<long double>(div)) {
-        s = 48 - bit_width(growth - 1) - (static_cast<int>(std::max(emax, 1u)) - 16382);
-        so = s - down;
+        : s(48 - bit_width(growth - 1) - (static_cast<int>(std::max(emax, 1u)) - 16382)),
+          so(s - down),
+          fct(f / static_cast<long double>(div)) {
         int q = 0;
         const long double m = std::frexp(f, &q);
         const double mh = static_cast<double>(m);

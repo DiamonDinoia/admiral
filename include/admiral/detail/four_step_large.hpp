@@ -215,7 +215,7 @@ void four_step_transpose_inplace(std::complex<T>* m, std::size_t R, std::size_t 
 // at M + j0 * ld + i0 advances W * ld per step and a whole row walk lands in the same cache
 // sets. A B x B panel holds both tiles of every pair in L1 across the panel, which is the
 // blocking four_step_transpose_band already has and this walk never got.
-[[nodiscard]] inline constexpr std::size_t four_step_panel_tiles(std::size_t W) {
+[[nodiscard]] constexpr std::size_t four_step_panel_tiles(std::size_t W) {
     return four_step_tblock >= W ? four_step_tblock / W : std::size_t{1};
 }
 
@@ -603,7 +603,7 @@ template<typename T>
     return choose_fused_large_split<T>(N).valid();
 }
 
-[[nodiscard]] inline constexpr bool fsl_ws_engaged(const thread_pool* pool) {
+[[nodiscard]] constexpr bool fsl_ws_engaged(const thread_pool* pool) {
     return pool != nullptr && pool->size() > 1;
 }
 

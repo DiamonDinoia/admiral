@@ -501,6 +501,7 @@ TEMPLATE_TEST_CASE("effort::measure elects the same route under concurrent first
         CAPTURE(n);
         std::array<std::string, kRacers> routes;
         std::vector<std::thread> racers;
+        racers.reserve(kRacers);
         for (std::size_t i = 0; i < kRacers; ++i)
             racers.emplace_back([&, i] {
                 routes[i] = admiral::detail::plan_impl<T>(n, true, 4, nullptr,

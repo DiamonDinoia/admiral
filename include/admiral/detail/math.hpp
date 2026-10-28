@@ -167,13 +167,13 @@ inline constexpr double kFourStepOverhead = 1.13;
 template<typename T>
 // Cycles for four_step at N = n1*n2: n1 leaves of length n2 plus n2 of length n1, times the
 // transpose and twist overhead.
-[[nodiscard]] inline constexpr double four_step_cost(std::size_t n1, std::size_t n2) {
+[[nodiscard]] constexpr double four_step_cost(std::size_t n1, std::size_t n2) {
     return kFourStepOverhead *
            (double(n1) * leaf_cost_cyc<T>(n2) + double(n2) * leaf_cost_cyc<T>(n1));
 }
 
 // four_step_cost against the frozen gate table instead of the live leaf tables.
-[[nodiscard]] inline constexpr double gate_four_step_cost(std::size_t n1, std::size_t n2) {
+[[nodiscard]] constexpr double gate_four_step_cost(std::size_t n1, std::size_t n2) {
     return kFourStepOverhead * (double(n1) * gate_leaf_cyc(n2) + double(n2) * gate_leaf_cyc(n1));
 }
 

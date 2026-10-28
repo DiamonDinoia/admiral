@@ -340,17 +340,17 @@ public:
         return tagged;
     }
 
-    const std::vector<node>& nodes() const noexcept { return nodes_; }
-    std::size_t size() const noexcept { return nodes_.size(); }
-    const std::array<std::uint64_t, kOpCount>& op_hist() const noexcept { return hist_; }
-    std::uint64_t op_count() const noexcept {
+    [[nodiscard]] const std::vector<node>& nodes() const noexcept { return nodes_; }
+    [[nodiscard]] std::size_t size() const noexcept { return nodes_.size(); }
+    [[nodiscard]] const std::array<std::uint64_t, kOpCount>& op_hist() const noexcept { return hist_; }
+    [[nodiscard]] std::uint64_t op_count() const noexcept {
         std::uint64_t t = 0;
         for (std::size_t i = 0; i < kOpCount; ++i)
             if (is_fp_op(static_cast<op>(i))) t += hist_[i];
         return t;
     }
-    std::uint64_t created() const noexcept { return created_; }
-    std::uint64_t intern_dups() const noexcept { return intern_dups_; }
+    [[nodiscard]] std::uint64_t created() const noexcept { return created_; }
+    [[nodiscard]] std::uint64_t intern_dups() const noexcept { return intern_dups_; }
 
 private:
     std::uint32_t append(const node& n) {
@@ -453,7 +453,7 @@ public:
         }
         return out;
     }
-    std::size_t distinct() const noexcept { return table_.size(); }
+    [[nodiscard]] std::size_t distinct() const noexcept { return table_.size(); }
 
 private:
     std::map<canon_key, std::uint32_t> table_;

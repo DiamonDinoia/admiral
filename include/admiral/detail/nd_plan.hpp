@@ -812,7 +812,7 @@ nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forwa
     // ADMISSION PREDICATE of the rank-3 cube fast path (the granule-cube seat). Every
     // term is a property the general path would recompute on every execute(): rank 3,
     // serial, unfused, equal extents in the decoupled cube admission set
-    // (granule_cube_admit_v, which folds the ADM_GRANULE_ADMIT knob), with the leaf the
+    // (granule_cube_admit_v, which folds the ADM_GRANULE_ADMIT_OFF define), with the leaf the
     // driver can actually reach (a catalog that drops 4 or 8 keeps the general path).
     if constexpr (kGranuleFmaddsub) {
         if (m.shape.size() == 3 && m.pool == nullptr && !m.fuse_planes) {

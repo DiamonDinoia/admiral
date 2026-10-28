@@ -281,8 +281,8 @@ TEST_CASE("granule f64-rows / f32-cols reduced-width rungs match reference DFT",
 // The admission truth tables, evaluated over the whole generated catalog: each predicate
 // answers true exactly at its body's measured set, so a catalog change or a flipped bit is
 // loud at compile time in both precisions. ISA-probe-relative, so they hold in every build.
-// Under ADM_GRANULE_ADMIT=OFF the ON-state folds would assert against a table the knob
-// already zeroed, so the knob sides are compiled separately: ON keeps the exact table,
+// Under -DADM_GRANULE_ADMIT_OFF the ON-state folds would assert against a table the define
+// already zeroed, so the two sides are compiled separately: plain keeps the exact table,
 // OFF asserts the table is empty (the fold cannot pass unless every entry is false).
 #ifndef ADM_GRANULE_ADMIT_OFF
 namespace {
@@ -400,7 +400,7 @@ TEST_CASE("granule bits do not depend on data alignment class", "[codelet][granu
 #ifdef ADM_GRANULE_ADMIT_OFF
     // No admitted (N, prec) exists for this case to exercise; the OFF static asserts
     // above are its evidence. Name the skip rather than pass on zero work.
-    SKIP("granule admission compiled out (ADM_GRANULE_ADMIT=OFF)");
+    SKIP("granule admission compiled out (ADM_GRANULE_ADMIT_OFF)");
 #endif
     // One pair per (N, prec) whose rows flip landed; each call exercises whichever
     // body the same commit admitted (the other arm goes live at its own flip).
@@ -469,7 +469,7 @@ TEST_CASE("granule cube bits do not depend on data alignment class", "[codelet][
     if constexpr (!kGranuleFmaddsub)
         SKIP("granule dialect compiled out at this ISA");
 #ifdef ADM_GRANULE_ADMIT_OFF
-    SKIP("granule admission compiled out (ADM_GRANULE_ADMIT=OFF)");
+    SKIP("granule admission compiled out (ADM_GRANULE_ADMIT_OFF)");
 #endif
     check_granule_cube_align<4, float, true>();
     check_granule_cube_align<4, float, false>();

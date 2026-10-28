@@ -1,6 +1,6 @@
 // Granule-admission A/B runner. scripts/validate.sh's granule-admission arm
-// builds this binary twice per ISA (ADM_GRANULE_ADMIT ON/OFF) and interleaves invocations
-// on one pinned core; the arm owns the verdict, this binary only measures and prints TSV.
+// builds this binary twice per ISA (plain and -DADM_GRANULE_ADMIT_OFF) and interleaves
+// invocations on one pinned core; the arm owns the verdict, this binary only measures and prints TSV.
 //
 // Two modes:
 //   default:     public-engine cells over the admitted set ({12,24}^2 x {f32,f64} plus

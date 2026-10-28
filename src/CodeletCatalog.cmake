@@ -1,14 +1,11 @@
 
-set(ADM_CODELET_MIN_N 2 CACHE STRING
-    "Smallest N considered for compiled straight-line codelets")
-set(ADM_CODELET_MAX_N 64 CACHE STRING
-    "Largest N considered for compiled straight-line codelets")
-set(ADM_CODELET_EXCLUDE_SIZES "" CACHE STRING
-    "Semicolon-separated sizes excluded from the generated codelet catalog")
-set(ADM_CODELET_EXTRA_SIZES "120;65;85;143;100;360" CACHE STRING
-    "Semicolon-separated sizes added to the catalog beyond [MIN_N, MAX_N]")
+# The shipped catalog: a straight-line codelet per N in [2, 64], plus the production extras
+# below (each a receipted size). Shape the catalog here against a receipt; a -D at configure
+# time has no channel in.
+set(ADM_CODELET_MAX_N 64)
+set(ADM_CODELET_EXTRA_SIZES "120;65;85;143;100;360")
 
-if(NOT ADM_SANITIZER STREQUAL "none")
+if(CMAKE_CXX_FLAGS MATCHES "fsanitize")
     # A sanitized TU costs ~3 GB and minutes, so the catalog is trimmed. 45 stays in it because
     # the batched leaves roll their block loop only from kManyRollMinBlocks blocks up
     # (include/admiral/detail/codelet.hpp), and 2..16 never reaches that at float: without 45 no
@@ -18,31 +15,14 @@ if(NOT ADM_SANITIZER STREQUAL "none")
     set(ADM_CODELET_EXTRA_SIZES "45")
 endif()
 
-if(ADM_CODELET_MIN_N LESS 2)
-    message(FATAL_ERROR "ADM_CODELET_MIN_N must be >= 2")
-endif()
-if(ADM_CODELET_MAX_N LESS ADM_CODELET_MIN_N)
-    message(FATAL_ERROR "ADM_CODELET_MAX_N must be >= ADM_CODELET_MIN_N")
-endif()
-
 set(ADM_CODELET_RANGE_SIZES "")
-foreach(CODELET_N RANGE ${ADM_CODELET_MIN_N} ${ADM_CODELET_MAX_N})
-    if(NOT CODELET_N IN_LIST ADM_CODELET_EXCLUDE_SIZES)
-        list(APPEND ADM_CODELET_RANGE_SIZES ${CODELET_N})
-    endif()
+foreach(CODELET_N RANGE 2 ${ADM_CODELET_MAX_N})
+    list(APPEND ADM_CODELET_RANGE_SIZES ${CODELET_N})
 endforeach()
 
 set(ADM_CODELET_SIZES ${ADM_CODELET_RANGE_SIZES} ${ADM_CODELET_EXTRA_SIZES})
 list(REMOVE_DUPLICATES ADM_CODELET_SIZES)
 list(SORT ADM_CODELET_SIZES COMPARE NATURAL)
-if(NOT ADM_CODELET_SIZES)
-    message(FATAL_ERROR "ADM_CODELET_SIZES must contain at least one size")
-endif()
-foreach(CODELET_N IN LISTS ADM_CODELET_SIZES)
-    if(CODELET_N LESS 2)
-        message(FATAL_ERROR "ADM_CODELET_SIZES entries must be >= 2: ${CODELET_N}")
-    endif()
-endforeach()
 list(GET ADM_CODELET_SIZES -1 ADM_CODELET_MAX)
 list(LENGTH ADM_CODELET_SIZES ADM_CODELET_COUNT)
 string(REPLACE ";" ", " ADM_CODELET_SIZE_CSV "${ADM_CODELET_SIZES}")

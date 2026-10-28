@@ -12,8 +12,6 @@ function(adm_silence_target)
     endforeach()
 endfunction()
 
-option(ADM_BENCH_THREADS "Link threading into the benchmark references (ducc0/FFTW)" OFF)
-
 if(ADM_BUILD_BENCHMARKS)
 
 CPMAddPackage(
@@ -53,11 +51,10 @@ if(ducc0_ADDED)
         endif()
     endif()
 
-    if(ADM_BENCH_THREADS)
-        find_package(Threads REQUIRED)
-        target_link_libraries(ducc0 PUBLIC Threads::Threads)
-        message(STATUS "ducc0: threading ENABLED (ADM_BENCH_THREADS)")
-    endif()
+    # The benchmark references always thread: every perf receipt compares against the
+    # threaded baselines, so a serial ducc0/FFTW has no user here.
+    find_package(Threads REQUIRED)
+    target_link_libraries(ducc0 PUBLIC Threads::Threads)
 
     add_library(ducc::ducc0 ALIAS ducc0)
 
@@ -179,14 +176,23 @@ if(nanobench_ADDED)
 endif()
 endif()
 
-option(ADM_BENCH_FFTW "Add an FFTW reference to admiral_benchmark (needs system fftw3/fftw3f)" OFF)
-if(ADM_BENCH_FFTW)
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(FFTW REQUIRED IMPORTED_TARGET fftw3 fftw3f)
-    message(STATUS "FFTW: enabled for benchmarks (${FFTW_VERSION})")
-    if(ADM_BENCH_THREADS)
+# The FFTW reference is auto-detected: where pkg-config sees fftw3 and fftw3f,
+# admiral_benchmark gains its --fftw-ab arm (perf-master installs libfftw3-dev). Where it
+# does not, the benchmark builds without the arm.
+if(ADM_BUILD_BENCHMARKS)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(FFTW QUIET IMPORTED_TARGET fftw3 fftw3f)
+    endif()
+    if(FFTW_FOUND)
         find_library(FFTW3_THREADS_LIB  NAMES fftw3_threads  REQUIRED)
         find_library(FFTW3F_THREADS_LIB NAMES fftw3f_threads REQUIRED)
-        message(STATUS "FFTW: threads companion libs = ${FFTW3_THREADS_LIB} ${FFTW3F_THREADS_LIB}")
+        set(_adm_fftw_ver "")
+        if(FFTW_VERSION)
+            set(_adm_fftw_ver " (${FFTW_VERSION})")
+        endif()
+        message(STATUS "FFTW: found${_adm_fftw_ver}; admiral_benchmark gets the --fftw-ab reference")
+    else()
+        message(STATUS "FFTW: not found; admiral_benchmark builds without the --fftw-ab reference")
     endif()
 endif()

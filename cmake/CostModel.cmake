@@ -26,7 +26,7 @@ if(NOT CMAKE_CROSSCOMPILING)
     SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/cmake/probe_uarch.cpp
     CMAKE_FLAGS
       "-DINCLUDE_DIRECTORIES=${CMAKE_CURRENT_SOURCE_DIR}/include;${ADM_GENERATED_INCLUDE_DIR};${xsimd_SOURCE_DIR}/include;${poet_SOURCE_DIR}/include"
-    COMPILE_DEFINITIONS "${_adm_flags} ${ADM_EXTRA_CXX_FLAGS}"
+    COMPILE_DEFINITIONS "${_adm_flags} ${CMAKE_CXX_FLAGS}"
     RUN_OUTPUT_VARIABLE _adm_uarch)
   if(_adm_ua_compiled AND _adm_ua_exit EQUAL 0)
     string(STRIP "${_adm_uarch}" _adm_uarch)

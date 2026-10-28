@@ -42,12 +42,12 @@ inline constexpr bool kGranuleFmaddsub = XSIMD_WITH_FMA3_SSE || XSIMD_WITH_FMA3_
 // 16 f64 is a measured LOSS (0.87x and 0.93x) and stays out; N < 9 stays with
 // the flat arms; N > 24 waits on register-cliff work. Long double never compiles here.
 //
-// ADM_GRANULE_ADMIT_OFF (CMake -DADM_GRANULE_ADMIT=OFF)
+// ADM_GRANULE_ADMIT_OFF (compile with -DADM_GRANULE_ADMIT_OFF, through CMAKE_CXX_FLAGS)
 // forces every entry false: admission is if constexpr, so the granule arms drop
-// out at compile time and the SoA fallback runs. The knob serves one decision rule: an
+// out at compile time and the SoA fallback runs. The define serves one decision rule: an
 // admission that does not beat OFF beyond 2x the in-job control spread on every node
-// class goes OFF globally. The default-ON arm is textually the pre-knob predicate, so a
-// default build carries the knob absent and unchanged object code.
+// class goes OFF globally. The default arm is textually the predicate with the define
+// absent, so a default build carries unchanged object code.
 #ifdef ADM_GRANULE_ADMIT_OFF
 template<unsigned N, typename T>
 inline constexpr bool granule_rows_admit_v = false;

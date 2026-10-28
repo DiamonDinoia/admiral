@@ -87,7 +87,12 @@ function(set_project_warnings target_name)
         -Wuseless-cast
     )
 
-    if(ADM_ENABLE_WARNINGS_AS_ERRORS)
+    # Warnings are errors outside a plain Release build and only at top level:
+    # the shipped shape's consumers must not fail on a new toolchain's warnings,
+    # while Debug and RelWithDebInfo gate the tree itself. A superbuild that embeds
+    # admiral through add_subdirectory gets no -Werror on admiral targets. An in-tree
+    # Release build that wants the gate pins CMAKE_CXX_FLAGS=-Werror (the dev preset does).
+    if(PROJECT_IS_TOP_LEVEL AND NOT CMAKE_BUILD_TYPE STREQUAL "Release")
         list(APPEND CLANG_WARNINGS -Werror)
         list(APPEND GCC_WARNINGS -Werror)
         list(APPEND MSVC_WARNINGS /WX)

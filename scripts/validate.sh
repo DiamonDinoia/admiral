@@ -76,24 +76,20 @@ arm_sanitize() {
         run_arm "san-${san//+/-}" "want:-fsanitize=${san/+/,}" "want:-O1" \
             "want:-march=x86-64-v2" "not:-march=native" -- \
             -DCMAKE_CXX_COMPILER="$cxx" -DCMAKE_BUILD_TYPE=Debug \
-            -DADM_SANITIZER="$san" -DADM_TARGET_ARCH=x86-64-v2 -DCMAKE_CXX_FLAGS="$cxxflags" \
+            -DADM_TARGET_ARCH=x86-64-v2 \
+            -DCMAKE_CXX_FLAGS="$cxxflags -fsanitize=${san/+/,} -fno-omit-frame-pointer -g" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=${san/+/,}" \
             -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF
     done
 }
 
 arm_cxx17() {
-    # -Werror pinned, not inherited from the default: the warning class that breaks old gcc on
-    # this leg (-Wuseless-cast at four_step_large's geo-mid) is invisible if the default flips.
+    # -Werror pinned through CMAKE_CXX_FLAGS, not inherited from the build type: the warning
+    # class that breaks old gcc on this leg (-Wuseless-cast at four_step_large's geo-mid) is
+    # invisible if the default flips.
     run_arm cxx17 "want:-std=c++17" "want:-march=x86-64-v3" "not:std=c++20" "want:-Werror" -- \
         -DCMAKE_BUILD_TYPE=Release -DADM_CXX_STANDARD=17 -DADM_TARGET_ARCH=x86-64-v3 \
-        -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF -DADM_ENABLE_WARNINGS_AS_ERRORS=ON
-}
-
-arm_catalog() {
-    run_arm catalog "want:codelet_66" "want:-march=x86-64-v3" -- \
-        -DCMAKE_BUILD_TYPE=Release -DADM_TARGET_ARCH=x86-64-v3 \
-        -DADM_CODELET_EXTRA_SIZES="120;66" \
-        -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF
+        -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF -DCMAKE_CXX_FLAGS=-Werror
 }
 
 # Bit-identity digest: builds the tree twice at x86-64-v3 Release -- shipped and strict
@@ -290,7 +286,7 @@ for t in json.load(sys.stdin)["tests"]:
 # static-analysis job. Tidy alone carries two extra gates: the HeaderFilterRegex presence check
 # on .clang-tidy and the pre-build check_flags sweep.
 run_static_analysis_arm() {
-    local name=$1 tool=$2 cxx=$3 knob=$4
+    local name=$1 tool=$2 cxx=$3 launcher_flag=$4
     local dir=$out/$name log=$out/$name.log
     echo "=== $name"
     if ! command -v "$tool" >/dev/null; then
@@ -307,7 +303,7 @@ run_static_analysis_arm() {
     cmake -S "$src" -B "$dir" -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
         -DCMAKE_CXX_COMPILER="$cxx" -DCMAKE_BUILD_TYPE=Release \
         -DADM_TARGET_ARCH=x86-64-v3 -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=OFF \
-        -DADM_BUILD_EXAMPLES=OFF "-D$knob=ON" \
+        -DADM_BUILD_EXAMPLES=OFF "$launcher_flag" \
         >>"$log" 2>&1 || { echo "  FAILED: configure (see $log)"; failed+=("$name"); return; }
     if [[ $name == tidy ]]; then
         # Whole tokens split on /, so the compiler path asserts as its basename.
@@ -322,8 +318,19 @@ run_static_analysis_arm() {
     fi
 }
 
-arm_tidy() { run_static_analysis_arm tidy clang-tidy "" ADM_ENABLE_CLANG_TIDY; }
-arm_cppcheck() { run_static_analysis_arm cppcheck cppcheck "${CXX:-g++}" ADM_ENABLE_CPPCHECK; }
+# --config-file is not optional: the generated codelet sources live in the BUILD tree, and
+# clang-tidy's upward search from there can miss the repo's .clang-tidy entirely, which silently
+# analyses them with the default (near-empty) check set. Checks and WarningsAsErrors come from
+# .clang-tidy; HeaderFilterRegex there keeps the diagnostics on admiral headers and off xsimd.
+arm_tidy() { run_static_analysis_arm tidy clang-tidy "" \
+    "-DCMAKE_CXX_CLANG_TIDY=clang-tidy;--quiet;--config-file=$src/.clang-tidy"; }
+# cppcheck cannot follow every system header, and it reports the template-heavy SIMD headers as
+# unreachable configurations; those three missingInclude classes are suppressed and nothing
+# else is. The two file-scoped suppressions: cppcheck 2.21 cannot parse butterfly.hpp's
+# variable template initialised by an immediately-invoked lambda (crt_index), and cppcheck
+# 2.13.0 reads gate_leaf_cyc's `n <= kFourStepLeafMax` guard as off-by-one (2.21.0 does not).
+arm_cppcheck() { run_static_analysis_arm cppcheck cppcheck "${CXX:-g++}" \
+    "-DCMAKE_CXX_CPPCHECK=cppcheck;--enable=warning,performance,portability;--inline-suppr;--suppress=missingInclude;--suppress=missingIncludeSystem;--suppress=unmatchedSuppression;--suppress=checkersReport;--suppress=syntaxError:*/butterfly.hpp;--suppress=containerOutOfBounds:*/math.hpp;--error-exitcode=2;--std=c++20"; }
 
 # Constants-with-receipt coupling: a commit touching a hand-fit- or probe-fit
 # constants header must name its derivation receipt. The scan is
@@ -355,18 +362,19 @@ arm_receipt-coupling() {
     esac
 }
 
-# Granule admission A/B. Builds the tree four times (x86-64-v4/v3 crossed with
-# ADM_GRANULE_ADMIT ON/OFF; Release, tests off, benchmarks on, the bench_granule_ab target
-# only), asserts the knob arrive per build via check_flags plus the CMake cache and a
-# symbol-level control (ON libadmiral_internal instantiates the granule drivers, OFF none).
-# Timing is interleaved: six rounds of on/off/ctl invocations per ISA with rotated start
-# order (ctl is the ON binary again -- the self-pair identity control), one pinned cpu on
-# a core whose sibling stays idle, min-of-R on ~2 ms bursts inside each invocation, and a
-# per-cell best-case reduction (min across rounds; powersave pstate wander moves whole
-# invocations, so the resolution floor is the on/ctl best-case spread, with the max
-# round-pair spread printed alongside as round-max). Per (isa, cell) the arm prints
-# WIN/LOSS/FLAT with the ON/OFF ratio against 2x that floor and FAILS iff an admitted
-# cell LOSES to OFF beyond it; wins inside the floor are reported FLAT, never failed.
+# Granule admission A/B. Builds the tree four times (x86-64-v4/v3 crossed with the admission
+# define absent/present: plain Release vs -DCMAKE_CXX_FLAGS=-DADM_GRANULE_ADMIT_OFF; tests off,
+# benchmarks on, the bench_granule_ab target only), asserts the define arrived per build via
+# check_flags plus a symbol-level control (admitted libadmiral_internal instantiates the
+# granule drivers, the OFF build none). Timing is interleaved: six rounds of on/off/ctl
+# invocations per ISA with rotated start order (ctl is the ON binary again -- the self-pair
+# identity control), one pinned cpu on a core whose sibling stays idle, min-of-R on ~2 ms
+# bursts inside each invocation, and a per-cell best-case reduction (min across rounds;
+# powersave pstate wander moves whole invocations, so the resolution floor is the on/ctl
+# best-case spread, with the max round-pair spread printed alongside as round-max). Per (isa,
+# cell) the arm prints WIN/LOSS/FLAT with the ON/OFF ratio against 2x that floor and FAILS iff
+# an admitted cell LOSES to OFF beyond it; wins inside the floor are reported FLAT, never
+# failed.
 # Quiet-box contract: verdicts are acceptance-grade only on a quiet box; under load the
 # identity floor spreads and every verdict degrades to informational -- the arm PRINTS a
 # line naming that condition whenever a cell's floor spread exceeds 10%, never silently
@@ -393,13 +401,14 @@ arm_granule-admission() {
             dir=$root/build-$isa-$st
             local -a checks=("want:-march=$isa" "not:-march=native")
             if [[ $st == on ]]; then checks+=("not:-DADM_GRANULE_ADMIT_OFF"); else checks+=("want:-DADM_GRANULE_ADMIT_OFF"); fi
+            local -a stflags=()
+            [[ $st == off ]] && stflags=(-DCMAKE_CXX_FLAGS=-DADM_GRANULE_ADMIT_OFF)
             echo "--- build $isa-$st" >>"$log"
             cmake -S "$src" -B "$dir" -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
                 -DCMAKE_BUILD_TYPE=Release -DADM_TARGET_ARCH="$isa" \
                 -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=ON \
-                -DADM_GRANULE_ADMIT="${st^^}" >>"$log" 2>&1 &&
+                "${stflags[@]}" >>"$log" 2>&1 &&
                 check_flags "$dir" "${checks[@]}" &&
-                grep -q "^ADM_GRANULE_ADMIT:BOOL=${st^^}$" "$dir/CMakeCache.txt" &&
                 cmake --build "$dir" --target bench_granule_ab -j "$jobs" >>"$log" 2>&1 &&
                 [[ -x $dir/benchmark/bench_granule_ab ]] ||
                 { echo "  FAILED: build $isa-$st (see $log)"; failed+=(granule-admission); return; }
@@ -533,13 +542,13 @@ arm_granule-admission() {
         echo "  OK"; ((pass++))
         rm -rf "$root"/build-*
     else
-        echo "  FAILED: admitted cell lost to ADM_GRANULE_ADMIT=OFF beyond the floor (see $log)"
+        echo "  FAILED: admitted cell lost to ADM_GRANULE_ADMIT_OFF beyond the floor (see $log)"
         failed+=(granule-admission)
     fi
 }
 
 arms=("$@")
-((${#arms[@]})) || arms=(isa compilers catalog digest cxx17 sanitize valgrind tidy cppcheck receipt-coupling granule-admission)
+((${#arms[@]})) || arms=(isa compilers digest cxx17 sanitize valgrind tidy cppcheck receipt-coupling granule-admission)
 for arm in "${arms[@]}"; do
     if [[ $(type -t "arm_$arm") != function ]]; then
         echo "=== $arm: no such arm"; failed+=("$arm-unknown"); continue

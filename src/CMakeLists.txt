@@ -25,8 +25,8 @@ if(ADM_DISPATCH)
     if(NOT ADM_TARGET_ARCH STREQUAL ADM_TIER_FLOOR)
         message(FATAL_ERROR "ADM_DISPATCH needs ADM_TARGET_ARCH=${ADM_TIER_FLOOR} (the floor), not ${ADM_TARGET_ARCH}")
     endif()
-    if(ADM_ENABLE_LTO)
-        message(FATAL_ERROR "ADM_DISPATCH needs ADM_ENABLE_LTO=OFF: LTO objects hold IR, not machine code, and the tier rename needs machine code")
+    if(CMAKE_INTERPROCEDURAL_OPTIMIZATION)
+        message(FATAL_ERROR "ADM_DISPATCH conflicts with CMAKE_INTERPROCEDURAL_OPTIMIZATION: LTO objects hold IR, not machine code, and the tier rename needs machine code")
     endif()
     find_program(ADM_LLVM_NM llvm-nm)
     find_program(ADM_LLVM_OBJCOPY llvm-objcopy)
@@ -65,19 +65,6 @@ set_source_files_properties(
     inst_col_first_d_inv.cpp inst_col_mid_f.cpp inst_col_mid_d.cpp
     PROPERTIES COMPILE_OPTIONS "${_adm_col_numerics}")
 
-# ADM_PIN_1D: extend the same numerics pin to the unpinned 1-D engine instantiation TUs.
-# Closes the per-inline-context contraction/reassociation clone channel there the same way
-# the col pin does for the column engine; default OFF, i.e. no flag is emitted unless asked.
-option(ADM_PIN_1D "Pin fp contraction/reassociation in the 1-D engine instantiation TUs" OFF)
-if(ADM_PIN_1D)
-    set_source_files_properties(
-        inst_dif_f_fwd.cpp inst_dif_f_inv.cpp inst_dif_d_fwd.cpp inst_dif_d_inv.cpp
-        inst_dif_thunks_f.cpp inst_dif_thunks_d.cpp
-        inst_dif_thunks_ip_f.cpp inst_dif_thunks_ip_d.cpp
-        inst_dif_thunks_chip_f.cpp inst_dif_thunks_chip_d.cpp
-        inst_real_f.cpp inst_real_d.cpp inst_api_ld.cpp
-        PROPERTIES COMPILE_OPTIONS "${_adm_col_numerics}")
-endif()
 # The long double engine (dd_fft.hpp) splits values exactly; fast math folds the splits to zero.
 # Contraction keeps the 0.5 ulp bound but moves low-order output bits, and the compilers default
 # to different modes. Off costs at most 0.5% of the engine's instructions. icpx reassociates by
@@ -106,10 +93,6 @@ target_compile_definitions(admiral_engine PRIVATE ADM_BUILDING)
 # scratch_alloc.cpp reads LD_PRELOAD via std::getenv; Windows CRT deprecates it under every driver.
 if(WIN32)
     target_compile_definitions(admiral_engine PRIVATE _CRT_SECURE_NO_WARNINGS)
-endif()
-# PRIVATE covers every route decision: plan_impl is extern-templated inside admiral_engine only.
-if(ADM_PIN_PLAN_ESTIMATE)
-    target_compile_definitions(admiral_engine PRIVATE ADM_PIN_PLAN_ESTIMATE)
 endif()
 adm_apply_build_profile(admiral_engine)
 
@@ -169,9 +152,6 @@ if(ADM_DISPATCH)
         target_compile_definitions(${eng} PRIVATE ADM_BUILDING ADM_DISPATCH ADM_STATIC_DEFINE)
         if(WIN32)
             target_compile_definitions(${eng} PRIVATE _CRT_SECURE_NO_WARNINGS)
-        endif()
-        if(ADM_PIN_PLAN_ESTIMATE)
-            target_compile_definitions(${eng} PRIVATE ADM_PIN_PLAN_ESTIMATE)
         endif()
         adm_apply_build_profile(${eng})
         # The tier flag library comes after the profile, so its -march wins over the floor's.
@@ -262,18 +242,6 @@ target_link_libraries(admiral_internal ${adm_internal_scope}
     xsimd poet::poet ${ADM_THREADS_LIB})
 if(TARGET admiral_optimization_flags)
     target_link_libraries(admiral_internal ${adm_internal_scope} admiral_optimization_flags)
-endif()
-# Tests and benchmarks include granule_codelet.hpp through this target's PUBLIC
-# interface, so the knob's definition has to ride it too: a PRIVATE link would leave a
-# test TU reading the ON admission table against an OFF library.
-if(TARGET admiral_granule_admit_flags)
-    target_link_libraries(admiral_internal ${adm_internal_scope} admiral_granule_admit_flags)
-endif()
-
-if(ADM_ENABLE_PCH)
-    foreach(target admiral_engine admiral_codelets)
-        target_precompile_headers(${target} PRIVATE <xsimd/xsimd.hpp> <poet/poet.hpp>)
-    endforeach()
 endif()
 
 if(PROJECT_IS_TOP_LEVEL)

@@ -9,12 +9,10 @@
 #include <utility>
 
 #if defined(_MSC_VER) && !defined(__clang__)
-#  define ADM_CPLUSPLUS _MSVC_LANG
+#  define ADM_CXX20 (_MSVC_LANG >= 202002L)
 #else
-#  define ADM_CPLUSPLUS __cplusplus
+#  define ADM_CXX20 (__cplusplus >= 202002L)
 #endif
-
-#define ADM_CXX20 (ADM_CPLUSPLUS >= 202002L)
 
 // gcc 13 rejects a consteval function reached from a static data member initializer of a class
 // template as "used before its definition" even when the definition precedes it lexically

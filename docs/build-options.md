@@ -17,7 +17,7 @@ Default: `ON` as top-level project. Builds the Catch2 test suite.
 
 ### `ADM_BUILD_BENCHMARKS`
 
-Default: `ON` as top-level project. Builds `admiral_benchmark`. Downloads ducc0 and nanobench.
+Default: `ON` as top-level project. Builds `admiral_benchmark`. Downloads ducc0 and nanobench. Where pkg-config finds system `fftw3` and `fftw3f`, the benchmark also builds the `--fftw-ab` FFTW reference, threaded like ducc0's.
 
 ```{literalinclude} ../scripts/options.sh
 :start-after: [doc:opt-ADM_BUILD_BENCHMARKS]
@@ -77,42 +77,6 @@ The flag follows these rules.
 - The flag is `-march=` for all other processors, including `aarch64` on Linux. With `native`, `-mtune=native` is also added.
 - MSVC gets `/arch:AVX2` when `CMAKE_SYSTEM_PROCESSOR` is x86 or AMD64. Other MSVC combinations, such as ARM64, get no flag.
 
-### `ADM_ENABLE_WARNINGS_AS_ERRORS`
-
-Default: `ON`. Adds `-Werror` (`/WX` on MSVC) to the admiral targets. Set `OFF` before `add_subdirectory`. Consumer targets keep their own flags.
-
-```{literalinclude} ../scripts/options.sh
-:start-after: [doc:opt-ADM_ENABLE_WARNINGS_AS_ERRORS]
-:end-before: [doc:opt-ADM_ENABLE_WARNINGS_AS_ERRORS-end]
-```
-
-### `ADM_ENABLE_LTO`
-
-Default: `OFF`. Sets `CMAKE_INTERPROCEDURAL_OPTIMIZATION` for Release, RelWithDebInfo and MinSizeRel when `check_ipo_supported` succeeds. With `OFF`, this project sets it for no build type. GCC writes GIMPLE into the installed archives, so only the same compiler can link them. Use `OFF` for a shipped install.
-
-```{literalinclude} ../scripts/options.sh
-:start-after: [doc:opt-ADM_ENABLE_LTO]
-:end-before: [doc:opt-ADM_ENABLE_LTO-end]
-```
-
-### `ADM_ENABLE_PCH`
-
-Default: `OFF`. Precompiles `xsimd/xsimd.hpp` and `poet/poet.hpp` for the engine and codelet targets.
-
-```{literalinclude} ../scripts/options.sh
-:start-after: [doc:opt-ADM_ENABLE_PCH]
-:end-before: [doc:opt-ADM_ENABLE_PCH-end]
-```
-
-### `ADM_SANITIZER`
-
-Default: `none`. Adds `-fsanitize=` to compile and link. Requires GCC or Clang. Values: `none`, `address`, `undefined`, `address+undefined`, `thread`. Any other value or compiler stops the configure. A sanitizer build trims the codelet catalog to sizes up to 16, plus 45. It ignores `ADM_CODELET_MAX_N` and `ADM_CODELET_EXTRA_SIZES`.
-
-```{literalinclude} ../scripts/options.sh
-:start-after: [doc:opt-ADM_SANITIZER]
-:end-before: [doc:opt-ADM_SANITIZER-end]
-```
-
 ### `ADM_USE_FAST_MATH`
 
 Default: `ON`. Adds `-ffast-math`. `OFF` keeps strict IEEE semantics.
@@ -122,117 +86,9 @@ Default: `ON`. Adds `-ffast-math`. `OFF` keeps strict IEEE semantics.
 :end-before: [doc:opt-ADM_USE_FAST_MATH-end]
 ```
 
-### `ADM_GRANULE_ADMIT`
-
-Default: `ON`. `OFF` removes the AoS-granule leaf kernels at compile time.
-
-```{literalinclude} ../scripts/options.sh
-:start-after: [doc:opt-ADM_GRANULE_ADMIT]
-:end-before: [doc:opt-ADM_GRANULE_ADMIT-end]
-```
-
-### `ADM_CODELET_MIN_N`
-
-Default: `2`. Smallest size that gets a compiled straight-line codelet. Values: integer, at least 2.
-
-```{literalinclude} ../scripts/options.sh
-:start-after: [doc:opt-ADM_CODELET_MIN_N]
-:end-before: [doc:opt-ADM_CODELET_MIN_N-end]
-```
-
-### `ADM_CODELET_MAX_N`
-
-Default: `64`. Largest size that gets a compiled straight-line codelet. Values: integer, at least `ADM_CODELET_MIN_N`.
-
-```{literalinclude} ../scripts/options.sh
-:start-after: [doc:opt-ADM_CODELET_MAX_N]
-:end-before: [doc:opt-ADM_CODELET_MAX_N-end]
-```
-
-### `ADM_CODELET_EXCLUDE_SIZES`
-
-Default: empty. Sizes that the generated codelet catalog leaves out. Values: list separated by `;`.
-
-```{literalinclude} ../scripts/options.sh
-:start-after: [doc:opt-ADM_CODELET_EXCLUDE_SIZES]
-:end-before: [doc:opt-ADM_CODELET_EXCLUDE_SIZES-end]
-```
-
-### `ADM_CODELET_EXTRA_SIZES`
-
-Default: `120;65;85;143;100;360`. Sizes that the catalog adds beyond `ADM_CODELET_MIN_N` to `ADM_CODELET_MAX_N`. Values: list separated by `;`.
-
-```{literalinclude} ../scripts/options.sh
-:start-after: [doc:opt-ADM_CODELET_EXTRA_SIZES]
-:end-before: [doc:opt-ADM_CODELET_EXTRA_SIZES-end]
-```
-
-### `ADM_EXTRA_CXX_FLAGS`
-
-Default: not set. Adds these flags to every C++ compile of the admiral targets. Values: flag string.
-
-```{literalinclude} ../scripts/options.sh
-:start-after: [doc:opt-ADM_EXTRA_CXX_FLAGS]
-:end-before: [doc:opt-ADM_EXTRA_CXX_FLAGS-end]
-```
-
-### `ADM_BENCH_FFTW`
-
-Default: `OFF`. Adds an FFTW reference to `admiral_benchmark`. Requires system `fftw3` and `fftw3f`.
-
-```{literalinclude} ../scripts/options.sh
-:start-after: [doc:opt-ADM_BENCH_FFTW]
-:end-before: [doc:opt-ADM_BENCH_FFTW-end]
-```
-
-### `ADM_BENCH_THREADS`
-
-Default: `OFF`. Threads the benchmark reference libraries (ducc0, FFTW).
-
-```{literalinclude} ../scripts/options.sh
-:start-after: [doc:opt-ADM_BENCH_THREADS]
-:end-before: [doc:opt-ADM_BENCH_THREADS-end]
-```
-
 ## Development options
 
 These options are for work on the library itself.
-
-### `ADM_PIN_1D`
-
-Default: `OFF`. Pins floating-point contraction and reassociation in the 1-D engine instantiation TUs.
-
-```{literalinclude} ../scripts/options.sh
-:start-after: [doc:opt-ADM_PIN_1D]
-:end-before: [doc:opt-ADM_PIN_1D-end]
-```
-
-### `ADM_PIN_PLAN_ESTIMATE`
-
-Default: `OFF`. Resolves every plan route as `effort::estimate`, even at `measure` and `automatic`.
-
-```{literalinclude} ../scripts/options.sh
-:start-after: [doc:opt-ADM_PIN_PLAN_ESTIMATE]
-:end-before: [doc:opt-ADM_PIN_PLAN_ESTIMATE-end]
-```
-
-### `ADM_ENABLE_CLANG_TIDY`
-
-Default: `OFF`. Runs clang-tidy on the admiral sources during the build. The configure stops if `clang-tidy` is missing.
-
-```{literalinclude} ../scripts/options.sh
-:start-after: [doc:opt-ADM_ENABLE_CLANG_TIDY]
-:end-before: [doc:opt-ADM_ENABLE_CLANG_TIDY-end]
-```
-
-### `ADM_ENABLE_CPPCHECK`
-
-Default: `OFF`. Runs cppcheck on the admiral sources during the build. The configure stops if `cppcheck` is missing.
-
-```{literalinclude} ../scripts/options.sh
-:start-after: [doc:opt-ADM_ENABLE_CPPCHECK]
-:end-before: [doc:opt-ADM_ENABLE_CPPCHECK-end]
-```
 
 ### `ADM_FIT_COST_MODEL`
 

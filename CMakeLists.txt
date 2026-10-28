@@ -19,11 +19,8 @@ endforeach()
 option(ADM_BUILD_TESTS "Build unit tests" ${PROJECT_IS_TOP_LEVEL})
 option(ADM_BUILD_BENCHMARKS "Build benchmarks" ${PROJECT_IS_TOP_LEVEL})
 option(ADM_BUILD_EXAMPLES "Build the runnable examples" ${PROJECT_IS_TOP_LEVEL})
-option(ADM_ENABLE_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 option(ADM_ENABLE_THREADS "Multi-threaded plan execution (links Threads); OFF = serial no-op pool" ON)
 option(ADM_MEASURE "Compile in plan-time route measurement (admiral::effort::measure, FFTW_MEASURE)" ON)
-# Measurement-session knob: keeps ADM_MEASURE compiled in but measures nothing at plan time.
-option(ADM_PIN_PLAN_ESTIMATE "Resolve every plan route as effort::estimate, even at measure/automatic" OFF)
 
 set(ADM_CXX_STANDARD 20 CACHE STRING "C++ standard for library and public headers: 17, 20 or 23")
 set_property(CACHE ADM_CXX_STANDARD PROPERTY STRINGS 17 20 23)
@@ -33,20 +30,8 @@ endif()
 
 option(ADM_USE_FAST_MATH "Enable -ffast-math for relaxed floating-point math" ON)
 
-# Compile-time admission of the AoS-granule leaf kernels into the codelet routes. OFF
-# stamps ADM_GRANULE_ADMIT_OFF everywhere granule_codelet.hpp is reachable and the
-# granule arms drop out at compile time (if constexpr); the SoA fallback runs.
-option(ADM_GRANULE_ADMIT "Admit the AoS-granule leaf kernels into the codelet routes" ON)
-
 set(ADM_TARGET_ARCH "native" CACHE STRING
     "Target microarchitecture: native, none, or an arch/CPU name (x86-64-v3, armv8-a, power8). CompilerOptions.cmake picks -march= or -mcpu= from CMAKE_SYSTEM_PROCESSOR")
-
-set(ADM_SANITIZER "none" CACHE STRING "Sanitizers: none, address, undefined, address+undefined, thread")
-set_property(CACHE ADM_SANITIZER PROPERTY STRINGS none address undefined address+undefined thread)
-
-option(ADM_ENABLE_LTO "Enable link-time optimization" OFF)
-
-option(ADM_ENABLE_PCH "Use precompiled headers for the library targets" OFF)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
@@ -57,7 +42,6 @@ include(Dependencies)
 include(CompilerWarnings)
 include(StaticAnalysis)
 include(AdmiralTargets)
-include(Sanitizers)
 
 add_subdirectory(src)
 
@@ -86,12 +70,7 @@ message(STATUS "  Libraries:    shared + static")
 message(STATUS "  Tests:        ${ADM_BUILD_TESTS}")
 message(STATUS "  Benchmarks:   ${ADM_BUILD_BENCHMARKS}")
 message(STATUS "  Threads:      ${ADM_ENABLE_THREADS}")
-message(STATUS "  Sanitizer:    ${ADM_SANITIZER}")
 message(STATUS "  Fast math:    ${ADM_USE_FAST_MATH}")
-message(STATUS "  Granule admit:${ADM_GRANULE_ADMIT}")
 message(STATUS "  Measure:      ${ADM_MEASURE}")
-message(STATUS "  Pin estimate: ${ADM_PIN_PLAN_ESTIMATE}")
 message(STATUS "  Target arch:  ${ADM_TARGET_ARCH}")
-message(STATUS "  LTO:          ${ADM_ENABLE_LTO}")
-message(STATUS "  PCH:          ${ADM_ENABLE_PCH}")
 message(STATUS "")

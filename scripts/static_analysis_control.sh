@@ -6,7 +6,8 @@
 # parse error.
 #
 # Usage: scripts/static_analysis_control.sh <build-dir>
-# The build dir must be configured with -DADM_ENABLE_CLANG_TIDY=ON and/or -DADM_ENABLE_CPPCHECK=ON.
+# The build dir must be configured with -DCMAKE_CXX_CLANG_TIDY=... and/or -DCMAKE_CXX_CPPCHECK=...
+# (scripts/validate.sh's tidy and cppcheck arms do exactly that).
 # The flags come from that build's static_analysis_cmd.txt, so they cannot drift from the build's.
 
 set -uo pipefail

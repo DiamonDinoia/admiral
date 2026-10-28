@@ -81,9 +81,11 @@ arm_sanitize() {
 }
 
 arm_cxx17() {
-    run_arm cxx17 "want:-std=c++17" "want:-march=x86-64-v3" "not:std=c++20" -- \
+    # -Werror pinned, not inherited from the default: the warning class that breaks old gcc on
+    # this leg (-Wuseless-cast at four_step_large's geo-mid) is invisible if the default flips.
+    run_arm cxx17 "want:-std=c++17" "want:-march=x86-64-v3" "not:std=c++20" "want:-Werror" -- \
         -DCMAKE_BUILD_TYPE=Release -DADM_CXX_STANDARD=17 -DADM_TARGET_ARCH=x86-64-v3 \
-        -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF
+        -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF -DADM_ENABLE_WARNINGS_AS_ERRORS=ON
 }
 
 arm_catalog() {

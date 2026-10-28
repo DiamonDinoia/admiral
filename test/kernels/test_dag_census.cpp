@@ -565,7 +565,11 @@ struct chunk_ladder {
             rungs_sized_walk(out, std::make_index_sequence<static_cast<std::size_t>(
                                        bit_width(W)) - 1>{});
             if constexpr (cover < rem)
-                out.push_back(rung_row{1u, static_cast<std::uint32_t>(rem - cover),
+                // The ull staging keeps the uint32 cast a real conversion everywhere: on
+                // 32-bit targets size_t IS uint32_t and an identity cast is a
+                // -Werror=useless-cast (gcc) error. Same idiom as 09488b3.
+                out.push_back(rung_row{1u, static_cast<std::uint32_t>(
+                                               static_cast<unsigned long long>(rem - cover)),
                                        nfull * W + cover});
         }
         return out;

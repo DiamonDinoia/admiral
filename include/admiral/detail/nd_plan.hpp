@@ -609,15 +609,6 @@ void nd_apply_axis(std::complex<T>* data, std::size_t total, std::size_t len,
     static bool off = false;
     return off;
 }
-#ifdef ADM_FAST2D_COUNT
-// Route assertion. Not compiled into the timing binary.
-[[nodiscard]] inline unsigned long& nd_fast2d_hits() { static unsigned long n = 0; return n; }
-[[nodiscard]] inline unsigned long& nd_slow2d_hits() { static unsigned long n = 0; return n; }
-#endif
-#ifdef ADM_FAST3D_COUNT
-// Route assertion twin for the cube seat. Not compiled into the timing binary.
-[[nodiscard]] inline unsigned long& nd_fast3d_hits() { static unsigned long n = 0; return n; }
-#endif
 
 template<typename T>
 class nd_runtime_plan {
@@ -648,9 +639,6 @@ private:
     // Rank-2 in-place fast path: the two axis bodies, called directly. No scale_plan, no
     // per-axis loop, no apply_lines_* , no parallel_for, no line-plan resolve.
     ADM_ALWAYS_INLINE void execute_fast2d(std::complex<T>* data, std::optional<T> fct) const {
-#ifdef ADM_FAST2D_COUNT
-        ++nd_fast2d_hits();
-#endif
         const std::size_t n0 = m.shape[0];
         const std::size_t n1 = m.shape[1];
         const T def = default_transform_fct<T>(m.is_forward, m.total);
@@ -681,9 +669,6 @@ private:
 
     ADM_ALWAYS_INLINE void execute_fast3d(const std::complex<T>* src, std::complex<T>* dst,
                                           std::optional<T> fct) const {
-#ifdef ADM_FAST3D_COUNT
-        ++nd_fast3d_hits();
-#endif
         const T def = default_transform_fct<T>(m.is_forward, m.total);
         const T f = fct.value_or(def);
         // m.fast3d implies shape[0] in {4, 8}: the gate proves what the dispatch assumes.
@@ -859,9 +844,6 @@ void nd_runtime_plan<T>::execute(std::complex<T>* data, const exec_options<T>& o
 
 template<typename T>
 void nd_runtime_plan<T>::execute_nd(std::complex<T>* data, const exec_options<T>& opts) const {
-#ifdef ADM_FAST2D_COUNT
-    ++nd_slow2d_hits();
-#endif
     const std::size_t ndim = m.shape.size();
     if (opts.debug >= dbg_route) ADM_UNLIKELY trace(opts.debug, "in-place");
     const scale_plan sp = make_scale_plan(opts.fct);

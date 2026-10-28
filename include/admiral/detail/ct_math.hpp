@@ -138,11 +138,6 @@ template<typename F>
     return {ssum, csum};
 }
 
-template<typename F = double>
-[[nodiscard]] ADM_CONSTEVAL ct_sincos_v<F> ct_sincos_small(F x) {
-    return sincos_small_eval<F>(x);
-}
-
 // v to 106 bits. q is the 106-bit ulp of hi's binade: lo rounds to q, so F(hi) + F(lo) is exact.
 template<typename F>
 [[nodiscard]] constexpr F dd_round(ct_dd v) {

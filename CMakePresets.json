@@ -19,8 +19,7 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "ADM_BUILD_TESTS": "ON",
-        "ADM_BUILD_BENCHMARKS": "ON",
-        "ADM_ENABLE_WARNINGS_AS_ERRORS": "ON"
+        "ADM_BUILD_BENCHMARKS": "ON"
       }
     },
     {
@@ -28,11 +27,11 @@
       "displayName": "Debug + AddressSanitizer + UBSan (clang)",
       "inherits": "debug",
       "cacheVariables": {
-        "ADM_SANITIZER": "address+undefined",
         "ADM_BUILD_BENCHMARKS": "OFF",
         "CMAKE_CXX_COMPILER": "clang++",
         "ADM_TARGET_ARCH": "none",
-        "CMAKE_CXX_FLAGS": "-O1"
+        "CMAKE_CXX_FLAGS": "-O1 -fsanitize=address,undefined -fno-omit-frame-pointer -g",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined"
       }
     },
     {
@@ -40,10 +39,10 @@
       "displayName": "Debug + ThreadSanitizer",
       "inherits": "debug",
       "cacheVariables": {
-        "ADM_SANITIZER": "thread",
         "ADM_BUILD_BENCHMARKS": "OFF",
         "ADM_TARGET_ARCH": "none",
-        "CMAKE_CXX_FLAGS": "-O1"
+        "CMAKE_CXX_FLAGS": "-O1 -fsanitize=thread -fno-omit-frame-pointer -g",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread"
       }
     },
     {
@@ -68,8 +67,7 @@
         "CMAKE_BUILD_TYPE": "Release",
         "ADM_BUILD_TESTS": "ON",
         "ADM_BUILD_BENCHMARKS": "OFF",
-        "ADM_ENABLE_WARNINGS_AS_ERRORS": "ON",
-        "ADM_ENABLE_LTO": "OFF"
+        "CMAKE_CXX_FLAGS": "-Werror"
       }
     },
     {
@@ -79,9 +77,7 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "ADM_BUILD_TESTS": "OFF",
-        "ADM_BUILD_BENCHMARKS": "ON",
-        "ADM_ENABLE_WARNINGS_AS_ERRORS": "OFF",
-        "ADM_ENABLE_LTO": "OFF"
+        "ADM_BUILD_BENCHMARKS": "ON"
       }
     },
     {
@@ -91,8 +87,7 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "ADM_BUILD_TESTS": "ON",
-        "ADM_BUILD_BENCHMARKS": "ON",
-        "ADM_ENABLE_WARNINGS_AS_ERRORS": "ON"
+        "ADM_BUILD_BENCHMARKS": "ON"
       }
     }
   ],

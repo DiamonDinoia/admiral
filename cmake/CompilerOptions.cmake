@@ -28,18 +28,6 @@ else()
     message(STATUS "Fast math: DISABLED (enable with -DADM_USE_FAST_MATH=ON)")
 endif()
 
-# Unlike fast math, this knob must be consistent in every TU that can see
-# granule_codelet.hpp, consumers included: adm_apply_build_profile carries it to the
-# library targets (the fast-math channel) and admiral_internal forwards it PUBLIC
-# (the ADM_STATIC_DEFINE channel), which is what tests and benchmarks link.
-add_library(admiral_granule_admit_flags INTERFACE)
-if(ADM_GRANULE_ADMIT)
-    message(STATUS "Granule admission: ENABLED (default; no definition emitted)")
-else()
-    target_compile_definitions(admiral_granule_admit_flags INTERFACE ADM_GRANULE_ADMIT_OFF)
-    message(STATUS "Granule admission: DISABLED (-DADM_GRANULE_ADMIT_OFF on every granule TU)")
-endif()
-
 if(ADM_TARGET_ARCH STREQUAL "none")
     message(STATUS "Target arch: none (compiler default)")
 elseif(CMAKE_CROSSCOMPILING AND ADM_TARGET_ARCH STREQUAL "native")
@@ -73,26 +61,6 @@ include(${CMAKE_CURRENT_LIST_DIR}/tiers/aarch64.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/tiers/riscv.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/tiers/loongarch.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/tiers/s390x.cmake)
-
-if(ADM_ENABLE_LTO)
-    include(CheckIPOSupported)
-    check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
-    if(ipo_supported)
-        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
-        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
-        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL TRUE)
-        message(STATUS "Link-time optimization (LTO): ENABLED")
-        message(WARNING
-            "LTO is not the shipping configuration: GCC writes GIMPLE, not machine "
-            "code, into the installed .a archives, so they will only link with this "
-            "exact compiler. Leave ADM_ENABLE_LTO off to ship.")
-    else()
-        message(STATUS "Link-time optimization (LTO): NOT SUPPORTED")
-        message(STATUS "  Reason: ${ipo_error}")
-    endif()
-else()
-    message(STATUS "Link-time optimization (LTO): DISABLED (enable with -DADM_ENABLE_LTO=ON)")
-endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -139,12 +107,4 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     endif()
 endif()
 
-if(DEFINED ADM_EXTRA_CXX_FLAGS)
-    separate_arguments(ADM_EXTRA_CXX_FLAGS_LIST UNIX_COMMAND "${ADM_EXTRA_CXX_FLAGS}")
-    target_compile_options(admiral_optimization_flags INTERFACE
-        $<$<COMPILE_LANGUAGE:CXX>:${ADM_EXTRA_CXX_FLAGS_LIST}>
-    )
-    message(STATUS "Custom C++ flags: ${ADM_EXTRA_CXX_FLAGS}")
-endif()
-
-message(STATUS "Optimization flags: fast-math=${ADM_USE_FAST_MATH} arch=${ADM_TARGET_ARCH} lto=${ADM_ENABLE_LTO}")
+message(STATUS "Optimization flags: fast-math=${ADM_USE_FAST_MATH} arch=${ADM_TARGET_ARCH}")

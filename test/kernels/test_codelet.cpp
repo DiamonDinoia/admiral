@@ -346,14 +346,14 @@ void check_col_sizes() {
 
 template<typename T>
 void check_many_sizes() {
-    // Sweep the catalog itself: ADM_CODELET_EXTRA_SIZES changes which sizes exist, so a hardcoded
-    // list is a different test in every configuration. The gate is the production constant, not a
-    // copy, so raising it cannot leave this classification behind. The counts below fail if a
-    // catalog stops reaching an arm it can reach. Whether the rolled arm is reachable at all is a
-    // property of the catalog and the batch width, not of the code: the largest size has to carry
-    // kManyRollMinBlocks blocks. Every size is under the gate at the smallest catalog a sanitizer
-    // build accepts, so requiring the arm unconditionally would fail there for a reason no source
-    // change can fix.
+    // Sweep the catalog itself: the extras list in src/CodeletCatalog.cmake changes which sizes
+    // exist, so a hardcoded list is a different test per catalog. The gate is the production
+    // constant, not a copy, so raising it cannot leave this classification behind. The counts
+    // below fail if a catalog stops reaching an arm it can reach. Whether the rolled arm is
+    // reachable at all is a property of the catalog and the batch width, not of the code: the
+    // largest size has to carry kManyRollMinBlocks blocks. Every size is under the gate at the
+    // smallest catalog a sanitizer build accepts, so requiring the arm unconditionally would fail
+    // there for a reason no source change can fix.
     constexpr std::size_t W = xsimd::batch<T>::size;
     constexpr std::size_t kGate = kManyRollMinBlocks;
     std::size_t rolled = 0, statik = 0;

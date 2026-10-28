@@ -564,20 +564,6 @@ jobs:
       - name: G5 source grep
         run: scripts/check_g5.sh check
 
-  catalog:
-    timeout-minutes: 30
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build
-      - uses: hendrikmuhs/ccache-action@v1.2.24
-        with: {key: catalog}
-      - run: |
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_COMPILER=g++-14 -DADM_TARGET_ARCH=x86-64-v2 -DADM_CODELET_EXTRA_SIZES=66
-          cmake --build build
-          ctest --test-dir build --timeout 900 --output-on-failure --no-tests=error
-
   nothreads:
     timeout-minutes: 30
     runs-on: ubuntu-24.04

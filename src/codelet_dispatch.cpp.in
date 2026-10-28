@@ -102,7 +102,7 @@ struct col_codelet_invoke {
     void operator()(bool forward, const std::complex<T>* in, std::size_t in_inner,
                     std::complex<T>* out, std::size_t out_inner, std::size_t ncols,
                     T scale) const {
-        // Users may raise ADM_CODELET_MAX_N past 64; the col route never asks for it
+        // An extra past 64 gets no col arm: the col route never asks for it
         // (gated at kFourStepLeafMax), and instantiating there would burn compile time.
         if constexpr (N <= 64) {
             if (forward) col_codelet_apply<N, T, true >(in, in_inner, out, out_inner, ncols, scale);

@@ -334,7 +334,8 @@ TEMPLATE_TEST_CASE("Rader with a codelet inner transform", "[coverage][route][ca
         if (L > 64 && rader_supported(L + 1)) p = L + 1;
     if (p == 0)
         SKIP("no catalog size L > 64 with L+1 prime, so rader_inner_kind::codelet is "
-             "unreachable here; set ADM_CODELET_EXTRA_SIZES to cover it");
+             "unreachable here; extend ADM_CODELET_EXTRA_SIZES in src/CodeletCatalog.cmake "
+             "to cover it");
 
     CAPTURE(p);
     REQUIRE(is_codelet_catalog(p - 1));
@@ -642,7 +643,7 @@ TEMPLATE_TEST_CASE("fast3d gate pins the cube shapes astride its admission terms
         REQUIRE_FALSE(fast3d(s3{8, 8, 8}));
     }
 #else
-    // The ADM_GRANULE_ADMIT knob folds the cube predicate false with the rows/cols one.
+    // The ADM_GRANULE_ADMIT_OFF define folds the cube predicate false with the rows/cols one.
     REQUIRE_FALSE(fast3d(s3{4, 4, 4}));
     REQUIRE_FALSE(fast3d(s3{8, 8, 8}));
 #endif
@@ -664,7 +665,7 @@ TEMPLATE_TEST_CASE("fast3d cube execution matches the separable 3-D reference",
         SKIP("granule dialect compiled out at this ISA");
     }
 #ifdef ADM_GRANULE_ADMIT_OFF
-    SKIP("granule admission compiled out (ADM_GRANULE_ADMIT=OFF)");
+    SKIP("granule admission compiled out (ADM_GRANULE_ADMIT_OFF)");
 #endif
     using T = TestType;
     unsigned seed = 61;

@@ -84,7 +84,7 @@ endif()
 
 # Registers one test binary: the executable, the per-name ADM_TEST_EXTRA_*_<name>
 # includes/options/libs (set above), the Catch2 includes, and the optional
-# project_warnings/project_sanitizers linkage. A plain test is registered through
+# project_warnings linkage. A plain test is registered through
 # catch_discover_tests. POISON <def> instead compiles a positive-control twin with
 # -D<def>=1 and registers the whole binary through add_test with WILL_FAIL TRUE: the
 # poisoned invariant makes the binary exit nonzero, so a poison build that PASSES
@@ -118,9 +118,6 @@ function(adm_add_test name source)
 
     if(TARGET project_warnings)
         target_link_libraries(${name} PRIVATE project_warnings)
-    endif()
-    if(TARGET project_sanitizers)
-        target_link_libraries(${name} PRIVATE project_sanitizers)
     endif()
 
     if(ADM_T_POISON)
@@ -213,9 +210,6 @@ add_executable(admiral_digest digest/digest.cpp)
 target_link_libraries(admiral_digest PRIVATE admiral::admiral)
 if(TARGET project_warnings)
     target_link_libraries(admiral_digest PRIVATE project_warnings)
-endif()
-if(TARGET project_sanitizers)
-    target_link_libraries(admiral_digest PRIVATE project_sanitizers)
 endif()
 
 # ELF only: `nm -D` reads a dynamic symbol table, which a PE DLL does not have, and the

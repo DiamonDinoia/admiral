@@ -21,16 +21,13 @@ foreach(dep ducc::ducc0 nanobench)
     endif()
 endforeach()
 
-if(ADM_BENCH_FFTW)
+# The references always thread (ADM_BENCH_THREADS). The FFTW reference compiles in wherever
+# cmake/Dependencies.cmake's pkg-config probe found fftw3 and fftw3f (the --fftw-ab arm).
+target_compile_definitions(admiral_benchmark PRIVATE ADM_BENCH_THREADS)
+if(TARGET PkgConfig::FFTW)
     target_link_libraries(admiral_benchmark PRIVATE PkgConfig::FFTW)
     target_compile_definitions(admiral_benchmark PRIVATE ADM_BENCH_FFTW)
-endif()
-
-if(ADM_BENCH_THREADS)
-    target_compile_definitions(admiral_benchmark PRIVATE ADM_BENCH_THREADS)
-    if(ADM_BENCH_FFTW)
-        target_link_libraries(admiral_benchmark PRIVATE ${FFTW3_THREADS_LIB} ${FFTW3F_THREADS_LIB})
-    endif()
+    target_link_libraries(admiral_benchmark PRIVATE ${FFTW3_THREADS_LIB} ${FFTW3F_THREADS_LIB})
 endif()
 
 # This one leg stays an unconditional link: the pre-profile build linked it without an

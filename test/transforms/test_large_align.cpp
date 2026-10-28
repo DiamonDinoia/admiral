@@ -280,9 +280,14 @@ TEST_CASE("streaming transpose band matches the cached one bit for bit", "[large
         CHECK(!four_step_stream_ok<double>(shifted, n2, huge));
     }
 
-    // A row pitch that is not a whole number of arch vectors. It can only fail where an arch
-    // vector holds more than one complex, so it is asserted only there.
-    if constexpr (xsimd::batch<double>::size > 2) {
+    // A row pitch that is not a whole number of arch vectors fails only where one arch vector
+    // is wider than one complex: the gate quotes "(n2 * 2 * sizeof(T)) % A" against the arch
+    // alignment (four_step_large.hpp, "An arch-aligned base plus a row pitch that is a whole
+    // number of arch vectors makes every such address arch-aligned"). One complex<double> is
+    // 16 bytes; where A is 16 (x86-64, NEON, and rvv at every VLEN — xsimd pins rvv alignment
+    // to 16) every whole-complex pitch is a whole number of arch vectors and the control does
+    // not exist. Key it to A, not to the batch width: A > 2 * sizeof(double).
+    if constexpr (A > 2 * sizeof(double)) {
         CHECK(!four_step_stream_ok<double>(aligned.ptr, n2 + 1, huge));
     }
 

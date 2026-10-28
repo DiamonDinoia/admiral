@@ -1,5 +1,16 @@
 
 #include "cpp_api.hpp"
+
+#ifdef ADM_DISPATCH
+
+namespace admiral::detail {
+
+template const tier_ops<float>* tier_entry::operator()(xsimd::default_arch, float*) const noexcept;
+
+}
+
+#else  // !ADM_DISPATCH: master's text, verbatim
+
 #include "admiral/detail/cxx_compat.hpp"
 
 namespace admiral {
@@ -29,3 +40,5 @@ template ADM_API_INST void inverse<float>(std::complex<float>*, float*, span<con
                                           const options&, std::optional<float>);
 
 }
+
+#endif

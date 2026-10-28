@@ -1,6 +1,15 @@
 #pragma once
 
+// The engine half of the public API. Under ADM_DISPATCH this header carries one engine tier:
+// the states derive from the abstract bases of api_tier.hpp and the tier entry builds the
+// dispatch table. Without ADM_DISPATCH it carries master's concrete states and the public
+// API itself, verbatim, so an OFF build keeps master's codegen and exports.
+
+#ifdef ADM_DISPATCH
+#include "api_tier.hpp"
+#else
 #include "admiral/admiral.hpp"
+#endif
 
 #include <limits>
 #include <vector>
@@ -37,6 +46,234 @@ inline std::size_t split_batch_threads(std::size_t requested, std::size_t total,
     }
     return requested;
 }
+
+#ifdef ADM_DISPATCH
+
+template<typename T>
+struct plan_state_impl final : plan_state<T> {
+    nd_runtime_plan<T> fwd;
+    nd_runtime_plan<T> inv;
+    unsigned debug;
+
+    plan_state_impl(span<const std::size_t> shape, const admiral::options& opts)
+        : fwd{shape, true, opts.nthreads, opts.eff, opts.pin_threads},
+          inv{shape, false, opts.nthreads, opts.eff, opts.pin_threads},
+          debug(opts.debug) {}
+
+    [[nodiscard]] std::size_t size() const noexcept override { return fwd.size(); }
+    void run(bool is_forward, std::complex<T>* data, const T* fct) const override {
+        (is_forward ? fwd : inv).execute(data, {as_optional(fct), debug});
+    }
+    void run(bool is_forward, const std::complex<T>* src, std::complex<T>* dst,
+             const T* fct) const override {
+        (is_forward ? fwd : inv).execute(src, dst, {as_optional(fct), debug});
+    }
+};
+
+template<>
+struct plan_state_impl<long double> final : plan_state<long double> {
+    scalar_plan_state<long double, ld_c2c_t<long double>> s;
+    // Members defined in inst_api_ld.cpp, the one TU built without fast math (dd_fft.hpp).
+    plan_state_impl(span<const std::size_t> shape, const admiral::options& opts);
+    [[nodiscard]] std::size_t size() const noexcept override;
+    void run(bool is_forward, std::complex<long double>* data,
+             const long double* fct) const override;
+    void run(bool is_forward, const std::complex<long double>* src,
+             std::complex<long double>* dst, const long double* fct) const override;
+};
+
+template<typename T>
+struct axis_state_impl final : axis_state<T> {
+    std::vector<std::size_t> shape;
+    std::vector<std::size_t> stride;
+    std::vector<std::size_t> bd;
+    std::size_t axis;
+    bool forward;
+    bool innermost;
+    nd_axis_state<T> st;
+    std::unique_ptr<thread_pool> pool;
+    unsigned debug;
+
+    axis_state_impl(span<const std::size_t> extents, std::size_t ax, bool fwd,
+                    const admiral::options& opts)
+        : shape(extents.begin(), extents.end()), stride(extents.size()), axis(ax), forward(fwd),
+          innermost(ax + 1 == extents.size()), debug(opts.debug) {
+        if (shape.empty() || axis >= shape.size()) ADM_UNLIKELY
+            throw size_error("axis_plan: axis out of range");
+        const auto total = extent_product(shape);
+        if (!total) ADM_UNLIKELY
+            throw size_error("axis_plan: extents must be > 0 and their product must fit");
+        std::size_t s = 1;
+        for (std::size_t di = 0; di < shape.size(); ++di) {
+            const std::size_t d = shape.size() - 1 - di;
+            stride[d] = s;
+            s *= shape[d];
+        }
+        for (std::size_t d = 0; d < shape.size(); ++d)
+            if (d != axis && (innermost || d + 1 != shape.size())) bd.push_back(d);
+        st = make_nd_axis_state<T>(shape[axis], stride[axis], forward, innermost,
+                                   split_batch_threads<T>(opts.nthreads, *total,
+                                                          *total / shape[axis], shape[axis],
+                                                          pool, opts.pin_threads),
+                                   opts.eff, opts.pin_threads);
+    }
+
+    void execute_bands(std::complex<T>* data, span<const std::size_t> lo,
+                       span<const std::size_t> hi, std::size_t lo2_last, std::size_t hi2_last,
+                       std::optional<T> fct) const override;
+};
+
+template<typename T>
+struct strides_state_impl final : strides_state<T> {
+    std::size_t len, nbatch;
+    std::size_t in_stride, in_dist, out_stride, out_dist;
+    nd_axis_state<T> fwd, inv;
+    std::unique_ptr<thread_pool> pool;
+
+    strides_state_impl(std::size_t len_, std::size_t n, std::size_t istride, std::size_t idist,
+                       std::size_t ostride, std::size_t odist, const admiral::options& opts)
+        : len(len_), nbatch(n), in_stride(istride), in_dist(idist), out_stride(ostride),
+          out_dist(odist) {
+        if (istride == 0 || ostride == 0 || (n > 1 && (idist == 0 || odist == 0)))
+            ADM_UNLIKELY
+            throw size_error("strides_plan: strides must be nonzero");
+        const std::size_t dims[2] = {len_, n};
+        const auto total = extent_product(span<const std::size_t>(dims, 2));
+        if (!total) ADM_UNLIKELY
+            throw size_error("strides_plan: len and nbatch must be > 0 and their"
+                             " product must fit");
+        const std::size_t axis_threads =
+            split_batch_threads<T>(opts.nthreads, *total, n, len_, pool, opts.pin_threads);
+        fwd = make_nd_axis_state<T>(len_, istride, true, false,
+                                    axis_threads, opts.eff, opts.pin_threads);
+        inv = make_nd_axis_state<T>(len_, istride, false, false,
+                                    axis_threads, opts.eff, opts.pin_threads);
+        const bool need_slab = len_ > 1 && istride != 1 && idist == 1 && odist != 1 &&
+                               (slab_route(fwd) || slab_route(inv));
+        if (need_slab && pool && opts.nthreads == 0) {
+            const std::size_t n1 =
+                resolve_nthreads(0, *total, 2,
+                                 double(n) * line_work_cyc<T>(len_) / core_cyc_per_ns(), 1);
+            if (n1 > 1 && n1 != pool->size())
+                pool = std::make_unique<thread_pool>(n1, opts.pin_threads);
+        }
+    }
+
+    [[nodiscard]] bool slab_route(const nd_axis_state<T>& st) const {
+        return choose_line_route<T>(st, len, in_stride, nbatch, pool_size(pool.get())) ==
+               line_route::col_dif;
+    }
+
+    [[nodiscard]] std::size_t size() const noexcept override { return len * nbatch; }
+
+    void run(bool is_forward, const std::complex<T>* src, std::complex<T>* dst,
+             std::optional<T> fct) const override {
+        const nd_axis_state<T>& st = is_forward ? fwd : inv;
+        if (src == dst && (in_stride != out_stride || in_dist != out_dist)) ADM_UNLIKELY
+            throw size_error("strides_plan: in place requires matching in/out strides");
+        if (len <= 1) {
+            const T scale = fct.value_or(T(1));
+            for (std::size_t l = 0; l < nbatch; ++l)
+                *dst = *src * scale, src += in_dist, dst += out_dist;
+            return;
+        }
+        if (in_stride == 1) {
+            const exec_options<T> opts{fct};
+            if (out_stride == 1) {
+                parallel_for(pool.get(), nbatch, len * nbatch,
+                             [&](std::size_t b, std::size_t e, std::size_t) {
+                                 for (std::size_t r = b; r < e; ++r)
+                                     st.plan->execute(src + r * in_dist, dst + r * out_dist,
+                                                      opts);
+                             });
+                return;
+            }
+            parallel_for(pool.get(), nbatch, len * nbatch,
+                         [&](std::size_t b, std::size_t e, std::size_t) {
+                             detail::soa_scratch<std::complex<T>, 1> scratch(len);
+                             std::complex<T>* const line = scratch.buf(0);
+                             for (std::size_t r = b; r < e; ++r) {
+                                 st.plan->execute(src + r * in_dist, line, opts);
+                                 for (std::size_t p = 0; p < len; ++p)
+                                     dst[p * out_stride + r * out_dist] = line[p];
+                             }
+                         });
+            return;
+        }
+        if (in_dist == 1 && out_dist != 1 && slab_route(st)) {
+            detail::soa_scratch<std::complex<T>, 1> slab_sc(len * nbatch);
+            std::complex<T>* const slab = slab_sc.buf(0);
+            apply_lines_strided_oop<T>(src, in_stride, in_dist, slab, nbatch,
+                                       1, len, is_forward, st, fct,
+                                       pool.get(), 1, nbatch, len * nbatch,
+                                       [](std::size_t) { return std::size_t{0}; },
+                                       [](std::size_t) { return std::size_t{0}; });
+            parallel_for(pool.get(), nbatch, len * nbatch,
+                         [&](std::size_t b, std::size_t e, std::size_t) {
+                             for (std::size_t l = b; l < e; ++l)
+                                 for (std::size_t p = 0; p < len; ++p)
+                                     dst[p * out_stride + l * out_dist] = slab[p * nbatch + l];
+                         });
+            return;
+        }
+        apply_lines_strided_oop<T>(src, in_stride, in_dist, dst, out_stride, out_dist, len,
+                                   is_forward, st, fct, pool.get(), 1, nbatch,
+                                   len * nbatch, [](std::size_t) { return std::size_t{0}; },
+                                   [](std::size_t) { return std::size_t{0}; });
+    }
+};
+
+template<typename T>
+struct real_state_impl final : real_state<T> {
+    nd_real_plan<T> plan;
+    unsigned debug;
+
+    real_state_impl(span<const std::size_t> shape, const admiral::options& opts)
+        : plan{shape, opts.nthreads, opts.eff, opts.pin_threads}, debug(opts.debug) {}
+
+    void forward(const T* in, std::complex<T>* out, std::optional<T> fct) const override {
+        plan.forward(in, out, {fct, debug});
+    }
+    void inverse(std::complex<T>* spec, T* out, std::optional<T> fct) const override {
+        plan.inverse(spec, out, {fct, debug});
+    }
+    [[nodiscard]] std::size_t real_size() const noexcept override { return plan.real_size(); }
+    [[nodiscard]] std::size_t cplx_size() const noexcept override { return plan.cplx_size(); }
+};
+
+template<>
+struct real_state_impl<long double> final : real_state<long double> {
+    scalar_real_state<long double, ld_c2c_t<long double>, ld_r2c_t<long double>> s;
+    // Members defined in inst_api_ld.cpp, the one TU built without fast math (dd_fft.hpp).
+    real_state_impl(span<const std::size_t> shape, const admiral::options& opts);
+    [[nodiscard]] std::size_t real_size() const noexcept override;
+    [[nodiscard]] std::size_t cplx_size() const noexcept override;
+    void forward(const long double* in, std::complex<long double>* out,
+                 std::optional<long double> fct) const override;
+    void inverse(std::complex<long double>* spec, long double* out,
+                 std::optional<long double> fct) const override;
+};
+
+template<typename T>
+struct r2r_state_impl final : r2r_state<T> {
+    r2r_plan<T> plan;
+
+    r2r_state_impl(std::size_t N, r2r_kind kind, std::size_t rows, const admiral::options& opts)
+        : plan{N, kind, rows, opts.eff,
+               resolve_nthreads(opts.nthreads, sat_elems(N, rows), 1,
+                                double(rows) * line_work_cyc<T>(N) / core_cyc_per_ns(), 1),
+               opts.pin_threads} {}
+
+    [[nodiscard]] std::size_t size() const noexcept override { return plan.size(); }
+    void forward(const T* in, T* out, std::optional<T> fct) const override {
+        plan.forward(in, out, fct);
+    }
+    void inverse(const T* in, T* out, std::optional<T> fct) const override {
+        plan.inverse(in, out, fct);
+    }
+};
+
+#else  // !ADM_DISPATCH: master's concrete states, verbatim
 
 template<typename T>
 struct plan_state {
@@ -236,6 +473,8 @@ struct r2r_state {
                opts.pin_threads} {}
 };
 
+#endif  // ADM_DISPATCH
+
 }
 
 namespace {
@@ -248,7 +487,11 @@ void one_shot_1d(span<const std::complex<T>> input, span<std::complex<T>> output
     if (input.empty()) ADM_UNLIKELY return;
     if constexpr (std::is_same_v<T, long double>) {
         const std::size_t n = output.size();
+#ifdef ADM_DISPATCH
+        detail::plan_state_impl<T>(span<const std::size_t>(&n, 1), opts)
+#else
         detail::plan_state<T>(span<const std::size_t>(&n, 1), opts)
+#endif
             .run(is_forward, input.data(), output.data(), fct ? &*fct : nullptr);
     } else {
         detail::plan_impl<T>(output.size(), is_forward, opts.nthreads, nullptr,
@@ -261,7 +504,11 @@ template<typename T>
 void one_shot_nd(std::complex<T>* data, span<const std::size_t> shape, bool is_forward,
                  const options& opts, std::optional<T> fct) {
     if constexpr (std::is_same_v<T, long double>) {
+#ifdef ADM_DISPATCH
+        detail::plan_state_impl<T>(shape, opts).run(is_forward, data, fct ? &*fct : nullptr);
+#else
         detail::plan_state<T>(shape, opts).run(is_forward, data, fct ? &*fct : nullptr);
+#endif
     } else {
         detail::nd_runtime_plan<T>(shape, is_forward, opts.nthreads, effort::estimate,
                                    opts.pin_threads)
@@ -269,7 +516,163 @@ void one_shot_nd(std::complex<T>* data, span<const std::size_t> shape, bool is_f
     }
 }
 
+#ifdef ADM_DISPATCH
+
+template<typename T>
+void one_shot_r2c(const T* in, std::complex<T>* out, span<const std::size_t> shape,
+                  const options& opts, std::optional<T> fct) {
+    if constexpr (std::is_same_v<T, long double>) {
+        detail::real_state_impl<T>(shape, opts).forward(in, out, fct);
+    } else {
+        detail::nd_real_plan<T>(shape, opts.nthreads, effort::estimate, opts.pin_threads)
+            .forward(in, out, {fct, opts.debug});
+    }
 }
+
+template<typename T>
+void one_shot_c2r(std::complex<T>* spec, T* out, span<const std::size_t> shape,
+                  const options& opts, std::optional<T> fct) {
+    if constexpr (std::is_same_v<T, long double>) {
+        detail::real_state_impl<T>(shape, opts).inverse(spec, out, fct);
+    } else {
+        detail::nd_real_plan<T>(shape, opts.nthreads, effort::estimate, opts.pin_threads)
+            .inverse(spec, out, {fct, opts.debug});
+    }
+}
+
+#endif  // ADM_DISPATCH
+
+}
+
+#ifdef ADM_DISPATCH
+
+template<typename T>
+void detail::axis_state_impl<T>::execute_bands(std::complex<T>* data,
+                                               span<const std::size_t> lo,
+                                               span<const std::size_t> hi,
+                                               std::size_t lo2_last,
+                                               std::size_t hi2_last,
+                                               std::optional<T> fct) const {
+    const axis_state_impl* const m = this;
+    const std::size_t ndim = m->shape.size();
+    const std::size_t len = m->shape[m->axis];
+    const std::size_t inner = m->stride[m->axis];
+
+    if ((!lo.empty() && lo.size() != ndim) || (!hi.empty() && hi.size() != ndim)) ADM_UNLIKELY
+        throw size_error("axis_plan: box rank must match shape");
+    const auto blo = [&](std::size_t d) { return lo.empty() ? std::size_t{0} : lo[d]; };
+    const auto bhi = [&](std::size_t d) { return hi.empty() ? m->shape[d] : hi[d]; };
+    bool empty_box = false;
+    for (std::size_t d = 0; d < ndim; ++d) {
+        if (bhi(d) > m->shape[d] || blo(d) > bhi(d)) ADM_UNLIKELY
+            throw size_error("axis_plan: box out of range");
+        empty_box |= (blo(d) == bhi(d));
+    }
+    if (blo(m->axis) != 0 || bhi(m->axis) != len) ADM_UNLIKELY
+        throw size_error("axis_plan: transformed axis must be full");
+    if (lo2_last != hi2_last) {
+        const std::size_t last = ndim - 1;
+        if (hi2_last > m->shape[last] || lo2_last > hi2_last || m->axis == last || empty_box)
+            ADM_UNLIKELY
+            throw size_error("axis_plan: second band out of range");
+        if (lo2_last < bhi(last) && blo(last) < hi2_last) ADM_UNLIKELY
+            throw size_error("axis_plan: bands overlap");
+    }
+    if (empty_box || len <= 1) return;
+
+    detail::thread_pool* tp = m->pool.get();
+
+    std::size_t nbatch = 1;
+    for (const std::size_t d : m->bd) nbatch *= bhi(d) - blo(d);
+    const auto base_of = [&](std::size_t i) {
+        std::size_t off = 0;
+        for (std::size_t k = m->bd.size(); k-- > 0;) {
+            const std::size_t d = m->bd[k];
+            const std::size_t e = bhi(d) - blo(d);
+            off += (blo(d) + i % e) * m->stride[d];
+            i /= e;
+        }
+        return off;
+    };
+
+    if (m->innermost) {
+        bool dense = true;
+        for (std::size_t k = 1; k < m->bd.size(); ++k)
+            dense &= blo(m->bd[k]) == 0 && bhi(m->bd[k]) == m->shape[m->bd[k]];
+        detail::apply_lines_contiguous<T>(data, len, m->st, fct, tp, nbatch, nbatch * len,
+                                          base_of, dense ? len : 0);
+        return;
+    }
+    const std::size_t last = ndim - 1;
+    const std::size_t band = bhi(last) - blo(last);
+    const std::size_t c_lo = blo(last);
+    const std::size_t w1 = hi2_last - lo2_last;
+
+    switch (detail::choose_band_form(m->st.dif, m->st.dtw.radices.size(), band, w1,
+                                     xsimd::batch<T>::size)) {
+    case detail::band_form::packed:
+        detail::apply_bands_strided_packed<T>(
+            data, len, inner, m->forward, m->st, fct, tp, nbatch, band, w1,
+            nbatch * len * (band + w1), [&](std::size_t r) {
+                const std::size_t off = base_of(r);
+                return std::array<std::size_t, 2>{off + c_lo, off + lo2_last};
+            });
+        return;
+
+    case detail::band_form::merged:
+        detail::apply_lines_strided<T>(
+            data, len, inner, m->forward, m->st, fct, tp, 2 * nbatch, band,
+            2 * nbatch * len * band,
+            [&](std::size_t r) { return base_of(r / 2) + (r % 2 == 0 ? c_lo : lo2_last); });
+        return;
+
+    case detail::band_form::split:
+        detail::apply_lines_strided<T>(data, len, inner, m->forward, m->st, fct, tp, nbatch,
+                                       band, nbatch * len * band,
+                                       [&](std::size_t r) { return base_of(r) + c_lo; });
+        if (w1 != 0)
+            detail::apply_lines_strided<T>(data, len, inner, m->forward, m->st, fct, tp, nbatch,
+                                           w1, nbatch * len * w1,
+                                           [&](std::size_t r) { return base_of(r) + lo2_last; });
+        return;
+    }
+}
+
+namespace detail {
+
+template<class Base, class Impl, class... A>
+std::unique_ptr<Base> make_state(A... a) {
+    return std::make_unique<Impl>(a...);
+}
+
+template<class Arch, typename T>
+const tier_ops<T>* tier_entry::operator()(Arch, T*) const noexcept {
+    static const tier_ops<T> ops = [] {
+        using S = span<const std::size_t>;
+        using std::size_t;
+        tier_ops<T> t{};
+        t.plan = &make_state<plan_state<T>, plan_state_impl<T>, S, const options&>;
+        t.real = &make_state<real_state<T>, real_state_impl<T>, S, const options&>;
+        if constexpr (is_simd_precision_v<T>) {
+            t.axis = &make_state<axis_state<T>, axis_state_impl<T>, S, size_t, bool,
+                                 const options&>;
+            t.strides = &make_state<strides_state<T>, strides_state_impl<T>, size_t, size_t,
+                                    size_t, size_t, size_t, size_t, const options&>;
+            t.r2r = &make_state<r2r_state<T>, r2r_state_impl<T>, size_t, r2r_kind, size_t,
+                                const options&>;
+        }
+        t.one_1d = &one_shot_1d<T>;
+        t.one_nd = &one_shot_nd<T>;
+        t.one_r2c = &one_shot_r2c<T>;
+        t.one_c2r = &one_shot_c2r<T>;
+        return t;
+    }();
+    return &ops;
+}
+
+}
+
+#else  // !ADM_DISPATCH: master's public API definitions, verbatim
 
 #if ADM_CXX20
 template<detail::precision T>
@@ -573,5 +976,7 @@ template<typename T>
 std::size_t plan_r2r<T>::size() const noexcept {
     return m->plan.size();
 }
+
+#endif  // ADM_DISPATCH
 
 }

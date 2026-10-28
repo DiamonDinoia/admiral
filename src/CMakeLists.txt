@@ -1,7 +1,10 @@
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/CodeletCatalog.cmake)
 
-add_library(admiral_engine OBJECT
+# The ISA-dependent engine. ADM_DISPATCH builds it once at the floor and once more per upper
+# tier. The shared TUs (one snmalloc state, one probe cache, one set of error key functions and
+# the dispatch seam) build only at the floor.
+set(ADM_TIER_SOURCES
     inst_col_f_fwd.cpp inst_col_f_inv.cpp inst_col_d_fwd.cpp inst_col_d_inv.cpp
     inst_col_first_f_fwd.cpp inst_col_first_f_inv.cpp inst_col_first_d_fwd.cpp
     inst_col_first_d_inv.cpp inst_col_mid_f.cpp inst_col_mid_d.cpp
@@ -13,8 +16,32 @@ add_library(admiral_engine OBJECT
     inst_gt_f.cpp inst_gt_d.cpp
     inst_nd_f.cpp inst_nd_d.cpp
     inst_real_f.cpp inst_real_d.cpp
-    inst_api_f.cpp inst_api_d.cpp inst_api_ld.cpp
-    scratch_alloc.cpp large_route_probe.cpp)
+    inst_api_f.cpp inst_api_d.cpp inst_api_ld.cpp)
+option(ADM_DISPATCH "Add run-time engine tiers above the floor (tier map: cmake/tiers/)" OFF)
+if(ADM_DISPATCH)
+    if(NOT ADM_TIER_TAGS)
+        message(FATAL_ERROR "ADM_DISPATCH has no tiers for ${CMAKE_SYSTEM_PROCESSOR} (cmake/tiers)")
+    endif()
+    if(NOT ADM_TARGET_ARCH STREQUAL ADM_TIER_FLOOR)
+        message(FATAL_ERROR "ADM_DISPATCH needs ADM_TARGET_ARCH=${ADM_TIER_FLOOR} (the floor), not ${ADM_TARGET_ARCH}")
+    endif()
+    if(ADM_ENABLE_LTO)
+        message(FATAL_ERROR "ADM_DISPATCH needs ADM_ENABLE_LTO=OFF: LTO objects hold IR, not machine code, and the tier rename needs machine code")
+    endif()
+    find_program(ADM_LLVM_NM llvm-nm)
+    find_program(ADM_LLVM_OBJCOPY llvm-objcopy)
+    if(NOT ADM_LLVM_NM OR NOT ADM_LLVM_OBJCOPY)
+        message(FATAL_ERROR "ADM_DISPATCH needs llvm-nm and llvm-objcopy (nm=${ADM_LLVM_NM}, objcopy=${ADM_LLVM_OBJCOPY})")
+    endif()
+endif()
+if(ADM_DISPATCH)
+    add_library(admiral_engine OBJECT
+        ${ADM_TIER_SOURCES} api.cpp errors.cpp scratch_alloc.cpp large_route_probe.cpp)
+    target_compile_definitions(admiral_engine PRIVATE ADM_DISPATCH)
+else()
+    add_library(admiral_engine OBJECT
+        ${ADM_TIER_SOURCES} scratch_alloc.cpp large_route_probe.cpp)
+endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set(_adm_col_numerics -ffp-contract=on -fno-associative-math)
@@ -109,6 +136,73 @@ if(NOT WIN32)
     endforeach()
 endif()
 
+# ADM_DISPATCH: the floor is ADM_TARGET_ARCH=${ADM_TIER_FLOOR}. The engine and the codelets build once
+# more per tier. cmake/rename_tier.cmake then gives every external symbol that a tier defines,
+# except the tier entry, the prefix admiral_<tag>_, so no symbol of one tier can bind to
+# another. Local symbols keep their names: they bind inside one object and cannot cross a tier.
+# The per-source COMPILE_OPTIONS of this file (the col pin and the inst_api_ld strict-FP set)
+# ride the tier copies through CMake's directory-scoped source properties; check (g) asserts
+# this per tier from compile_commands.json. Tier code keeps master's mutable header statics
+# (thread_pool.hpp, the plan.hpp probe/pool caches, plan.hpp's route_memo, nd_plan.hpp's
+# workspace slot): one tier runs per process, and a measured route choice is ISA-specific, so
+# route_memo must be -- and is -- a per-tier copy.
+set(ADM_TIER_OBJECTS "")
+if(ADM_DISPATCH)
+    if(MSVC)
+        set(_adm_obj_ext .obj)
+    else()
+        set(_adm_obj_ext .o)
+    endif()
+    file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/floor.list
+         CONTENT "$<JOIN:$<TARGET_OBJECTS:admiral_engine>,\n>\n$<JOIN:$<TARGET_OBJECTS:admiral_codelets>,\n>\n")
+    foreach(tag ${ADM_TIER_TAGS})
+        set(eng admiral_engine_${tag})
+        add_library(${eng} OBJECT
+            ${ADM_TIER_SOURCES} ${ADM_CODELET_GENERATED}
+            ${CMAKE_CURRENT_BINARY_DIR}/codelet_dispatch.cpp)
+        target_compile_features(${eng} PRIVATE cxx_std_${ADM_CXX_STANDARD})
+        target_include_directories(${eng} PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${CMAKE_CURRENT_SOURCE_DIR}
+            ${ADM_GENERATED_INCLUDE_DIR})
+        target_link_libraries(${eng} PRIVATE xsimd poet::poet snmalloc ${ADM_THREADS_LIB})
+        target_compile_definitions(${eng} PRIVATE ADM_BUILDING ADM_DISPATCH ADM_STATIC_DEFINE)
+        if(WIN32)
+            target_compile_definitions(${eng} PRIVATE _CRT_SECURE_NO_WARNINGS)
+        endif()
+        if(ADM_PIN_PLAN_ESTIMATE)
+            target_compile_definitions(${eng} PRIVATE ADM_PIN_PLAN_ESTIMATE)
+        endif()
+        adm_apply_build_profile(${eng})
+        # The tier flag library comes after the profile, so its -march wins over the floor's.
+        add_library(admiral_tier_${tag}_flags INTERFACE)
+        target_compile_options(admiral_tier_${tag}_flags INTERFACE ${_adm_tier_flag_${tag}})
+        target_link_libraries(${eng} PRIVATE admiral_tier_${tag}_flags)
+        if(NOT WIN32)
+            set_target_properties(${eng} PROPERTIES CXX_VISIBILITY_PRESET default)
+        endif()
+
+        file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/tier_${tag}.list
+             CONTENT "$<JOIN:$<TARGET_OBJECTS:${eng}>,\n>\n")
+        set(renamed "")
+        foreach(src ${ADM_TIER_SOURCES} ${ADM_CODELET_GENERATED}
+                    ${CMAKE_CURRENT_BINARY_DIR}/codelet_dispatch.cpp)
+            get_filename_component(base ${src} NAME)
+            list(APPEND renamed ${CMAKE_CURRENT_BINARY_DIR}/tier_${tag}/${base}${_adm_obj_ext})
+        endforeach()
+        add_custom_command(OUTPUT ${renamed}
+            COMMAND ${CMAKE_COMMAND}
+                    -DNM=${ADM_LLVM_NM} -DOBJCOPY=${ADM_LLVM_OBJCOPY}
+                    -DTAG=${tag} -DLIST=${CMAKE_CURRENT_BINARY_DIR}/tier_${tag}.list
+                    -DOUT=${CMAKE_CURRENT_BINARY_DIR}/tier_${tag}
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/rename_tier.cmake
+            DEPENDS ${eng} ${CMAKE_CURRENT_BINARY_DIR}/tier_${tag}.list
+                    ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/rename_tier.cmake
+            VERBATIM)
+        list(APPEND ADM_TIER_OBJECTS ${renamed})
+    endforeach()
+endif()
+
 adm_add_surface(admiral
     VERSION_SCRIPT admiral.map
     EXPORT_NAME admiral)
@@ -138,12 +232,15 @@ target_link_libraries(admiral_fftw_objects INTERFACE ${CMAKE_DL_LIBS})
 if(WIN32)
     add_library(admiral_internal INTERFACE)
     set(adm_internal_scope INTERFACE)
-    target_sources(admiral_internal INTERFACE $<TARGET_OBJECTS:admiral_engine>)
+    target_sources(admiral_internal INTERFACE
+        $<TARGET_OBJECTS:admiral_engine>
+        ${ADM_TIER_OBJECTS})
     target_link_libraries(admiral_internal INTERFACE admiral_codelets)
 else()
     add_library(admiral_internal SHARED
         $<TARGET_OBJECTS:admiral_engine>
-        $<TARGET_OBJECTS:admiral_codelets>)
+        $<TARGET_OBJECTS:admiral_codelets>
+        ${ADM_TIER_OBJECTS})
     set(adm_internal_scope PUBLIC)
     # -Bsymbolic-functions binds the library's own cross-TU calls directly, the way the version
     # script already does inside the shipped surfaces, so only a consumer's entry call takes a

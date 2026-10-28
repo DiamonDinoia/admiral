@@ -55,11 +55,11 @@ resolve_cell() {
             case $1 in
                 x86_64)   K=native CXX=g++-14 ARCH=x86-64-v2 EXPECT='-march=x86-64-v2' XARCH=sse4.2 ;;
                 aarch64)  TRIPLE=aarch64-linux-gnu        PROC=aarch64 QEMU=qemu-aarch64 ARCH=armv8-a EXPECT='-march=armv8-a' XARCH=arm64+neon ;;
-                ppc64le)  TRIPLE=powerpc64le-linux-gnu    PROC=ppc64le  QEMU=qemu-ppc64le ARCH=power8   EXPECT='-mcpu=power8' ;;
+                ppc64le)  TRIPLE=powerpc64le-linux-gnu    PROC=ppc64le  QEMU=qemu-ppc64le ARCH=power8   EXPECT='-mcpu=power8' XARCH=vmx+vsx ;;
                 ppc64)    TRIPLE=powerpc64-linux-gnu      PROC=ppc64    QEMU=qemu-ppc64   ARCH=power8   EXPECT='-mcpu=power8' ;;
                 armhf)    TRIPLE=arm-linux-gnueabihf      PROC=arm      QEMU=qemu-arm     ARCH=none     XARCH=emulated ;;
                 riscv64)  TRIPLE=riscv64-linux-gnu        PROC=riscv64  QEMU=qemu-riscv64 ARCH=none     XARCH=emulated ;;
-                s390x)    TRIPLE=s390x-linux-gnu          PROC=s390x    QEMU=qemu-s390x   ARCH=none     XARCH=emulated ;;
+                s390x)    TRIPLE=s390x-linux-gnu          PROC=s390x    QEMU=qemu-s390x   ARCH=z14      EXPECT='-march=z14 -mzvector' XARCH=vxe ;;
             esac ;;
         linux-gcc-14-release)   K=linux CC=gcc-14 CXX=g++-14     CFG=Release ARCH=x86-64-v3 ;;
         linux-gcc-14-debug)     K=linux CC=gcc-14 CXX=g++-14     CFG=Debug   ARCH=x86-64-v3 ;;
@@ -135,9 +135,9 @@ if ! cmake "${args[@]}" > /b/logs/configure.log 2>&1; then
 fi
 
 if [ "$K" = qemu ] || [ "$K" = native ]; then
-    if [ -n "$EXPECT" ] && ! grep -qF -- "$EXPECT" "$b/compile_commands.json"; then
-        echo "FLAG MISSING: $EXPECT"; exit 1
-    fi
+    for f in $EXPECT; do
+        grep -qF -- "$f" "$b/compile_commands.json" || { echo "FLAG MISSING: $f"; exit 1; }
+    done
     if grep -qF -- '=native' "$b/compile_commands.json"; then echo "FLAG PRESENT: =native"; exit 1; fi
     if ! grep -qF -- '-O3' "$b/compile_commands.json" && ! grep -qF -- '-O2' "$b/compile_commands.json"; then
         echo "FLAG MISSING: -O3|-O2"; exit 1
@@ -169,12 +169,25 @@ if [ -n "$XARCH" ]; then
 fi
 
 timeout_s=900
-[ "$K" = qemu ] && timeout_s=1800
+[ "$K" = qemu ] && timeout_s=7200
 rc=0
-ctest --test-dir "$b" -j "$ADM_CI_CTEST_JOBS" --timeout "$timeout_s" --output-on-failure --no-tests=error \
-    > /b/logs/ctest.log 2>&1 || rc=$?
+if [ "$K" = qemu ]; then
+    # Each ctest case is one qemu process. The long cases run in their own -R call, at the same
+    # time as the rest, so they do not run last.
+    long='plane-fused|ULP: large'
+    ctest --test-dir "$b" -j "$ADM_CI_CTEST_JOBS" --timeout "$timeout_s" --output-on-failure -R "$long" \
+        > /b/logs/ctest-long.log 2>&1 &
+    p1=$!
+    ctest --test-dir "$b" -j "$ADM_CI_CTEST_JOBS" --timeout "$timeout_s" --output-on-failure --no-tests=error -E "$long" \
+        > /b/logs/ctest.log 2>&1 || rc=$?
+    wait "$p1" || rc=$?
+    echo "long cases:"; grep -E 'tests passed|tests failed|No tests' /b/logs/ctest-long.log || true
+else
+    ctest --test-dir "$b" -j "$ADM_CI_CTEST_JOBS" --timeout "$timeout_s" --output-on-failure --no-tests=error \
+        > /b/logs/ctest.log 2>&1 || rc=$?
+fi
 grep -E 'tests passed|tests failed|Total Test time' /b/logs/ctest.log || true
-[ "$rc" -eq 0 ] || { grep -E '\*\*\*|Failed|Timeout|Not Run' /b/logs/ctest.log | head -n 30 || true; exit "$rc"; }
+[ "$rc" -eq 0 ] || { grep -E '\*\*\*|Failed|Timeout|Not Run' /b/logs/ctest*.log | head -n 30 || true; exit "$rc"; }
 
 if [ "$K" = linux ]; then
     cmake --install "$b" --prefix /b/prefix >> /b/logs/install.log 2>&1 || { echo "install failed"; exit 1; }

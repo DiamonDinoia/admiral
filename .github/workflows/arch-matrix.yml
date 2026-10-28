@@ -39,8 +39,8 @@ jobs:
           - {name: ppc64, os: ubuntu-24.04, kind: qemu, triple: powerpc64-linux-gnu, proc: ppc64, qemu: qemu-ppc64, arch: power8, expect: '-mcpu=power8'}
           # numpy baseline: none. Compiler default, no NEON.
           - {name: armhf, os: ubuntu-24.04, kind: qemu, triple: arm-linux-gnueabihf, proc: arm, qemu: qemu-arm, arch: none, xarch: emulated}
-          # numpy baseline: none. QEMU only, by standing decision.
-          - {name: s390x, os: ubuntu-24.04, kind: qemu, triple: s390x-linux-gnu, proc: s390x, qemu: qemu-s390x, arch: none, xarch: emulated}
+          # One VXE build (z14, -mzvector). numpy baseline: none. QEMU only, by standing decision.
+          - {name: s390x, os: ubuntu-24.04, kind: qemu, triple: s390x-linux-gnu, proc: s390x, qemu: qemu-s390x, arch: z14, expect: '-march=z14 -mzvector', xarch: vxe}
           # Scalar only, by standing decision.
           - {name: riscv64, os: ubuntu-24.04, kind: qemu, triple: riscv64-linux-gnu, proc: riscv64, qemu: qemu-riscv64, arch: none, xarch: emulated}
     name: ${{ matrix.name }}
@@ -104,9 +104,9 @@ jobs:
       - name: Assert the flags arrived
         run: |
           set -eu
-          if [ -n '${{ matrix.expect }}' ]; then
-            grep -qF -- '${{ matrix.expect }}' build/compile_commands.json
-          fi
+          for f in ${{ matrix.expect }}; do
+            grep -qF -- "$f" build/compile_commands.json
+          done
           ! grep -qF -- '=native' build/compile_commands.json
           grep -qF -- '-O3' build/compile_commands.json || grep -qF -- '-O2' build/compile_commands.json
           grep -q 'LAUNCHER = ccache' build/build.ninja

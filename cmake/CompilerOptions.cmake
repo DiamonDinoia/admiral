@@ -67,6 +67,13 @@ else()
     message(STATUS "Target arch: ${ADM_TARGET_ARCH} not expressible for this compiler, using default")
 endif()
 
+# Per-arch tiers and flags (cmake/tiers/<arch>.cmake): each file guards on its own processor.
+include(${CMAKE_CURRENT_LIST_DIR}/tiers/x86.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/tiers/aarch64.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/tiers/riscv.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/tiers/loongarch.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/tiers/s390x.cmake)
+
 if(ADM_ENABLE_LTO)
     include(CheckIPOSupported)
     check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)

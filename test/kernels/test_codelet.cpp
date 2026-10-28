@@ -14,16 +14,26 @@
 
 using namespace admiral::detail;
 
-static_assert(cofactor_simd_profitable<double, 4>(cofactor_batch_width<double, 4>() + 2));
-static_assert(cofactor_simd_profitable<double, 4>(3 * cofactor_batch_width<double, 4>()));
+// Assert the outcome as a function of the width, not under one width regime: at these
+// (T,R,M) points cofactor_simd_profitable's arms collapse to exactly (Wc < 2*R) — on x86
+// via the sized-batch arms, on rvv256/512 via the 2R <= Wc rejection arm. Pinning the
+// width relation covers fixed-VLEN archs (no xsimd sized sub-register batches: rvv, and
+// any future one) instead of compiling silently past them.
+static_assert(cofactor_simd_profitable<double, 4>(cofactor_batch_width<double, 4>() + 2) ==
+              (cofactor_batch_width<double, 4>() < 2u * 4));
+static_assert(cofactor_simd_profitable<double, 4>(3 * cofactor_batch_width<double, 4>()) ==
+              (cofactor_batch_width<double, 4>() < 2u * 4));
 static_assert(!cofactor_simd_profitable<double, 4>(cofactor_batch_width<double, 4>() - 2));
-static_assert(cofactor_simd_profitable<float, 8>(cofactor_batch_width<float, 8>() + 2));
-static_assert(cofactor_simd_profitable<float, 8>(3 * cofactor_batch_width<float, 8>()));
+static_assert(cofactor_simd_profitable<float, 8>(cofactor_batch_width<float, 8>() + 2) ==
+              (cofactor_batch_width<float, 8>() < 2u * 8));
+static_assert(cofactor_simd_profitable<float, 8>(3 * cofactor_batch_width<float, 8>()) ==
+              (cofactor_batch_width<float, 8>() < 2u * 8));
 static_assert(!cofactor_simd_profitable<float, 8>(cofactor_batch_width<float, 8>() - 2));
 constexpr bool kMasked256F64 = cofactor_batch_width<double, 3>() * sizeof(double) > 16;
 static_assert(kMasked256F64 == !cofactor_simd_profitable<double, 3>(8));
-static_assert(cofactor_simd_profitable<double, 3>(10));
-static_assert(cofactor_simd_profitable<float, 3>(cofactor_batch_width<float, 3>()));
+static_assert(cofactor_simd_profitable<double, 3>(10) == (cofactor_batch_width<double, 3>() < 2u * 3));
+static_assert(cofactor_simd_profitable<float, 3>(cofactor_batch_width<float, 3>()) ==
+              (cofactor_batch_width<float, 3>() < 2u * 3));
 
 namespace {
 

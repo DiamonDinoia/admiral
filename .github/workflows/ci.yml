@@ -107,8 +107,9 @@ jobs:
       - name: Assert the flags arrived
         if: matrix.arch != 'none'
         # A Debug cell debugs at -Og. -O0 pays the same template instantiation cost and then
-        # runs the tests several times slower. `=x86-64 ` would also match `=x86-64-v2/v3`, so
-        # the v1 cell carries its own denial: a silent higher level must not pass here.
+        # runs the tests several times slower. check_flags.sh matches whole flag tokens, so
+        # want:=x86-64 cannot pass on a =x86-64-v2/v3 flag; the v1 cell still carries its own
+        # denials: a silent higher level must not pass here.
         # Debug: gcc and clang both compile at -Og. gcc adds -g and
         # -fno-var-tracking-assignments; clang keeps -g3. The build step below sets no
         # parallel level, so ninja runs its default of 6 jobs on the 4-vCPU runner.
@@ -118,7 +119,7 @@ jobs:
           want:-std=c++${{ matrix.std || 20 }}
           ${{ matrix.build_type == 'Debug' && 'want:-Og not:-O0 not:-O1' || '' }}
           ${{ matrix.build_type == 'Debug' && startsWith(matrix.toolchain, 'gcc') && 'want:-g want:-fno-var-tracking-assignments' || '' }}
-          ${{ matrix.arch == 'x86-64' && 'not:-march=x86-64-v' || '' }}
+          ${{ matrix.arch == 'x86-64' && 'not:-march=x86-64-v2 not:-march=x86-64-v3 not:-march=x86-64-v4' || '' }}
       # compile_commands.json omits the launcher under Ninja, so build.ninja is the only witness.
       - name: Assert the compiler launcher arrived
         run: grep -q 'LAUNCHER = ccache' build/build.ninja
@@ -483,6 +484,85 @@ jobs:
         run: |
           ctest --test-dir build --output-on-failure --no-tests=error --timeout 1800
           sde-spr build/benchmark/admiral_benchmark --verify
+
+  # One x86-64 build with the v1/v3/v4 tiers: the (a)-(h) checks and controls of
+  # scripts/check_dispatch.sh, ctest per tier (v1 and v3 natively, v4 under SDE -spr), the
+  # run-time pick test under three SDE models, and the installed library through the
+  # test/package consumer under the same models. XED comes from the SDE kit. -j3 by the RAM
+  # rule of spec section 9.
+  dispatch-x86:
+    timeout-minutes: 90
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - run: sudo apt-get update && sudo apt-get install -y cmake g++-14 ninja-build llvm
+      - uses: hendrikmuhs/ccache-action@v1.2.24
+        with: {key: dispatch-x86}
+      - uses: petarpetrovt/setup-sde@6d2773bc0ef3005fd52e0ae0bb91782321793aec  # v6.0
+      - name: SDE wrappers
+        run: |
+          # sde-maybe runs each test natively unless ADM_RUN_SDE names a chip model: one
+          # configure serves the native v1/v3 legs and the SDE v4 leg.
+          printf '#!/bin/sh\n[ -n "$ADM_RUN_SDE" ] || exec "$@"\nexec "%s/sde64" -"$ADM_RUN_SDE" -- "$@"\n' \
+            "$SDE_PATH" | sudo tee /usr/local/bin/sde-maybe
+          printf '#!/bin/sh\nexec "%s/sde64" -hsw -- "$@"\n' "$SDE_PATH" | sudo tee /usr/local/bin/sde-hsw
+          printf '#!/bin/sh\nexec "%s/sde64" -spr -- "$@"\n' "$SDE_PATH" | sudo tee /usr/local/bin/sde-spr
+          sudo chmod +x /usr/local/bin/sde-maybe /usr/local/bin/sde-hsw /usr/local/bin/sde-spr
+      - name: Build (ADM_DISPATCH=ON)
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=g++-14 -DADM_TARGET_ARCH=x86-64 -DADM_DISPATCH=ON \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DCMAKE_CROSSCOMPILING_EMULATOR=/usr/local/bin/sde-maybe
+          scripts/check_flags.sh build want:=x86-64 want:-DADM_DISPATCH not:=native
+          cmake --build build -j3
+      - name: Build the OFF reference (ADM_DISPATCH=OFF) for check (d)
+        run: |
+          cmake -B build-off -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=g++-14 -DADM_TARGET_ARCH=x86-64 -DADM_DISPATCH=OFF \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DADM_BUILD_TESTS=OFF -DADM_BUILD_BENCHMARKS=OFF -DADM_BUILD_EXAMPLES=OFF
+          cmake --build build-off -j3
+      - name: Dispatch checks (a)-(h) and controls
+        run: |
+          XED64=$SDE_PATH/xed64 bash scripts/check_dispatch.sh build build-off
+          XED64=$SDE_PATH/xed64 bash scripts/check_dispatch.sh controls build build-off
+      - name: ctest v1 and v3 natively
+        run: |
+          ADM_TEST_TIER=v1 ctest --test-dir build -j3 --output-on-failure --no-tests=error --timeout 1800
+          ADM_TEST_TIER=v3 ctest --test-dir build -j3 --output-on-failure --no-tests=error --timeout 1800
+      - name: ctest v4 under SDE -spr
+        run: ADM_TEST_TIER=v4 ADM_RUN_SDE=spr ctest --test-dir build -j3 --output-on-failure --no-tests=error --timeout 1800
+      - name: Run-time pick under three SDE models
+        run: |
+          LD_LIBRARY_PATH=$PWD/build/src $SDE_PATH/sde64 -p4p -- env ADM_EXPECT_TIER=sse2 build/test/test_dispatch
+          LD_LIBRARY_PATH=$PWD/build/src $SDE_PATH/sde64 -hsw -- env ADM_EXPECT_TIER=fma3+avx2 build/test/test_dispatch
+          LD_LIBRARY_PATH=$PWD/build/src $SDE_PATH/sde64 -spr -- env ADM_EXPECT_TIER=avx512bw build/test/test_dispatch
+      - name: Run-time pick controls
+        run: |
+          ADM_TEST_TIER=v9 build/test/test_dispatch && { echo "v9 must exit 2"; exit 1; } || rc=$?
+          [ "${rc:-0}" -eq 2 ] || { echo "v9 exit $rc, must be 2"; exit 1; }
+          if LD_LIBRARY_PATH=$PWD/build/src $SDE_PATH/sde64 -hsw -- env ADM_EXPECT_TIER=avx512bw \
+              build/test/test_dispatch; then
+            echo "expected a mismatch on -hsw with ADM_EXPECT_TIER=avx512bw"; exit 1
+          fi
+      - name: Install and consume the shipped library under the three models
+        run: |
+          cmake --install build --prefix "$RUNNER_TEMP/prefix"
+          cmake -S test/package -B "$RUNNER_TEMP/consumer" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++-14 \
+            -DADM_PACKAGE_ROUTE=prefix_shared \
+            -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/prefix" \
+            > /dev/null
+          cmake --build "$RUNNER_TEMP/consumer"
+          for b in use_cxx_admiral use_c_admiral_c use_fftw_fftw; do
+            for m in p4p hsw spr; do
+              LD_LIBRARY_PATH=$RUNNER_TEMP/prefix/lib $SDE_PATH/sde64 -$m -- "$RUNNER_TEMP/consumer/$b"
+            done
+          done
+      # The tied variant of gap 5: G5 last, after everything above.
+      - name: G5 source grep
+        run: scripts/check_g5.sh check
 
   catalog:
     timeout-minutes: 30

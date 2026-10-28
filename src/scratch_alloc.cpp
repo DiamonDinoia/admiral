@@ -24,6 +24,9 @@
 // takes the global allocator too.
 #if defined(__SANITIZE_ADDRESS__) || defined(__s390x__)
 #define ADM_SCRATCH_SYSTEM_ALLOC 1
+#elif defined(__loongarch__) || defined(__EMSCRIPTEN__)
+// snmalloc has no architecture layer for LoongArch or WebAssembly.
+#define ADM_SCRATCH_SYSTEM_ALLOC 1
 #elif defined(__has_feature)
 #if __has_feature(address_sanitizer)
 #define ADM_SCRATCH_SYSTEM_ALLOC 1

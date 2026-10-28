@@ -28,10 +28,29 @@ GRID_FULL = GRID_CI + [
     (4194304, "f64", 15), (8388608, "f64", 15),
 ]
 
-def run_cell(binary, n, prec, iters):
-    out = subprocess.run(
-        [binary, f"--size={n}", f"--iters={iters}", f"--prec={prec}"],
-        check=True, capture_output=True, text=True).stdout
+GRID_TIER = [(f"--size={n}", p, it, 1) for n, p, it in [
+    (64, 'f64', 276180),
+    (64, 'f32', 538117),
+    (1024, 'f64', 11336),
+    (1024, 'f32', 17778),
+    (8192, 'f64', 1061),
+    (65536, 'f64', 86),
+    (1260, 'f64', 7518),
+    (4970, 'f32', 1092),
+    (21538, 'f32', 283),
+    (194000, 'f64', 16),
+    (1048576, 'f64', 3),
+    (4194304, 'f32', 2),
+]] + [
+    ("--shape=1024x1024", "f64", 4, 1),
+    ("--shape=64x64x64", "f32", 67, 1),
+]
+
+def run_cell(binary, spec, prec, iters, nt, extra=0):
+    cmd = [binary, spec, f"--iters={iters}", f"--prec={prec}", f"--nthreads={nt}"]
+    if extra:
+        cmd.append(f"--extra={extra}")
+    out = subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
     return float(re.search(r"per_call_us=([\d.]+)", out).group(1))
 
 def main():
@@ -39,31 +58,45 @@ def main():
     ap.add_argument("bin_a")
     ap.add_argument("bin_b")
     ap.add_argument("--rounds", type=int, default=6)
-    ap.add_argument("--grid", choices=["ci", "full"], default="ci")
+    ap.add_argument("--grid", choices=["ci", "full", "tier"], default="ci")
     ap.add_argument("--json", default=None)
+    ap.add_argument("--pair", default=None,
+                    help="lower,candidate of a tier receipt: the json then carries the pair schema "
+                         "that scripts/tier_verdict.py reads")
+    ap.add_argument("--extra-a", type=float, default=0,
+                    help="pass --extra=P to the A binary only (the calibration arm: +P percent)")
     args = ap.parse_args()
 
-    cells = GRID_CI if args.grid == "ci" else GRID_FULL
-    acc = {(n, p): {"A": [], "B": []} for n, p, _ in cells}
+    cells = {"ci": [(f"--size={n}", p, i, 1) for n, p, i in GRID_CI],
+             "full": [(f"--size={n}", p, i, 1) for n, p, i in GRID_FULL],
+             "tier": GRID_TIER}[args.grid]
+    acc = {(s, p, nt): {"A": [], "B": []} for s, p, _, nt in cells}
     for r in range(args.rounds):
         order = [("A", args.bin_a), ("B", args.bin_b)] if r % 2 == 0 else [("B", args.bin_b), ("A", args.bin_a)]
         for arm, binary in order:
-            for n, p, iters in cells:
-                acc[n, p][arm].append(run_cell(binary, n, p, iters))
+            for s, p, iters, nt in cells:
+                acc[s, p, nt][arm].append(run_cell(binary, s, p, iters, nt,
+                                                   args.extra_a if arm == "A" else 0))
 
     rows, results = [], {}
-    print(f"{'N':>9} {'prec':>4} {'min_A_us':>10} {'min_B_us':>10} {'A/B':>7} {'sprA%':>6} {'sprB%':>6}")
-    for (n, p), d in acc.items():
+    print(f"{'cell':>24} {'prec':>4} {'min_A_us':>12} {'min_B_us':>12} {'A/B':>7} {'sprA%':>6} {'sprB%':>6}")
+    for (s, p, nt), d in acc.items():
         a, b = min(d["A"]), min(d["B"])
         sa, sb = (max(d["A"]) / a - 1) * 100, (max(d["B"]) / b - 1) * 100
-        results[f"{n},{p}"] = {"A": a, "B": b, "ratio": a / b, "spreadA": sa, "spreadB": sb}
-        rows.append(f"{n:>9} {p:>4} {a:>10.3f} {b:>10.3f} {a/b:>7.3f} {sa:>6.1f} {sb:>6.1f}")
+        key = f"{s.split('=')[1]},{p},nt{nt}"
+        results[key] = {"A": a, "B": b, "ratio": a / b, "spreadA": sa, "spreadB": sb}
+        rows.append(f"{key.split(',')[0] + '/nt' + str(nt):>24} {p:>4} {a:>12.3f} {b:>12.3f} "
+                    f"{a/b:>7.3f} {sa:>6.1f} {sb:>6.1f}")
     print("\n".join(rows))
     geo = math.exp(sum(math.log(v["ratio"]) for v in results.values()) / len(results))
     print(f"geomean A/B = {geo:.4f} over {len(results)} cells")
     if args.json:
+        doc = {"geomean": geo, "ratio": geo, "cells": results}
+        if args.pair:
+            doc["pairs"] = {args.pair: {k: {"A": v["A"], "B": v["B"]}
+                                        for k, v in results.items()}}
         with open(args.json, "w") as f:
-            json.dump({"geomean": geo, "cells": results}, f, indent=1)
+            json.dump(doc, f, indent=1)
     return 0
 
 if __name__ == "__main__":

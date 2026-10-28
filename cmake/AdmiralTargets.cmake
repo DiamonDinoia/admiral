@@ -55,11 +55,13 @@ function(adm_add_surface name)
 
     add_library(${name} SHARED
         ${own_objects}
-        $<TARGET_OBJECTS:admiral_engine>)
+        $<TARGET_OBJECTS:admiral_engine>
+        ${ADM_TIER_OBJECTS})
     add_library(${name}_static STATIC
         ${own_objects}
         $<TARGET_OBJECTS:admiral_engine>
-        $<TARGET_OBJECTS:admiral_codelets>)
+        $<TARGET_OBJECTS:admiral_codelets>
+        ${ADM_TIER_OBJECTS})
 
     foreach(lib ${name} ${name}_static)
         target_include_directories(${lib} PUBLIC

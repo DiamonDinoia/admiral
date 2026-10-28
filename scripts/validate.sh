@@ -52,7 +52,8 @@ arm_compilers() {
         if ! command -v "$cxx" >/dev/null; then
             echo "=== compiler-$cxx: skipped, not on PATH"; skipped+=("compiler-$cxx"); continue
         fi
-        run_arm "compiler-${cxx//+/p}" "want:-march=x86-64-v3" "want:$cxx" -- \
+        # want: sees whole tokens, so a full path in CXX_LIST asserts as its basename.
+        run_arm "compiler-${cxx//+/p}" "want:-march=x86-64-v3" "want:${cxx##*/}" -- \
             -DCMAKE_CXX_COMPILER="$cxx" -DCMAKE_BUILD_TYPE=Release \
             -DADM_TARGET_ARCH=x86-64-v3 -DADM_BUILD_TESTS=ON -DADM_BUILD_BENCHMARKS=OFF
     done
@@ -309,7 +310,8 @@ run_static_analysis_arm() {
         -DADM_BUILD_EXAMPLES=OFF "-D$knob=ON" \
         >>"$log" 2>&1 || { echo "  FAILED: configure (see $log)"; failed+=("$name"); return; }
     if [[ $name == tidy ]]; then
-        check_flags "$dir" "want:$cxx" "want:-march=x86-64-v3" || { failed+=("$name"); return; }
+        # Whole tokens split on /, so the compiler path asserts as its basename.
+        check_flags "$dir" "want:${cxx##*/}" "want:-march=x86-64-v3" || { failed+=("$name"); return; }
     fi
     cmake --build "$dir" --target admiral -j "$jobs" >>"$log" 2>&1 ||
         { echo "  FAILED: $tool (see $log)"; failed+=("$name"); return; }

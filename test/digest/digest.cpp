@@ -5,6 +5,9 @@
 // Self-checks (case_list.hpp states the rule they enforce): the emitted case count must
 // equal kCaseCount, and case kUlpControlCase must still be named kUlpControlName.
 #include <admiral/admiral.hpp>
+#if defined(_MSC_VER)
+#include <malloc.h>  // _aligned_malloc/_aligned_free (the pinned struct below)
+#endif
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -34,6 +37,41 @@ static std::size_t g_case = 0, g_ulp = ~std::size_t(0), g_dump = ~std::size_t(0)
 static const char* g_dumpfile = nullptr;
 static std::string g_control_name;
 
+// Pinned transform buffers. The 1-D engine's bits depend on buffer alignment (mod 64 for
+// the prime>11 Bluestein/Rader arms; CLAUDE.md "Bitwise stability"), and std::vector lets
+// the heap phase choose the slot: any allocation-history change re-rolls the roulette
+// class (a 1 MiB stdout sink instead of a pipe flips cases 1174/1175/1177). Every buffer
+// handed to the engine is therefore one mmap-page base plus a fixed coded offset, so the
+// draw holds one alignment class on any host. A/B arms set ADM_DIGEST_BUF_OFF=16.
+#ifndef ADM_DIGEST_BUF_OFF
+#define ADM_DIGEST_BUF_OFF 64
+#endif
+template<typename T>
+struct pinned {
+    void* base_ = nullptr;
+    T* data_ = nullptr;
+    explicit pinned(std::size_t n) {
+#if defined(_MSC_VER)
+        base_ = ::_aligned_malloc(n * sizeof(T) + ADM_DIGEST_BUF_OFF, 4096);
+        if (!base_) throw std::bad_alloc{};
+#else
+        if (::posix_memalign(&base_, 4096, n * sizeof(T) + ADM_DIGEST_BUF_OFF) != 0)
+            throw std::bad_alloc{};
+#endif
+        data_ = reinterpret_cast<T*>(reinterpret_cast<char*>(base_) + ADM_DIGEST_BUF_OFF);
+    }
+    ~pinned() {
+#if defined(_MSC_VER)
+        ::_aligned_free(base_);
+#else
+        std::free(base_);
+#endif
+    }
+    pinned(const pinned&) = delete;
+    pinned& operator=(const pinned&) = delete;
+    T* data() { return data_; }
+};
+
 template<typename T>
 static void emit(const char* tag, const std::string& name,
                  const std::complex<T>* out, std::size_t n) {
@@ -54,15 +92,16 @@ static void emit(const char* tag, const std::string& name,
 }
 
 template<typename T>
-static void fill(std::vector<std::complex<T>>& v) {
+static void fill(std::complex<T>* v, std::size_t n) {
     rng_state = 88172645463325252ull;
-    for (auto& z : v) z = std::complex<T>(static_cast<T>(rnd()), static_cast<T>(rnd()));
+    for (std::size_t i = 0; i < n; ++i)
+        v[i] = std::complex<T>(static_cast<T>(rnd()), static_cast<T>(rnd()));
 }
 
 template<typename T>
 static void do_plan(const char* tag, const std::vector<std::size_t>& shape, bool fwd) {
     std::size_t n = 1; for (auto s : shape) n *= s;
-    std::vector<std::complex<T>> v(n); fill(v);
+    pinned<std::complex<T>> v(n); fill(v.data(), n);
     admiral::options o; o.nthreads = 1; o.eff = admiral::effort::estimate;
     admiral::plan<T> p(admiral::span<const std::size_t>(shape.data(), shape.size()), o);
     if (fwd) p.forward(v.data()); else p.inverse(v.data());
@@ -75,8 +114,9 @@ template<typename T>
 static void do_strides(const char* tag, const digest_cases::StridesCase& c, bool fwd) {
     const std::size_t need = (c.batch - 1) * c.ibatch + (c.len - 1) * c.istride + 1;
     const std::size_t needo = (c.batch - 1) * c.obatch + (c.len - 1) * c.ostride + 1;
-    std::vector<std::complex<T>> in(need), out(needo, std::complex<T>(0, 0));
-    fill(in);
+    pinned<std::complex<T>> in(need), out(needo);
+    for (std::size_t i = 0; i < needo; ++i) out.data()[i] = std::complex<T>(0, 0);
+    fill(in.data(), need);
     admiral::options o; o.nthreads = 1; o.eff = admiral::effort::estimate;
     admiral::strides_plan<T> p(c.len, c.batch, c.istride, c.ibatch, c.ostride, c.obatch, o);
     if (fwd) p.forward(in.data(), out.data()); else p.inverse(in.data(), out.data());

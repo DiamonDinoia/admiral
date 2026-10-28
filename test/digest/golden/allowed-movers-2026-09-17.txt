@@ -1,106 +1,58 @@
 # Allowed digest movers, SHIPPED arm only -- an upper bound, not an exact prediction.
-# Host class: ccmlin075 (Xeon w5-3435X, SPR), gcc 14.2.0, x86-64-v3 Release,
-# commit 37cd1c0, banked 2026-09-17.
+# Host class: ccmlin075 (Xeon w5-3435X, SPR), gcc 14.2.0, x86-64-v3 Release.
+# Banked 2026-09-17 (91 ids at 37cd1c0); re-derived 2026-10-28 (the file name keeps the
+# banking date; validate.sh and test/digest/README.md reference it).
 #
 # Every entry is a member of the address-allocation-layout class: the shipped arm's
-# contract-reassociate codegen keys vector-arm dispatch on pointer alignment, so a change
-# to the construction-time allocation sequence re-draws which address-sensitive cases
-# move. The class pool is 1-D lengths with a prime factor > 11 (Bluestein/Rader arms,
-# which change bits even with the col pin on), the lengths {96, 128, 160, 192, 256, 320}
-# (the 1-D engine's output bits depend on data alignment there), and the N-D 96x96 line.
-# This list is the 2026-09-17 draw at that commit: 89 prime-factor>11 ids + 256xI
-# (id 1181) + 96x96xF (id 1320). The strict dialect is address-insensitive (0 movers in
-# every experiment), so the strict arm and the --ulp 700 control stay zero-tolerance.
-# A mover id not listed here fails the arm; ids that stop moving are an improvement
-# (delete the entry, and the file when the class is fixed).
-130
-131
-138
-139
-142
-143
-174
-175
-190
-191
-198
-199
-214
-215
-222
-223
-250
-251
-298
-299
-322
-323
-358
-359
-382
-383
-390
-391
-394
-395
-418
-419
-478
-479
-498
-499
-510
-511
-538
-539
-558
-559
-802
-803
-810
-811
-814
-815
-846
-847
-862
-863
-870
-871
-886
-887
-894
-895
-922
-923
-952
-970
-971
-994
-995
-1030
-1031
-1054
-1055
-1062
-1063
-1066
-1067
-1090
-1091
-1135
+# contract-reassociate codegen keys vector-arm dispatch on pointer alignment, so a
+# runtime-allocator or scratch-layout change re-draws which address-sensitive cases move.
+# The class pool is 1-D lengths with a prime factor > 11 (Bluestein/Rader arms, which
+# change bits even with the col pin on), the lengths {96, 128, 160, 192, 256, 320} (the
+# 1-D engine's output bits depend on data alignment there), and the N-D 32x32 and 96x96
+# lines; single f32 lengths 55/56 ride along in the observed draws.
+#
+# Since 2026-10-28 the digest driver pins every transform buffer to one alignment class
+# (test/digest/digest.cpp: mmap-page base + ADM_DIGEST_BUF_OFF=64), so driver-buffer
+# alignment and allocation history can no longer move a case (measured: 0 movers across
+# 10 runs and across pipe vs 1 MiB-file stdout sinks; the unpinned driver moved 3 under
+# the same sink change). This list is the union of the two residual draws: the al16
+# offset arm (ADM_DIGEST_BUF_OFF=16, 29 ids) and the banked binary run under glibc
+# 2.43/libstdc++ 15 (admiral-ci-deb, 13 ids) = 32 ids, down from 108. It is an upper
+# bound for environment variation on the unchanged tree only; a landing that changes the
+# driver pin re-derives it with those two arms.
+# The strict dialect is address-insensitive (0 movers in every experiment), so the
+# strict arm and the --ulp 700 control stay zero-tolerance. A mover id not listed here
+# fails the arm; ids that stop moving are an improvement (delete the entry, and the file
+# when the class is fixed).
+314
+315
+379
+443
+505
+571
+629
+631
+633
+635
+636
+637
+951
+953
+988
+989
+1051
+1052
+1053
+1117
+1120
+1121
+1134
 1138
+1139
+1142
 1147
-1150
-1151
-1170
-1171
 1175
+1177
 1181
-1182
-1183
-1210
-1211
-1230
-1231
-1320
+1244
+1308

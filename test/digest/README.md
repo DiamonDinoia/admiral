@@ -9,6 +9,8 @@ The `shipped` arm builds with fast math. The `strict` arm builds with `-DADM_USE
 
 The `shipped` arm fails on a mover that `golden/allowed-movers-2026-09-17.txt` does not list. Ids in that file can move on a clean tree. The `strict` arm and the `--ulp` control accept no mover. A strict mover must also be a shipped mover.
 
+The driver hands the engine only pinned transform buffers (a 4096-byte-aligned block plus the fixed `ADM_DIGEST_BUF_OFF` offset in `digest.cpp`), so driver-buffer alignment and allocation history cannot move a case. The waiver lists the residual runtime-allocator pool, re-derived from the `ADM_DIGEST_BUF_OFF=16` arm and a second-glibc run of the banked binary.
+
 The goldens come from gcc 14.2.0 on a Xeon w5-3435X (16 cores, 2 MiB L2 per core, 45 MiB L3). Route selection reads the host cache sizes. A host with other sizes can show movers with no code change. Regenerate on a host of the same class.
 
 To regenerate both goldens, run this from the repository root. It stops on the first failure. It keeps each golden until its run succeeds. A nonzero `check_digest.sh` status passes only when it lists movers.

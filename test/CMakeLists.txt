@@ -16,6 +16,7 @@ set(ADM_TEST_SOURCES
     api/test_api_c_errors.cpp
     api/test_api_fftw.cpp
     kernels/test_ct_math.cpp
+    kernels/test_sized_walk.cpp
     kernels/test_factor_plan.cpp
     kernels/test_cost_model.cpp
     kernels/test_cxx_compat.cpp

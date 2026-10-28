@@ -545,30 +545,59 @@ struct chunk_ladder {
     static constexpr std::size_t minw = min_sized_tail_width<T>();
     static constexpr std::size_t nscal = rem & (minw - 1);
     static constexpr std::size_t jscal = nfull * W + (rem & ~(minw - 1));
+    // Mirrors the shipped two-arm schedule: the bit decomposition where the ladder is sound,
+    // the greedy cursor walk where xsimd's arch list leaves a dead rung above a live one (the
+    // sve512 hole). The walk's rung offsets come from the same sized_walk_cover the sites use.
+    static constexpr bool sound = sized_ladder_sound<sized_rungs<T>, W / 2>();
+    static constexpr std::size_t cover = sized_walk_cover<sized_rungs<T>, W / 2>(rem);
 
     static std::vector<rung_row> rungs() {
         std::vector<rung_row> out;
         if constexpr (nfull > 0)
             out.push_back(rung_row{static_cast<std::uint32_t>(W),
                                    static_cast<std::uint32_t>(nfull), 0});
-        rungs_sized(out, std::make_index_sequence<static_cast<std::size_t>(bit_width(W)) -
-                                                   1>{});
-        if constexpr (nscal > 0)
-            out.push_back(rung_row{1u, static_cast<std::uint32_t>(nscal), jscal});
+        if constexpr (sound) {
+            rungs_sized_bits(out, std::make_index_sequence<static_cast<std::size_t>(
+                                       bit_width(W)) - 1>{});
+            if constexpr (nscal > 0)
+                out.push_back(rung_row{1u, static_cast<std::uint32_t>(nscal), jscal});
+        } else {
+            rungs_sized_walk(out, std::make_index_sequence<static_cast<std::size_t>(
+                                       bit_width(W)) - 1>{});
+            if constexpr (cover < rem)
+                out.push_back(rung_row{1u, static_cast<std::uint32_t>(rem - cover),
+                                       nfull * W + cover});
+        }
         return out;
     }
 
 private:
     template <std::size_t... S>
-    static void rungs_sized(std::vector<rung_row>& out, std::index_sequence<S...>) {
-        (push_sized_rung<S>(out), ...);
+    static void rungs_sized_bits(std::vector<rung_row>& out, std::index_sequence<S...>) {
+        (push_sized_rung_bits<S>(out), ...);
     }
     template <std::size_t S>
-    static void push_sized_rung(std::vector<rung_row>& out) {
+    static void push_sized_rung_bits(std::vector<rung_row>& out) {
         constexpr std::size_t Wt = W >> (S + 1);
         if constexpr (sized_exists<T, Wt>() && (rem & Wt) != 0)
             out.push_back(rung_row{static_cast<std::uint32_t>(Wt), 1u,
                                    nfull * W + (rem & ~(2 * Wt - 1))});
+    }
+    template <std::size_t... S>
+    static void rungs_sized_walk(std::vector<rung_row>& out, std::index_sequence<S...>) {
+        (push_sized_rung_walk<S>(out), ...);
+    }
+    template <std::size_t S>
+    static void push_sized_rung_walk(std::vector<rung_row>& out) {
+        constexpr std::size_t Wt = W >> (S + 1);
+        constexpr std::size_t j0 = sized_walk_cover<sized_rungs<T>, W / 2, Wt>(rem);
+        constexpr std::size_t trips =
+            sized_exists<T, Wt>() ? (rem - j0) / Wt : std::size_t{0};
+        // One row PER TRIP: rb_run traces one chunk per row, and a rung the walk fires
+        // several times must trace (and cover) every trip (a rung with trips > 1 shows up
+        // on a holed ladder, e.g. sve512 f32's w4 x3 at rem = 15).
+        for (std::size_t t = 0; t < trips; ++t)
+            out.push_back(rung_row{static_cast<std::uint32_t>(Wt), 1u, nfull * W + j0 + t * Wt});
     }
 };
 

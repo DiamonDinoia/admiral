@@ -45,6 +45,17 @@ struct ct_dd {
     constexpr ct_dd(A a) : hi(static_cast<double>(a)) {}
 };
 
+// The engine TUs compile every inline body below under /fp:fast (ADM_USE_FAST_MATH), where the
+// compensated sums and the error-free transforms collapse; cl then links the first COMDAT it
+// meets, so a test or consumer TU that calls one of these bodies can run the fast-math copy.
+// One pragma region keeps every instantiation on the precise model, so the linker's pick no
+// longer changes the result. Constant evaluation folds precisely under any flag; only the
+// runtime bodies need the region. fp_contract needs no treatment: the Dekker split it could
+// break runs in constant evaluation only, and the runtime product spells std::fma explicitly.
+#if defined(_MSC_VER) && !defined(__clang__)
+#  pragma float_control(precise, on, push)
+#endif
+
 constexpr ct_dd dd_two_sum(double a, double b) {
     const double s = a + b, bb = s - a;
     return {s, (a - (s - bb)) + (b - bb)};
@@ -196,8 +207,8 @@ template <typename G>
 // twiddle once, against the default budget of 1048576. The ct_dd fold is tens of times that
 // and busts the budget (the base commit fails the clang check at codelet.hpp:757).
 // ponytail: the compensation folds away under -ffast-math or /fp:fast and the error then
-// reaches 2.5 double ulp. The project builds precise FP; guard with a float_control pragma
-// if a fast-math consumer ever needs this fold.
+// reaches 2.5 double ulp; the float_control region above pins the precise model on MSVC, the
+// one place a fast-math object can out-select a test's own COMDAT copy today.
 template<typename F>
 [[nodiscard]] constexpr ct_sincos_v<F> sincos_turns_fold_dbl(bool conjugate, std::size_t num,
                                                              std::size_t den) {
@@ -277,6 +288,10 @@ template<typename F>
         return sincos_turns_fold<F>(conjugate, num, den);
     }
 }
+
+#if defined(_MSC_VER) && !defined(__clang__)
+#  pragma float_control(pop)
+#endif
 
 template<typename F = double>
 [[nodiscard]] ADM_CONSTEVAL ct_sincos_v<F> ct_sincos_turns(bool conjugate, std::size_t num,

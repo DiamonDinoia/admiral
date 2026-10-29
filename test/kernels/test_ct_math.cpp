@@ -102,41 +102,133 @@ TEST_CASE("ct_sincos_turns matches libm at the fold precision", "[ct_math][numer
     REQUIRE(wd <= 8);
 }
 
-// The double fold is a rounded ct_dd value, so it lands within 1 double-ulp of the correctly
-// rounded root. A double-folded series plus the octant fold loses a factor of 2-3 here, and
-// that error sits in every twiddle table and codelet constant.
-static double turns_ulp_err(bool conjugate, std::size_t num, std::size_t den) {
-    const ct_sincos_v<double> w = sincos_turns_eval<double>(conjugate, num, den);
+// Exact reference angle of the fold: exp(+2*pi*i*n/den) with n = num reduced and conjugated
+// the way the fold does it.
+static long double turns_ref_angle(bool conjugate, std::size_t num, std::size_t den) {
     const std::size_t n = num % den;
-    const long double ang = 2.0L * numbers::pi_v<long double>
-                            * static_cast<long double>(conjugate && n != 0 ? den - n : n)
-                            / static_cast<long double>(den);
-    const double es = std::abs(w.s - static_cast<double>(std::sin(ang)));
-    const double ec = std::abs(w.c - static_cast<double>(std::cos(ang)));
-    return std::max(es, ec) / digits_eps<double>();
+    return 2.0L * numbers::pi_v<long double>
+           * static_cast<long double>(conjugate && n != 0 ? den - n : n)
+           / static_cast<long double>(den);
 }
 
-TEST_CASE("trig constants are correctly rounded doubles", "[ct_math][numerics]") {
+template<typename T>
+static double turns_ulp_err_v(T s, T c, bool conjugate, std::size_t num, std::size_t den) {
+    const long double ang = turns_ref_angle(conjugate, num, den);
+    const T es = std::abs(s - static_cast<T>(std::sin(ang)));
+    const T ec = std::abs(c - static_cast<T>(std::cos(ang)));
+    return static_cast<double>(std::max(es, ec) / digits_eps<T>());
+}
+
+static double turns_ulp_err(bool conjugate, std::size_t num, std::size_t den) {
+    const ct_sincos_v<double> w = sincos_turns_eval<double>(conjugate, num, den);
+    return turns_ulp_err_v<double>(w.s, w.c, conjugate, num, den);
+}
+
+static double turns_ulp_err_dbl(bool conjugate, std::size_t num, std::size_t den) {
+    const ct_sincos_v<double> w = sincos_turns_fold_dbl<double>(conjugate, num, den);
+    return turns_ulp_err_v<double>(w.s, w.c, conjugate, num, den);
+}
+
+static double turns_ulp_err_ctdd(bool conjugate, std::size_t num, std::size_t den) {
+    const ct_sincos_v<ct_dd> w = sincos_turns_fold<ct_dd>(conjugate, num, den);
+    return turns_ulp_err_v<double>(dd_round<double>(w.s), dd_round<double>(w.c),
+                                   conjugate, num, den);
+}
+
+static double turns_ulp_err_ctdd_f(bool conjugate, std::size_t num, std::size_t den) {
+    const ct_sincos_v<ct_dd> w = sincos_turns_fold<ct_dd>(conjugate, num, den);
+    return turns_ulp_err_v<float>(dd_round<float>(w.s), dd_round<float>(w.c),
+                                  conjugate, num, den);
+}
+
+static double turns_ulp_err_f(bool conjugate, std::size_t num, std::size_t den) {
+    const ct_sincos_v<float> w = sincos_turns_eval<float>(conjugate, num, den);
+    return turns_ulp_err_v<float>(w.s, w.c, conjugate, num, den);
+}
+
+static double turns_ulp_err_f_dbl(bool conjugate, std::size_t num, std::size_t den) {
+    const ct_sincos_v<float> w = sincos_turns_fold_dbl<float>(conjugate, num, den);
+    return turns_ulp_err_v<float>(w.s, w.c, conjugate, num, den);
+}
+
+// Every shipped denominator class, including the power-of-two and prime edges the fold can
+// meet: den 2 and 8 (octant degeneracies), 65537 (the widest FFT root of unity), and the
+// largest den whose 8*num stays in size_t.
+static const std::size_t turns_dens[] = {2, 8, 13, 47, 59, 61, 101, 251, 1024, 3329, 65537};
+
+template<typename Err>
+static double turns_worst(Err err) {
     double worst = 0;
-    for (const std::size_t den : {std::size_t{13}, std::size_t{47}, std::size_t{59},
-                                  std::size_t{61}, std::size_t{101}, std::size_t{251},
-                                  std::size_t{1024}, std::size_t{3329}}) {
+    for (const std::size_t den : turns_dens) {
         for (std::size_t k = 0; k < den; ++k) {
-            worst = std::max(worst, turns_ulp_err(false, k, den));
-            worst = std::max(worst, turns_ulp_err(true, k, den));
-            const auto [sn, cs] = admiral::detail::portable_trig::sincos_turns(k, den, true);
-            const std::size_t n = k % den;
-            const long double ang = -2.0L * numbers::pi_v<long double>
-                                    * static_cast<long double>(n)
-                                    / static_cast<long double>(den);
-            worst = std::max(worst, std::abs(sn - static_cast<double>(std::sin(ang)))
-                                        / digits_eps<double>());
-            worst = std::max(worst, std::abs(cs - static_cast<double>(std::cos(ang)))
-                                        / digits_eps<double>());
+            worst = std::max(worst, err(false, k, den));
+            worst = std::max(worst, err(true, k, den));
         }
     }
+    constexpr std::size_t big_den = SIZE_MAX / 8;
+    for (const std::size_t k : {std::size_t{0}, std::size_t{1}, big_den / 8,
+                                big_den / 2, big_den - 1}) {
+        worst = std::max(worst, err(false, k, big_den));
+        worst = std::max(worst, err(true, k, big_den));
+    }
+    return worst;
+}
+
+// The fold rounds once to double, so it lands within 1 double-ulp of the correctly rounded
+// root. A double-folded series plus the octant fold loses a factor of 2-3 here, and that
+// error sits in every twiddle table and codelet constant.
+TEST_CASE("trig constants are correctly rounded doubles", "[ct_math][numerics]") {
+    const double worst = turns_worst(turns_ulp_err);
     INFO("worst trig constant error " << worst << " ulp");
-    REQUIRE(worst <= 1.0);
+    REQUIRE(worst <= 0.75);
+}
+
+// The fallback fold runs where long double is double or composite; it must land where the
+// long double fold lands, not at the old double-fold error.
+TEST_CASE("the double fallback fold rounds once", "[ct_math][numerics]") {
+    const double worst = turns_worst(turns_ulp_err_dbl);
+    INFO("worst fallback fold error " << worst << " ulp");
+    REQUIRE(worst <= 0.75);
+}
+
+// The ct_dd fold for F = double and float is the long-double-is-double route's cousin and
+// the IBM double-double route's body; it must run here too or it rots like its branch did.
+TEST_CASE("the ct_dd fold rounds once to double and float", "[ct_math][numerics]") {
+    const double worst = turns_worst(turns_ulp_err_ctdd);
+    const double worstf = turns_worst(turns_ulp_err_ctdd_f);
+    INFO("worst ct_dd fold error " << worst << " ulp double, " << worstf << " ulp float");
+    REQUIRE(worst <= 0.75);
+    REQUIRE(worstf <= 0.75);
+}
+
+TEST_CASE("float trig constants round once to float", "[ct_math][numerics]") {
+    const double worst = turns_worst(turns_ulp_err_f);
+    const double worstf = turns_worst(turns_ulp_err_f_dbl);
+    INFO("worst float constant error " << worst << " ulp route, " << worstf << " ulp fallback");
+    REQUIRE(worst <= 0.75);
+    REQUIRE(worstf <= 0.75);
+}
+
+// A value that double-rounds through the two-step rounding dd_round used for a narrow F:
+// 1 + 2^-24 is a float tie and lo pushes past it, so the float must round up to the next
+// float, not to the tie-even 1.
+TEST_CASE("dd_round rounds a narrow F once", "[ct_math][numerics]") {
+    REQUIRE(dd_round<float>(ct_dd{0x1.000001p+0, 0x1p-52}) == 0x1.000002p+0f);
+}
+
+// A runtime table entry and a folded codelet constant carry the same value: portable_trig is
+// the fold, not a second approximation of it.
+TEST_CASE("a runtime table entry equals the folded constant", "[ct_math][numerics]") {
+    for (const std::size_t den : turns_dens) {
+        for (std::size_t k = 0; k < den; ++k) {
+            for (const bool forward : {false, true}) {
+                const ct_sincos_v<double> w = sincos_turns_eval<double>(forward, k, den);
+                const auto p = admiral::detail::portable_trig::sincos_turns(k, den, forward);
+                REQUIRE(p.first == w.s);
+                REQUIRE(p.second == w.c);
+            }
+        }
+    }
 }
 
 TEST_CASE("ct_sincos_turns matches libm at the long double fold precision",

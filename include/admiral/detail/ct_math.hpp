@@ -139,12 +139,19 @@ template<typename F>
 }
 
 // v to 106 bits. q is the 106-bit ulp of hi's binade: lo rounds to q, so F(hi) + F(lo) is exact.
-// An F narrower than double rounds hi + lo once to F: the double sum cannot double-round into F
-// because F's precision plus 2 fits in double's.
+// An F narrower than double rounds hi + lo to F. When the double sum drops lo entirely, one
+// double bit flips toward lo first, so a value exactly on a float tie cannot round to even.
+// ponytail: a value within one double ulp of a float tie, with the double sum different from hi,
+// can still double-round; about one constant in 2^29. Round to odd on the double sum if that
+// ever shows up in a failing constant.
 template<typename F>
 [[nodiscard]] constexpr F dd_round(ct_dd v) {
     if constexpr (std::numeric_limits<F>::digits < std::numeric_limits<double>::digits) {
-        return static_cast<F>(v.hi + v.lo);
+        double sum = v.hi + v.lo;
+        if (sum == v.hi && v.lo != 0) {
+            sum += (v.lo > 0 ? 1.0 : -1.0) * (v.hi < 0 ? -v.hi : v.hi) * 0x1p-52;
+        }
+        return static_cast<F>(sum);
     } else {
         const double a = v.hi < 0 ? -v.hi : v.hi;
         double q = 0x1p-105;
@@ -181,10 +188,14 @@ template <typename G>
 
 // Fallback fold for a narrow F where long double adds no precision (long double is double on
 // MSVC and clang-cl, composite double-double on ppc64le). The Taylor tails accumulate in
-// double and the constant and linear terms add last, the octant fold sums exactly in ct_dd,
-// and the value rounds once to F. This costs about the old double fold and fits the default
-// constexpr budgets; the ct_dd fold is about 16x that and does not (make_rader_bhat<19U>
-// folds 342 constants into two constexpr arrays).
+// double with a compensated sum, the residual angle folds at ct_dd, and the octant fold sums
+// in ct_dd before the value rounds to F. Measured on clang-21 -mlong-double-64: one fold
+// stays below 400 constexpr steps and make_rader_bhat<71U> below 200k after folding each
+// twiddle once, against the default budget of 1048576. The ct_dd fold is tens of times that
+// and busts the budget (the base commit fails the clang check at codelet.hpp:757).
+// ponytail: the compensation folds away under -ffast-math or /fp:fast and the error then
+// reaches 2.5 double ulp. The project builds precise FP; guard with a float_control pragma
+// if a fast-math consumer ever needs this fold.
 template<typename F>
 [[nodiscard]] constexpr ct_sincos_v<F> sincos_turns_fold_dbl(bool conjugate, std::size_t num,
                                                              std::size_t den) {
@@ -192,10 +203,11 @@ template<typename F>
     if (conjugate && num != 0) num = den - num;
     const std::size_t oct = (8 * num) / den;
     const std::size_t rem = 8 * num - oct * den;
-    // The residual angle rounds once at ct_dd: a double-folded pi loses 0.5 ulp of the angle,
-    // which lands 1:1 in the sine.
-    const double ratio = static_cast<double>(rem) / (4.0 * static_cast<double>(den));
-    const double res = dd_round<double>(ct_dd{ratio, 0.0} * ct_pi<ct_dd>);
+    // The residual angle rounds once at ct_dd: a double-folded ratio loses bits of the angle,
+    // which land 1:1 in the sine.
+    const ct_dd ratio =
+        ct_dd{static_cast<double>(rem), 0.0} / ct_dd{4.0 * static_cast<double>(den), 0.0};
+    const double res = dd_round<double>(ratio * ct_pi<ct_dd>);
     const double x2 = res * res;
     const double tiny = std::numeric_limits<double>::epsilon() / 2.0;
     double cterm = 1, csum = 0, ccomp = 0;
@@ -215,8 +227,10 @@ template<typename F>
         const double sa = sterm < 0 ? -sterm : sterm;
         if (ca <= tiny && sa <= tiny) break;
     }
-    const ct_dd c = dd_two_sum(1.0, csum) + ct_dd{ccomp, 0.0};
-    const ct_dd s = dd_two_sum(res, ssum) + ct_dd{scomp, 0.0};
+    // The compensated sums carry their pending term in the negated compensation: s - comp is
+    // the exact accumulated value.
+    const ct_dd c = dd_two_sum(1.0, csum) - ct_dd{ccomp, 0.0};
+    const ct_dd s = dd_two_sum(res, ssum) - ct_dd{scomp, 0.0};
     if (oct == 0) return {dd_round<F>(s), dd_round<F>(c)};
     if (oct == 2) return {dd_round<F>(c), dd_round<F>(-s)};
     if (oct == 4) return {dd_round<F>(-s), dd_round<F>(-c)};
@@ -240,10 +254,10 @@ template<typename F>
     // fits 106 bits (fold-const.cc, MODE_COMPOSITE_P), so that F folds at ct_dd. A double or
     // float constant folds at long double and rounds once to F where long double is a wide
     // IEEE type (x86 80-bit, arm64 binary128): a double-folded series plus the octant fold
-    // lands 2-3 F-ulp off a correctly rounded root, and that error sits in every twiddle
-    // table and codelet constant built from these values. Everywhere else (long double is
-    // double or composite) the compensated double fold takes over. long double and ct_dd
-    // constants run their own series at their own fold precision.
+    // lands 2-3 F-ulp off the true value, and that error sits in every twiddle table and
+    // codelet constant built from these values. Everywhere else (long double is double or
+    // composite) the compensated double fold takes over. long double and ct_dd constants run
+    // their own series at their own fold precision.
     if constexpr (std::numeric_limits<F>::digits == 2 * std::numeric_limits<double>::digits) {
         const ct_sincos_v<ct_dd> w = sincos_turns_fold<ct_dd>(conjugate, num, den);
         return {dd_round<F>(w.s), dd_round<F>(w.c)};

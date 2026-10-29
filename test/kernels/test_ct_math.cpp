@@ -70,15 +70,41 @@ ADM_CONSTEVAL std::array<ct_sincos_v<F>, Den> folded_turns() {
     return a;
 }
 
+// Reference sine and cosine of exp(+2*pi*i*n/den) at double-double precision: a Taylor
+// series on the dd angle. The libm long double route is not portable here: MSVC and Apple
+// arm64 have a double long double, and clang -mlong-double-64 narrows the type without the
+// libm ABI, so sinl returns garbage there. The series is accurate to about 2^-100.
+// ponytail: m and den must stay below 2^53 for the ratio to fold exactly; the test dens do.
+static ct_sincos_v<ct_dd> turns_ref_sincos(bool conjugate, std::size_t num, std::size_t den) {
+    const std::size_t n = num % den;
+    const std::size_t m = conjugate && n != 0 ? den - n : n;
+    ct_dd x =
+        (ct_pi<ct_dd> * ct_dd{2.0 * static_cast<double>(m), 0.0}) / ct_dd{static_cast<double>(den), 0.0};
+    if (x.hi > ct_pi<double>) x = x - (ct_pi<ct_dd> * ct_dd{2.0, 0.0});
+    const ct_dd x2 = x * x;
+    ct_dd ssum{0.0, 0.0}, csum{0.0, 0.0}, ts = x, tc{1.0, 0.0};
+    for (unsigned i = 0; i < 60; ++i) {
+        ssum = ssum + ts;
+        csum = csum + tc;
+        ts = ((ts * x2) * ct_dd{-1.0, 0.0}) / ct_dd{(2.0 * i + 2.0) * (2.0 * i + 3.0), 0.0};
+        tc = ((tc * x2) * ct_dd{-1.0, 0.0}) / ct_dd{(2.0 * i + 1.0) * (2.0 * i + 2.0), 0.0};
+    }
+    return {ssum, csum};
+}
+
 template<typename F, std::size_t Den>
 F turns_err() {
     constexpr std::array<ct_sincos_v<F>, Den> tab = folded_turns<F, Den>();
     const F eps = static_cast<F>(digits_eps<F>());
     F worst = 0;
     for (std::size_t k = 0; k < Den; ++k) {
-        const F ang = F(2) * numbers::pi_v<F> * static_cast<F>(k) / static_cast<F>(Den);
-        const F es = std::abs(tab[k].s - std::sin(ang)) / eps;
-        const F ec = std::abs(tab[k].c - std::cos(ang)) / eps;
+        const ct_sincos_v<ct_dd> r = turns_ref_sincos(false, k, Den);
+        const long double rs = static_cast<long double>(r.s.hi) + static_cast<long double>(r.s.lo);
+        const long double rc = static_cast<long double>(r.c.hi) + static_cast<long double>(r.c.lo);
+        const F es = static_cast<F>(std::abs(static_cast<long double>(tab[k].s) - rs)
+                                    / static_cast<long double>(eps));
+        const F ec = static_cast<F>(std::abs(static_cast<long double>(tab[k].c) - rc)
+                                    / static_cast<long double>(eps));
         worst = es > worst ? es : worst;
         worst = ec > worst ? ec : worst;
     }
@@ -102,21 +128,14 @@ TEST_CASE("ct_sincos_turns matches libm at the fold precision", "[ct_math][numer
     REQUIRE(wd <= 8);
 }
 
-// Exact reference angle of the fold: exp(+2*pi*i*n/den) with n = num reduced and conjugated
-// the way the fold does it.
-static long double turns_ref_angle(bool conjugate, std::size_t num, std::size_t den) {
-    const std::size_t n = num % den;
-    return 2.0L * numbers::pi_v<long double>
-           * static_cast<long double>(conjugate && n != 0 ? den - n : n)
-           / static_cast<long double>(den);
-}
-
 template<typename T>
 static double turns_ulp_err_v(T s, T c, bool conjugate, std::size_t num, std::size_t den) {
-    const long double ang = turns_ref_angle(conjugate, num, den);
-    const T es = std::abs(s - static_cast<T>(std::sin(ang)));
-    const T ec = std::abs(c - static_cast<T>(std::cos(ang)));
-    return static_cast<double>(std::max(es, ec)) / static_cast<double>(digits_eps<T>());
+    const ct_sincos_v<ct_dd> r = turns_ref_sincos(conjugate, num, den);
+    const long double rs = static_cast<long double>(r.s.hi) + static_cast<long double>(r.s.lo);
+    const long double rc = static_cast<long double>(r.c.hi) + static_cast<long double>(r.c.lo);
+    const long double es = std::abs(static_cast<long double>(s) - rs);
+    const long double ec = std::abs(static_cast<long double>(c) - rc);
+    return static_cast<double>(std::max(es, ec) / static_cast<long double>(digits_eps<T>()));
 }
 
 static double turns_ulp_err(bool conjugate, std::size_t num, std::size_t den) {

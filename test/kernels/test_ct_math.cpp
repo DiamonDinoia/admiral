@@ -3,6 +3,7 @@
 
 #include <admiral/detail/ct_math.hpp>
 #include <admiral/detail/math.hpp>
+#include <admiral/detail/portable_trig.hpp>
 
 #include "utils/reference.hpp"
 
@@ -99,6 +100,43 @@ TEST_CASE("ct_sincos_turns matches libm at the fold precision", "[ct_math][numer
     const double wd = worst_turns_err<double>();
     INFO("double fold worst " << wd << " eps");
     REQUIRE(wd <= 8);
+}
+
+// The double fold is a rounded ct_dd value, so it lands within 1 double-ulp of the correctly
+// rounded root. A double-folded series plus the octant fold loses a factor of 2-3 here, and
+// that error sits in every twiddle table and codelet constant.
+static double turns_ulp_err(bool conjugate, std::size_t num, std::size_t den) {
+    const ct_sincos_v<double> w = sincos_turns_eval<double>(conjugate, num, den);
+    const std::size_t n = num % den;
+    const long double ang = 2.0L * numbers::pi_v<long double>
+                            * static_cast<long double>(conjugate && n != 0 ? den - n : n)
+                            / static_cast<long double>(den);
+    const double es = std::abs(w.s - static_cast<double>(std::sin(ang)));
+    const double ec = std::abs(w.c - static_cast<double>(std::cos(ang)));
+    return std::max(es, ec) / digits_eps<double>();
+}
+
+TEST_CASE("trig constants are correctly rounded doubles", "[ct_math][numerics]") {
+    double worst = 0;
+    for (const std::size_t den : {std::size_t{13}, std::size_t{47}, std::size_t{59},
+                                  std::size_t{61}, std::size_t{101}, std::size_t{251},
+                                  std::size_t{1024}, std::size_t{3329}}) {
+        for (std::size_t k = 0; k < den; ++k) {
+            worst = std::max(worst, turns_ulp_err(false, k, den));
+            worst = std::max(worst, turns_ulp_err(true, k, den));
+            const auto [sn, cs] = admiral::detail::portable_trig::sincos_turns(k, den, true);
+            const std::size_t n = k % den;
+            const long double ang = -2.0L * numbers::pi_v<long double>
+                                    * static_cast<long double>(n)
+                                    / static_cast<long double>(den);
+            worst = std::max(worst, std::abs(sn - static_cast<double>(std::sin(ang)))
+                                        / digits_eps<double>());
+            worst = std::max(worst, std::abs(cs - static_cast<double>(std::cos(ang)))
+                                        / digits_eps<double>());
+        }
+    }
+    INFO("worst trig constant error " << worst << " ulp");
+    REQUIRE(worst <= 1.0);
 }
 
 TEST_CASE("ct_sincos_turns matches libm at the long double fold precision",

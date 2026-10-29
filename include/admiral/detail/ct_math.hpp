@@ -149,23 +149,17 @@ template<typename F>
     return F(v.hi) + F(((t + big) - big) * q);
 }
 
-template<typename F>
-[[nodiscard]] constexpr ct_sincos_v<F> sincos_turns_eval(bool conjugate, std::size_t num,
+template <typename G>
+[[nodiscard]] constexpr ct_sincos_v<G> sincos_turns_fold(bool conjugate, std::size_t num,
                                                          std::size_t den) {
-    // gcc folds an F that is a pair of doubles (IBM double-double) only where the exact result
-    // fits 106 bits (fold-const.cc, MODE_COMPOSITE_P), so that F folds at ct_dd.
-    if constexpr (std::numeric_limits<F>::digits == 2 * std::numeric_limits<double>::digits) {
-        const ct_sincos_v<ct_dd> w = sincos_turns_eval<ct_dd>(conjugate, num, den);
-        return {dd_round<F>(w.s), dd_round<F>(w.c)};
-    }
     num %= den;
     if (conjugate && num != 0) num = den - num;
     const std::size_t oct = (8 * num) / den;
     const std::size_t rem = 8 * num - oct * den;
-    const F res = static_cast<F>(rem) * (ct_pi<F> / (F(4) * static_cast<F>(den)));
-    const ct_sincos_v<F> r = sincos_small_eval<F>(res);
-    constexpr F inv_sqrt2 = ct_sqrt2<F> / F(2);
-    F bc = 0, bs = 0;
+    const G res = static_cast<G>(rem) * (ct_pi<G> / (G(4) * static_cast<G>(den)));
+    const ct_sincos_v<G> r = sincos_small_eval<G>(res);
+    constexpr G inv_sqrt2 = ct_sqrt2<G> / G(2);
+    G bc = 0, bs = 0;
     switch (oct) {
         case 0: bc = 1;            bs = 0;            break;
         case 1: bc = inv_sqrt2;    bs = inv_sqrt2;    break;
@@ -177,6 +171,33 @@ template<typename F>
         default: bc = inv_sqrt2;   bs = -inv_sqrt2;   break;
     }
     return {bs * r.c + bc * r.s, bc * r.c - bs * r.s};
+}
+
+template<typename F>
+[[nodiscard]] constexpr ct_sincos_v<F> sincos_turns_eval(bool conjugate, std::size_t num,
+                                                         std::size_t den) {
+    // gcc folds an F that is a pair of doubles (IBM double-double) only where the exact result
+    // fits 106 bits (fold-const.cc, MODE_COMPOSITE_P), so that F folds at ct_dd. A double or
+    // float constant folds at long double and rounds once to F: a double-folded series plus
+    // the octant fold lands 2-3 F-ulp off a correctly rounded root, and that error sits in
+    // every twiddle table and codelet constant built from these values. Long double is the
+    // fold type where it is wider than double (one operation to gcc each, where ct_dd is four
+    // doubles), so the compile-time tables fold at the same cost as before; where long double
+    // is double the fold falls back to ct_dd. long double and ct_dd constants run their own
+    // series at their own fold precision.
+    if constexpr (std::numeric_limits<F>::digits == 2 * std::numeric_limits<double>::digits) {
+        const ct_sincos_v<ct_dd> w = sincos_turns_fold<ct_dd>(conjugate, num, den);
+        return {dd_round<F>(w.s), dd_round<F>(w.c)};
+    } else if constexpr (std::numeric_limits<F>::digits < 64 &&
+                         std::numeric_limits<long double>::digits > 53) {
+        const ct_sincos_v<long double> w = sincos_turns_fold<long double>(conjugate, num, den);
+        return {static_cast<F>(w.s), static_cast<F>(w.c)};
+    } else if constexpr (std::numeric_limits<F>::digits < 64) {
+        const ct_sincos_v<ct_dd> w = sincos_turns_fold<ct_dd>(conjugate, num, den);
+        return {dd_round<F>(w.s), dd_round<F>(w.c)};
+    } else {
+        return sincos_turns_fold<F>(conjugate, num, den);
+    }
 }
 
 template<typename F = double>

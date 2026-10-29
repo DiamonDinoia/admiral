@@ -248,21 +248,24 @@ template<unsigned P, typename T, bool Imag>
 ADM_CONSTEVAL std::array<T, P - 1> make_rader_bhat() {
     constexpr unsigned L = P - 1;
     constexpr std::size_t g = ct_primitive_root(P);
-    struct cd { double re; double im; };
+    // long double: the twiddles and the O(L^2) sum carry the bhat error; one rounding to T at the end.
+    using SF = long double;
+    using WF = long double;
+    struct cd { SF re; SF im; };
     const std::size_t ginv = ct_powmod(g, P - 2, P);
     std::array<cd, L> bp{};
     for (unsigned j = 0; j < L; ++j) {
         const std::size_t e = ct_powmod(ginv, j, P);
-        const ct_sincos_t w = ct_sincos_turns(true, e, P);
-        bp[j] = {w.c, w.s};
+        const ct_sincos_v<WF> w = ct_sincos_turns<WF>(true, e, P);
+        bp[j] = {static_cast<SF>(w.c), static_cast<SF>(w.s)};
     }
     std::array<T, L> out{};
     for (unsigned k = 0; k < L; ++k) {
-        double sr = 0.0, si = 0.0;
+        SF sr = 0.0, si = 0.0;
         for (unsigned j = 0; j < L; ++j) {
-            const ct_sincos_t e = ct_sincos_turns(true, j * k % L, L);
-            sr += bp[j].re * e.c - bp[j].im * e.s;
-            si += bp[j].re * e.s + bp[j].im * e.c;
+            const ct_sincos_v<WF> e = ct_sincos_turns<WF>(true, j * k % L, L);
+            sr += bp[j].re * static_cast<SF>(e.c) - bp[j].im * static_cast<SF>(e.s);
+            si += bp[j].re * static_cast<SF>(e.s) + bp[j].im * static_cast<SF>(e.c);
         }
         out[k] = static_cast<T>((Imag ? si : sr) / L);
     }

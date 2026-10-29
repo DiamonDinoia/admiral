@@ -259,13 +259,20 @@ ADM_CONSTEVAL std::array<T, P - 1> make_rader_bhat() {
         const ct_sincos_v<WF> w = ct_sincos_turns<WF>(true, e, P);
         bp[j] = {static_cast<SF>(w.c), static_cast<SF>(w.s)};
     }
+    // j * k % L takes L values over the double loop below: fold each once. Folding inside
+    // the loop costs L times more constexpr steps and busts the default step budgets.
+    std::array<cd, L> ep{};
+    for (unsigned e = 0; e < L; ++e) {
+        const ct_sincos_v<WF> w = ct_sincos_turns<WF>(true, e, L);
+        ep[e] = {static_cast<SF>(w.c), static_cast<SF>(w.s)};
+    }
     std::array<T, L> out{};
     for (unsigned k = 0; k < L; ++k) {
         SF sr = 0.0, si = 0.0;
         for (unsigned j = 0; j < L; ++j) {
-            const ct_sincos_v<WF> e = ct_sincos_turns<WF>(true, j * k % L, L);
-            sr += bp[j].re * static_cast<SF>(e.c) - bp[j].im * static_cast<SF>(e.s);
-            si += bp[j].re * static_cast<SF>(e.s) + bp[j].im * static_cast<SF>(e.c);
+            const cd& e = ep[j * k % L];
+            sr += bp[j].re * e.re - bp[j].im * e.im;
+            si += bp[j].re * e.im + bp[j].im * e.re;
         }
         out[k] = static_cast<T>((Imag ? si : sr) / L);
     }

@@ -194,8 +194,8 @@ template<typename F>
     const std::size_t rem = 8 * num - oct * den;
     // The residual angle rounds once at ct_dd: a double-folded pi loses 0.5 ulp of the angle,
     // which lands 1:1 in the sine.
-    const double t = static_cast<double>(rem) / (4.0 * static_cast<double>(den));
-    const double res = dd_round<double>(ct_dd{t, 0.0} * ct_pi<ct_dd>);
+    const double ratio = static_cast<double>(rem) / (4.0 * static_cast<double>(den));
+    const double res = dd_round<double>(ct_dd{ratio, 0.0} * ct_pi<ct_dd>);
     const double x2 = res * res;
     const double tiny = std::numeric_limits<double>::epsilon() / 2.0;
     double cterm = 1, csum = 0, ccomp = 0;

@@ -116,7 +116,7 @@ static double turns_ulp_err_v(T s, T c, bool conjugate, std::size_t num, std::si
     const long double ang = turns_ref_angle(conjugate, num, den);
     const T es = std::abs(s - static_cast<T>(std::sin(ang)));
     const T ec = std::abs(c - static_cast<T>(std::cos(ang)));
-    return static_cast<double>(std::max(es, ec) / digits_eps<T>());
+    return static_cast<double>(std::max(es, ec)) / static_cast<double>(digits_eps<T>());
 }
 
 static double turns_ulp_err(bool conjugate, std::size_t num, std::size_t den) {

@@ -215,6 +215,12 @@ TEST_CASE("the fallback fold lands within one 2^-53", "[ct_math][numerics]") {
     const ct_sincos_v<double> w = sincos_turns_fold_dbl<double>(true, 1450, 2313);
     REQUIRE(w.s == 0x1.6e50cf76e4352p-1);
     REQUIRE(w.c == -0x1.65b5e6319fdd2p-1);
+    const ct_sincos_v<double> a = sincos_turns_fold_dbl<double>(false, 1, 3);
+    const ct_sincos_v<double> b = sincos_turns_fold_dbl<double>(true, 1, 3);
+    REQUIRE(a.s == 0x1.bb67ae8584caap-1);
+    REQUIRE(a.c == -0x1p-1);
+    REQUIRE(b.s == -0x1.bb67ae8584cabp-1);
+    REQUIRE(b.c == -0x1p-1);
 }
 
 // The ct_dd fold for F = double and float is the long-double-is-double route's cousin and

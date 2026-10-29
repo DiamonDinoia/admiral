@@ -120,7 +120,9 @@ namespace detail {
 template<typename F>
 [[nodiscard]] constexpr ct_sincos_v<F> sincos_small_eval(F x) {
     const F x2 = x * x;
-    const F tiny = std::numeric_limits<F>::epsilon() / F(2);
+    // The break test doubles the term instead of halving epsilon: gcc's composite long double
+    // reports epsilon at the smallest subnormal and epsilon / 2 then fails to constant-fold.
+    const F eps = std::numeric_limits<F>::epsilon();
     F cterm = 1, csum = 1;
     F sterm = x, ssum = x;
     // The term index counts in integers, so `2k-1` and `2k+1` are exact by construction and the
@@ -133,7 +135,7 @@ template<typename F>
         ssum += sterm;
         const F ca = cterm < 0 ? -cterm : cterm;
         const F sa = sterm < 0 ? -sterm : sterm;
-        if (ca <= tiny && sa <= tiny) break;
+        if (ca + ca <= eps && sa + sa <= eps) break;
     }
     return {ssum, csum};
 }
@@ -263,7 +265,10 @@ template<typename F>
         return {dd_round<F>(w.s), dd_round<F>(w.c)};
     } else if constexpr (std::numeric_limits<F>::digits < 64 &&
                          std::numeric_limits<long double>::is_iec559 &&
-                         std::numeric_limits<long double>::digits > 53) {
+                         std::numeric_limits<long double>::digits > 53 &&
+                         std::numeric_limits<long double>::max_exponent > 1024) {
+        // The max_exponent gate keeps the IBM composite long double (ppc64le) out: it reports
+        // is_iec559 with double's range and folds no better than the dd route below.
         const ct_sincos_v<long double> w = sincos_turns_fold<long double>(conjugate, num, den);
         return {static_cast<F>(w.s), static_cast<F>(w.c)};
     } else if constexpr (std::numeric_limits<F>::digits < 64) {

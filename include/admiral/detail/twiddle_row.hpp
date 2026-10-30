@@ -21,12 +21,13 @@ ADM_ALWAYS_INLINE void cmul_ip(B& are, B& aim, const B& bre, const B& bim) {
 
 template<typename T, bool Forward>
 void geom_twiddle_row(std::size_t step, std::size_t den, std::size_t n,
-                      T* ADM_RESTRICT re, T* ADM_RESTRICT im) {
+                      T* ADM_RESTRICT re, T* ADM_RESTRICT im,
+                      portable_trig::turns_memo* memo = nullptr) {
     using B = xsimd::batch<T>;
     constexpr std::size_t W = B::size;
 
     const auto exact = [&](std::size_t i) {
-        const auto [sn, cs] = portable_trig::sincos_turns<Forward>(step * i, den);
+        const auto [sn, cs] = portable_trig::sincos_turns<Forward>(step * i, den, memo);
         return std::pair<T, T>{static_cast<T>(cs), static_cast<T>(sn)};
     };
 

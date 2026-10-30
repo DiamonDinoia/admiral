@@ -298,8 +298,9 @@ real_adm_plan<T>::real_adm_plan(std::size_t N, admiral::effort eff)
     if (even_) {
         const std::size_t half = N_ / 2;
         tw_.resize(half + 1);
+        portable_trig::turns_memo memo;
         for (std::size_t k = 0; k <= half; ++k) {
-            const auto [sn, cs] = portable_trig::sincos_turns<true>(k, N_);
+            const auto [sn, cs] = portable_trig::sincos_turns<true>(k, N_, &memo);
             tw_[k] = std::complex<T>(static_cast<T>(cs), static_cast<T>(sn));
         }
         batched_ = M_ >= 2 && multipass_supported(M_);
@@ -393,10 +394,11 @@ nd_real_plan<T>::nd_real_plan(span<const std::size_t> shape, std::size_t nthread
     std::size_t inner = m.Nh;
     for (std::size_t di = 0; di < nouter; ++di) {
         const std::size_t d = nouter - 1 - di;
+        portable_trig::turns_memo memo;
         m.fwd_axes[d] = make_nd_axis_state<T>(m.shape[d], inner, true,
-                                              false, 1, eff, pin);
+                                              false, 1, eff, pin, &memo);
         m.inv_axes[d] = make_nd_axis_state<T>(m.shape[d], inner, false,
-                                              false, 1, eff, pin);
+                                              false, 1, eff, pin, &memo);
         // run_outer always calls nd_apply_axis with total=m.total_c (no plane-fusion here),
         // so plan_nruns is plan-invariant the same way nd_runtime_plan's is.
         const std::size_t nruns = m.total_c / (m.shape[d] * inner);

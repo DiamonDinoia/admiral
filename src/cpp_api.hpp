@@ -55,10 +55,14 @@ struct plan_state_impl final : plan_state<T> {
     nd_runtime_plan<T> inv;
     unsigned debug;
 
+    // The memo lives for the plan build only: the table builders get it by argument, fwd and
+    // inv share one, and it ends with the constructor.
     plan_state_impl(span<const std::size_t> shape, const admiral::options& opts)
-        : fwd{shape, true, opts.nthreads, opts.eff, opts.pin_threads},
-          inv{shape, false, opts.nthreads, opts.eff, opts.pin_threads},
-          debug(opts.debug) {}
+        : debug(opts.debug) {
+        portable_trig::turns_memo memo;
+        fwd = nd_runtime_plan<T>{shape, true, opts.nthreads, opts.eff, opts.pin_threads, &memo};
+        inv = nd_runtime_plan<T>{shape, false, opts.nthreads, opts.eff, opts.pin_threads, &memo};
+    }
 
     [[nodiscard]] std::size_t size() const noexcept override { return fwd.size(); }
     void run(bool is_forward, std::complex<T>* data, const T* fct) const override {
@@ -144,10 +148,11 @@ struct strides_state_impl final : strides_state<T> {
                              " product must fit");
         const std::size_t axis_threads =
             split_batch_threads<T>(opts.nthreads, *total, n, len_, pool, opts.pin_threads);
+        portable_trig::turns_memo memo;
         fwd = make_nd_axis_state<T>(len_, istride, true, false,
-                                    axis_threads, opts.eff, opts.pin_threads);
+                                    axis_threads, opts.eff, opts.pin_threads, &memo);
         inv = make_nd_axis_state<T>(len_, istride, false, false,
-                                    axis_threads, opts.eff, opts.pin_threads);
+                                    axis_threads, opts.eff, opts.pin_threads, &memo);
         const bool need_slab = len_ > 1 && istride != 1 && idist == 1 && odist != 1 &&
                                (slab_route(fwd) || slab_route(inv));
         if (need_slab && pool && opts.nthreads == 0) {
@@ -281,10 +286,14 @@ struct plan_state {
     nd_runtime_plan<T> inv;
     unsigned debug;
 
+    // The memo lives for the plan build only: the table builders get it by argument, fwd and
+    // inv share one, and it ends with the constructor.
     plan_state(span<const std::size_t> shape, const admiral::options& opts)
-        : fwd{shape, true, opts.nthreads, opts.eff, opts.pin_threads},
-          inv{shape, false, opts.nthreads, opts.eff, opts.pin_threads},
-          debug(opts.debug) {}
+        : debug(opts.debug) {
+        portable_trig::turns_memo memo;
+        fwd = nd_runtime_plan<T>{shape, true, opts.nthreads, opts.eff, opts.pin_threads, &memo};
+        inv = nd_runtime_plan<T>{shape, false, opts.nthreads, opts.eff, opts.pin_threads, &memo};
+    }
 
     [[nodiscard]] std::size_t size() const noexcept { return fwd.size(); }
     void run(bool is_forward, std::complex<T>* data, const T* fct) const {
@@ -360,10 +369,11 @@ struct strides_state {
                              " product must fit");
         const std::size_t axis_threads =
             split_batch_threads<T>(opts.nthreads, *total, n, len_, pool, opts.pin_threads);
+        portable_trig::turns_memo memo;
         fwd = make_nd_axis_state<T>(len_, istride, true, false,
-                                    axis_threads, opts.eff, opts.pin_threads);
+                                    axis_threads, opts.eff, opts.pin_threads, &memo);
         inv = make_nd_axis_state<T>(len_, istride, false, false,
-                                    axis_threads, opts.eff, opts.pin_threads);
+                                    axis_threads, opts.eff, opts.pin_threads, &memo);
         const bool need_slab = len_ > 1 && istride != 1 && idist == 1 && odist != 1 &&
                                (slab_route(fwd) || slab_route(inv));
         if (need_slab && pool && opts.nthreads == 0) {

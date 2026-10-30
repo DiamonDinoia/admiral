@@ -264,6 +264,18 @@ template<typename F>
     }
 }
 
+// The run-time long double can be narrower than the compile-time format: valgrind emulates
+// x87 at 53 bits, and an x87 precision-control word can do the same on real hardware. One
+// volatile probe separates the two: 1 + 2^-60 is representable at 64 bits and rounds to 1 at
+// 53. The volatile sum keeps -ffast-math from reducing the test to tail != 0. Stateless: the
+// probe runs per call.
+inline bool ld_full_precision() noexcept {
+    volatile long double one = 1.0L;
+    volatile long double tail = 0x1p-60L;
+    volatile long double sum = one + tail;
+    return sum != one;
+}
+
 template<typename F>
 [[nodiscard]] constexpr ct_sincos_v<F> sincos_turns_eval(bool conjugate, std::size_t num,
                                                          std::size_t den) {
@@ -283,7 +295,11 @@ template<typename F>
                          std::numeric_limits<long double>::digits > 53 &&
                          std::numeric_limits<long double>::max_exponent > 1024) {
         // The max_exponent gate keeps the IBM composite long double (ppc64le) out: it reports
-        // is_iec559 with double's range and folds no better than the dd route below.
+        // is_iec559 with double's range and folds no better than the dd route below. The probe
+        // keeps a degraded run-time long double on that same fallback, so the fold holds its
+        // one-2^-53 contract wherever it runs.
+        if (!ADM_IS_CONSTANT_EVALUATED() && !ld_full_precision())
+            return sincos_turns_fold_dbl<F>(conjugate, num, den);
         const ct_sincos_v<long double> w = sincos_turns_fold<long double>(conjugate, num, den);
         return {static_cast<F>(w.s), static_cast<F>(w.c)};
     } else if constexpr (std::numeric_limits<F>::digits < 64) {

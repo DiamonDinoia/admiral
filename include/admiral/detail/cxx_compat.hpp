@@ -39,7 +39,10 @@
 
 #if defined(__cpp_lib_is_constant_evaluated) && __cpp_lib_is_constant_evaluated >= 201811L
 #  define ADM_IS_CONSTANT_EVALUATED() std::is_constant_evaluated()
-#elif defined(__GNUC__) || defined(__clang__)
+#elif defined(__GNUC__) || defined(__clang__) || (defined(_MSC_VER) && _MSC_VER >= 1928)
+// MSVC has the builtin in every language mode; without it the C++17 fallback below is
+// false at compile time and every constexpr dd helper routes into std::fma, which MSVC
+// cannot constant-fold on x86.
 #  define ADM_IS_CONSTANT_EVALUATED() __builtin_is_constant_evaluated()
 #else
 #  define ADM_IS_CONSTANT_EVALUATED() (false)

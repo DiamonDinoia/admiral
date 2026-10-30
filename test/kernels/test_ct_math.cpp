@@ -251,6 +251,19 @@ TEST_CASE("dd_round rounds a narrow F once", "[ct_math][numerics]") {
     REQUIRE(dd_round<float>(ct_dd{0x1.8p+0, 0x1p-54}) == 0x1.8p+0f);
 }
 
+// The fold and the dd helpers must constant-evaluate on every compiler: on MSVC the C++17
+// constant-evaluation detection once fell back to false, and every constexpr dd helper then
+// routed into std::fma, which MSVC cannot constant-fold on x86.
+TEST_CASE("the fold constant-evaluates", "[ct_math][portability]") {
+    constexpr ct_dd p = ct_dd{3.0, 0.25} * ct_dd{1.5, 0.125};
+    static_assert(p.hi != 0.0);
+    constexpr ct_sincos_v<double> w = sincos_turns_fold_dbl<double>(false, 3, 13);
+    static_assert(w.s != 0.0);
+    constexpr ct_sincos_v<float> wf = sincos_turns_eval<float>(true, 5, 61);
+    static_assert(wf.c != 0.0f);
+    SUCCEED();
+}
+
 // A runtime table entry and a folded codelet constant carry the same value: portable_trig is
 // the fold, not a second approximation of it.
 TEST_CASE("a runtime table entry equals the folded constant", "[ct_math][numerics]") {

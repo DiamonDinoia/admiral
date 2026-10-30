@@ -189,6 +189,27 @@ foreach(test_src IN LISTS ADM_TEST_SOURCES)
     adm_add_test(${test_name} ${test_src})
 endforeach()
 
+# The engine's fast-math flag set on one test TU: on the narrow long double cells the engine
+# compiles sincos_turns_fold_dbl under fast math, and this build runs the fold in that codegen
+# on every platform. The TU carries no libm reference (its dd reference is pinned itself), so
+# reference.hpp's no-fast-math guard does not apply there. With ADM_USE_FAST_MATH off the
+# flags are empty and the case degenerates to the precise check: still correct, no pin test.
+add_executable(test_fold_fast kernels/test_fold_fast.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tier_select.cpp)
+target_include_directories(test_fold_fast PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test_fold_fast
+    PRIVATE
+        admiral_internal
+        admiral_fast_math_flags
+        $<BUILD_INTERFACE:Catch2::Catch2WithMain>
+    )
+if(CATCH2_INCLUDE_DIRS)
+    target_include_directories(test_fold_fast SYSTEM PRIVATE ${CATCH2_INCLUDE_DIRS})
+endif()
+if(TARGET project_warnings)
+    target_link_libraries(test_fold_fast PRIVATE project_warnings)
+endif()
+catch_discover_tests(test_fold_fast)
+
 # The run-time tier pick: ADM_EXPECT_TIER names the arch the library's own dispatch must
 # choose. CI runs it under the SDE models. Plain add_test: its own main must not be probed by
 # catch_discover_tests.

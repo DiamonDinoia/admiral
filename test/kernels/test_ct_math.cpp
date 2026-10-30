@@ -268,12 +268,17 @@ TEST_CASE("the fold constant-evaluates", "[ct_math][portability]") {
 // the fold, not a second approximation of it.
 TEST_CASE("a runtime table entry equals the folded constant", "[ct_math][numerics]") {
     for (const std::size_t den : turns_dens) {
+        admiral::detail::portable_trig::turns_memo memo;
         for (std::size_t k = 0; k < den; ++k) {
             for (const bool forward : {false, true}) {
                 const ct_sincos_v<double> w = sincos_turns_eval<double>(forward, k, den);
                 const auto p = admiral::detail::portable_trig::sincos_turns(k, den, forward);
                 REQUIRE(p.first == w.s);
                 REQUIRE(p.second == w.c);
+                const auto pm =
+                    admiral::detail::portable_trig::sincos_turns(k, den, forward, &memo);
+                REQUIRE(pm.first == w.s);
+                REQUIRE(pm.second == w.c);
             }
         }
     }

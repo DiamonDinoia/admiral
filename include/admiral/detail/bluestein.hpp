@@ -68,8 +68,9 @@ public:
         m.chirp.resize(m.size);
         // e steps through n * n mod 2N. The product itself overflows a 32-bit size_t.
         std::size_t e = 0;
+        portable_trig::turns_memo memo;
         for (std::size_t n = 0; n < m.size; e = (e + 2 * n + 1) % (2 * m.size), ++n) {
-            const auto [s, c] = portable_trig::sincos_turns(e, 2 * m.size, m.is_forward);
+            const auto [s, c] = portable_trig::sincos_turns(e, 2 * m.size, m.is_forward, &memo);
             m.chirp[n] = std::complex<T>(static_cast<T>(c), static_cast<T>(s));
         }
 

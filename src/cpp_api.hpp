@@ -51,13 +51,14 @@ inline std::size_t split_batch_threads(std::size_t requested, std::size_t total,
 
 template<typename T>
 struct plan_state_impl final : plan_state<T> {
+    portable_trig::turns_memo memo;
     nd_runtime_plan<T> fwd;
     nd_runtime_plan<T> inv;
     unsigned debug;
 
     plan_state_impl(span<const std::size_t> shape, const admiral::options& opts)
-        : fwd{shape, true, opts.nthreads, opts.eff, opts.pin_threads},
-          inv{shape, false, opts.nthreads, opts.eff, opts.pin_threads},
+        : fwd{shape, true, opts.nthreads, opts.eff, opts.pin_threads, &memo},
+          inv{shape, false, opts.nthreads, opts.eff, opts.pin_threads, &memo},
           debug(opts.debug) {}
 
     [[nodiscard]] std::size_t size() const noexcept override { return fwd.size(); }
@@ -144,10 +145,11 @@ struct strides_state_impl final : strides_state<T> {
                              " product must fit");
         const std::size_t axis_threads =
             split_batch_threads<T>(opts.nthreads, *total, n, len_, pool, opts.pin_threads);
+        portable_trig::turns_memo memo;
         fwd = make_nd_axis_state<T>(len_, istride, true, false,
-                                    axis_threads, opts.eff, opts.pin_threads);
+                                    axis_threads, opts.eff, opts.pin_threads, &memo);
         inv = make_nd_axis_state<T>(len_, istride, false, false,
-                                    axis_threads, opts.eff, opts.pin_threads);
+                                    axis_threads, opts.eff, opts.pin_threads, &memo);
         const bool need_slab = len_ > 1 && istride != 1 && idist == 1 && odist != 1 &&
                                (slab_route(fwd) || slab_route(inv));
         if (need_slab && pool && opts.nthreads == 0) {
@@ -277,13 +279,14 @@ struct r2r_state_impl final : r2r_state<T> {
 
 template<typename T>
 struct plan_state {
+    portable_trig::turns_memo memo;
     nd_runtime_plan<T> fwd;
     nd_runtime_plan<T> inv;
     unsigned debug;
 
     plan_state(span<const std::size_t> shape, const admiral::options& opts)
-        : fwd{shape, true, opts.nthreads, opts.eff, opts.pin_threads},
-          inv{shape, false, opts.nthreads, opts.eff, opts.pin_threads},
+        : fwd{shape, true, opts.nthreads, opts.eff, opts.pin_threads, &memo},
+          inv{shape, false, opts.nthreads, opts.eff, opts.pin_threads, &memo},
           debug(opts.debug) {}
 
     [[nodiscard]] std::size_t size() const noexcept { return fwd.size(); }
@@ -360,10 +363,11 @@ struct strides_state {
                              " product must fit");
         const std::size_t axis_threads =
             split_batch_threads<T>(opts.nthreads, *total, n, len_, pool, opts.pin_threads);
+        portable_trig::turns_memo memo;
         fwd = make_nd_axis_state<T>(len_, istride, true, false,
-                                    axis_threads, opts.eff, opts.pin_threads);
+                                    axis_threads, opts.eff, opts.pin_threads, &memo);
         inv = make_nd_axis_state<T>(len_, istride, false, false,
-                                    axis_threads, opts.eff, opts.pin_threads);
+                                    axis_threads, opts.eff, opts.pin_threads, &memo);
         const bool need_slab = len_ > 1 && istride != 1 && idist == 1 && odist != 1 &&
                                (slab_route(fwd) || slab_route(inv));
         if (need_slab && pool && opts.nthreads == 0) {

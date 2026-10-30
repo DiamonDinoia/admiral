@@ -45,14 +45,18 @@ struct ct_dd {
     constexpr ct_dd(A a) : hi(static_cast<double>(a)) {}
 };
 
-// The engine TUs compile every inline body below under /fp:fast (ADM_USE_FAST_MATH), where the
-// compensated sums and the error-free transforms collapse; cl then links the first COMDAT it
+// The engine TUs compile every inline body below under a fast-math flag (ADM_USE_FAST_MATH:
+// /fp:fast on cl, -ffast-math on clang-cl), where the compensated sums and the error-free
+// transforms collapse; on COFF the linker keeps the first COMDAT or linkonce_odr copy it
 // meets, so a test or consumer TU that calls one of these bodies can run the fast-math copy.
 // One pragma region keeps every instantiation on the precise model, so the linker's pick no
 // longer changes the result. Constant evaluation folds precisely under any flag; only the
 // runtime bodies need the region. fp_contract needs no treatment: the Dekker split it could
 // break runs in constant evaluation only, and the runtime product spells std::fma explicitly.
-#if defined(_MSC_VER) && !defined(__clang__)
+// _MSC_VER covers clang-cl too: its engine TUs get -ffast-math and it emits linkonce_odr
+// copies, the same hazard class as cl. gcc/clang on ELF cannot hit it: their engine objects
+// emit no out-of-line fold/dd copy, and an archive member only loads for an undefined symbol.
+#if defined(_MSC_VER)
 #  pragma float_control(precise, on, push)
 #endif
 
@@ -211,8 +215,8 @@ template <typename G>
 // twiddle once, against the default budget of 1048576. The ct_dd fold is tens of times that
 // and busts the budget (the base commit fails the clang check at codelet.hpp:757).
 // ponytail: the compensation folds away under -ffast-math or /fp:fast and the error then
-// reaches 2.5 double ulp; the float_control region above pins the precise model on MSVC, the
-// one place a fast-math object can out-select a test's own COMDAT copy today.
+// reaches 2.5 double ulp; the float_control region above pins the precise model on cl and
+// clang-cl, the COFF compilers where a fast-math copy can out-select a test's own COMDAT copy.
 template<typename F>
 [[nodiscard]] constexpr ct_sincos_v<F> sincos_turns_fold_dbl(bool conjugate, std::size_t num,
                                                              std::size_t den) {
@@ -293,7 +297,7 @@ template<typename F>
     }
 }
 
-#if defined(_MSC_VER) && !defined(__clang__)
+#if defined(_MSC_VER)
 #  pragma float_control(pop)
 #endif
 

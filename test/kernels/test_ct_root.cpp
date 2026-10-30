@@ -78,6 +78,26 @@ constexpr bool lattice_swept(std::size_t den, std::size_t num) {
     return num == 0 || num == 1 || num == den / 4 || num == den / 2 || num == den - 1;
 }
 
+#if defined(_MSC_VER) && !defined(__clang__)
+// cl's constant evaluator holds one arena per TU; ci.yml measures a 16-21 GiB commit peak
+// for this TU at master, and with the dd fallback in the fold the whole-lattice sweep
+// overflows cl's heap outright (C1060 at the chunk variables on windows-2022/2025). cl
+// sweeps once at runtime in the TEST_CASEs instead: a constant expression must give the
+// runtime IEEE value, so the classification agreement this pins and its coverage do not
+// change. The consteval folding below stays for gcc and clang (clang-cl's evaluator has no
+// such heap mode).
+template<typename F>
+[[nodiscard]] constexpr root_lattice_bad first_bad_root() {
+    for (std::size_t den = 1; den <= kLatticeDenMax; ++den)
+        for (std::size_t num = 0; num < den; ++num)
+            for (const bool conj : {false, true})
+                if (lattice_swept<F>(den, num) &&
+                    ct_root_form(num, den, conj) !=
+                        fold_form(sincos_turns_eval<F>(conj, num, den)))
+                    return {den, num, conj};
+    return {};
+}
+#else
 // gcc caps one constant evaluation at -fconstexpr-ops-limit; a full-precision 1..512
 // sweep busts it, so the lattice folds in 8-den chunks and the chunks merge. An IBM
 // double-double long double folds through ct_dd: one 16-den chunk there takes over half the cap.
@@ -121,11 +141,15 @@ constexpr root_lattice_bad first_bad_root() {
 inline constexpr root_lattice_bad bad_f = first_bad_root<float>();
 inline constexpr root_lattice_bad bad_d = first_bad_root<double>();
 inline constexpr root_lattice_bad bad_ld = first_bad_root<long double>();
+#endif
 
 } // namespace
 
 TEST_CASE("ct_root lattice agrees with the sincos fold at float precision",
           "[ct_math][ct_root]") {
+#if defined(_MSC_VER) && !defined(__clang__)
+    const root_lattice_bad bad_f = first_bad_root<float>();
+#endif
     INFO("first bad (den, num, conj) = " << bad_f.den << ", " << bad_f.num << ", "
                                          << bad_f.conj);
     REQUIRE(bad_f.den == 0u);
@@ -133,6 +157,9 @@ TEST_CASE("ct_root lattice agrees with the sincos fold at float precision",
 
 TEST_CASE("ct_root lattice agrees with the sincos fold at double precision",
           "[ct_math][ct_root]") {
+#if defined(_MSC_VER) && !defined(__clang__)
+    const root_lattice_bad bad_d = first_bad_root<double>();
+#endif
     INFO("first bad (den, num, conj) = " << bad_d.den << ", " << bad_d.num << ", "
                                          << bad_d.conj);
     REQUIRE(bad_d.den == 0u);
@@ -140,6 +167,9 @@ TEST_CASE("ct_root lattice agrees with the sincos fold at double precision",
 
 TEST_CASE("ct_root lattice agrees with the sincos fold at long double precision",
           "[ct_math][ct_root][longdouble]") {
+#if defined(_MSC_VER) && !defined(__clang__)
+    const root_lattice_bad bad_ld = first_bad_root<long double>();
+#endif
     INFO("first bad (den, num, conj) = " << bad_ld.den << ", " << bad_ld.num << ", "
                                          << bad_ld.conj);
     REQUIRE(bad_ld.den == 0u);

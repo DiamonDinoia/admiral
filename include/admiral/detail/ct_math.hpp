@@ -180,14 +180,7 @@ template<typename F>
 }
 
 template <typename G>
-[[nodiscard]] constexpr ct_sincos_v<G> sincos_turns_fold(bool conjugate, std::size_t num,
-                                                         std::size_t den) {
-    num %= den;
-    if (conjugate && num != 0) num = den - num;
-    const std::size_t oct = (8 * num) / den;
-    const std::size_t rem = 8 * num - oct * den;
-    const G res = static_cast<G>(rem) * (ct_pi<G> / (G(4) * static_cast<G>(den)));
-    const ct_sincos_v<G> r = sincos_small_eval<G>(res);
+[[nodiscard]] constexpr ct_sincos_v<G> sincos_octant_mix(std::size_t oct, const ct_sincos_v<G>& r) {
     constexpr G inv_sqrt2 = ct_sqrt2<G> / G(2);
     G bc = 0, bs = 0;
     switch (oct) {
@@ -201,6 +194,17 @@ template <typename G>
         default: bc = inv_sqrt2;   bs = -inv_sqrt2;   break;
     }
     return {bs * r.c + bc * r.s, bc * r.c - bs * r.s};
+}
+
+template <typename G>
+[[nodiscard]] constexpr ct_sincos_v<G> sincos_turns_fold(bool conjugate, std::size_t num,
+                                                         std::size_t den) {
+    num %= den;
+    if (conjugate && num != 0) num = den - num;
+    const std::size_t oct = (8 * num) / den;
+    const std::size_t rem = 8 * num - oct * den;
+    const G res = static_cast<G>(rem) * (ct_pi<G> / (G(4) * static_cast<G>(den)));
+    return sincos_octant_mix<G>(oct, sincos_small_eval<G>(res));
 }
 
 // Fallback fold for a narrow F where long double adds no precision (long double is double on

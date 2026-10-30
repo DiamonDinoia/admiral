@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <limits>
+#include <optional>
 #include <ranges>
 #include <stdexcept>
 #include <utility>
@@ -803,8 +804,14 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N);
 template<typename T>
 [[nodiscard]] dif_twiddle_set<T> build_dif_twiddle_set(std::size_t N,
                                          const dif_factor_plan* override_plan = nullptr,
-                                         bool fuse_packed = true) {
+                                         bool fuse_packed = true,
+                                         portable_trig::turns_memo* memo = nullptr) {
     dif_twiddle_set<T> s;
+    std::optional<portable_trig::turns_memo> local_memo;
+    if (memo == nullptr) {
+        local_memo.emplace();
+        memo = &*local_memo;
+    }
     const dif_factor_plan planned = override_plan ? *override_plan : dif_elected_chain<T>(N);
     if (override_plan)
         for (std::size_t p = 0; p < planned.count; ++p) {
@@ -828,7 +835,8 @@ template<typename T>
         for (std::size_t j = 1; j < ip; ++j)
             geom_twiddle_row<T, true>(j * l1, N, ido,
                                                   re.data() + (j - 1) * ido,
-                                                  im.data() + (j - 1) * ido);
+                                                  im.data() + (j - 1) * ido,
+                                                  memo);
         s.passes.emplace_back(std::move(re), std::move(im));
 
         l1 *= ip;
@@ -850,10 +858,12 @@ template<typename T>
             for (std::size_t j = 1; j < ip0; ++j) {
                 geom_twiddle_row<T, true>(j, N, bw,
                                                       re.data() + (j - 1) * bw,
-                                                      im.data() + (j - 1) * bw);
+                                                      im.data() + (j - 1) * bw,
+                                                      memo);
                 geom_twiddle_row<T, true>(j * bw, N, nb,
                                                       re.data() + (ip0 - 1) * bw + (j - 1) * nb,
-                                                      im.data() + (ip0 - 1) * bw + (j - 1) * nb);
+                                                      im.data() + (ip0 - 1) * bw + (j - 1) * nb,
+                                                      memo);
             }
             s.passes[0] = {std::move(re), std::move(im)};
             s.p0_block = bw;

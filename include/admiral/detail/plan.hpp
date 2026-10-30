@@ -120,7 +120,8 @@ public:
 
     plan_impl(std::size_t size, bool is_forward, std::size_t nthreads = 1,
               const dif_factor_plan* dif_override = nullptr,
-              admiral::effort eff = admiral::effort::estimate, bool pin = false);
+              admiral::effort eff = admiral::effort::estimate, bool pin = false,
+              portable_trig::turns_memo* memo = nullptr);
 
 private:
     struct routed_plan {
@@ -129,7 +130,8 @@ private:
         const dif_factor_plan* dif_override;
     };
 
-    plan_impl(std::size_t size, bool is_forward, routed_plan rp, bool pin);
+    plan_impl(std::size_t size, bool is_forward, routed_plan rp, bool pin,
+              portable_trig::turns_memo* memo = nullptr);
     plan_impl(std::size_t size, bool is_forward, std::size_t nthreads,
               const dif_factor_plan* dif_override, measured_choice choice)
         : plan_impl(size, is_forward, routed_plan{choice, nthreads, dif_override}, false) {}
@@ -169,7 +171,8 @@ private:
         return {ch, nt, dif_override};
     }
 
-    void emplace_route_state(std::size_t size, bool is_forward, const dif_factor_plan* dif_override) {
+    void emplace_route_state(std::size_t size, bool is_forward, const dif_factor_plan* dif_override,
+                             portable_trig::turns_memo* memo = nullptr) {
         switch (m.route) {
         case route_kind::codelet:
             break;
@@ -178,7 +181,7 @@ private:
             break;
         case route_kind::iterative_dif:
             m.st.template emplace<dif_state>(
-                dif_state{build_dif_twiddle_set<T>(size, dif_override)});
+                dif_state{build_dif_twiddle_set<T>(size, dif_override, true, memo)});
             break;
         case route_kind::four_step: {
             const four_step_split split = choose_four_step_split_exec<T>(size);
@@ -481,11 +484,14 @@ plan_impl<T>::plan_impl(std::size_t size, bool is_forward, route_kind forced,
 
 template<typename T>
 plan_impl<T>::plan_impl(std::size_t size, bool is_forward, std::size_t nthreads,
-                        const dif_factor_plan* dif_override, admiral::effort eff, bool pin)
-    : plan_impl(size, is_forward, route_plan(size, is_forward, nthreads, dif_override, eff), pin) {}
+                        const dif_factor_plan* dif_override, admiral::effort eff, bool pin,
+                        portable_trig::turns_memo* memo)
+    : plan_impl(size, is_forward, route_plan(size, is_forward, nthreads, dif_override, eff), pin,
+                memo) {}
 
 template<typename T>
-plan_impl<T>::plan_impl(std::size_t size, bool is_forward, routed_plan rp, bool pin)
+plan_impl<T>::plan_impl(std::size_t size, bool is_forward, routed_plan rp, bool pin,
+                        portable_trig::turns_memo* memo)
     : m{size, is_forward,
         rp.ch.route,
         {},
@@ -500,7 +506,7 @@ plan_impl<T>::plan_impl(std::size_t size, bool is_forward, routed_plan rp, bool 
         rp.dif_override != nullptr        ? rp.dif_override
         : rp.ch.dif_chain.count != 0 ? &rp.ch.dif_chain
                                      : nullptr;
-    emplace_route_state(size, is_forward, chain);
+    emplace_route_state(size, is_forward, chain, memo);
 }
 
 inline constexpr std::size_t kMeasureCandidates = 8;

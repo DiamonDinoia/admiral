@@ -54,18 +54,41 @@ struct ct_dd {
 // runtime bodies need the region. fp_contract needs no treatment: the Dekker split it could
 // break runs in constant evaluation only, and the runtime product spells std::fma explicitly.
 // _MSC_VER covers clang-cl too: its engine TUs get -ffast-math and it emits linkonce_odr
-// copies, the same hazard class as cl. gcc/clang on ELF cannot hit it: their engine objects
-// emit no out-of-line fold/dd copy, and an archive member only loads for an undefined symbol.
+// copies, the same hazard class as cl. gcc/clang on ELF hit the same hazard through the
+// shared engine library and through inlining: their fold/dd copies do exist, and -ffast-math
+// is free to reassociate an error-free transform away. The volatile round trips in the two
+// sums pin each step to one double rounding on every compiler, so no codegen can collapse
+// them.
 #if defined(_MSC_VER)
 #  pragma float_control(precise, on, push)
 #endif
 
 constexpr ct_dd dd_two_sum(double a, double b) {
+    if (!ADM_IS_CONSTANT_EVALUATED()) {
+        volatile double s0 = a + b;
+        const double s = s0;
+        volatile double bb0 = s - a;
+        const double bb = bb0;
+        volatile double sb0 = s - bb;
+        const double sb = sb0;
+        volatile double e10 = a - sb;
+        const double e1 = e10;
+        volatile double e20 = b - bb;
+        const double e2 = e20;
+        return {s, e1 + e2};
+    }
     const double s = a + b, bb = s - a;
     return {s, (a - (s - bb)) + (b - bb)};
 }
 
 constexpr ct_dd dd_fast_two_sum(double a, double b) {
+    if (!ADM_IS_CONSTANT_EVALUATED()) {
+        volatile double s0 = a + b;
+        const double s = s0;
+        volatile double t0 = s - a;
+        const double t = t0;
+        return {s, b - t};
+    }
     const double s = a + b;
     return {s, b - (s - a)};
 }
@@ -174,7 +197,15 @@ template<typename F>
         double q = 0x1p-105;
         while (a != 0 && a < q * 0x1p105) q /= 2;
         while (a >= q * 0x1p106) q *= 2;
-        const double t = v.lo / q, big = t < 0 ? -0x1p52 : 0x1p52;
+        const double tv = v.lo / q;
+        if (!ADM_IS_CONSTANT_EVALUATED()) {
+            volatile double t = tv;
+            volatile double big = t < 0 ? -0x1p52 : 0x1p52;
+            t = t + big;
+            t = t - big;
+            return F(v.hi) + F(double(t) * q);
+        }
+        const double t = tv, big = t < 0 ? -0x1p52 : 0x1p52;
         return F(v.hi) + F(((t + big) - big) * q);
     }
 }

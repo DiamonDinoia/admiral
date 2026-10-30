@@ -92,18 +92,43 @@ static ct_sincos_v<ct_dd> turns_ref_sincos(bool conjugate, std::size_t num, std:
     return {ssum, csum};
 }
 
+// A fold wider than double-double (binary128 long double) needs a wider reference: the dd
+// series resolves about 2^-104 and cannot adjudicate a 113-bit fold. Where the long double ABI
+// is coherent the platform libm is that reference (binary128 sinl/cosl measured under 0.25
+// long double eps against exact rational truth); where sinl is garbage (MSVC and Apple double
+// long double, clang -mlong-double-64) the fold is 106 bits or less and the dd series above is
+// the reference.
+[[maybe_unused]] static ct_sincos_v<long double> turns_ref_sincos_ld(bool conjugate,
+                                                                     std::size_t num,
+                                                                     std::size_t den) {
+    const std::size_t n = num % den;
+    const std::size_t m = conjugate && n != 0 ? den - n : n;
+    const long double ang =
+        ct_pi<long double> * (static_cast<long double>(2 * m) / static_cast<long double>(den));
+    return {std::sinl(ang), std::cosl(ang)};
+}
+
+template<typename F>
+static ct_sincos_v<long double> turns_ref(bool conjugate, std::size_t num, std::size_t den) {
+    if constexpr (std::numeric_limits<F>::digits > 106) {
+        return turns_ref_sincos_ld(conjugate, num, den);
+    } else {
+        const ct_sincos_v<ct_dd> r = turns_ref_sincos(conjugate, num, den);
+        return {static_cast<long double>(r.s.hi) + static_cast<long double>(r.s.lo),
+                static_cast<long double>(r.c.hi) + static_cast<long double>(r.c.lo)};
+    }
+}
+
 template<typename F, std::size_t Den>
 F turns_err() {
     constexpr std::array<ct_sincos_v<F>, Den> tab = folded_turns<F, Den>();
     const F eps = static_cast<F>(digits_eps<F>());
     F worst = 0;
     for (std::size_t k = 0; k < Den; ++k) {
-        const ct_sincos_v<ct_dd> r = turns_ref_sincos(false, k, Den);
-        const long double rs = static_cast<long double>(r.s.hi) + static_cast<long double>(r.s.lo);
-        const long double rc = static_cast<long double>(r.c.hi) + static_cast<long double>(r.c.lo);
-        const F es = static_cast<F>(std::abs(static_cast<long double>(tab[k].s) - rs)
+        const ct_sincos_v<long double> r = turns_ref<F>(false, k, Den);
+        const F es = static_cast<F>(std::abs(static_cast<long double>(tab[k].s) - r.s)
                                     / static_cast<long double>(eps));
-        const F ec = static_cast<F>(std::abs(static_cast<long double>(tab[k].c) - rc)
+        const F ec = static_cast<F>(std::abs(static_cast<long double>(tab[k].c) - r.c)
                                     / static_cast<long double>(eps));
         worst = es > worst ? es : worst;
         worst = ec > worst ? ec : worst;
@@ -286,9 +311,35 @@ TEST_CASE("a runtime table entry equals the folded constant", "[ct_math][numeric
 
 TEST_CASE("ct_sincos_turns matches libm at the long double fold precision",
           "[ct_math][numerics][longdouble]") {
+    if constexpr (std::numeric_limits<long double>::digits > 106) {
+        // Detect a broken libm oracle at run time and say so. The dd series referees sinl here
+        // and resolves about 2^-100: agreement within 4096 long double eps proves sinl usable,
+        // while a garbage ABI (order-1 error) fails here instead of at the fold bound below.
+        double sanity = 0;
+        for (const std::size_t den : turns_dens) {
+            for (std::size_t k = 0; k < den; ++k) {
+                const ct_sincos_v<long double> l = turns_ref_sincos_ld(false, k, den);
+                const ct_sincos_v<ct_dd> r = turns_ref_sincos(false, k, den);
+                const long double rs =
+                    static_cast<long double>(r.s.hi) + static_cast<long double>(r.s.lo);
+                const long double rc =
+                    static_cast<long double>(r.c.hi) + static_cast<long double>(r.c.lo);
+                const long double leps = static_cast<long double>(digits_eps<long double>());
+                sanity = std::max(sanity, static_cast<double>(std::abs(l.s - rs) / leps));
+                sanity = std::max(sanity, static_cast<double>(std::abs(l.c - rc) / leps));
+            }
+        }
+        INFO("libm sinl/cosl within " << sanity << " long double eps of the dd series");
+        REQUIRE(sanity <= 4096);
+    }
     const double wl = static_cast<double>(worst_turns_err<long double>());
     INFO("long double fold worst " << wl << " eps (digits "
-                                   << std::numeric_limits<long double>::digits << ")");
+                                   << std::numeric_limits<long double>::digits
+                                   << ", reference: "
+                                   << (std::numeric_limits<long double>::digits > 106
+                                           ? "libm sinl/cosl"
+                                           : "the dd series")
+                                   << ")");
     REQUIRE(wl <= 8);
 }
 

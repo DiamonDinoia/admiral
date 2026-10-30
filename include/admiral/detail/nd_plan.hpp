@@ -108,12 +108,18 @@ template<typename T>
                                                          std::size_t nthreads = 1,
                                                          admiral::effort eff =
                                                              admiral::effort::estimate,
-                                                         bool pin = false) {
+                                                         bool pin = false,
+                                                         portable_trig::turns_memo* memo = nullptr) {
     nd_axis_state<T> st;
     st.length = length;
     st.pitch = transpose_pitch<T>(length);
+    std::optional<portable_trig::turns_memo> local_memo;
+    if (memo == nullptr) {
+        local_memo.emplace();
+        memo = &*local_memo;
+    }
     if (length <= 1) {
-        st.plan.emplace(length, is_forward, nthreads, nullptr, eff, pin);
+        st.plan.emplace(length, is_forward, nthreads, nullptr, eff, pin, memo);
         return st;
     }
     if (!innermost && is_codelet_supported(length)) {
@@ -137,9 +143,9 @@ template<typename T>
             const bool pow2 = detail::has_single_bit(length);
             if (small_inner && pow2) { r4 = build_radix4_plan(length); ov = &r4; }
         }
-        st.dtw = build_dif_twiddle_set<T>(length, ov, false);
+        st.dtw = build_dif_twiddle_set<T>(length, ov, false, memo);
     }
-    st.plan.emplace(length, is_forward, nthreads, nullptr, eff, pin);
+    st.plan.emplace(length, is_forward, nthreads, nullptr, eff, pin, memo);
     return st;
 }
 
@@ -624,9 +630,11 @@ class nd_runtime_plan {
     } m;
 
 public:
+    nd_runtime_plan() = default;
     nd_runtime_plan(span<const std::size_t> shape, bool is_forward,
                     std::size_t nthreads = 1,
-                    admiral::effort eff = admiral::effort::estimate, bool pin = false);
+                    admiral::effort eff = admiral::effort::estimate, bool pin = false,
+                    portable_trig::turns_memo* memo = nullptr);
     void execute(std::complex<T>* data, const exec_options<T>& opts = {}) const;
     void execute(const std::complex<T>* src, std::complex<T>* dst,
                  const exec_options<T>& opts = {}) const;
@@ -716,7 +724,8 @@ private:
 
 template<typename T>
 nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forward,
-                                    std::size_t nthreads, admiral::effort eff, bool pin) {
+                                    std::size_t nthreads, admiral::effort eff, bool pin,
+                                    portable_trig::turns_memo* memo) {
     m.shape.assign(shape.begin(), shape.end());
     m.is_forward = is_forward;
     const auto total = extent_product(m.shape);
@@ -762,7 +771,7 @@ nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forwa
         const bool threads_above = units >= 2 && m.total >= kThreadMinElems;
         const std::size_t axis_threads = threads_above ? 1 : nthreads;
         m.axes[d] = make_nd_axis_state<T>(m.shape[d], inner, is_forward, innermost, axis_threads,
-                                          eff, pin);
+                                          eff, pin, memo);
         // Every non-innermost axis always dispatches through apply_lines_strided with this same
         // (len=m.shape[d], inner, nruns) triple on every future execute(): inner is this loop's
         // running product regardless of fuse_planes (fusing only ever changes which axes share

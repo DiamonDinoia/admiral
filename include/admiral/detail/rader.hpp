@@ -95,9 +95,10 @@ public:
         }
 
         std::vector<std::complex<T>> bp(m.L);
+        portable_trig::turns_memo memo;
         for (std::size_t j = 0; j < m.L; ++j) {
             const std::size_t ee = m.ginvpow[j];
-            const auto [sn, cs] = portable_trig::sincos_turns(ee, p, is_forward);
+            const auto [sn, cs] = portable_trig::sincos_turns(ee, p, is_forward, &memo);
             bp[j] = std::complex<T>(static_cast<T>(cs), static_cast<T>(sn));
         }
         run_inner<true>(bp.data());

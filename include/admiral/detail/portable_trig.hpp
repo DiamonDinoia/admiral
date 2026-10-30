@@ -22,8 +22,8 @@ namespace portable_trig {
 // class. The table-building code creates one turns_memo and passes it down: the memo lives
 // for one table build and carries that sharing across its entries. The memo stores
 // sincos_octant_mix's own results: the values stay bitwise identical to the fold's. long
-// double is double or composite on MSVC and Apple, where the fold route mixes differently;
-// those keep the per-call fold.
+// double is double or composite on MSVC and Apple, or degraded at run time (valgrind), where
+// the fold route mixes differently; those keep the per-call fold.
 // ponytail: capped at 4096 residual classes per den; larger dens (bluestein paddings) fall
 // back to the per-call fold.
 
@@ -82,7 +82,8 @@ inline std::pair<double, double> sincos_turns(std::size_t num, std::size_t den,
     if constexpr (std::numeric_limits<long double>::is_iec559 &&
                   std::numeric_limits<long double>::digits > 53 &&
                   std::numeric_limits<long double>::max_exponent > 1024) {
-        if (memo != nullptr && den <= turns_memo::kCap) return memo->get(num, den);
+        if (memo != nullptr && den <= turns_memo::kCap && ld_full_precision())
+            return memo->get(num, den);
     }
     const ct_sincos_v<double> w = sincos_turns_eval<double>(false, num, den);
     return {w.s, w.c};

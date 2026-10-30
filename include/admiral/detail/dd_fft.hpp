@@ -65,7 +65,10 @@ ADM_ALWAYS_INLINE gdd operator-(const gdd& a) { return {-a.hi, -a.lo}; }
 // [2^52, 2^53), where the ulp is 1, so p is ch * xh rounded to an integer.
 ADM_ALWAYS_INLINE gdd operator*(const gdd& c, const gdd& x) {
     const dd_batch shift(0x1.8p52);
-    const dd_batch p = xsimd::fma(c.hi, x.hi, shift) - shift;
+    dd_batch p = xsimd::fma(c.hi, x.hi, shift) - shift;
+#if !defined(_MSC_VER)
+    asm volatile("" : "+m"(p));
+#endif
     const dd_batch e = xsimd::fms(c.hi, x.hi, p);
     return {p, xsimd::fma(c.hi, x.lo, xsimd::fma(c.lo, x.hi, e))};
 }

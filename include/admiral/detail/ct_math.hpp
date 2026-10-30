@@ -45,22 +45,104 @@ struct ct_dd {
     constexpr ct_dd(A a) : hi(static_cast<double>(a)) {}
 };
 
+// The engine TUs compile every inline body below under a fast-math flag (ADM_USE_FAST_MATH:
+// /fp:fast on cl, -ffast-math on clang-cl), where the compensated sums and the error-free
+// transforms collapse; on COFF the linker keeps the first COMDAT or linkonce_odr copy it
+// meets, so a test or consumer TU that calls one of these bodies can run the fast-math copy.
+// One pragma region keeps every instantiation on the precise model, so the linker's pick no
+// longer changes the result. Constant evaluation folds precisely under any flag; only the
+// runtime bodies need the region. fp_contract needs no treatment: the Dekker split it could
+// break runs in constant evaluation only, and the runtime product spells std::fma explicitly.
+// _MSC_VER covers clang-cl too: its engine TUs get -ffast-math and it emits linkonce_odr
+// copies, the same hazard class as cl. gcc/clang on ELF hit the same hazard through the
+// shared engine library and through inlining: their fold/dd copies do exist, and -ffast-math
+// is free to reassociate an error-free transform away. The volatile round trips in the two
+// sums pin each step to one double rounding on every compiler, so no codegen can collapse
+// them.
+#if defined(_MSC_VER)
+#  pragma float_control(precise, on, push)
+#endif
+
 constexpr ct_dd dd_two_sum(double a, double b) {
+    if (!ADM_IS_CONSTANT_EVALUATED()) {
+        volatile double s0 = a + b;
+        const double s = s0;
+        volatile double bb0 = s - a;
+        const double bb = bb0;
+        volatile double sb0 = s - bb;
+        const double sb = sb0;
+        volatile double e10 = a - sb;
+        const double e1 = e10;
+        volatile double e20 = b - bb;
+        const double e2 = e20;
+        return {s, e1 + e2};
+    }
     const double s = a + b, bb = s - a;
     return {s, (a - (s - bb)) + (b - bb)};
 }
 
 constexpr ct_dd dd_fast_two_sum(double a, double b) {
+    if (!ADM_IS_CONSTANT_EVALUATED()) {
+        volatile double s0 = a + b;
+        const double s = s0;
+        volatile double t0 = s - a;
+        const double t = t0;
+        return {s, b - t};
+    }
     const double s = a + b;
     return {s, b - (s - a)};
 }
 
 // Dekker's split at compile time, one fma at run time: -ffp-contract=fast fuses the split's
 // multiply into ta - a and breaks it. The run time callers are the dd engine, which needs kFusedFma.
+// Under -ffast-math (__FAST_MATH__) the compiler is free to split an explicit std::fma instead:
+// the multiply it emits then rounds like p and the residual collapses to 0. That mode takes
+// the Dekker split too, one volatile round trip per elementary op like dd_two_sum.
 constexpr ct_dd dd_two_prod(double a, double b) {
     if (!ADM_IS_CONSTANT_EVALUATED()) {
+#ifdef __FAST_MATH__
+        constexpr double split = 0x1p27 + 1;
+        volatile double ta0 = split * a;
+        const double ta = ta0;
+        volatile double tb0 = split * b;
+        const double tb = tb0;
+        volatile double da0 = ta - a;
+        const double da = da0;
+        volatile double db0 = tb - b;
+        const double db = db0;
+        volatile double ah0 = ta - da;
+        const double ah = ah0;
+        volatile double bh0 = tb - db;
+        const double bh = bh0;
+        volatile double al0 = a - ah;
+        const double al = al0;
+        volatile double bl0 = b - bh;
+        const double bl = bl0;
+        volatile double p0 = a * b;
+        const double p = p0;
+        // Every elementary op pins like dd_two_sum: a plain chain lets -ffast-math distribute
+        // the four products back to (ah + al) * (bh + bl), and ah + al rebuilds a exactly, so
+        // the residual collapses to 0.
+        volatile double t10 = ah * bh;
+        const double t1 = t10;
+        volatile double t20 = ah * bl;
+        const double t2 = t20;
+        volatile double t30 = al * bh;
+        const double t3 = t30;
+        volatile double t40 = al * bl;
+        const double t4 = t40;
+        volatile double s10 = t1 - p;
+        const double s1 = s10;
+        volatile double s20 = s1 + t2;
+        const double s2 = s20;
+        volatile double s30 = s2 + t3;
+        const double s3 = s30;
+        volatile double s40 = s3 + t4;
+        return {p, s40};
+#else
         const double p = a * b;
         return {p, std::fma(a, b, -p)};
+#endif
     }
     constexpr double split = 0x1p27 + 1;
     const double ta = split * a, ah = ta - (ta - a), al = a - ah;
@@ -159,7 +241,15 @@ template<typename F>
         double q = 0x1p-105;
         while (a != 0 && a < q * 0x1p105) q /= 2;
         while (a >= q * 0x1p106) q *= 2;
-        const double t = v.lo / q, big = t < 0 ? -0x1p52 : 0x1p52;
+        const double tv = v.lo / q;
+        if (!ADM_IS_CONSTANT_EVALUATED()) {
+            volatile double t = tv;
+            volatile double big = t < 0 ? -0x1p52 : 0x1p52;
+            t = t + big;
+            t = t - big;
+            return F(v.hi) + F(double(t) * q);
+        }
+        const double t = tv, big = t < 0 ? -0x1p52 : 0x1p52;
         return F(v.hi) + F(((t + big) - big) * q);
     }
 }
@@ -191,13 +281,30 @@ template <typename G>
 // Fallback fold for a narrow F where long double adds no precision (long double is double on
 // MSVC and clang-cl, composite double-double on ppc64le). The Taylor tails accumulate in
 // double with a compensated sum, the residual angle folds at ct_dd, and the octant fold sums
-// in ct_dd before the value rounds to F. Measured on clang-21 -mlong-double-64: one fold
-// stays below 400 constexpr steps and make_rader_bhat<71U> below 200k after folding each
-// twiddle once, against the default budget of 1048576. The ct_dd fold is tens of times that
-// and busts the budget (the base commit fails the clang check at codelet.hpp:757).
-// ponytail: the compensation folds away under -ffast-math or /fp:fast and the error then
-// reaches 2.5 double ulp. The project builds precise FP; guard with a float_control pragma
-// if a fast-math consumer ever needs this fold.
+// in ct_dd before the value rounds to F. One fold stays inside the default constexpr step
+// budget on the supported compilers; the ct_dd fold does not, hence the double fallback.
+// ponytail: at run time the compensation carries the same volatile round trip as dd_two_sum,
+// so -ffast-math cannot reassociate the Kahan sums away; constant evaluation keeps the plain
+// sequence. The float_control region above pins the precise model on cl and clang-cl, the
+// COFF compilers where a fast-math copy can out-select a test's own COMDAT copy.
+constexpr void kahan_step(double term, double& sum, double& comp) {
+    if (!ADM_IS_CONSTANT_EVALUATED()) {
+        volatile double y0 = term - comp;
+        const double y = y0;
+        volatile double t0 = sum + y;
+        const double t = t0;
+        volatile double b0 = t - sum;
+        const double b = b0;
+        volatile double c0 = b - y;
+        comp = c0;
+        sum = t;
+        return;
+    }
+    const double y = term - comp, t = sum + y;
+    comp = (t - sum) - y;
+    sum = t;
+}
+
 template<typename F>
 [[nodiscard]] constexpr ct_sincos_v<F> sincos_turns_fold_dbl(bool conjugate, std::size_t num,
                                                              std::size_t den) {
@@ -217,14 +324,9 @@ template<typename F>
     for (unsigned i = 1;; ++i) {
         const double k = static_cast<double>(i);
         cterm *= -x2 / ((2 * k - 1) * (2 * k));
-        double y = cterm - ccomp, t = csum + y;
-        ccomp = (t - csum) - y;
-        csum = t;
+        kahan_step(cterm, csum, ccomp);
         sterm *= -x2 / ((2 * k) * (2 * k + 1));
-        y = sterm - scomp;
-        t = ssum + y;
-        scomp = (t - ssum) - y;
-        ssum = t;
+        kahan_step(sterm, ssum, scomp);
         const double ca = cterm < 0 ? -cterm : cterm;
         const double sa = sterm < 0 ? -sterm : sterm;
         if (ca <= tiny && sa <= tiny) break;
@@ -293,6 +395,10 @@ template<typename F>
         return sincos_turns_fold<F>(conjugate, num, den);
     }
 }
+
+#if defined(_MSC_VER)
+#  pragma float_control(pop)
+#endif
 
 template<typename F = double>
 [[nodiscard]] ADM_CONSTEVAL ct_sincos_v<F> ct_sincos_turns(bool conjugate, std::size_t num,

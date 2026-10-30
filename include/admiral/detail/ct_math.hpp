@@ -139,33 +139,40 @@ template<typename F>
 }
 
 // v to 106 bits. q is the 106-bit ulp of hi's binade: lo rounds to q, so F(hi) + F(lo) is exact.
+// An F narrower than double rounds hi + lo to F. When the double sum drops lo entirely, one
+// double bit flips toward lo first, so a value exactly on a float tie cannot round to even.
+// ponytail: a value within one double ulp of a float tie, with the double sum different from hi,
+// can still double-round; about one constant in 2^29. Round to odd on the double sum if that
+// ever shows up in a failing constant.
 template<typename F>
 [[nodiscard]] constexpr F dd_round(ct_dd v) {
-    const double a = v.hi < 0 ? -v.hi : v.hi;
-    double q = 0x1p-105;
-    while (a != 0 && a < q * 0x1p105) q /= 2;
-    while (a >= q * 0x1p106) q *= 2;
-    const double t = v.lo / q, big = t < 0 ? -0x1p52 : 0x1p52;
-    return F(v.hi) + F(((t + big) - big) * q);
+    if constexpr (std::numeric_limits<F>::digits < std::numeric_limits<double>::digits) {
+        double sum = v.hi + v.lo;
+        if (sum == v.hi && v.lo != 0) {
+            sum += (v.lo > 0 ? 1.0 : -1.0) * (v.hi < 0 ? -v.hi : v.hi) * 0x1p-52;
+        }
+        return static_cast<F>(sum);
+    } else {
+        const double a = v.hi < 0 ? -v.hi : v.hi;
+        double q = 0x1p-105;
+        while (a != 0 && a < q * 0x1p105) q /= 2;
+        while (a >= q * 0x1p106) q *= 2;
+        const double t = v.lo / q, big = t < 0 ? -0x1p52 : 0x1p52;
+        return F(v.hi) + F(((t + big) - big) * q);
+    }
 }
 
-template<typename F>
-[[nodiscard]] constexpr ct_sincos_v<F> sincos_turns_eval(bool conjugate, std::size_t num,
+template <typename G>
+[[nodiscard]] constexpr ct_sincos_v<G> sincos_turns_fold(bool conjugate, std::size_t num,
                                                          std::size_t den) {
-    // gcc folds an F that is a pair of doubles (IBM double-double) only where the exact result
-    // fits 106 bits (fold-const.cc, MODE_COMPOSITE_P), so that F folds at ct_dd.
-    if constexpr (std::numeric_limits<F>::digits == 2 * std::numeric_limits<double>::digits) {
-        const ct_sincos_v<ct_dd> w = sincos_turns_eval<ct_dd>(conjugate, num, den);
-        return {dd_round<F>(w.s), dd_round<F>(w.c)};
-    }
     num %= den;
     if (conjugate && num != 0) num = den - num;
     const std::size_t oct = (8 * num) / den;
     const std::size_t rem = 8 * num - oct * den;
-    const F res = static_cast<F>(rem) * (ct_pi<F> / (F(4) * static_cast<F>(den)));
-    const ct_sincos_v<F> r = sincos_small_eval<F>(res);
-    constexpr F inv_sqrt2 = ct_sqrt2<F> / F(2);
-    F bc = 0, bs = 0;
+    const G res = static_cast<G>(rem) * (ct_pi<G> / (G(4) * static_cast<G>(den)));
+    const ct_sincos_v<G> r = sincos_small_eval<G>(res);
+    constexpr G inv_sqrt2 = ct_sqrt2<G> / G(2);
+    G bc = 0, bs = 0;
     switch (oct) {
         case 0: bc = 1;            bs = 0;            break;
         case 1: bc = inv_sqrt2;    bs = inv_sqrt2;    break;
@@ -177,6 +184,109 @@ template<typename F>
         default: bc = inv_sqrt2;   bs = -inv_sqrt2;   break;
     }
     return {bs * r.c + bc * r.s, bc * r.c - bs * r.s};
+}
+
+// Fallback fold for a narrow F where long double adds no precision (long double is double on
+// MSVC and clang-cl, composite double-double on ppc64le). The Taylor tails accumulate in
+// double with a compensated sum, the residual angle folds at ct_dd, and the octant fold sums
+// in ct_dd before the value rounds to F. Measured on clang-21 -mlong-double-64: one fold
+// stays below 400 constexpr steps and make_rader_bhat<71U> below 200k after folding each
+// twiddle once, against the default budget of 1048576. The ct_dd fold is tens of times that
+// and busts the budget (the base commit fails the clang check at codelet.hpp:757).
+// ponytail: the compensation folds away under -ffast-math or /fp:fast and the error then
+// reaches 2.5 double ulp. The project builds precise FP; guard with a float_control pragma
+// if a fast-math consumer ever needs this fold.
+template<typename F>
+[[nodiscard]] constexpr ct_sincos_v<F> sincos_turns_fold_dbl(bool conjugate, std::size_t num,
+                                                             std::size_t den) {
+    num %= den;
+    if (conjugate && num != 0) num = den - num;
+    const std::size_t oct = (8 * num) / den;
+    const std::size_t rem = 8 * num - oct * den;
+    // The residual angle rounds once at ct_dd: a double-folded ratio loses bits of the angle,
+    // which land 1:1 in the sine.
+    const ct_dd ratio =
+        ct_dd{static_cast<double>(rem), 0.0} / ct_dd{4.0 * static_cast<double>(den), 0.0};
+    const double res = dd_round<double>(ratio * ct_pi<ct_dd>);
+    const double x2 = res * res;
+    const double tiny = std::numeric_limits<double>::epsilon() / 2.0;
+    double cterm = 1, csum = 0, ccomp = 0;
+    double sterm = res, ssum = 0, scomp = 0;
+    for (unsigned i = 1;; ++i) {
+        const double k = static_cast<double>(i);
+        cterm *= -x2 / ((2 * k - 1) * (2 * k));
+        double y = cterm - ccomp, t = csum + y;
+        ccomp = (t - csum) - y;
+        csum = t;
+        sterm *= -x2 / ((2 * k) * (2 * k + 1));
+        y = sterm - scomp;
+        t = ssum + y;
+        scomp = (t - ssum) - y;
+        ssum = t;
+        const double ca = cterm < 0 ? -cterm : cterm;
+        const double sa = sterm < 0 ? -sterm : sterm;
+        if (ca <= tiny && sa <= tiny) break;
+    }
+    // The compensated sums carry their pending term in the negated compensation: s - comp is
+    // the exact accumulated value.
+    const ct_dd c = dd_two_sum(1.0, csum) - ct_dd{ccomp, 0.0};
+    const ct_dd s = dd_two_sum(res, ssum) - ct_dd{scomp, 0.0};
+    if (oct == 0) return {dd_round<F>(s), dd_round<F>(c)};
+    if (oct == 2) return {dd_round<F>(c), dd_round<F>(-s)};
+    if (oct == 4) return {dd_round<F>(-s), dd_round<F>(-c)};
+    if (oct == 6) return {dd_round<F>(-c), dd_round<F>(s)};
+    constexpr ct_dd inv_sqrt2 = ct_sqrt2<ct_dd> * ct_dd{0.5, 0.0};
+    const ct_dd u = c + s, v = c - s;
+    const ct_dd pu = inv_sqrt2 * u, pv = inv_sqrt2 * v;
+    // oct 1: {u, v}, oct 3: {v, -u}, oct 5: {-u, -v}, oct 7: {-v, u}, all by sqrt2/2.
+    switch (oct) {
+        case 1: return {dd_round<F>(pu), dd_round<F>(pv)};
+        case 3: return {dd_round<F>(pv), dd_round<F>(-pu)};
+        case 5: return {dd_round<F>(-pu), dd_round<F>(-pv)};
+        default: return {dd_round<F>(-pv), dd_round<F>(pu)};
+    }
+}
+
+// The run-time long double can be narrower than the compile-time format: valgrind emulates
+// x87 at 53 bits, and an x87 precision-control word can do the same on real hardware. One
+// volatile probe separates the two: 1 + 2^-60 is representable at 64 bits and rounds to 1 at
+// 53. The volatile sum keeps -ffast-math from reducing the test to tail != 0. Stateless: the
+// probe runs per call.
+inline bool ld_full_precision() noexcept {
+    volatile long double one = 1.0L;
+    volatile long double tail = 0x1p-60L;
+    volatile long double sum = one + tail;
+    return sum != one;
+}
+
+template<typename F>
+[[nodiscard]] constexpr ct_sincos_v<F> sincos_turns_eval(bool conjugate, std::size_t num,
+                                                         std::size_t den) {
+    // gcc folds an F that is a pair of doubles (IBM double-double) only where the exact result
+    // fits 106 bits (fold-const.cc, MODE_COMPOSITE_P), so that F folds at ct_dd. A double or
+    // float constant folds at long double and rounds once to F where long double is a wide
+    // IEEE type (x86 80-bit, arm64 binary128): a double-folded series plus the octant fold
+    // lands 2-3 F-ulp off the true value, and that error sits in every twiddle table and
+    // codelet constant built from these values. Everywhere else (long double is double or
+    // composite) the compensated double fold takes over. long double and ct_dd constants run
+    // their own series at their own fold precision.
+    if constexpr (std::numeric_limits<F>::digits == 2 * std::numeric_limits<double>::digits) {
+        const ct_sincos_v<ct_dd> w = sincos_turns_fold<ct_dd>(conjugate, num, den);
+        return {dd_round<F>(w.s), dd_round<F>(w.c)};
+    } else if constexpr (std::numeric_limits<F>::digits < 64 &&
+                         std::numeric_limits<long double>::is_iec559 &&
+                         std::numeric_limits<long double>::digits > 53) {
+        // The probe keeps a degraded run-time long double on the double fallback below, so
+        // the fold holds its one-2^-53 contract wherever it runs.
+        if (!ADM_IS_CONSTANT_EVALUATED() && !ld_full_precision())
+            return sincos_turns_fold_dbl<F>(conjugate, num, den);
+        const ct_sincos_v<long double> w = sincos_turns_fold<long double>(conjugate, num, den);
+        return {static_cast<F>(w.s), static_cast<F>(w.c)};
+    } else if constexpr (std::numeric_limits<F>::digits < 64) {
+        return sincos_turns_fold_dbl<F>(conjugate, num, den);
+    } else {
+        return sincos_turns_fold<F>(conjugate, num, den);
+    }
 }
 
 template<typename F = double>

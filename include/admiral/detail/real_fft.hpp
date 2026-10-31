@@ -7,6 +7,8 @@
 #include <concepts>
 #include <cstddef>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -242,12 +244,13 @@ private:
     }
 
     void c2r_even_scalar(const std::complex<T>* in, T* out, std::size_t rows) const {
+        const plan_impl<T>& inv = lazy_inv();
         const std::size_t M = M_;
         const auto Z = detail::make_aligned_buffer<std::complex<T>>(M == 0 ? 1 : M);
         for (std::size_t r = 0; r < rows; ++r) {
             const std::complex<T>* Xr = in + r * Nh_;
             for (std::size_t k = 0; k < M; ++k) Z[k] = c2r_even_bin(Xr, tw_[k], M, k);
-            inv_.execute(span<std::complex<T>>(Z.get(), M));
+            inv.execute(span<std::complex<T>>(Z.get(), M));
             T* xr = out + r * N_;
             for (std::size_t j = 0; j < M; ++j) { xr[2 * j] = Z[j].real(); xr[2 * j + 1] = Z[j].imag(); }
         }
@@ -267,23 +270,37 @@ private:
     }
 
     void c2r_odd(const std::complex<T>* in, T* out, std::size_t rows, thread_pool* pool) const {
+        const plan_impl<T>& inv = lazy_inv();
         parallel_for(pool, rows, rows * N_, [&](std::size_t b, std::size_t e, std::size_t) {
             const auto c = detail::make_aligned_buffer<std::complex<T>>(N_);
             for (std::size_t r = b; r < e; ++r) {
                 const std::complex<T>* Xr = in + r * Nh_;
                 for (std::size_t k = 0; k < Nh_; ++k) c[k] = Xr[k];
                 for (std::size_t k = Nh_; k < N_; ++k) c[k] = std::conj(Xr[N_ - k]);
-                inv_.execute(span<std::complex<T>>(c.get(), N_));
+                inv.execute(span<std::complex<T>>(c.get(), N_));
                 T* xr = out + r * N_;
                 for (std::size_t i = 0; i < N_; ++i) xr[i] = c[i].real();
             }
         });
     }
 
+    // The inverse c2c plan builds on first c2r call, not in the constructor: one plan
+    // object per numpy call executes one direction, so the eager twin was half the small-N
+    // plan cost. Same tables, same values: construction order does not change the bits.
+    const plan_impl<T>& lazy_inv() const {
+        std::call_once(inv_once_, [this] {
+            inv_.emplace(M_, false, std::size_t{1}, nullptr, eff_);
+        });
+        return *inv_;
+    }
+
     std::size_t N_;
     bool even_;
     std::size_t M_, Nh_;
-    plan_impl<T> fwd_, inv_;
+    admiral::effort eff_;
+    plan_impl<T> fwd_;
+    mutable std::optional<plan_impl<T>> inv_;
+    mutable std::once_flag inv_once_;
     std::vector<std::complex<T>> tw_;
     bool batched_ = false;
     vp::multipass_tables<T> tab_;
@@ -293,8 +310,8 @@ template<typename T>
 real_adm_plan<T>::real_adm_plan(std::size_t N, admiral::effort eff)
     : N_(N), even_(N % 2 == 0), M_(even_ ? N / 2 : N),
       Nh_(N / 2 + 1),
-      fwd_(M_, true, 1, nullptr, eff),
-      inv_(M_, false, 1, nullptr, eff) {
+      eff_(eff),
+      fwd_(M_, true, 1, nullptr, eff) {
     if (even_) {
         const std::size_t half = N_ / 2;
         tw_.resize(half + 1);

@@ -16,6 +16,7 @@ set(ADM_TEST_SOURCES
     api/test_api_c_errors.cpp
     api/test_api_fftw.cpp
     kernels/test_ct_math.cpp
+    kernels/test_twiddle_circle.cpp
     kernels/test_sized_walk.cpp
     kernels/test_factor_plan.cpp
     kernels/test_cost_model.cpp
@@ -209,6 +210,24 @@ if(TARGET project_warnings)
     target_link_libraries(test_fold_fast PRIVATE project_warnings)
 endif()
 catch_discover_tests(test_fold_fast)
+
+# The circle bit test under the engine's fast-math flags: the series fold must fold
+# to the same bits there, so one flipped flag or table bit fails this twin too.
+add_executable(test_twiddle_circle_fast kernels/test_twiddle_circle.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tier_select.cpp)
+target_include_directories(test_twiddle_circle_fast PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test_twiddle_circle_fast
+    PRIVATE
+        admiral_internal
+        admiral_fast_math_flags
+        $<BUILD_INTERFACE:Catch2::Catch2WithMain>
+    )
+if(CATCH2_INCLUDE_DIRS)
+    target_include_directories(test_twiddle_circle_fast SYSTEM PRIVATE ${CATCH2_INCLUDE_DIRS})
+endif()
+if(TARGET project_warnings)
+    target_link_libraries(test_twiddle_circle_fast PRIVATE project_warnings)
+endif()
+catch_discover_tests(test_twiddle_circle_fast)
 
 # The run-time tier pick: ADM_EXPECT_TIER names the arch the library's own dispatch must
 # choose. CI runs it under the SDE models. Plain add_test: its own main must not be probed by

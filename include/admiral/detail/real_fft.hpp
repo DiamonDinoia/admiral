@@ -291,6 +291,7 @@ private:
         std::call_once(inv_once_, [this] {
             inv_.emplace(M_, false, std::size_t{1}, nullptr, eff_);
         });
+        if (!inv_) throw internal_error("inverse plan not built");
         return *inv_;
     }
 

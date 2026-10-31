@@ -67,6 +67,7 @@ struct plan_state_impl final : plan_state<T> {
         std::call_once(inv_once, [this] {
             inv.emplace(shape, false, nthreads, eff, pin_threads);
         });
+        if (!inv) throw internal_error("inverse plan not built");
         return *inv;
     }
     const nd_runtime_plan<T>& dir(bool is_forward) const {
@@ -167,6 +168,7 @@ struct strides_state_impl final : strides_state<T> {
                                               axis_threads, eff, pin_threads, nullptr,
                                               in_stride != 1));
         });
+        if (!inv) throw internal_error("inverse axis state not built");
         return *inv;
     }
 
@@ -336,6 +338,7 @@ struct plan_state {
         std::call_once(inv_once, [this] {
             inv.emplace(shape, false, nthreads, eff, pin_threads);
         });
+        if (!inv) throw internal_error("inverse plan not built");
         return *inv;
     }
     const nd_runtime_plan<T>& dir(bool is_forward) const {
@@ -426,6 +429,7 @@ struct strides_state {
                                               axis_threads, eff, pin_threads, nullptr,
                                               in_stride != 1));
         });
+        if (!inv) throw internal_error("inverse axis state not built");
         return *inv;
     }
 

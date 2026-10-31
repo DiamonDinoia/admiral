@@ -164,7 +164,8 @@ struct strides_state_impl final : strides_state<T> {
     const nd_axis_state<T>& lazy_inv() const {
         std::call_once(inv_once, [this] {
             inv.emplace(make_nd_axis_state<T>(len, in_stride, false, false,
-                                              axis_threads, eff, pin_threads, nullptr));
+                                              axis_threads, eff, pin_threads, nullptr,
+                                              in_stride != 1));
         });
         return *inv;
     }
@@ -184,7 +185,8 @@ struct strides_state_impl final : strides_state<T> {
         axis_threads =
             split_batch_threads<T>(opts.nthreads, *total, n, len_, pool, opts.pin_threads);
         fwd = make_nd_axis_state<T>(len_, istride, true, false,
-                                    axis_threads, opts.eff, opts.pin_threads, nullptr);
+                                    axis_threads, opts.eff, opts.pin_threads, nullptr,
+                                    istride != 1);
         const bool need_slab = (len_ > 1 && istride != 1 && idist == 1 && odist != 1 &&
                                 slab_route(fwd));
         if (need_slab && pool && opts.nthreads == 0) {
@@ -421,7 +423,8 @@ struct strides_state {
     const nd_axis_state<T>& lazy_inv() const {
         std::call_once(inv_once, [this] {
             inv.emplace(make_nd_axis_state<T>(len, in_stride, false, false,
-                                              axis_threads, eff, pin_threads, nullptr));
+                                              axis_threads, eff, pin_threads, nullptr,
+                                              in_stride != 1));
         });
         return *inv;
     }
@@ -441,7 +444,8 @@ struct strides_state {
         axis_threads =
             split_batch_threads<T>(opts.nthreads, *total, n, len_, pool, opts.pin_threads);
         fwd = make_nd_axis_state<T>(len_, istride, true, false,
-                                    axis_threads, opts.eff, opts.pin_threads, nullptr);
+                                    axis_threads, opts.eff, opts.pin_threads, nullptr,
+                                    istride != 1);
         const bool need_slab = (len_ > 1 && istride != 1 && idist == 1 && odist != 1 &&
                                 slab_route(fwd));
         if (need_slab && pool && opts.nthreads == 0) {

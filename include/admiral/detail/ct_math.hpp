@@ -358,13 +358,18 @@ template<typename F>
 // The run-time long double can be narrower than the compile-time format: valgrind emulates
 // x87 at 53 bits, and an x87 precision-control word can do the same on real hardware. One
 // volatile probe separates the two: 1 + 2^-60 is representable at 64 bits and rounds to 1 at
-// 53. The volatile sum keeps -ffast-math from reducing the test to tail != 0. Stateless: the
-// probe runs per call.
+// 53. The volatile sum keeps -ffast-math from reducing the test to tail != 0. The answer is
+// cached once per process, the way plan.hpp's serial-line probe caches its topology read: an
+// x87 precision-control flip mid-process is the only case the first answer misses, and no
+// caller does that.
 inline bool ld_full_precision() noexcept {
-    volatile long double one = 1.0L;
-    volatile long double tail = 0x1p-60L;
-    volatile long double sum = one + tail;
-    return sum != one;
+    static const bool full = [] {
+        volatile long double one = 1.0L;
+        volatile long double tail = 0x1p-60L;
+        volatile long double sum = one + tail;
+        return sum != one;
+    }();
+    return full;
 }
 
 template<typename F>

@@ -110,13 +110,14 @@ ADM_QWAVE_INLINE std::pair<double, double> sincos_turns(std::size_t num, std::si
         // fold and every run-time long double operation. The circle holds doubles folded
         // from 64-bit-mantissa long double values, so the ADM_POW2_CIRCLE switch keeps
         // the other long double formats (double, binary128, composite) on the run-time
-        // fold, whose own bits differ there. The branch needs no ld_full_precision probe:
-        // the read does no run-time long double arithmetic, and a degraded run-time long
-        // double (valgrind, x87 precision control) leaves the committed bits alone, where
-        // the memo and fold routes degrade to the double fold for the same dens. The
+        // fold, whose own bits differ there. The ld_full_precision probe gates the read
+        // for the same reason it gates the memo and the fold below: a degraded run-time
+        // long double (valgrind, x87 precision control) runs the double fold for the same
+        // dens, and a run-time result must equal the fold of the same run-time mode. The
         // branch carries its own reduce and flip so the pow2 path never pays an idiv; the
         // generic reduce below repeats them for the rest.
-        if (den >= 8 && den <= kPow2CircleDen && (den & (den - 1)) == 0) {
+        if (den >= 8 && den <= kPow2CircleDen && (den & (den - 1)) == 0 &&
+            ld_full_precision()) {
 #ifdef ADM_CIRCLE_COUNTR_ZERO
             const unsigned l2 = static_cast<unsigned>(std::countr_zero(den));
 #else

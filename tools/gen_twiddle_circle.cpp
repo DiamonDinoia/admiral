@@ -6,7 +6,13 @@
 // build then pays one load a twiddle and no run-time long double math.
 #include <admiral/detail/ct_math.hpp>
 
+#include <cfloat>
 #include <cstdio>
+
+// The committed bits are the 64-bit-mantissa long double fold rounded once to double.
+// A host with a different long double format folds different bits; fail loud there.
+static_assert(LDBL_MANT_DIG == 64 && LDBL_MAX_EXP > 1024,
+              "the circle generator needs the x86 64-bit-mantissa long double format");
 
 int main() {
     using namespace admiral::detail;

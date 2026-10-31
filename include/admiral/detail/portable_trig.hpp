@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cfloat>
 #include <cstddef>
 #include <memory>
 #include <numeric>
@@ -8,7 +9,17 @@
 #include <vector>
 
 #include "ct_math.hpp"
-#include "twiddle_circle.hpp"
+
+// The circle matches the run-time fold bit for bit only where long double is the 64-bit
+// mantissa format the generator folded at (x86 80-bit). The measured other formats keep
+// the run-time fold: ld == double and the ppc64le double-double differ in 87448 of 262128
+// cells, aarch64 binary128 in 752 (the sweep shape of test/kernels/test_twiddle_circle.cpp).
+// The 3 MB table is parsed only where a plan reads it; MSVC's C1060 card limit never sees
+// it. Consumers key the same switch on ADM_POW2_CIRCLE.
+#if defined(LDBL_MANT_DIG) && LDBL_MANT_DIG == 64 && LDBL_MAX_EXP > 1024
+#  include "twiddle_circle.hpp"
+#  define ADM_POW2_CIRCLE 1
+#endif
 
 #include <version>
 #if defined(__cpp_lib_bitops) && __cpp_lib_bitops >= 201907L
@@ -93,18 +104,17 @@ struct turns_memo {
 template<bool Forward>
 ADM_QWAVE_INLINE std::pair<double, double> sincos_turns(std::size_t num, std::size_t den,
                                                         turns_memo* memo = nullptr) {
-    if constexpr (std::numeric_limits<long double>::is_iec559 &&
-                  std::numeric_limits<long double>::digits == 64 &&
-                  std::numeric_limits<long double>::max_exponent > 1024) {
+    if constexpr (std::numeric_limits<long double>::is_iec559) {
+#ifdef ADM_POW2_CIRCLE
         // A power-of-two den reads the precomputed circle: one load replaces the series
         // fold and every run-time long double operation. The circle holds doubles folded
-        // from 64-bit-mantissa long double values, so the digits == 64 gate keeps other
-        // long double formats (double, binary128, composite) on the run-time fold, whose
-        // own bits differ there. The branch needs no ld_full_precision probe: the read
-        // does no run-time long double arithmetic, and a degraded run-time long double
-        // (valgrind, x87 precision control) leaves the committed bits alone, where the
-        // memo and fold routes degrade to the double fold for the same dens. The branch
-        // carries its own reduce and flip so the pow2 path never pays an idiv; the
+        // from 64-bit-mantissa long double values, so the ADM_POW2_CIRCLE switch keeps
+        // the other long double formats (double, binary128, composite) on the run-time
+        // fold, whose own bits differ there. The branch needs no ld_full_precision probe:
+        // the read does no run-time long double arithmetic, and a degraded run-time long
+        // double (valgrind, x87 precision control) leaves the committed bits alone, where
+        // the memo and fold routes degrade to the double fold for the same dens. The
+        // branch carries its own reduce and flip so the pow2 path never pays an idiv; the
         // generic reduce below repeats them for the rest.
         if (den >= 8 && den <= kPow2CircleDen && (den & (den - 1)) == 0) {
 #ifdef ADM_CIRCLE_COUNTR_ZERO
@@ -120,6 +130,7 @@ ADM_QWAVE_INLINE std::pair<double, double> sincos_turns(std::size_t num, std::si
             const ct_sincos_v<double> w = pow2_circle[num << (16 - l2)];
             return {w.s, w.c};
         }
+#endif
     }
     num %= den;
     if constexpr (Forward) {

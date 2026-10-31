@@ -53,6 +53,10 @@ inline std::size_t split_batch_threads(std::size_t requested, std::size_t total,
 
 template<typename T>
 struct plan_state_impl final : plan_state<T> {
+    std::vector<std::size_t> shape;
+    std::size_t nthreads;
+    admiral::effort eff;
+    bool pin_threads;
     nd_runtime_plan<T> fwd;
     unsigned debug;
 
@@ -86,10 +90,6 @@ struct plan_state_impl final : plan_state<T> {
     }
 
 private:
-    std::vector<std::size_t> shape;
-    std::size_t nthreads;
-    admiral::effort eff;
-    bool pin_threads;
     mutable std::optional<nd_runtime_plan<T>> inv;
     mutable std::once_flag inv_once;
 };
@@ -149,6 +149,9 @@ struct axis_state_impl final : axis_state<T> {
 
 template<typename T>
 struct strides_state_impl final : strides_state<T> {
+    std::size_t axis_threads;
+    admiral::effort eff;
+    bool pin_threads;
     std::size_t len, nbatch;
     std::size_t in_stride, in_dist, out_stride, out_dist;
     nd_axis_state<T> fwd;
@@ -168,8 +171,8 @@ struct strides_state_impl final : strides_state<T> {
 
     strides_state_impl(std::size_t len_, std::size_t n, std::size_t istride, std::size_t idist,
                        std::size_t ostride, std::size_t odist, const admiral::options& opts)
-        : len(len_), nbatch(n), in_stride(istride), in_dist(idist), out_stride(ostride),
-          out_dist(odist), axis_threads(0), eff(opts.eff), pin_threads(opts.pin_threads) {
+        : axis_threads(0), eff(opts.eff), pin_threads(opts.pin_threads), len(len_), nbatch(n),
+          in_stride(istride), in_dist(idist), out_stride(ostride), out_dist(odist) {
         if (istride == 0 || ostride == 0 || (n > 1 && (idist == 0 || odist == 0)))
             ADM_UNLIKELY
             throw size_error("strides_plan: strides must be nonzero");
@@ -199,9 +202,6 @@ struct strides_state_impl final : strides_state<T> {
     }
 
 private:
-    std::size_t axis_threads;
-    admiral::effort eff;
-    bool pin_threads;
     mutable std::optional<nd_axis_state<T>> inv;
     mutable std::once_flag inv_once;
 
@@ -320,6 +320,10 @@ struct r2r_state_impl final : r2r_state<T> {
 
 template<typename T>
 struct plan_state {
+    std::vector<std::size_t> shape;
+    std::size_t nthreads;
+    admiral::effort eff;
+    bool pin_threads;
     nd_runtime_plan<T> fwd;
     unsigned debug;
 
@@ -353,10 +357,6 @@ struct plan_state {
     }
 
 private:
-    std::vector<std::size_t> shape;
-    std::size_t nthreads;
-    admiral::effort eff;
-    bool pin_threads;
     mutable std::optional<nd_runtime_plan<T>> inv;
     mutable std::once_flag inv_once;
 };
@@ -406,6 +406,9 @@ struct axis_state {
 
 template<typename T>
 struct strides_state {
+    std::size_t axis_threads;
+    admiral::effort eff;
+    bool pin_threads;
     std::size_t len, nbatch;
     std::size_t in_stride, in_dist, out_stride, out_dist;
     nd_axis_state<T> fwd;
@@ -425,8 +428,8 @@ struct strides_state {
 
     strides_state(std::size_t len_, std::size_t n, std::size_t istride, std::size_t idist,
                   std::size_t ostride, std::size_t odist, const admiral::options& opts)
-        : len(len_), nbatch(n), in_stride(istride), in_dist(idist), out_stride(ostride),
-          out_dist(odist), axis_threads(0), eff(opts.eff), pin_threads(opts.pin_threads) {
+        : axis_threads(0), eff(opts.eff), pin_threads(opts.pin_threads), len(len_), nbatch(n),
+          in_stride(istride), in_dist(idist), out_stride(ostride), out_dist(odist) {
         if (istride == 0 || ostride == 0 || (n > 1 && (idist == 0 || odist == 0)))
             ADM_UNLIKELY
             throw size_error("strides_plan: strides must be nonzero");
@@ -456,9 +459,6 @@ struct strides_state {
     }
 
 private:
-    std::size_t axis_threads;
-    admiral::effort eff;
-    bool pin_threads;
     mutable std::optional<nd_axis_state<T>> inv;
     mutable std::once_flag inv_once;
 

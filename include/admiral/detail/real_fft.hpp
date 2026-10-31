@@ -54,7 +54,7 @@ private:
 
     void r2c_even(const T* in, std::complex<T>* out, std::size_t rows, thread_pool* pool) const {
         std::size_t done = 0;
-        if (batched_) {
+        if (rows >= W && tiles_batched()) {
             const std::size_t ntiles = rows / W;
             run_tiles(pool, ntiles, rows * N_, [&](std::size_t t, V* sc) {
                 r2c_even_tile(in + t * W * N_, out + t * W * Nh_, sc);
@@ -66,7 +66,7 @@ private:
 
     void c2r_even(const std::complex<T>* in, T* out, std::size_t rows, thread_pool* pool) const {
         std::size_t done = 0;
-        if (batched_) {
+        if (rows >= W && tiles_batched()) {
             const std::size_t ntiles = rows / W;
             run_tiles(pool, ntiles, rows * N_, [&](std::size_t t, V* sc) {
                 c2r_even_tile(in + t * W * Nh_, out + t * W * N_, sc);
@@ -294,6 +294,17 @@ private:
         return *inv_;
     }
 
+    // The batched tile tables matter only when a call brings at least W rows; a per-call
+    // numpy rfft brings one. The supported check and the table build move behind the first
+    // tile-capable call. The tables fill the same values whenever they run.
+    bool tiles_batched() const {
+        std::call_once(tab_once_, [this] {
+            batched_ = M_ >= 2 && multipass_supported(M_);
+            if (batched_) tab_.build(M_);
+        });
+        return batched_;
+    }
+
     std::size_t N_;
     bool even_;
     std::size_t M_, Nh_;
@@ -302,8 +313,9 @@ private:
     mutable std::optional<plan_impl<T>> inv_;
     mutable std::once_flag inv_once_;
     std::vector<std::complex<T>> tw_;
-    bool batched_ = false;
-    vp::multipass_tables<T> tab_;
+    mutable bool batched_ = false;
+    mutable std::once_flag tab_once_;
+    mutable vp::multipass_tables<T> tab_;
 };
 
 template<typename T>
@@ -320,8 +332,6 @@ real_adm_plan<T>::real_adm_plan(std::size_t N, admiral::effort eff)
             const auto [sn, cs] = portable_trig::sincos_turns<true>(k, N_, &memo);
             tw_[k] = std::complex<T>(static_cast<T>(cs), static_cast<T>(sn));
         }
-        batched_ = M_ >= 2 && multipass_supported(M_);
-        if (batched_) tab_.build(M_);
     }
 }
 

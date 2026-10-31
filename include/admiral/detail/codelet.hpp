@@ -248,33 +248,44 @@ template<unsigned P, typename T, bool Imag>
 ADM_CONSTEVAL std::array<T, P - 1> make_rader_bhat() {
     constexpr unsigned L = P - 1;
     constexpr std::size_t g = ct_primitive_root(P);
-    // long double: the twiddles and the O(L^2) sum carry the bhat error; one rounding to T at the end.
-    using SF = long double;
-    using WF = long double;
+    // The fold type. A composite long double (ppc64 double-double) folds general arithmetic
+    // in constant evaluation only where the exact result fits 106 bits (fold-const.cc,
+    // MODE_COMPOSITE_P), so the bhat fold runs at ct_dd there, the same 106 bits through
+    // error-free transforms. Every other target folds at long double: the twiddles and the
+    // O(L^2) sum carry the bhat error, with one rounding to T at the end.
+    using SF = std::conditional_t<std::numeric_limits<long double>::digits ==
+                                          2 * std::numeric_limits<double>::digits,
+                                  ct_dd, long double>;
+    using WF = SF;
     struct cd { SF re; SF im; };
     const std::size_t ginv = ct_powmod(g, P - 2, P);
     std::array<cd, L> bp{};
     for (unsigned j = 0; j < L; ++j) {
         const std::size_t e = ct_powmod(ginv, j, P);
         const ct_sincos_v<WF> w = ct_sincos_turns<WF>(true, e, P);
-        bp[j] = {static_cast<SF>(w.c), static_cast<SF>(w.s)};
+        bp[j] = {w.c, w.s};
     }
     // j * k % L takes L values over the double loop below: fold each once. Folding inside
     // the loop costs L times more constexpr steps and busts the default step budgets.
     std::array<cd, L> ep{};
     for (unsigned e = 0; e < L; ++e) {
         const ct_sincos_v<WF> w = ct_sincos_turns<WF>(true, e, L);
-        ep[e] = {static_cast<SF>(w.c), static_cast<SF>(w.s)};
+        ep[e] = {w.c, w.s};
     }
     std::array<T, L> out{};
     for (unsigned k = 0; k < L; ++k) {
-        SF sr = 0.0, si = 0.0;
+        SF sr{0}, si{0};
         for (unsigned j = 0; j < L; ++j) {
             const cd& e = ep[j * k % L];
             sr += bp[j].re * e.re - bp[j].im * e.im;
             si += bp[j].re * e.im + bp[j].im * e.re;
         }
-        out[k] = static_cast<T>((Imag ? si : sr) / L);
+        // dd_round is the single rounding to T of the 106-bit fold, the same one
+        // sincos_turns_eval's ct_dd route uses.
+        if constexpr (std::is_same_v<SF, ct_dd>)
+            out[k] = dd_round<T>((Imag ? si : sr) / L);
+        else
+            out[k] = static_cast<T>((Imag ? si : sr) / L);
     }
     return out;
 }

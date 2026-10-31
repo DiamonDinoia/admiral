@@ -109,7 +109,8 @@ template<typename T>
                                                          admiral::effort eff =
                                                              admiral::effort::estimate,
                                                          bool pin = false,
-                                                         portable_trig::turns_memo* memo = nullptr) {
+                                                         portable_trig::turns_memo* memo = nullptr,
+                                                         bool col_ok = true) {
     nd_axis_state<T> st;
     st.length = length;
     st.pitch = transpose_pitch<T>(length);
@@ -122,7 +123,9 @@ template<typename T>
         st.plan.emplace(length, is_forward, nthreads, nullptr, eff, pin, memo);
         return st;
     }
-    if (!innermost && is_codelet_supported(length)) {
+    // col_ok=false: the caller always dispatches by line strides (strides_plan with
+    // istride == 1 runs only the per-line plan arms), so the column twiddle set is dead.
+    if (!innermost && col_ok && is_codelet_supported(length)) {
         st.dif = true;
         const std::size_t e2_cap = std::min(e2_len_cap(), kFourStepLeafMax);
         // A col length below 8 pays only when the col body can vectorise the block: with the narrow

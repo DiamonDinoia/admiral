@@ -57,6 +57,23 @@ namespace portable_trig {
 
 struct turns_memo {
     static constexpr std::size_t kCap = 4096;
+    // Two-level lookup covers dens above kCap up to 2^24; the tables hold 2*sqrt(den) entries.
+    static constexpr std::size_t kTwoLevelDenMax = std::size_t{1} << 24;
+
+    // Two-level circle for dens above kCap, the split pocketfft's sincos_2pibyn uses:
+    // w^(hi*q + lo) = w^(hi*q) * w^lo with q a power of two nearest sqrt(den). Every base
+    // table entry is the plain sincos_turns_eval fold at this den, and one table product
+    // replaces the per-call fold, so a lookup lands about a double ulp from the fold where
+    // the old path folded the entry itself. No probe gate: the bases inherit the run-time
+    // fold mode through sincos_turns_eval, so build and fallback agree on every host.
+    std::pair<double, double> get_two(std::size_t num, std::size_t d) {
+        if (two_den != d) build_two(d);
+        const std::size_t lo = num & (two_q - 1);
+        const std::size_t hi = num >> two_shift;
+        const double ls = two_lo_s[lo], lc = two_lo_c[lo];
+        const double hs = two_hi_s[hi], hc = two_hi_c[hi];
+        return {ls * hc + lc * hs, lc * hc - ls * hs};
+    }
 
     std::pair<double, double> get(std::size_t num, std::size_t d) {
         if (den != d) {
@@ -95,6 +112,32 @@ struct turns_memo {
    private:
     std::size_t den = 0;
     std::size_t period = 0;
+
+    void build_two(std::size_t d) {
+        two_den = d;
+        two_shift = 0;
+        while ((std::size_t{1} << two_shift) * (std::size_t{1} << two_shift) < d) ++two_shift;
+        two_q = std::size_t{1} << two_shift;
+        const std::size_t nh = (d + two_q - 1) / two_q;
+        two_lo_s.resize(two_q);
+        two_lo_c.resize(two_q);
+        two_hi_s.resize(nh);
+        two_hi_c.resize(nh);
+        for (std::size_t i = 0; i < two_q; ++i) {
+            const ct_sincos_v<double> w = sincos_turns_eval<double>(false, i, d);
+            two_lo_s[i] = w.s;
+            two_lo_c[i] = w.c;
+        }
+        for (std::size_t j = 0; j < nh; ++j) {
+            const ct_sincos_v<double> w = sincos_turns_eval<double>(false, j * two_q, d);
+            two_hi_s[j] = w.s;
+            two_hi_c[j] = w.c;
+        }
+    }
+    std::size_t two_den = 0;
+    unsigned two_shift = 0;
+    std::size_t two_q = 0;
+    std::vector<double> two_lo_s, two_lo_c, two_hi_s, two_hi_c;
     bool pow2 = false;
     unsigned split = 0;                             // pow2 den: oct = num >> split
     std::unique_ptr<std::array<double, 8>[]> out;   // per class: 4 octants x (s, c), filled under have
@@ -137,6 +180,8 @@ ADM_QWAVE_INLINE std::pair<double, double> sincos_turns(std::size_t num, std::si
     if constexpr (Forward) {
         if (num != 0) num = den - num;
     }
+    if (memo != nullptr && den > turns_memo::kCap && den <= turns_memo::kTwoLevelDenMax)
+        return memo->get_two(num, den);
     if constexpr (std::numeric_limits<long double>::is_iec559 &&
                   std::numeric_limits<long double>::digits > 53 &&
                   std::numeric_limits<long double>::max_exponent > 1024) {

@@ -8,6 +8,23 @@
 #include <vector>
 
 #include "ct_math.hpp"
+#include "twiddle_circle.hpp"
+
+#include <version>
+#if defined(__cpp_lib_bitops) && __cpp_lib_bitops >= 201907L
+#  include <bit>
+#  define ADM_CIRCLE_COUNTR_ZERO
+#endif
+
+// Local twin of macros.hpp's ADM_ALWAYS_INLINE: this header sits inside the include span
+// of headers that pair macros.hpp with undef_macros.hpp, so it cannot join that pairing.
+#if defined(_MSC_VER) && !defined(__clang__)
+#  define ADM_QWAVE_INLINE __forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+#  define ADM_QWAVE_INLINE inline __attribute__((always_inline))
+#else
+#  define ADM_QWAVE_INLINE inline
+#endif
 
 namespace admiral {
 namespace detail {
@@ -74,8 +91,36 @@ struct turns_memo {
 };
 
 template<bool Forward>
-inline std::pair<double, double> sincos_turns(std::size_t num, std::size_t den,
-                                              turns_memo* memo = nullptr) {
+ADM_QWAVE_INLINE std::pair<double, double> sincos_turns(std::size_t num, std::size_t den,
+                                                        turns_memo* memo = nullptr) {
+    if constexpr (std::numeric_limits<long double>::is_iec559 &&
+                  std::numeric_limits<long double>::digits == 64 &&
+                  std::numeric_limits<long double>::max_exponent > 1024) {
+        // A power-of-two den reads the precomputed circle: one load replaces the series
+        // fold and every run-time long double operation. The circle holds doubles folded
+        // from 64-bit-mantissa long double values, so the digits == 64 gate keeps other
+        // long double formats (double, binary128, composite) on the run-time fold, whose
+        // own bits differ there. The branch needs no ld_full_precision probe: the read
+        // does no run-time long double arithmetic, and a degraded run-time long double
+        // (valgrind, x87 precision control) leaves the committed bits alone, where the
+        // memo and fold routes degrade to the double fold for the same dens. The branch
+        // carries its own reduce and flip so the pow2 path never pays an idiv; the
+        // generic reduce below repeats them for the rest.
+        if (den >= 8 && den <= kPow2CircleDen && (den & (den - 1)) == 0) {
+#ifdef ADM_CIRCLE_COUNTR_ZERO
+            const unsigned l2 = static_cast<unsigned>(std::countr_zero(den));
+#else
+            unsigned l2 = 0;
+            for (std::size_t d = den; d > 1; d >>= 1) ++l2;
+#endif
+            num &= den - 1;
+            if constexpr (Forward) {
+                if (num != 0) num = den - num;
+            }
+            const ct_sincos_v<double> w = pow2_circle[num << (16 - l2)];
+            return {w.s, w.c};
+        }
+    }
     num %= den;
     if constexpr (Forward) {
         if (num != 0) num = den - num;
@@ -90,11 +135,14 @@ inline std::pair<double, double> sincos_turns(std::size_t num, std::size_t den,
     return {w.s, w.c};
 }
 
-inline std::pair<double, double> sincos_turns(std::size_t num, std::size_t den, bool forward,
-                                              turns_memo* memo = nullptr) {
+[[nodiscard]] ADM_QWAVE_INLINE std::pair<double, double> sincos_turns(
+    std::size_t num, std::size_t den, bool forward, turns_memo* memo = nullptr) {
     return forward ? sincos_turns<true>(num, den, memo) : sincos_turns<false>(num, den, memo);
 }
 
 }
 }
 }
+
+#undef ADM_QWAVE_INLINE
+#undef ADM_CIRCLE_COUNTR_ZERO

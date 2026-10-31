@@ -61,7 +61,7 @@ jobs:
         run: |
           set -eu
           f=include/admiral/detail/ct_math.hpp
-          sed -i -e 's/const ct_sincos_v<ct_dd> w = sincos_turns_eval<ct_dd>(/const ct_sincos_v<double> w = sincos_turns_eval<double>(/' \
+          sed -i -e 's/const ct_sincos_v<ct_dd> w = sincos_turns_fold<ct_dd>(/const ct_sincos_v<double> w = sincos_turns_fold<double>(/' \
                  -e 's/return {dd_round<F>(w.s), dd_round<F>(w.c)};/return {F(w.s), F(w.c)};/' "$f"
           git diff -- "$f"
           test "$(git diff --numstat -- "$f" | cut -f1)" = 2

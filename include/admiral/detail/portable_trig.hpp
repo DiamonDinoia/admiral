@@ -1,10 +1,8 @@
 #pragma once
 
-#include <array>
 #include <cfloat>
+#include <cmath>
 #include <cstddef>
-#include <memory>
-#include <numeric>
 #include <utility>
 #include <vector>
 
@@ -41,77 +39,101 @@ namespace admiral {
 namespace detail {
 namespace portable_trig {
 
-// Runtime twin of the compile-time fold: roots of unity at ct_dd precision rounded once to
-// double, so a table built here and a constant folded into a codelet are the same value.
+// Runtime roots of unity for plan tables. Accuracy contract: the transform's error sits at
+// machine precision in norm (the relative L2 transform error stays within 1.25x of stock
+// pocketfft's and inside 4 * eps * log2(size), gated by test/plans/test_norm_gate.cpp).
+// The old bit-identical-to-the-fold contract is dropped for these runtime twiddles: the fold
+// kept about 64-bit precision per entry at x87-series cost (~40 ns per angle), and the gate
+// only needs libm-grade accuracy.
 //
-// Plan tables call this per entry. Numerators that differ by a multiple of
-// den / gcd(8, den) share one residual angle, and sincos_octant_mix turns one series
-// evaluation into all eight octant outputs, so a whole table costs one series per residual
-// class. The table-building code creates one turns_memo and passes it down: the memo lives
-// for one table build and carries that sharing across its entries. The memo stores
-// sincos_octant_mix's own results: the values stay bitwise identical to the fold's. long
-// double is double or composite on MSVC and Apple, or degraded at run time (valgrind), where
-// the fold route mixes differently; those keep the per-call fold.
-// ponytail: capped at 4096 residual classes per den; larger dens (bluestein paddings) fall
-// back to the per-call fold.
+// The memo is a two-level circle, the split pocketfft's sincos_2pibyn uses:
+// w^(hi*q + lo) = w^(hi*q) * w^lo with q a power of two nearest sqrt(den). One table build
+// costs 2*sqrt(den) libm sincos calls (~8 ns per pair), one lookup costs one complex product
+// of two table entries (~2-3 ulp from the libm values). The table-building code creates one
+// turns_memo and passes it down: the memo lives for one plan build, is rebuilt when the den
+// changes, and holds at most 2*sqrt(2^24) doubles.
 
 struct turns_memo {
-    static constexpr std::size_t kCap = 4096;
-    // Two-level lookup covers dens above kCap up to 2^24; the tables hold 2*sqrt(den) entries.
+    // Two-level lookup covers dens 8..2^24.
     static constexpr std::size_t kTwoLevelDenMax = std::size_t{1} << 24;
 
-    // Two-level circle for dens above kCap, the split pocketfft's sincos_2pibyn uses:
-    // w^(hi*q + lo) = w^(hi*q) * w^lo with q a power of two nearest sqrt(den). Every base
-    // table entry is the plain sincos_turns_eval fold at this den, and one table product
-    // replaces the per-call fold, so a lookup lands about a double ulp from the fold where
-    // the old path folded the entry itself. No probe gate: the bases inherit the run-time
-    // fold mode through sincos_turns_eval, so build and fallback agree on every host.
     std::pair<double, double> get_two(std::size_t num, std::size_t d) {
-        if (two_den != d) build_two(d);
-        const std::size_t lo = num & (two_q - 1);
-        const std::size_t hi = num >> two_shift;
+        // One table build also serves every den that divides it: w^(num/d) = w^(num*s/D)
+        // with s = D/d. r2c pairs N with N/2, so a smooth plan builds its tables once.
+        std::size_t num_d = num;
+        if (two_den != d) {
+            if (two_den != 0 && two_den % d == 0)
+                num_d = num * (two_den / d);
+            else
+                build_two(d);
+        }
+        const std::size_t lo = num_d & (two_q - 1);
+        const std::size_t hi = num_d >> two_shift;
         const double ls = two_lo_s[lo], lc = two_lo_c[lo];
         const double hs = two_hi_s[hi], hc = two_hi_c[hi];
-        return {ls * hc + lc * hs, lc * hc - ls * hs};
-    }
-
-    std::pair<double, double> get(std::size_t num, std::size_t d) {
-        if (den != d) {
-            den = d;
-            period = d / std::gcd<std::size_t>(8, d);
-            pow2 = d >= 8 && (d & (d - 1)) == 0;
-            split = 0;
-            if (pow2)
-                for (std::size_t p = period; p > 1; p >>= 1) ++split;
-            out = std::unique_ptr<std::array<double, 8>[]>(new std::array<double, 8>[period]);
-            have.assign(period, 0);
-        }
-        const std::size_t oct = pow2 ? num >> split : (8 * num) / d;
-        const std::size_t slot = pow2 ? num & (period - 1) : num % period;
-        if (!have[slot]) {
-            const std::size_t rem = 8 * num - oct * d;
-            const long double res =
-                static_cast<long double>(rem) *
-                (ct_pi<long double> /
-                 (static_cast<long double>(4) * static_cast<long double>(d)));
-            const ct_sincos_v<long double> r = sincos_small_eval<long double>(res);
-            // Octant j + 4 is exactly -octant j (both operands of the mix negate), so the top
-            // half never needs storing or computing.
-            for (std::size_t j = 0; j < 4; ++j) {
-                const ct_sincos_v<long double> w = sincos_octant_mix<long double>(j, r);
-                out[slot][2 * j] = static_cast<double>(w.s);
-                out[slot][2 * j + 1] = static_cast<double>(w.c);
-            }
-            have[slot] = 1;
-        }
-        const std::size_t o = oct & 3;
-        const double s = out[slot][2 * o], c = out[slot][2 * o + 1];
-        return oct < 4 ? std::pair<double, double>{s, c} : std::pair<double, double>{-s, -c};
+        // Compensated product: TwoProd tails plus a TwoSum keep the entry at about one double
+        // ulp of absolute error, also where the terms cancel near the axes.
+        const double p1 = ls * hc, e1 = std::fma(ls, hc, -p1);
+        const double q1 = lc * hs, e2 = std::fma(lc, hs, -q1);
+        const double sh = p1 + q1;
+        const double ts = sh - p1;
+        const double s = sh + ((p1 - (sh - ts)) + (q1 - ts) + e1 + e2);
+        const double p2 = lc * hc, e3 = std::fma(lc, hc, -p2);
+        const double r2 = ls * hs, e4 = std::fma(ls, hs, -r2);
+        const double ch = p2 - r2;
+        const double tc = ch - p2;
+        const double c = ch + ((p2 - (ch - tc)) + (-r2 - tc) + e3 - e4);
+        return {s, c};
     }
 
    private:
-    std::size_t den = 0;
-    std::size_t period = 0;
+    static void libm_sincos(double x, double& s, double& c) {
+#if defined(__GNUC__) || defined(__clang__)
+        __builtin_sincos(x, &s, &c);
+#else
+        s = std::sin(x);
+        c = std::cos(x);
+#endif
+    }
+
+    // Table of w^(k*step/d) for k = 0..count-1, evaluated like pocketfft's sincos_2pibyn:
+    // every index maps to a first-octant residual angle below pi/4 and mirrors analytically,
+    // so no libm call ever sees a big argument (a 2*pi-scale argument quantizes at ~1.6
+    // absolute ulp and the transform norm feels it). The phase pi/(4d) is double-double:
+    // a lone double ph rounds once and every base angle inherits that bias coherently, which
+    // the transform reads as a systematic rotation. Base error is ~1 absolute ulp.
+    void libm_base(std::size_t step, std::size_t count, std::size_t d, double* out_s,
+                   double* out_c) {
+        const ct_dd phdd = ct_pi<ct_dd> / ct_dd{4.0 * static_cast<double>(d), 0.0};
+        const double phh = phdd.hi, phl = phdd.lo;
+        // sqrt(1/2) as double-double: the diagonal mirror s2*t stays inside one ulp of the
+        // plain double product (each mirror would otherwise carry s2's own rounding).
+        constexpr double s2h = 0x1.6a09e667f3bcdp-1;
+        constexpr double s2l = -4.8336466567264567e-17;
+        const auto diag = [s2h, s2l](double t) { return std::fma(s2h, t, s2l * t); };
+        for (std::size_t k = 0; k < count; ++k) {
+            const std::size_t m = k * step;
+            const std::size_t oct = (8 * m) / d;
+            const std::size_t rem = 8 * m - oct * d;
+            double rs, rc;
+            libm_sincos(std::fma(static_cast<double>(rem), phl,
+                                 static_cast<double>(rem) * phh),
+                        rs, rc);
+            double s, c;
+            switch (oct & 7) {
+                case 0: s = rs;                     c = rc;                     break;
+                case 1: s = diag(rc + rs);          c = diag(rc - rs);          break;
+                case 2: s = rc;                     c = -rs;                    break;
+                case 3: s = diag(rc - rs);          c = -diag(rc + rs);         break;
+                case 4: s = -rs;                    c = -rc;                    break;
+                case 5: s = -diag(rc + rs);         c = -diag(rc - rs);         break;
+                case 6: s = -rc;                    c = rs;                     break;
+                default: s = -diag(rc - rs);        c = diag(rc + rs);          break;
+            }
+            out_s[k] = s;
+            out_c[k] = c;
+        }
+    }
 
     void build_two(std::size_t d) {
         two_den = d;
@@ -123,25 +145,13 @@ struct turns_memo {
         two_lo_c.resize(two_q);
         two_hi_s.resize(nh);
         two_hi_c.resize(nh);
-        for (std::size_t i = 0; i < two_q; ++i) {
-            const ct_sincos_v<double> w = sincos_turns_eval<double>(false, i, d);
-            two_lo_s[i] = w.s;
-            two_lo_c[i] = w.c;
-        }
-        for (std::size_t j = 0; j < nh; ++j) {
-            const ct_sincos_v<double> w = sincos_turns_eval<double>(false, j * two_q, d);
-            two_hi_s[j] = w.s;
-            two_hi_c[j] = w.c;
-        }
+        libm_base(1, two_q, d, two_lo_s.data(), two_lo_c.data());      // w^(i/d),   i < q
+        libm_base(two_q, nh, d, two_hi_s.data(), two_hi_c.data());     // w^(j*q/d), j < nh
     }
     std::size_t two_den = 0;
     unsigned two_shift = 0;
     std::size_t two_q = 0;
     std::vector<double> two_lo_s, two_lo_c, two_hi_s, two_hi_c;
-    bool pow2 = false;
-    unsigned split = 0;                             // pow2 den: oct = num >> split
-    std::unique_ptr<std::array<double, 8>[]> out;   // per class: 4 octants x (s, c), filled under have
-    std::vector<unsigned char> have{};              // per class
 };
 
 template<bool Forward>
@@ -180,14 +190,8 @@ ADM_QWAVE_INLINE std::pair<double, double> sincos_turns(std::size_t num, std::si
     if constexpr (Forward) {
         if (num != 0) num = den - num;
     }
-    if (memo != nullptr && den > turns_memo::kCap && den <= turns_memo::kTwoLevelDenMax)
+    if (memo != nullptr && den >= 8 && den <= turns_memo::kTwoLevelDenMax)
         return memo->get_two(num, den);
-    if constexpr (std::numeric_limits<long double>::is_iec559 &&
-                  std::numeric_limits<long double>::digits > 53 &&
-                  std::numeric_limits<long double>::max_exponent > 1024) {
-        if (memo != nullptr && den <= turns_memo::kCap && ld_full_precision())
-            return memo->get(num, den);
-    }
     const ct_sincos_v<double> w = sincos_turns_eval<double>(false, num, den);
     return {w.s, w.c};
 }

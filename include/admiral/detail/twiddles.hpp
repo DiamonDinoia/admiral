@@ -22,6 +22,7 @@
 #include "ct_math.hpp"
 #include "cxx_compat.hpp"
 #include "math.hpp"
+#include "scratch.hpp"
 #include "twiddle_row.hpp"
 #include "portable_trig.hpp"
 
@@ -646,6 +647,35 @@ template<typename T>
     return d;
 }
 
+// Same walk into caller storage; returns the count, 0 when the capacity does not hold it.
+[[nodiscard]] inline std::size_t ascending_divisors_into(std::size_t n, std::size_t* out,
+                                                         std::size_t cap) {
+    std::size_t cnt = 1;
+    out[0] = 1;
+    for (std::size_t p = 2; p * p <= n; ++p) {
+        if (n % p != 0) continue;
+        const std::size_t known = cnt;
+        for (std::size_t q = p; n % p == 0; q *= p) {
+            n /= p;
+            for (std::size_t i = 0; i < known; ++i) {
+                if (cnt == cap) return 0;
+                out[cnt] = out[i] * q;
+                ++cnt;
+            }
+        }
+    }
+    if (n > 1) {
+        const std::size_t known = cnt;
+        for (std::size_t i = 0; i < known; ++i) {
+            if (cnt == cap) return 0;
+            out[cnt] = out[i] * n;
+            ++cnt;
+        }
+    }
+    std::sort(out, out + cnt);
+    return cnt;
+}
+
 // Namespace scope, not function scope: MSVC 14.51 treats a function-local class carrying
 // default member initializers as having no default constructor, so a `std::vector` of it sized
 // by count fails inside `std::construct_at` (C2672) and a plain `dif_chain_entry{}` inside a
@@ -671,15 +701,32 @@ template<typename T>
         return x * 0xBF58476D1CE4E5B9ull;
     };
 
-    const std::vector<std::size_t> divisors = ascending_divisors(N);
-    const auto state = [&divisors](std::size_t n) {
-        const auto* const first = divisors.data();
-        const auto* const at = std::lower_bound(first, first + divisors.size(), n);
-        return static_cast<std::size_t>(at - first);
+    // Stack storage for the single-rail election (beam == 1): divisors and the dp row, no
+    // heap. A cap miss or a multi-candidate race keeps the heap vectors.
+    constexpr std::size_t kDivStack = 128;
+    std::size_t divs_stack[kDivStack];
+    std::vector<std::size_t> divs_heap;
+    const std::size_t* divisors = divs_stack;
+    std::size_t ndiv = ascending_divisors_into(N, divs_stack, kDivStack);
+    if (ndiv == 0) {
+        divs_heap = ascending_divisors(N);
+        divisors = divs_heap.data();
+        ndiv = divs_heap.size();
+    }
+    const auto state = [divisors, ndiv](std::size_t n) {
+        const auto* const at = std::lower_bound(divisors, divisors + ndiv, n);
+        return static_cast<std::size_t>(at - divisors);
     };
 
-    std::vector<dif_chain_entry> dp(divisors.size() * beam);
-    const auto row = [&dp, beam](std::size_t i) {
+    dif_chain_entry dp_stack[kDivStack]{};
+    std::vector<dif_chain_entry> dp_heap;
+    const bool stack_dp = beam == 1 && ndiv <= kDivStack;
+    dif_chain_entry* dp = dp_stack;
+    if (!stack_dp) {
+        dp_heap.resize(ndiv * beam);
+        dp = dp_heap.data();
+    }
+    const auto row = [dp, beam](std::size_t i) {
         return span<dif_chain_entry>(&dp[i * beam], beam);
     };
 
@@ -722,7 +769,7 @@ template<typename T>
     for (const std::size_t g : dif_generic_radices)
         if (N % g == 0) generics[ngen++] = g;
 
-    for (std::size_t i = 1; i < divisors.size(); ++i) {
+    for (std::size_t i = 1; i < ndiv; ++i) {
         const std::size_t n = divisors[i];
         const auto expand = [&](const std::size_t radix, const double stage) {
             const std::size_t rest = n / radix;
@@ -838,23 +885,44 @@ struct dif_step {
 
 template<typename T>
 struct dif_tape_pair {
-    std::vector<dif_step<T>> blk, flat;
+    dif_buf<dif_step<T>> blk, flat;
+};
+
+template<typename T>
+struct dif_pass_tables {
+    dif_buf<T> first, second;
 };
 
 template<typename T>
 struct dif_twiddle_set {
-    std::vector<std::pair<std::vector<T>, std::vector<T>>> passes;
-    std::vector<std::size_t> radices;
-    std::vector<dif_fuse> sched;
-    std::vector<std::vector<T>> packed_pair;
+    dif_buf<dif_pass_tables<T>> passes;
+    dif_buf<std::size_t> radices;
+    dif_buf<dif_fuse> sched;
+    dif_buf<dif_buf<T>> packed_pair;
     std::uint32_t ip_mask = 0;
-    std::vector<std::uint32_t> rowperm;
+    dif_buf<std::uint32_t> rowperm;
     std::size_t p0_block = 0;
     dif_tape_pair<T> tape[2];
+    dif_arena arena;
 };
 
 template<typename T, bool Forward>
 void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N);
+
+// Steps one tape variant holds: first, one step per middle pass (an f2head subsumes one more
+// pass, an f3head two), then the last (or the single radix-1 inline step). Variant, direction
+// and in-place/generic markings change function pointers only, never the count.
+[[nodiscard]] inline std::size_t dif_tape_step_count(std::size_t n_passes,
+                                                     const dif_fuse* sched) {
+    if (n_passes == 0) return 0;
+    std::size_t steps = 2;
+    for (std::size_t p = 1; p + 1 < n_passes; ++p) {
+        ++steps;
+        if (sched[p] == dif_fuse::f3head) p += 2;
+        else if (sched[p] == dif_fuse::f2head) p += 1;
+    }
+    return steps;
+}
 
 template<typename T>
 [[nodiscard]] dif_twiddle_set<T> build_dif_twiddle_set(std::size_t N,
@@ -875,131 +943,202 @@ template<typename T>
                 throw unsupported_error("forced dif: radix is not in dif_radix_set");
         }
 
-    std::size_t l1 = 1;
-    for (std::size_t pass = 0; pass < planned.count; ++pass) {
-        const std::size_t ip = planned[pass];
-        const std::size_t ido = N / (l1 * ip);
+    constexpr std::size_t W = xsimd::batch<T>::size;
+    const std::size_t np = planned.count;
 
-        s.radices.push_back(ip);
+    // Phase 1: every decision that shapes a buffer, and the buffer sizes. The fill phases
+    // below read these decisions, so the arena holds the build's whole heap footprint.
+    dif_fuse sched_st[dif_factor_plan::max_passes]{};
+    dif_fusion_schedule_into<T>(N, planned.radices.data(), np,
+                                sched_st);  // all plain when n < fuse floor
+    if (!fuse_packed)
+        for (std::size_t p = 0; p < np; ++p) sched_st[p] = dif_fuse::plain;
 
-        const std::size_t sz = (ip - 1) * ido;
-        std::vector<T> re(sz), im(sz);
-        for (std::size_t j = 1; j < ip; ++j)
-            geom_twiddle_row<T, true>(j * l1, N, ido,
-                                                  re.data() + (j - 1) * ido,
-                                                  im.data() + (j - 1) * ido,
-                                                  memo);
-        s.passes.emplace_back(std::move(re), std::move(im));
-
-        l1 *= ip;
-    }
-
-    if (fuse_packed && !s.radices.empty() && !dif_is_generic_radix(s.radices[0])) {
-        constexpr std::size_t W = xsimd::batch<T>::size;
-        const std::size_t ip0 = s.radices[0], ido0 = N / ip0;
+    // The first pass streams the complex input (2N reals), the split output pair (2N reals)
+    // and the table, each element once, so the table stays L1-resident only while that sum
+    // leaves room in a 12-way L1D. Three quarters of L1D is the admission, hand set from the
+    // survey reading that 46.0 KiB of a 48 KiB L1D already runs L1 bound, not fitted.
+    bool blocked_first = false;
+    std::size_t bw = 0, nb = 0;
+    if (fuse_packed && np != 0 && !dif_is_generic_radix(planned[0])) {
+        const std::size_t ip0 = planned[0], ido0 = N / ip0;
         const std::size_t flat = 2 * (ip0 - 1) * ido0 * sizeof(T);
-        // The first pass streams the complex input (2N reals), the split output pair (2N reals)
-        // and the table, each element once, so the table stays L1-resident only while that sum
-        // leaves room in a 12-way L1D. Three quarters of L1D is the admission, hand set from the
-        // survey reading that 46.0 KiB of a 48 KiB L1D already runs L1 bound, not fitted.
         if (4 * N * sizeof(T) + flat > (cpu_cache().l1d * 3) / 4) {
-            std::size_t bw = W;
+            blocked_first = true;
+            bw = W;
             while (bw * bw < ido0) bw *= 2;
-            const std::size_t nb = (ido0 + bw - 1) / bw;
-            std::vector<T> re((ip0 - 1) * (bw + nb)), im(re.size());
-            for (std::size_t j = 1; j < ip0; ++j) {
-                geom_twiddle_row<T, true>(j, N, bw,
-                                                      re.data() + (j - 1) * bw,
-                                                      im.data() + (j - 1) * bw,
-                                                      memo);
-                geom_twiddle_row<T, true>(j * bw, N, nb,
-                                                      re.data() + (ip0 - 1) * bw + (j - 1) * nb,
-                                                      im.data() + (ip0 - 1) * bw + (j - 1) * nb,
-                                                      memo);
-            }
-            s.passes[0] = {std::move(re), std::move(im)};
-            s.p0_block = bw;
+            nb = (ido0 + bw - 1) / bw;
         }
     }
 
-    s.packed_pair.resize(s.passes.size());
-    s.sched = fuse_packed ? dif_fusion_schedule<T>(N, s.radices)
-                          : std::vector<dif_fuse>(s.radices.size(), dif_fuse::plain);
+    std::size_t pass_rows[dif_factor_plan::max_passes]{};
     {
-        constexpr std::size_t W = xsimd::batch<T>::size;
+        std::size_t l1 = 1;
+        for (std::size_t p = 0; p < np; ++p) {
+            const std::size_t ip = planned[p];
+            pass_rows[p] = (p == 0 && blocked_first) ? (ip - 1) * (bw + nb)
+                                                     : (ip - 1) * (N / (l1 * ip));
+            l1 *= ip;
+        }
+    }
+
+    std::uint32_t ip_mask = 0;
+    if (fuse_packed && np >= 3) {
+        constexpr std::size_t kGatherWindowBytes = 256u * 1024u;
+        const std::size_t r_last = planned[np - 1];
+        std::size_t L = planned[0];
+        std::size_t ip_prefix = 0;
+        for (std::size_t p = 1; p + 1 < np; ++p) {
+            if (sched_st[p] != dif_fuse::plain) break;
+            if (dif_is_generic_radix(planned[p])) break;
+            if (butterfly_wants_reload(planned[p], poet::vector_register_count())) break;
+            const std::size_t Ln = L * planned[p];
+            if (Ln * r_last * 2u * sizeof(T) > kGatherWindowBytes) break;
+            L = Ln;
+            ip_prefix = p;
+        }
+        for (std::size_t p = 1; p <= ip_prefix; ++p) ip_mask |= 1u << p;
+
+        for (std::size_t p = 1, l1p = planned[0]; p + 2 < np; l1p *= planned[p], ++p) {
+            const std::size_t ip = planned[p];
+            if (sched_st[p] == dif_fuse::plain &&
+                butterfly_wants_reload(ip, poet::vector_register_count()) &&
+                (N / (l1p * ip)) * ip * 2u * sizeof(T) <= kIpTileBytes)
+                ip_mask |= 1u << p;
+        }
+    }
+    const std::size_t rowperm_n = ip_mask != 0 ? N / planned[np - 1] : 0;
+    const std::size_t steps = (fuse_packed && np != 0) ? dif_tape_step_count(np, sched_st) : 0;
+
+    // Phase 2: one block, every buffer carved from it.
+    {
+        std::size_t bytes = 64;  // one alignment slack unit per carve, counted generously
+        std::size_t lf = 1;
+        bytes += np * (sizeof(dif_pass_tables<T>) + sizeof(std::size_t) + sizeof(dif_fuse) +
+                       sizeof(dif_buf<T>));
+        for (std::size_t p = 0; p < np; ++p) {
+            bytes += 2 * pass_rows[p] * sizeof(T) + 128;
+            if (sched_st[p] == dif_fuse::f2head) {
+                const std::size_t ip1 = planned[p], ip2 = planned[p + 1u];
+                const std::size_t ido1 = N / (lf * ip1), ido2 = ido1 / ip2;
+                bytes += ((ip1 - 1u) * 2u * ido1 + (ip2 - 1u) * 2u * ido2) * sizeof(T) + 64;
+                ++p;
+                pass_rows[p - 1] = 0;
+                pass_rows[p] = 0;
+                lf *= ip1 * ip2;
+                continue;
+            }
+            lf *= planned[p];
+        }
+        bytes += rowperm_n * sizeof(std::uint32_t) + 64;
+        bytes += 4u * steps * sizeof(dif_step<T>) + 256;
+        s.arena.alloc(bytes);
+    }
+    s.passes = s.arena.template carve<dif_pass_tables<T>>(np);
+    s.radices = s.arena.template carve<std::size_t>(np);
+    s.sched = s.arena.template carve<dif_fuse>(np);
+    s.packed_pair = s.arena.template carve<dif_buf<T>>(np);
+    for (std::size_t p = 0; p < np; ++p) {
+        s.radices[p] = planned[p];
+        s.sched[p] = sched_st[p];
+        s.packed_pair[p] = {};
+    }
+    {
+        for (std::size_t p = 0; p < np; ++p) {
+            s.passes[p].first = s.arena.template carve<T>(pass_rows[p]);
+            s.passes[p].second = s.arena.template carve<T>(pass_rows[p]);
+        }
         std::size_t lp = 1;
-        for (std::size_t p = 0; p < s.radices.size(); ++p) {
-            const std::size_t ip1 = s.radices[p];
+        for (std::size_t p = 0; p < np; ++p) {
+            const std::size_t ip1 = planned[p];
+            if (sched_st[p] == dif_fuse::f2head) {
+                const std::size_t ip2 = planned[p + 1u];
+                const std::size_t ido1 = N / (lp * ip1), ido2 = ido1 / ip2;
+                s.packed_pair[p] =
+                    s.arena.template carve<T>((ip1 - 1u) * 2u * ido1 + (ip2 - 1u) * 2u * ido2);
+            }
+            lp *= ip1;
+        }
+        if (rowperm_n != 0) s.rowperm = s.arena.template carve<std::uint32_t>(rowperm_n);
+        if (steps != 0) {
+            s.tape[0].blk = s.arena.template carve<dif_step<T>>(steps);
+            s.tape[0].flat = s.arena.template carve<dif_step<T>>(steps);
+            s.tape[1].blk = s.arena.template carve<dif_step<T>>(steps);
+            s.tape[1].flat = s.arena.template carve<dif_step<T>>(steps);
+        }
+    }
+    s.ip_mask = ip_mask;
+    if (blocked_first) s.p0_block = bw;
+
+    // Phase 3: the fills. One geom row per (pass, radix cofactor), the fused-pair pack copy,
+    // the rowperm walk and the tape steps; no allocation left in the loop.
+    {
+        std::size_t l1 = 1;
+        for (std::size_t p = 0; p < np; ++p) {
+            const std::size_t ip = planned[p];
+            if (p == 0 && blocked_first) {
+                for (std::size_t j = 1; j < ip; ++j) {
+                    geom_twiddle_row<T, true>(j, N, bw, s.passes[0].first.data() + (j - 1) * bw,
+                                              s.passes[0].second.data() + (j - 1) * bw, memo);
+                    geom_twiddle_row<T, true>(j * bw, N, nb,
+                                              s.passes[0].first.data() + (ip - 1) * bw +
+                                                  (j - 1) * nb,
+                                              s.passes[0].second.data() + (ip - 1) * bw +
+                                                  (j - 1) * nb,
+                                              memo);
+                }
+            } else if (pass_rows[p] != 0) {
+                const std::size_t ido = N / (l1 * ip);
+                for (std::size_t j = 1; j < ip; ++j) {
+                    geom_twiddle_row<T, true>(j * l1, N, ido,
+                                              s.passes[p].first.data() + (j - 1) * ido,
+                                              s.passes[p].second.data() + (j - 1) * ido, memo);
+                }
+            }
+            l1 *= ip;
+        }
+        std::size_t lp = 1;
+        for (std::size_t p = 0; p < np; ++p) {
+            const std::size_t ip1 = planned[p];
             const std::size_t ido_p = N / (lp * ip1);
-            if (s.sched[p] == dif_fuse::f2head) {
-                const std::size_t ip2 = s.radices[p + 1u];
+            if (sched_st[p] == dif_fuse::f2head) {
+                // The pair's tables are never built: each packed chunk is a W-entry window of
+                // the row the plain passes would have held, written straight into the final
+                // layout (the window's seed/anchor decomposition mirrors the row's own at the
+                // chunk boundary, so entries sit in the same ulp class as the plain rows).
+                const std::size_t ip2 = planned[p + 1u];
                 const std::size_t ido2_p = ido_p / ip2;
-                const std::size_t sz1 = (ip1 - 1u) * 2u * ido_p;
-                const std::size_t sz2 = (ip2 - 1u) * 2u * ido2_p;
-                std::vector<T> packed(sz1 + sz2);
-                const auto& tw1 = s.passes[p];
-                const auto& tw2 = s.passes[p + 1u];
+                T* const packed = s.packed_pair[p].data();
                 std::size_t off = 0;
                 const std::size_t n_chunks1 = ido_p / W;
                 for (std::size_t ac = 0; ac < n_chunks1; ++ac) {
                     for (std::size_t k = 1; k < ip1; ++k) {
-                        const std::size_t base = (k - 1) * ido_p + ac * W;
-                        for (std::size_t i = 0; i < W; ++i) packed[off++] = tw1.first[base + i];
-                        for (std::size_t i = 0; i < W; ++i) packed[off++] = tw1.second[base + i];
+                        geom_twiddle_row<T, true>(k * lp, N, W, packed + off, packed + off + W,
+                                                  memo, ac * W);
+                        off += 2 * W;
                     }
                 }
                 const std::size_t n_chunks2 = ido2_p / W;
                 for (std::size_t ac = 0; ac < n_chunks2; ++ac) {
                     for (std::size_t k2 = 1; k2 < ip2; ++k2) {
-                        const std::size_t base2 = (k2 - 1) * ido2_p + ac * W;
-                        for (std::size_t i = 0; i < W; ++i) packed[off++] = tw2.first[base2 + i];
-                        for (std::size_t i = 0; i < W; ++i) packed[off++] = tw2.second[base2 + i];
+                        geom_twiddle_row<T, true>(k2 * lp * ip1, N, W, packed + off,
+                                                  packed + off + W, memo, ac * W);
+                        off += 2 * W;
                     }
                 }
-                s.packed_pair[p] = std::move(packed);
-                s.passes[p] = {};
-                s.passes[p + 1u] = {};
             }
             lp *= ip1;
         }
     }
-
-    if (fuse_packed && s.radices.size() >= 3) {
-        constexpr std::size_t kGatherWindowBytes = 256u * 1024u;
-        const std::size_t r_last = s.radices.back();
-        std::size_t L = s.radices[0];
-        std::size_t ip_prefix = 0;
-        for (std::size_t p = 1; p + 1 < s.radices.size(); ++p) {
-            if (s.sched[p] != dif_fuse::plain) break;
-            if (dif_is_generic_radix(s.radices[p])) break;
-            if (butterfly_wants_reload(s.radices[p], poet::vector_register_count())) break;
-            const std::size_t Ln = L * s.radices[p];
-            if (Ln * r_last * 2u * sizeof(T) > kGatherWindowBytes) break;
-            L = Ln;
-            ip_prefix = p;
-        }
-        for (std::size_t p = 1; p <= ip_prefix; ++p) s.ip_mask |= 1u << p;
-
-        for (std::size_t p = 1, l1p = s.radices[0]; p + 2 < s.radices.size();
-             l1p *= s.radices[p], ++p) {
-            const std::size_t ip = s.radices[p];
-            if (s.sched[p] == dif_fuse::plain &&
-                butterfly_wants_reload(ip, poet::vector_register_count()) &&
-                (N / (l1p * ip)) * ip * 2u * sizeof(T) <= kIpTileBytes)
-                s.ip_mask |= 1u << p;
-        }
-    }
-    if (s.ip_mask != 0) {
-        const std::size_t K = s.radices.size() - 1;
-        const std::size_t l1_last = N / s.radices.back();
-        s.rowperm.resize(l1_last);
+    if (ip_mask != 0) {
+        const std::size_t K = np - 1;
         std::size_t k[dif_factor_plan::max_passes]{};
-        for (std::size_t n = 0; n < l1_last; ++n) {
+        for (std::size_t n = 0; n < rowperm_n; ++n) {
             std::size_t lg = 0, ph = 0, w = 1;
             for (std::size_t i = 0; i < K; ++i) {
                 const std::size_t r = s.radices[i];
                 lg += w * k[i];
-                if (s.ip_mask >> i & 1u)
+                if (ip_mask >> i & 1u)
                     ph = r * ph + (butterfly_wants_reload(r, poet::vector_register_count())
                                        ? (k[i] & 1u) * (r / 2u) + k[i] / 2u
                                        : k[i]);
@@ -1014,7 +1153,7 @@ template<typename T>
         }
     }
 
-    if (fuse_packed && !s.radices.empty()) {
+    if (steps != 0) {
         dif_build_tape<T, true>(s, N);
         dif_build_tape<T, false>(s, N);
     }

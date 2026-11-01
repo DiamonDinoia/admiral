@@ -313,9 +313,15 @@ private:
     // One circle for the whole real plan: the recombine row builds it at den N first, the
     // half-length c2c states (and the lazy inverse twin) read den N/2 from the same tables.
     mutable portable_trig::turns_memo memo_;
-    static std::vector<std::complex<T>> make_recombine_tw(std::size_t N, bool even,
-                                                          portable_trig::turns_memo* memo);
-    std::vector<std::complex<T>> tw_;
+    // One block per real plan: the recombine row up front, the memo's two-level circle
+    // behind it. The half-length c2c state keeps its own single arena block.
+    dif_arena block_;
+    static dif_arena make_plan_block(std::size_t N, bool even, portable_trig::turns_memo* memo);
+    // Carve the recombine row from block_ and fill it at den N, before fwd_ reads the memo.
+    static dif_buf<std::complex<T>> fill_recombine_tw(std::size_t N, bool even,
+                                                      dif_arena& block,
+                                                      portable_trig::turns_memo* memo);
+    dif_buf<std::complex<T>> tw_;
     plan_impl<T> fwd_;
     mutable std::optional<plan_impl<T>> inv_;
     mutable std::once_flag inv_once_;
@@ -330,8 +336,24 @@ real_adm_plan<T>::real_adm_plan(std::size_t N, admiral::effort eff)
       Nh_(N / 2 + 1),
       eff_(eff),
       memo_(),
-      tw_(make_recombine_tw(N, even_, &memo_)),
+      block_(make_plan_block(N, even_, &memo_)),
+      tw_(fill_recombine_tw(N, even_, block_, &memo_)),
       fwd_(M_, true, 1, nullptr, eff, false, &memo_) {
+}
+
+// One block per real plan: the recombine row up front, the memo's two-level circle tables
+// behind it. Sizes come from the den-N circle the recombine row builds first (the half-length
+// c2c state and the lazy inverse twin read den N/2 from the same build).
+template<typename T>
+dif_arena real_adm_plan<T>::make_plan_block(std::size_t N, bool even,
+                                            portable_trig::turns_memo* memo) {
+    dif_arena block;
+    const std::size_t tw_bytes = even ? (N / 2 + 1) * sizeof(std::complex<T>) : 0;
+    const std::size_t memo_elems = portable_trig::turns_memo::table_elems(N);
+    block.alloc(tw_bytes + memo_elems * sizeof(double) + 128);
+    dif_buf<double> region = block.template carve<double>(memo_elems);
+    memo->attach(region.data(), region.size());
+    return block;
 }
 
 // One batched row replaces per-entry sincos calls. Entries carry the product rounding
@@ -341,14 +363,13 @@ real_adm_plan<T>::real_adm_plan(std::size_t N, admiral::effort eff)
 // dif tables at den N/2 read the same two-level circle over den N instead of building
 // their own: one table build per plan, one sincos batch total.
 template<typename T>
-std::vector<std::complex<T>> real_adm_plan<T>::make_recombine_tw(std::size_t N, bool even,
-                                                                 portable_trig::turns_memo* memo) {
-    std::vector<std::complex<T>> tw;
-    if (even) {
-        const std::size_t half = N / 2;
-        tw.resize(half + 1);
-        geom_twiddle_row_packed<T, true>(1, N, half + 1, tw.data(), memo);
-    }
+dif_buf<std::complex<T>> real_adm_plan<T>::fill_recombine_tw(std::size_t N, bool even,
+                                                             dif_arena& block,
+                                                             portable_trig::turns_memo* memo) {
+    if (!even) return {};
+    const std::size_t half = N / 2;
+    dif_buf<std::complex<T>> tw = block.template carve<std::complex<T>>(half + 1);
+    geom_twiddle_row_packed<T, true>(1, N, half + 1, tw.data(), memo);
     return tw;
 }
 

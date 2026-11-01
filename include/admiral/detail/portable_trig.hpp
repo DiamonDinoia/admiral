@@ -3,10 +3,12 @@
 #include <cfloat>
 #include <cmath>
 #include <cstddef>
+#include <memory>
 #include <utility>
 #include <vector>
 
 #include "ct_math.hpp"
+#include "scratch.hpp"
 
 // The circle matches the run-time fold bit for bit only where long double is the 64-bit
 // mantissa format the generator folded at (x86 80-bit). The measured other formats keep
@@ -86,6 +88,20 @@ struct turns_memo {
         return {s, c};
     }
 
+    // External backing the plan carves from its single block: table_elems(den) must cover the
+    // largest den the memo will serve (this plan's top den; divisor dens reuse the build).
+    void attach(double* base, std::size_t elems) {
+        ext_base_ = base;
+        ext_elems_ = elems;
+        ext_off_ = 0;
+    }
+    [[nodiscard]] static std::size_t table_elems(std::size_t d) {
+        std::size_t shift = 0;
+        while ((std::size_t{1} << shift) * (std::size_t{1} << shift) < d) ++shift;
+        const std::size_t q = std::size_t{1} << shift;
+        return 2 * (q + (d + q - 1) / q);
+    }
+
    private:
     static void libm_sincos(double x, double& s, double& c) {
 #if defined(__GNUC__) || defined(__clang__)
@@ -141,17 +157,32 @@ struct turns_memo {
         while ((std::size_t{1} << two_shift) * (std::size_t{1} << two_shift) < d) ++two_shift;
         two_q = std::size_t{1} << two_shift;
         const std::size_t nh = (d + two_q - 1) / two_q;
-        two_lo_s.resize(two_q);
-        two_lo_c.resize(two_q);
-        two_hi_s.resize(nh);
-        two_hi_c.resize(nh);
+        // One block per table build, where the plan attached a region carved from its own
+        // arena or from this unique_ptr fallback (as the earlier per-side vector storage).
+        const std::size_t need = 2 * (two_q + nh);
+        double* base;
+        if (ext_base_ != nullptr && ext_off_ + need <= ext_elems_) {
+            base = ext_base_ + ext_off_;
+            ext_off_ += need;
+        } else {
+            owned_ = std::make_unique<double[]>(need);
+            base = owned_.get();
+        }
+        two_lo_s = {base, two_q};
+        two_lo_c = {base + two_q, two_q};
+        two_hi_s = {base + 2 * two_q, nh};
+        two_hi_c = {base + 2 * two_q + nh, nh};
         libm_base(1, two_q, d, two_lo_s.data(), two_lo_c.data());      // w^(i/d),   i < q
         libm_base(two_q, nh, d, two_hi_s.data(), two_hi_c.data());     // w^(j*q/d), j < nh
     }
+
     std::size_t two_den = 0;
     unsigned two_shift = 0;
     std::size_t two_q = 0;
-    std::vector<double> two_lo_s, two_lo_c, two_hi_s, two_hi_c;
+    dif_buf<double> two_lo_s, two_lo_c, two_hi_s, two_hi_c;
+    std::unique_ptr<double[]> owned_;
+    double* ext_base_ = nullptr;
+    std::size_t ext_elems_ = 0, ext_off_ = 0;
 };
 
 template<bool Forward>

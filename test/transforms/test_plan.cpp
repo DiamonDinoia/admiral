@@ -607,3 +607,16 @@ TEMPLATE_TEST_CASE("effort::measure races the large route serially past the cost
     REQUIRE(est_route == "four_step_large");  // the regime the case is about
     REQUIRE(meas_ns > est_ns + 2.0 * exec_ns);
 }
+
+TEST_CASE("plan construction sweeps n = 2..4096 and the gate sizes", "[plan][sweep]") {
+    for (std::size_t n = 2; n <= 4096; ++n) {
+        CAPTURE(n);
+        REQUIRE(admiral::plan<double>(n).size() == n);
+        REQUIRE(admiral::plan<float>(n).size() == n);
+    }
+    for (const std::size_t n : {std::size_t{256}, std::size_t{1000}, std::size_t{1024}}) {
+        CAPTURE(n);
+        REQUIRE(admiral::plan_r2c<double>(n).real_size() == n);
+        REQUIRE(admiral::plan_r2c<float>(n).real_size() == n);
+    }
+}

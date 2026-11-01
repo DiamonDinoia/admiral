@@ -236,8 +236,9 @@ template<typename T>
 
 // The last pass of a tape variant: reads the live plane, writes the transform's output.
 template<typename T, bool Forward>
-ADM_ALWAYS_INLINE void dif_tape_push_last(std::vector<dif_step<T>>& tv, const dif_twiddle_set<T>& dtw,
-                        std::size_t l1, bool ping) {
+ADM_ALWAYS_INLINE void dif_tape_push_last(dif_buf<dif_step<T>>& tv, std::size_t k,
+                                          const dif_twiddle_set<T>& dtw,
+                                          std::size_t l1, bool ping) {
     const std::size_t p = dtw.radices.size() - 1;
     dif_step<T> st{};
     st.p = p;
@@ -250,7 +251,7 @@ ADM_ALWAYS_INLINE void dif_tape_push_last(std::vector<dif_step<T>>& tv, const di
                        poet::dispatch_param<dif_generic_radix_seq>{dtw.radices[p]}, st);
     else
         dispatch_dif_radix(dtw.radices[p], dif_tape_fill_last<T, Forward>{}, st);
-    tv.push_back(st);
+    tv[k] = st;
 }
 
 template<typename T, bool Forward>
@@ -260,8 +261,8 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
     auto& tp = dtw.tape[Forward ? 0 : 1];
 
     for (unsigned variant = 0; variant < 2; ++variant) {
-        std::vector<dif_step<T>>& tv = variant == 0 ? tp.blk : tp.flat;
-        tv.reserve(n_passes + 1);
+        dif_buf<dif_step<T>>& tv = variant == 0 ? tp.blk : tp.flat;
+        std::size_t k = 0;
 
         const std::uint64_t es2 =
             variant == 0 ? compute_dif_es2(dtw, N, n_passes) : std::uint64_t{0};
@@ -282,14 +283,14 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
                                st);
             else
                 dispatch_dif_radix(dtw.radices[0], dif_tape_fill_first<T, Forward>{}, st);
-            tv.push_back(st);
+            tv[k++] = st;
         }
 
         if (n_passes == 1) {
             dif_step<T> st{};
             st.fn = &dif_tape_step_single<T, Forward>;
             st.n = N;
-            tv.push_back(st);
+            tv[k] = st;
             continue;
         }
 
@@ -311,7 +312,7 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
             if (dif_is_generic_radix(ip)) {
                 st.fn = dif_thunk<T>::chiplet(ip);
                 st.n = ip;
-                tv.push_back(st);
+                tv[k++] = st;
                 l1 *= ip;
                 ping = !ping;
                 continue;
@@ -321,13 +322,13 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
                 st.dim = st.sim;
                 st.es = static_cast<std::uint8_t>(es_bit(p) << 1);
                 st.fn = dif_thunk<T>::in_place(ip);
-                tv.push_back(st);
+                tv[k++] = st;
                 l1 *= ip;
                 continue;
             }
             if (dtw.sched[p] == dif_fuse::f3head) {
                 st.fn = dif_thunk<T>::fused3();
-                tv.push_back(st);
+                tv[k++] = st;
                 l1 *= 64u;
                 ping = !ping;
                 p += 2;
@@ -335,19 +336,19 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
             }
             if (dtw.sched[p] == dif_fuse::f2head) {
                 st.fn = dif_thunk<T>::fused2(ip, dtw.radices[p + 1]);
-                tv.push_back(st);
+                tv[k++] = st;
                 l1 *= ip * dtw.radices[p + 1];
                 ping = !ping;
                 ++p;
                 continue;
             }
             st.fn = dif_thunk<T>::body(ip);
-            tv.push_back(st);
+            tv[k++] = st;
             l1 *= ip;
             ping = !ping;
         }
 
-        dif_tape_push_last<T, Forward>(tv, dtw, l1, ping);
+        dif_tape_push_last<T, Forward>(tv, k, dtw, l1, ping);
     }
 }
 
@@ -361,7 +362,7 @@ void iterative_dif_execute_ws(const std::complex<T>* in, std::complex<T>* out,
     if (N <= 1) return;
     constexpr std::size_t W = xsimd::batch<T>::size;
     const auto& tp = dtw.tape[Forward ? 0 : 1];
-    const std::vector<dif_step<T>>& tv = soa_stride >= N ? tp.blk : tp.flat;
+    const dif_buf<dif_step<T>>& tv = soa_stride >= N ? tp.blk : tp.flat;
     const dif_rt<T> rt{in, out, scale_val, &dtw};
     for (const dif_step<T>& st : tv) {
         T* const dr = st.dst ? cc1re : cc0re;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <complex>
 #include <tuple>
 #include <utility>
 
@@ -50,6 +51,53 @@ void geom_twiddle_row(std::size_t step, std::size_t den, std::size_t n,
         aim.store_unaligned(im + b * W);
     }
     for (std::size_t i = blocks * W; i < n; ++i) std::tie(re[i], im[i]) = exact(i);
+}
+
+// Same geometry into interleaved storage, for tables held as complex<T>: one sincos call per
+// batch instead of per entry, at the same product rounding the split row above carries.
+template<typename T, bool Forward>
+void geom_twiddle_row_packed(std::size_t step, std::size_t den, std::size_t n,
+                             std::complex<T>* ADM_RESTRICT out,
+                             portable_trig::turns_memo* memo = nullptr) {
+    using B = xsimd::batch<T>;
+    constexpr std::size_t W = B::size;
+
+    const auto exact = [&](std::size_t i) {
+        const auto [sn, cs] = portable_trig::sincos_turns<Forward>(step * i, den, memo);
+        return std::pair<T, T>{static_cast<T>(cs), static_cast<T>(sn)};
+    };
+
+    if (n < W) {
+        for (std::size_t i = 0; i < n; ++i) {
+            const auto [re, im] = exact(i);
+            out[i] = std::complex<T>(re, im);
+        }
+        return;
+    }
+
+    alignas(B::arch_type::alignment()) T seed_re[W], seed_im[W];
+    for (std::size_t l = 0; l < W; ++l) std::tie(seed_re[l], seed_im[l]) = exact(l);
+    const B sre = B::load_aligned(seed_re);
+    const B sim = B::load_aligned(seed_im);
+
+    const std::size_t blocks = n / W;
+    for (std::size_t b = 0; b < blocks; ++b) {
+        const auto [a_re, a_im] = exact(b * W);
+        B are = sre, aim = sim;
+        cmul_ip(are, aim, B(a_re), B(a_im));
+        alignas(B::arch_type::alignment()) T re[W], im[W];
+        are.store_aligned(re);
+        aim.store_aligned(im);
+        T* dst = reinterpret_cast<T*>(out + b * W);
+        for (std::size_t i = 0; i < W; ++i) {
+            dst[2 * i] = re[i];
+            dst[2 * i + 1] = im[i];
+        }
+    }
+    for (std::size_t i = blocks * W; i < n; ++i) {
+        const auto [re, im] = exact(i);
+        out[i] = std::complex<T>(re, im);
+    }
 }
 
 }

@@ -11,6 +11,7 @@
 #include "admiral/admiral.hpp"
 #endif
 
+#include <atomic>
 #include <limits>
 #include <mutex>
 #include <optional>
@@ -49,50 +50,71 @@ inline std::size_t split_batch_threads(std::size_t requested, std::size_t total,
     return requested;
 }
 
+// One lazy plan half. The acquire load is the hot path. The factory runs under the mutex
+// only while the slot is unset. The release store publishes the built state. A build that
+// throws leaves the slot unset, and the next call retries it.
+template<typename T>
+class lazy_slot {
+public:
+    template<typename F>
+    const T& get(F&& build) const {
+        if (!ready.load(std::memory_order_acquire)) {
+            std::lock_guard<std::mutex> lock(mtx);
+            if (!ready.load(std::memory_order_relaxed)) {
+                st.emplace(build());
+                ready.store(true, std::memory_order_release);
+            }
+        }
+        return *st;
+    }
+
+private:
+    mutable std::optional<T> st;
+    mutable std::atomic<bool> ready{false};
+    mutable std::mutex mtx;
+};
+
 #ifdef ADM_DISPATCH
 
 template<typename T>
 struct plan_state_impl final : plan_state<T> {
     std::vector<std::size_t> shape;
+    std::size_t total = 0;
     std::size_t nthreads;
     admiral::effort eff;
     bool pin_threads;
-    nd_runtime_plan<T> fwd;
     unsigned debug;
 
-    // The inverse half builds on first use, not in the constructor: one numpy call runs one
-    // direction, so the eager twin was half the small-N plan cost. The tables the deferred
+    // Both halves build on first use, not in the constructor: one numpy call runs one
+    // direction, so an eager twin was half the small-N plan cost. The tables the deferred
     // build fills are the same values the eager one filled, so outputs stay bit-identical.
-    const nd_runtime_plan<T>& lazy_inv() const {
-        std::call_once(inv_once, [this] {
-            inv.emplace(shape, false, nthreads, eff, pin_threads);
-        });
-        if (!inv) throw internal_error("inverse plan not built");
-        return *inv;
-    }
-    const nd_runtime_plan<T>& dir(bool is_forward) const {
-        return is_forward ? fwd : lazy_inv();
+    const nd_runtime_plan<T>& lazy_dir(bool is_forward) const {
+        return (is_forward ? fwd : inv).get(
+            [&] { return nd_runtime_plan<T>(shape, is_forward, nthreads, eff, pin_threads); });
     }
 
     plan_state_impl(span<const std::size_t> shape_, const admiral::options& opts)
         : shape(shape_.begin(), shape_.end()), nthreads(opts.nthreads), eff(opts.eff),
           pin_threads(opts.pin_threads), debug(opts.debug) {
-        fwd = nd_runtime_plan<T>{shape, true, opts.nthreads, opts.eff, opts.pin_threads,
-                                 nullptr};
+        // The size check the eager build raised lives here; allocation failure surfaces at
+        // the first call that needs a half.
+        const auto elems = extent_product(shape);
+        if (!elems) ADM_UNLIKELY
+            throw size_error("Plan size must be greater than 0");
+        total = *elems;
     }
 
-    [[nodiscard]] std::size_t size() const noexcept override { return fwd.size(); }
+    [[nodiscard]] std::size_t size() const noexcept override { return total; }
     void run(bool is_forward, std::complex<T>* data, const T* fct) const override {
-        dir(is_forward).execute(data, {as_optional(fct), debug});
+        lazy_dir(is_forward).execute(data, {as_optional(fct), debug});
     }
     void run(bool is_forward, const std::complex<T>* src, std::complex<T>* dst,
              const T* fct) const override {
-        dir(is_forward).execute(src, dst, {as_optional(fct), debug});
+        lazy_dir(is_forward).execute(src, dst, {as_optional(fct), debug});
     }
 
 private:
-    mutable std::optional<nd_runtime_plan<T>> inv;
-    mutable std::once_flag inv_once;
+    mutable lazy_slot<nd_runtime_plan<T>> fwd, inv;
 };
 
 template<>
@@ -155,21 +177,16 @@ struct strides_state_impl final : strides_state<T> {
     bool pin_threads;
     std::size_t len, nbatch;
     std::size_t in_stride, in_dist, out_stride, out_dist;
-    nd_axis_state<T> fwd;
     std::unique_ptr<thread_pool> pool;
 
-    // The inverse axis state builds on first use, not in the constructor (numpy runs one
-    // direction per plan). Route election is direction-independent, so the slab check reads
-    // the forward state alone. ponytail: effort::measure could elect differing routes per
-    // direction; then the pool stays at the forward width, a resize, not an error.
-    const nd_axis_state<T>& lazy_inv() const {
-        std::call_once(inv_once, [this] {
-            inv.emplace(make_nd_axis_state<T>(len, in_stride, false, false,
-                                              axis_threads, eff, pin_threads, nullptr,
-                                              in_stride != 1));
+    // Both axis states build on first use, not in the constructor (numpy runs one direction
+    // per plan). ponytail: effort::measure could elect differing routes per direction; then
+    // the pool stays at the forward width, a resize, not an error.
+    const nd_axis_state<T>& lazy_dir(bool is_forward) const {
+        return (is_forward ? fwd : inv).get([&] {
+            return make_nd_axis_state<T>(len, in_stride, is_forward, false, axis_threads, eff,
+                                         pin_threads, nullptr, in_stride != 1);
         });
-        if (!inv) throw internal_error("inverse axis state not built");
-        return *inv;
     }
 
     strides_state_impl(std::size_t len_, std::size_t n, std::size_t istride, std::size_t idist,
@@ -186,11 +203,14 @@ struct strides_state_impl final : strides_state<T> {
                              " product must fit");
         axis_threads =
             split_batch_threads<T>(opts.nthreads, *total, n, len_, pool, opts.pin_threads);
-        fwd = make_nd_axis_state<T>(len_, istride, true, false,
-                                    axis_threads, opts.eff, opts.pin_threads, nullptr,
-                                    istride != 1);
+        // The pool is immutable after this constructor (run() reads it unsynchronised), so
+        // the slab width is decided here. Route election is direction-independent
+        // (choose_line_route reads dif alone), so the check probes the dif flag the lazy
+        // build would set instead of a built state.
+        nd_axis_state<T> probe;
+        probe.dif = axis_dif_wanted(len_, false, istride != 1);
         const bool need_slab = (len_ > 1 && istride != 1 && idist == 1 && odist != 1 &&
-                                slab_route(fwd));
+                                slab_route(probe));
         if (need_slab && pool && opts.nthreads == 0) {
             const std::size_t n1 =
                 resolve_nthreads(0, *total, 2,
@@ -206,8 +226,7 @@ struct strides_state_impl final : strides_state<T> {
     }
 
 private:
-    mutable std::optional<nd_axis_state<T>> inv;
-    mutable std::once_flag inv_once;
+    mutable lazy_slot<nd_axis_state<T>> fwd, inv;
 
 public:
 
@@ -215,7 +234,7 @@ public:
 
     void run(bool is_forward, const std::complex<T>* src, std::complex<T>* dst,
              std::optional<T> fct) const override {
-        const nd_axis_state<T>& st = is_forward ? fwd : lazy_inv();
+        const nd_axis_state<T>& st = lazy_dir(is_forward);
         if (src == dst && (in_stride != out_stride || in_dist != out_dist)) ADM_UNLIKELY
             throw size_error("strides_plan: in place requires matching in/out strides");
         if (len <= 1) {
@@ -325,45 +344,42 @@ struct r2r_state_impl final : r2r_state<T> {
 template<typename T>
 struct plan_state {
     std::vector<std::size_t> shape;
+    std::size_t total = 0;
     std::size_t nthreads;
     admiral::effort eff;
     bool pin_threads;
-    nd_runtime_plan<T> fwd;
     unsigned debug;
 
-    // The inverse half builds on first use, not in the constructor: one numpy call runs one
-    // direction, so the eager twin was half the small-N plan cost. The tables the deferred
+    // Both halves build on first use, not in the constructor: one numpy call runs one
+    // direction, so an eager twin was half the small-N plan cost. The tables the deferred
     // build fills are the same values the eager one filled, so outputs stay bit-identical.
-    const nd_runtime_plan<T>& lazy_inv() const {
-        std::call_once(inv_once, [this] {
-            inv.emplace(shape, false, nthreads, eff, pin_threads);
-        });
-        if (!inv) throw internal_error("inverse plan not built");
-        return *inv;
-    }
-    const nd_runtime_plan<T>& dir(bool is_forward) const {
-        return is_forward ? fwd : lazy_inv();
+    const nd_runtime_plan<T>& lazy_dir(bool is_forward) const {
+        return (is_forward ? fwd : inv).get(
+            [&] { return nd_runtime_plan<T>(shape, is_forward, nthreads, eff, pin_threads); });
     }
 
     plan_state(span<const std::size_t> shape_, const admiral::options& opts)
         : shape(shape_.begin(), shape_.end()), nthreads(opts.nthreads), eff(opts.eff),
           pin_threads(opts.pin_threads), debug(opts.debug) {
-        fwd = nd_runtime_plan<T>{shape, true, opts.nthreads, opts.eff, opts.pin_threads,
-                                 nullptr};
+        // The size check the eager build raised lives here; allocation failure surfaces at
+        // the first call that needs a half.
+        const auto elems = extent_product(shape);
+        if (!elems) ADM_UNLIKELY
+            throw size_error("Plan size must be greater than 0");
+        total = *elems;
     }
 
-    [[nodiscard]] std::size_t size() const noexcept { return fwd.size(); }
+    [[nodiscard]] std::size_t size() const noexcept { return total; }
     void run(bool is_forward, std::complex<T>* data, const T* fct) const {
-        dir(is_forward).execute(data, {as_optional(fct), debug});
+        lazy_dir(is_forward).execute(data, {as_optional(fct), debug});
     }
     void run(bool is_forward, const std::complex<T>* src, std::complex<T>* dst,
              const T* fct) const {
-        dir(is_forward).execute(src, dst, {as_optional(fct), debug});
+        lazy_dir(is_forward).execute(src, dst, {as_optional(fct), debug});
     }
 
 private:
-    mutable std::optional<nd_runtime_plan<T>> inv;
-    mutable std::once_flag inv_once;
+    mutable lazy_slot<nd_runtime_plan<T>> fwd, inv;
 };
 
 template<>
@@ -416,21 +432,16 @@ struct strides_state {
     bool pin_threads;
     std::size_t len, nbatch;
     std::size_t in_stride, in_dist, out_stride, out_dist;
-    nd_axis_state<T> fwd;
     std::unique_ptr<thread_pool> pool;
 
-    // The inverse axis state builds on first use, not in the constructor (numpy runs one
-    // direction per plan). Route election is direction-independent, so the slab check reads
-    // the forward state alone. ponytail: effort::measure could elect differing routes per
-    // direction; then the pool stays at the forward width, a resize, not an error.
-    const nd_axis_state<T>& lazy_inv() const {
-        std::call_once(inv_once, [this] {
-            inv.emplace(make_nd_axis_state<T>(len, in_stride, false, false,
-                                              axis_threads, eff, pin_threads, nullptr,
-                                              in_stride != 1));
+    // Both axis states build on first use, not in the constructor (numpy runs one direction
+    // per plan). ponytail: effort::measure could elect differing routes per direction; then
+    // the pool stays at the forward width, a resize, not an error.
+    const nd_axis_state<T>& lazy_dir(bool is_forward) const {
+        return (is_forward ? fwd : inv).get([&] {
+            return make_nd_axis_state<T>(len, in_stride, is_forward, false, axis_threads, eff,
+                                         pin_threads, nullptr, in_stride != 1);
         });
-        if (!inv) throw internal_error("inverse axis state not built");
-        return *inv;
     }
 
     strides_state(std::size_t len_, std::size_t n, std::size_t istride, std::size_t idist,
@@ -447,11 +458,14 @@ struct strides_state {
                              " product must fit");
         axis_threads =
             split_batch_threads<T>(opts.nthreads, *total, n, len_, pool, opts.pin_threads);
-        fwd = make_nd_axis_state<T>(len_, istride, true, false,
-                                    axis_threads, opts.eff, opts.pin_threads, nullptr,
-                                    istride != 1);
+        // The pool is immutable after this constructor (run() reads it unsynchronised), so
+        // the slab width is decided here. Route election is direction-independent
+        // (choose_line_route reads dif alone), so the check probes the dif flag the lazy
+        // build would set instead of a built state.
+        nd_axis_state<T> probe;
+        probe.dif = axis_dif_wanted(len_, false, istride != 1);
         const bool need_slab = (len_ > 1 && istride != 1 && idist == 1 && odist != 1 &&
-                                slab_route(fwd));
+                                slab_route(probe));
         if (need_slab && pool && opts.nthreads == 0) {
             const std::size_t n1 =
                 resolve_nthreads(0, *total, 2,
@@ -467,14 +481,13 @@ struct strides_state {
     }
 
 private:
-    mutable std::optional<nd_axis_state<T>> inv;
-    mutable std::once_flag inv_once;
+    mutable lazy_slot<nd_axis_state<T>> fwd, inv;
 
 public:
 
     void run(bool is_forward, const std::complex<T>* src, std::complex<T>* dst,
              std::optional<T> fct) const {
-        const nd_axis_state<T>& st = is_forward ? fwd : lazy_inv();
+        const nd_axis_state<T>& st = lazy_dir(is_forward);
         if (src == dst && (in_stride != out_stride || in_dist != out_dist)) ADM_UNLIKELY
             throw size_error("strides_plan: in place requires matching in/out strides");
         if (len <= 1) {

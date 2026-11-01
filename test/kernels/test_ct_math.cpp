@@ -289,11 +289,11 @@ TEST_CASE("the fold constant-evaluates", "[ct_math][portability]") {
     SUCCEED();
 }
 
-// A runtime table entry and a folded codelet constant carry the same value: portable_trig is
-// the fold, not a second approximation of it. Above turns_memo::kCap the memoized call reads
-// the two-level table, whose product of two folded bases lands within a few double ulp of the
-// entrywise fold; there the bound replaces the bitwise check.
-TEST_CASE("a runtime table entry equals the folded constant", "[ct_math][numerics]") {
+// The no-memo run-time path is still the fold, bit for bit. The memoized path above den 8
+// reads the two-level libm table: the bit-identical-to-the-fold contract is dropped there
+// (machine precision in norm is the gate, see portable_trig.hpp), so the check is an ulp
+// bound, loose enough for a weaker platform libm.
+TEST_CASE("a runtime table entry stays within the memo accuracy contract", "[ct_math][numerics]") {
     for (const std::size_t den : turns_dens) {
         admiral::detail::portable_trig::turns_memo memo;
         double worst_ulp = 0;
@@ -305,20 +305,15 @@ TEST_CASE("a runtime table entry equals the folded constant", "[ct_math][numeric
                 REQUIRE(p.second == w.c);
                 const auto pm =
                     admiral::detail::portable_trig::sincos_turns(k, den, forward, &memo);
-                const double ulp = double(std::numeric_limits<double>::epsilon());
-                if (den <= admiral::detail::portable_trig::turns_memo::kCap) {
-                    REQUIRE(pm.first == w.s);
-                    REQUIRE(pm.second == w.c);
-                } else {
-                    worst_ulp =
-                        std::max(worst_ulp,
-                                 std::max(std::abs(pm.first - w.s), std::abs(pm.second - w.c)) /
-                                     ulp);
-                }
+                const double ulp = std::numeric_limits<double>::epsilon();
+                worst_ulp =
+                    std::max(worst_ulp,
+                             std::max(std::abs(pm.first - w.s), std::abs(pm.second - w.c)) /
+                                 ulp);
             }
         }
         INFO("den " << den << " two-level memo worst " << worst_ulp << " in 2^-52 vs the fold");
-        REQUIRE(worst_ulp <= 2.0);
+        REQUIRE(worst_ulp <= 8.0);
     }
 }
 

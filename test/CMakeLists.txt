@@ -28,6 +28,7 @@ set(ADM_TEST_SOURCES
     transforms/test_generic_pass.cpp
     transforms/test_r2r.cpp
     accuracy/test_ulp.cpp
+    accuracy/test_norm_gate.cpp
     accuracy/test_analytical.cpp
     accuracy/test_long_double.cpp
 )

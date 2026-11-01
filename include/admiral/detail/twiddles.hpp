@@ -590,6 +590,11 @@ template<typename T>
     return out;
 }
 
+// Base-contract starved-tail floor: the strict pass keeps generic radices below it or
+// with a full-vector ido. The number is base's kGenericStarvedTailMinRadix, kept for
+// base-election fidelity (see dif_chain_shape_strict_ok).
+inline constexpr std::size_t kDifStrictStarvedMinRadix = 47;
+
 template<typename T>
 [[nodiscard]] inline bool dif_chain_shape_ok(std::size_t N, const dif_factor_plan& p) {
     if (p.count == 0) return false;
@@ -597,6 +602,27 @@ template<typename T>
     for (std::size_t i = 0; i < p.count; ++i) {
         const std::size_t r = p[i];
         if (!in_seq(dif_radix_set{}, r) && !dif_is_generic_radix(r)) return false;
+        prefix *= r;
+    }
+    return prefix == N;
+}
+
+// The base planner's contract: a generic radix sits in a middle pass and its ido fills a
+// vector tile. Every route outside the odd-prime class keeps this contract; measured
+// (odd-review Check 5, 465/555/615-class): generic-first chains lose 1.05-3.6x to it.
+template<typename T>
+[[nodiscard]] inline bool dif_chain_shape_strict_ok(std::size_t N, const dif_factor_plan& p) {
+    if (p.count == 0) return false;
+    std::size_t prefix = 1;
+    for (std::size_t i = 0; i < p.count; ++i) {
+        const std::size_t r = p[i];
+        if (dif_is_generic_radix(r)) {
+            if (i == 0 || i + 1 == p.count) return false;
+            const std::size_t ido = N / (prefix * r);
+            if (r >= kDifStrictStarvedMinRadix && ido < xsimd::batch<T>::size) return false;
+        } else if (!in_seq(dif_radix_set{}, r)) {
+            return false;
+        }
         prefix *= r;
     }
     return prefix == N;
@@ -634,7 +660,8 @@ struct dif_chain_entry {
 
 template<typename T>
 [[nodiscard]] inline dif_chain_list dif_chain_candidates(std::size_t N,
-                                                         std::size_t want = kDifCandidates) {
+                                                         std::size_t want = kDifCandidates,
+                                                         bool relaxed = true) {
     const std::size_t beam = want <= 1 ? 1 : kDifBeam;
     if (N >= kDifFuseMinN<T> && (N & (N - 1u)) == 0u) return enumerate_pow2_dif_chains<T>(N, want);
 
@@ -708,9 +735,23 @@ template<typename T>
         };
         for (std::size_t k = 0; k < nrad; ++k)
             if (n % radices[k] == 0) expand(radices[k], dif_stage_cost<T>(N, n, radices[k]));
-        for (std::size_t k = 0; k < ngen; ++k)
-            if (n % generics[k] == 0)
-                expand(generics[k], dif_generic_stage_cost<T>(N, n, generics[k]));
+        for (std::size_t k = 0; k < ngen; ++k) {
+            const std::size_t g = generics[k];
+            if (n % g != 0) continue;
+            // The strict pass keeps the base contract (middle pass; a starved tail priced
+            // out but still expanded, so the raw top matches base's best-effort chain).
+            // The relaxed pass is the odd-prime class, admitted only where no strict
+            // chain covers the size.
+            if (!relaxed) {
+                const std::size_t ido = n / g;
+                if (n == N || ido == 1) continue;
+                if (g >= kDifStrictStarvedMinRadix && ido < xsimd::batch<T>::size) {
+                    expand(g, 2e9 * static_cast<double>(N));
+                    continue;
+                }
+            }
+            expand(g, dif_generic_stage_cost<T>(N, n, g));
+        }
     }
 
     const auto rebuild = [&](std::size_t k) {
@@ -747,9 +788,24 @@ template<typename T>
 
 template<typename T>
 [[nodiscard]] inline dif_factor_plan dif_elected_chain(std::size_t N) {
-    const dif_factor_plan best = dif_chain_candidates<T>(N, 1)[0];
+    // The base election's exact call pattern (beam-1 probe, list rescan only when the
+    // probe fails shape) under the base chain contract: byte-identical output to the
+    // base planner at every size, so no route or chain outside the admitted class moves.
+    const dif_factor_plan best = dif_chain_candidates<T>(N, 1, false)[0];
+    if (dif_chain_shape_strict_ok<T>(N, best)) return best;
+    const dif_chain_list c = dif_chain_candidates<T>(N, kDifCandidates, false);
+    for (std::size_t i = 0; i < c.count; ++i)
+        if (dif_chain_shape_strict_ok<T>(N, c[i])) return c[i];
+    return best;
+}
+
+// The odd-prime election: the generic-end chain, used only where dif_elected_chain finds
+// no strict chain and the base route has no dedicated engine.
+template<typename T>
+[[nodiscard]] inline dif_factor_plan dif_elected_chain_relaxed(std::size_t N) {
+    const dif_factor_plan best = dif_chain_candidates<T>(N, 1, true)[0];
     if (dif_chain_shape_ok<T>(N, best)) return best;
-    const dif_chain_list c = dif_chain_candidates<T>(N);
+    const dif_chain_list c = dif_chain_candidates<T>(N, kDifCandidates, true);
     for (std::size_t i = 0; i < c.count; ++i)
         if (dif_chain_shape_ok<T>(N, c[i])) return c[i];
     return best;
@@ -761,7 +817,9 @@ template<typename T>
 // which admits generic radices.
 template<typename T>
 [[nodiscard]] inline dif_factor_plan build_dif_factor_plan(std::size_t N) {
-    return dif_chain_candidates<T>(N, 1)[0];
+    const dif_chain_list strict = dif_chain_candidates<T>(N, 1, false);
+    if (strict.count != 0 && dif_chain_shape_strict_ok<T>(N, strict[0])) return strict[0];
+    return dif_chain_candidates<T>(N, 1, true)[0];
 }
 
 template<typename T>

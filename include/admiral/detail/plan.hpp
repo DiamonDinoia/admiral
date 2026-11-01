@@ -391,7 +391,9 @@ private:
 
     [[nodiscard]] static bool dif_chain_supported(std::size_t size) {
         if (detail::has_single_bit(size) || is_codelet_supported(size)) return true;
-        return dif_chain_shape_ok(size, dif_elected_chain<T>(size));
+        // Capability, not policy: any chain the tape can run (the election policy lives
+        // in select_route), so forced chains stay testable at admitted sizes.
+        return detail::dif_chain_shape_ok<T>(size, detail::dif_elected_chain_relaxed<T>(size));
     }
 
 public:
@@ -411,7 +413,9 @@ private:
                 if (rk == route_kind::iterative_dif) {
                     if (detail::has_single_bit(size) || is_codelet_supported(size)) return rk;
                     const dif_factor_plan chain = detail::dif_elected_chain<T>(size);
-                    if (detail::dif_chain_shape_ok<T>(size, chain)) {
+                    // The fitted ranking models the base chain contract (strict). The
+                    // relaxed generic-end chain is admitted only on the ladder below.
+                    if (detail::dif_chain_shape_strict_ok<T>(size, chain)) {
                         if (dif_out != nullptr) *dif_out = chain;
                         return rk;
                     }
@@ -423,12 +427,28 @@ private:
         if (is_codelet_catalog(size)) return route_kind::codelet;
         if (four_step_batched_supported<T>(size)) return route_kind::four_step_batched;
         if (large_route_admits(size, nthreads)) return route_kind::four_step_large;
-        if (dif_chain_supported(size))
+        const dif_factor_plan strict_chain = detail::dif_elected_chain<T>(size);
+        const bool strict = detail::has_single_bit(size) || is_codelet_supported(size) ||
+                            detail::dif_chain_shape_strict_ok<T>(size, strict_chain);
+        if (strict) {
+            if (dif_out != nullptr) *dif_out = strict_chain;
             return route_kind::iterative_dif;
-        if (four_step_supported(size) && four_step_beats_bluestein<T>(size))
-            return route_kind::four_step;
-        if (rader_supported(size) && rader_beats_bluestein<T>(size))
-            return route_kind::rader;
+        }
+        const bool four = four_step_supported(size) && four_step_beats_bluestein<T>(size);
+        const bool rad = rader_supported(size) && rader_beats_bluestein<T>(size);
+        // The relaxed generic-end chain is the odd-prime class. Admit it only where the
+        // base route has no dedicated engine (four_step or whole-size Bluestein): that is
+        // what keeps codelet/rader/good_thomas sizes on the route the base elected
+        // (odd-review Check 5: those losses ran 1.1-3.6x).
+        if (four || !rad) {
+            const dif_factor_plan chain = detail::dif_elected_chain_relaxed<T>(size);
+            if (detail::dif_chain_shape_ok<T>(size, chain)) {
+                if (dif_out != nullptr) *dif_out = chain;
+                return route_kind::iterative_dif;
+            }
+        }
+        if (four) return route_kind::four_step;
+        if (rad) return route_kind::rader;
         return route_kind::bluestein;
     }
 
@@ -525,7 +545,12 @@ plan_impl<T>::plan_impl(std::size_t size, bool is_forward, routed_plan rp, bool 
     }
     if (rp.dif_override) {
         std::size_t cover = 1;
-        for (std::size_t p = 0; p < rp.dif_override->count; ++p) cover *= (*rp.dif_override)[p];
+        for (std::size_t p = 0; p < rp.dif_override->count; ++p) {
+            const std::size_t r = (*rp.dif_override)[p];
+            if (r == 0 || cover > size / r) ADM_UNLIKELY
+                throw unsupported_error("forced dif: chain overflows or does not multiply to size");
+            cover *= r;
+        }
         if (cover != size) ADM_UNLIKELY
             throw unsupported_error("forced dif: chain does not multiply to size");
     }

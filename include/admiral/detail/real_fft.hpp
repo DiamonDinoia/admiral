@@ -289,7 +289,7 @@ private:
     // plan cost. Same tables, same values: construction order does not change the bits.
     const plan_impl<T>& lazy_inv() const {
         std::call_once(inv_once_, [this] {
-            inv_.emplace(M_, false, std::size_t{1}, nullptr, eff_);
+            inv_.emplace(M_, false, std::size_t{1}, nullptr, eff_, false, &memo_);
         });
         if (!inv_) throw internal_error("inverse plan not built");
         return *inv_;
@@ -310,10 +310,15 @@ private:
     bool even_;
     std::size_t M_, Nh_;
     admiral::effort eff_;
+    // One circle for the whole real plan: the recombine row builds it at den N first, the
+    // half-length c2c states (and the lazy inverse twin) read den N/2 from the same tables.
+    mutable portable_trig::turns_memo memo_;
+    static std::vector<std::complex<T>> make_recombine_tw(std::size_t N, bool even,
+                                                          portable_trig::turns_memo* memo);
+    std::vector<std::complex<T>> tw_;
     plan_impl<T> fwd_;
     mutable std::optional<plan_impl<T>> inv_;
     mutable std::once_flag inv_once_;
-    std::vector<std::complex<T>> tw_;
     mutable bool batched_ = false;
     mutable std::once_flag tab_once_;
     mutable vp::multipass_tables<T> tab_;
@@ -324,16 +329,27 @@ real_adm_plan<T>::real_adm_plan(std::size_t N, admiral::effort eff)
     : N_(N), even_(N % 2 == 0), M_(even_ ? N / 2 : N),
       Nh_(N / 2 + 1),
       eff_(eff),
-      fwd_(M_, true, 1, nullptr, eff) {
-    if (even_) {
-        const std::size_t half = N_ / 2;
-        tw_.resize(half + 1);
-        portable_trig::turns_memo memo;
-        // One batched row replaces per-entry sincos calls. Entries carry the product rounding
-        // every dif twiddle row already carries (seed times block reseed); the recombine
-        // consumers multiply this table into the same data stream the dif tables feed.
-        geom_twiddle_row_packed<T, true>(1, N_, half + 1, tw_.data(), &memo);
+      memo_(),
+      tw_(make_recombine_tw(N, even_, &memo_)),
+      fwd_(M_, true, 1, nullptr, eff, false, &memo_) {
+}
+
+// One batched row replaces per-entry sincos calls. Entries carry the product rounding
+// every dif twiddle row already carries (seed times block reseed); the recombine
+// consumers multiply this table into the same data stream the dif tables feed.
+// It runs BEFORE the half-length c2c state construction (member order), so that state's
+// dif tables at den N/2 read the same two-level circle over den N instead of building
+// their own: one table build per plan, one sincos batch total.
+template<typename T>
+std::vector<std::complex<T>> real_adm_plan<T>::make_recombine_tw(std::size_t N, bool even,
+                                                                 portable_trig::turns_memo* memo) {
+    std::vector<std::complex<T>> tw;
+    if (even) {
+        const std::size_t half = N / 2;
+        tw.resize(half + 1);
+        geom_twiddle_row_packed<T, true>(1, N, half + 1, tw.data(), memo);
     }
+    return tw;
 }
 
 template<typename T>

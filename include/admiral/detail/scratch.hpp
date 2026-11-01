@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <memory>
 #include <new>
@@ -44,6 +45,46 @@ template<typename T>
 [[nodiscard]] aligned_buffer<T> make_aligned_buffer(std::size_t n) {
     return aligned_buffer<T>(static_cast<T*>(scratch_alloc(n * sizeof(T), span_align<T>)));
 }
+
+// A buffer carved from a set's one arena block: pointer and length, no ownership.
+template<typename T>
+struct dif_buf {
+    T* p = nullptr;
+    std::size_t n = 0;
+    [[nodiscard]] T* data() noexcept { return p; }
+    [[nodiscard]] const T* data() const noexcept { return p; }
+    [[nodiscard]] std::size_t size() const noexcept { return n; }
+    [[nodiscard]] bool empty() const noexcept { return n == 0; }
+    T& operator[](std::size_t i) noexcept { return p[i]; }
+    const T& operator[](std::size_t i) const noexcept { return p[i]; }
+    [[nodiscard]] T& front() noexcept { return p[0]; }
+    [[nodiscard]] const T& front() const noexcept { return p[0]; }
+    [[nodiscard]] T& back() noexcept { return p[n - 1]; }
+    [[nodiscard]] const T& back() const noexcept { return p[n - 1]; }
+    T* begin() noexcept { return p; }
+    T* end() noexcept { return p + n; }
+    [[nodiscard]] const T* begin() const noexcept { return p; }
+    [[nodiscard]] const T* end() const noexcept { return p + n; }
+};
+
+// One allocation per table set. carve() hands out 64-aligned buffers in address order; the
+// sizing walk counts every buffer first, so the block is exact and the cursor always fits.
+struct dif_arena {
+    aligned_buffer<char> block;
+    std::size_t off = 0;
+    std::size_t bytes = 0;
+    void alloc(std::size_t b) {
+        if (b != 0) { block = make_aligned_buffer<char>(b); bytes = b; }
+    }
+    template<typename T>
+    dif_buf<T> carve(std::size_t n) {
+        off = (off + 63u) & ~std::size_t{63};
+        T* const p = reinterpret_cast<T*>(block.get() + off);
+        off += n * sizeof(T);
+        assert(off <= bytes && "dif_arena::carve past the sized block");
+        return {p, n};
+    }
+};
 
 template<typename T, std::size_t K>
 struct soa_scratch {

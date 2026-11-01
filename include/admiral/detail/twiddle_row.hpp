@@ -23,12 +23,12 @@ ADM_ALWAYS_INLINE void cmul_ip(B& are, B& aim, const B& bre, const B& bim) {
 template<typename T, bool Forward>
 void geom_twiddle_row(std::size_t step, std::size_t den, std::size_t n,
                       T* ADM_RESTRICT re, T* ADM_RESTRICT im,
-                      portable_trig::turns_memo* memo = nullptr) {
+                      portable_trig::turns_memo* memo = nullptr, std::size_t i0 = 0) {
     using B = xsimd::batch<T>;
     constexpr std::size_t W = B::size;
 
     const auto exact = [&](std::size_t i) {
-        const auto [sn, cs] = portable_trig::sincos_turns<Forward>(step * i, den, memo);
+        const auto [sn, cs] = portable_trig::sincos_turns<Forward>(step * (i0 + i), den, memo);
         return std::pair<T, T>{static_cast<T>(cs), static_cast<T>(sn)};
     };
 
@@ -38,7 +38,13 @@ void geom_twiddle_row(std::size_t step, std::size_t den, std::size_t n,
     }
 
     alignas(B::arch_type::alignment()) T seed_re[W], seed_im[W];
-    for (std::size_t l = 0; l < W; ++l) std::tie(seed_re[l], seed_im[l]) = exact(l);
+    // The window offset rides the anchor leg only: putting it on both legs would shift every
+    // entry by step*i0 twice.
+    for (std::size_t l = 0; l < W; ++l) {
+        const auto [sn, cs] = portable_trig::sincos_turns<Forward>(step * l, den, memo);
+        seed_re[l] = static_cast<T>(cs);
+        seed_im[l] = static_cast<T>(sn);
+    }
     const B sre = B::load_aligned(seed_re);
     const B sim = B::load_aligned(seed_im);
 

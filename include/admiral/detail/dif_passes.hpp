@@ -525,6 +525,63 @@ ADM_NOINLINE void dif_pass_prime_chip(const T* ccre, const T* ccim,
     }
 }
 
+// First pass over AOS-interleaved input, prime radix: dif_pass_prime_chip's Rader pipeline
+// with deinterleaving loads and l1 == 1. Inverse swaps re/im on load (plane_refs<Forward>).
+template<typename T, bool Forward, std::size_t P>
+ADM_NOINLINE void dif_pass_first_prime(const T* ADM_RESTRICT src,
+                                       T* chre, T* chim,
+                                       std::size_t ido,
+                                       const T* twre, const T* twim,
+                                       std::size_t eso) {
+    using batch = xsimd::batch<T>;
+    constexpr std::size_t W = batch::size;
+    const std::size_t idz = ido * eso;
+    std::size_t a = 0;
+    for (; a + W <= ido; a += W) {
+        batch xre[P], xim[P];
+        for (std::size_t j = 0; j < P; ++j) {
+            batch xr, xi;
+            auto [dr, di] = plane_refs<Forward>(xr, xi);
+            aos_deinterleave<T>(src + 2u * (a + ido * j), dr, di);
+            xre[j] = xr;
+            xim[j] = xi;
+        }
+        batch yre[P], yim[P];
+        rader_apply<P, T, batch>(xre, xim, 1, yre, yim);
+        for (std::size_t k = 0; k < P; ++k) {
+            const std::size_t off = a * eso + idz * k;
+            if (k > 0) {
+                const batch owr = batch::load_unaligned(twre + ((k - 1u) * ido + a));
+                const batch owi = batch::load_unaligned(twim + ((k - 1u) * ido + a));
+                tw_store_unaligned(chre + off, chim + off, owr, owi, yre[k], yim[k]);
+            } else {
+                yre[k].store_unaligned(chre + off);
+                yim[k].store_unaligned(chim + off);
+            }
+        }
+    }
+    for (; a < ido; ++a) {
+        T xr[P], xi[P];
+        for (std::size_t j = 0; j < P; ++j) {
+            auto [dr, di] = plane_refs<Forward>(xr[j], xi[j]);
+            dr = src[2u * (a + ido * j)];
+            di = src[2u * (a + ido * j) + 1u];
+        }
+        T yr[P], yi[P];
+        rader_apply<P, T, T>(xr, xi, 1, yr, yi);
+        for (std::size_t k = 0; k < P; ++k) {
+            const std::size_t off = a * eso + idz * k;
+            if (k > 0) {
+                tw_store_scalar(chre[off], chim[off], twre[(k - 1u) * ido + a],
+                                twim[(k - 1u) * ido + a], yr[k], yi[k]);
+            } else {
+                chre[off] = yr[k];
+                chim[off] = yi[k];
+            }
+        }
+    }
+}
+
 template<typename T, std::size_t P1, std::size_t P2>
 void dif_pass_fused2(const T* ccre, const T* ccim,
                      T* chre, T* chim,
@@ -954,7 +1011,7 @@ template<typename T, std::size_t IP, std::size_t R, typename V>
     }
 }
 
-template<typename T, bool Forward, std::size_t IP>
+template<typename T, bool Forward, std::size_t IP, bool Chiplet = false>
 ADM_COLD ADM_NOINLINE void dif_pass_last_scalar_rows(const T* ccre,
                                             const T* ccim,
                                             std::complex<T>* data,
@@ -969,10 +1026,19 @@ ADM_COLD ADM_NOINLINE void dif_pass_last_scalar_rows(const T* ccre,
             tr[j] = ccre[off];
             ti[j] = ccim[off];
         }
-        dif_butterfly_terminal<T, IP>(tr, ti, [&](const auto k, T sr, T si) {
-            const auto [xr, xi] = plane_vals<Forward>(sr * scale_val, si * scale_val);
-            data[b + l1 * k] = std::complex<T>(xr, xi);
-        });
+        if constexpr (Chiplet) {
+            T yr[IP], yi[IP];
+            rader_apply<IP, T, T>(tr, ti, 1, yr, yi);
+            for (std::size_t k = 0; k < IP; ++k) {
+                const auto [xr, xi] = plane_vals<Forward>(yr[k] * scale_val, yi[k] * scale_val);
+                data[b + l1 * k] = std::complex<T>(xr, xi);
+            }
+        } else {
+            dif_butterfly_terminal<T, IP>(tr, ti, [&](const auto k, T sr, T si) {
+                const auto [xr, xi] = plane_vals<Forward>(sr * scale_val, si * scale_val);
+                data[b + l1 * k] = std::complex<T>(xr, xi);
+            });
+        }
     }
 }
 
@@ -985,7 +1051,7 @@ struct dif_last_batch {
     using type = std::conditional_t<std::is_void_v<sized_t>, xsimd::batch<T>, sized_t>;
 };
 
-template<typename T, bool Forward, std::size_t IP, std::size_t Rows>
+template<typename T, bool Forward, std::size_t IP, std::size_t Rows, bool Chiplet = false>
 ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
                                            const T* ccim,
                                            std::complex<T>* data,
@@ -1092,10 +1158,14 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
             for (std::size_t j = 0; j < IP; ++j) { btr[j] = rr[j]; bti[j] = ri[j]; }
         }
         batch_t out_re[IP], out_im[IP];
-        dif_butterfly_terminal<T, IP>(btr, bti, [&](const auto k, batch_t sr, batch_t si) {
-            out_re[k] = sr;
-            out_im[k] = si;
-        });
+        if constexpr (Chiplet) {
+            rader_apply<IP, T, batch_t>(btr, bti, 1, out_re, out_im);
+        } else {
+            dif_butterfly_terminal<T, IP>(btr, bti, [&](const auto k, batch_t sr, batch_t si) {
+                out_re[k] = sr;
+                out_im[k] = si;
+            });
+        }
         const batch_t sv(scale_val);
         for (std::size_t k = 0; k < IP; ++k) {
             const auto [xr, xi] = plane_vals<Forward>(out_re[k] * sv, out_im[k] * sv);
@@ -1105,20 +1175,20 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
 }
 
 
-template<typename T, bool Forward, std::size_t IP>
+template<typename T, bool Forward, std::size_t IP, bool Chiplet = false>
 struct dif_last_tail_invoke_t {
     template<std::size_t Rows>
     void operator()(const T* ccre, const T* ccim,
                     std::complex<T>* data, std::size_t l1, std::size_t b, T scale_val,
                     const std::uint32_t* rowperm) const {
-        dif_pass_last_block<T, Forward, IP, Rows>(ccre, ccim, data, l1, b, scale_val,
+        dif_pass_last_block<T, Forward, IP, Rows, Chiplet>(ccre, ccim, data, l1, b, scale_val,
                                                   rowperm);
     }
 };
-template<typename T, bool Forward, std::size_t IP>
-inline constexpr dif_last_tail_invoke_t<T, Forward, IP> dif_last_tail_invoke{};
+template<typename T, bool Forward, std::size_t IP, bool Chiplet = false>
+inline constexpr dif_last_tail_invoke_t<T, Forward, IP, Chiplet> dif_last_tail_invoke{};
 
-template<typename T, bool Forward, std::size_t IP>
+template<typename T, bool Forward, std::size_t IP, bool Chiplet = false>
 void dif_pass_last(const T* ccre, const T* ccim,
                    std::complex<T>* data,
                    std::size_t l1, [[maybe_unused]] std::size_t ido,
@@ -1136,20 +1206,20 @@ void dif_pass_last(const T* ccre, const T* ccim,
     // blocks at W=8 f64 and W=16 f32; ~16% loss at 8 blocks), so peel only past 4W.
     if (const std::size_t peel = l1 > 4u * W ? aos_store_align_peel<T, W>(data, l1, l1) : 0;
         peel != 0 && l1 >= peel + W) {
-        poet::dispatch(dif_last_tail_invoke<T, Forward, IP>,
+        poet::dispatch(dif_last_tail_invoke<T, Forward, IP, Chiplet>,
                        poet::dispatch_param<dif_last_tail_seq<W>>{peel},
                        ccre, ccim, data, l1, std::size_t{0}, scale_val, rowperm);
         for (b = peel; b + W <= l1; b += W)
-            dif_pass_last_block<T, Forward, IP, W>(ccre, ccim, data, l1, b, scale_val,
+            dif_pass_last_block<T, Forward, IP, W, Chiplet>(ccre, ccim, data, l1, b, scale_val,
                                                   rowperm);
     } else {
         for (; b + W <= l1; b += W)
-            dif_pass_last_block<T, Forward, IP, W>(ccre, ccim, data, l1, b, scale_val,
+            dif_pass_last_block<T, Forward, IP, W, Chiplet>(ccre, ccim, data, l1, b, scale_val,
                                                   rowperm);
     }
     if (b == l1) return;
     if (l1 < W) {
-        poet::dispatch(dif_last_tail_invoke<T, Forward, IP>,
+        poet::dispatch(dif_last_tail_invoke<T, Forward, IP, Chiplet>,
                        poet::dispatch_param<dif_last_tail_seq<W>>{l1},
                        ccre, ccim, data, l1, std::size_t{0}, scale_val, rowperm);
         return;
@@ -1159,7 +1229,8 @@ void dif_pass_last(const T* ccre, const T* ccim,
                                                scale_val, rowperm);
         return;
     }
-    dif_pass_last_scalar_rows<T, Forward, IP>(ccre, ccim, data, l1, b, scale_val, rowperm);
+    dif_pass_last_scalar_rows<T, Forward, IP, Chiplet>(ccre, ccim, data, l1, b, scale_val,
+                                                       rowperm);
 }
 
 }

@@ -81,12 +81,13 @@ void dif_tape_step_f3(const T* sr, const T* si, T* dr, T* di,
                                 t1.second.data(), t2.first.data(), t2.second.data());
 }
 
-template<typename T, bool Forward, std::size_t IP>
+template<typename T, bool Forward, std::size_t IP, bool Chiplet = false>
 void dif_tape_step_last(const T* sr, const T* si, T*, T*,
                         const dif_step<T>& s, const dif_rt<T>& rt) {
     const auto& tw = rt.dtw->passes[s.p];
-    dif_pass_last<T, Forward, IP>(sr, si, rt.out, s.l1, 1, tw.first.data(), tw.second.data(),
-                                  rt.scale, (s.es & 4u) ? rt.dtw->rowperm.data() : nullptr);
+    dif_pass_last<T, Forward, IP, Chiplet>(sr, si, rt.out, s.l1, 1, tw.first.data(),
+                                           tw.second.data(), rt.scale,
+                                           (s.es & 4u) ? rt.dtw->rowperm.data() : nullptr);
 }
 
 template<typename T, bool Forward>
@@ -119,6 +120,23 @@ struct dif_thunk_f2_maker {
     fn_t operator()() const noexcept { return &dif_tape_step_f2<T, P1, P2>; }
 };
 
+template<typename T, bool Forward, std::size_t P>
+void dif_tape_step_first_chip(const T*, const T*, T* dr, T* di,
+                              const dif_step<T>& s, const dif_rt<T>& rt) {
+    const auto& tw = rt.dtw->passes[s.p];
+    dif_pass_first_prime<T, Forward, P>(reinterpret_cast<const T*>(rt.in), dr, di, s.ido,
+                                        tw.first.data(), tw.second.data(),
+                                        es_stride(s.es, 1));
+}
+
+template<typename T, bool Forward>
+struct dif_tape_fill_first_chip {
+    template<std::size_t IP>
+    void operator()(dif_step<T>& s) const noexcept {
+        s.fn = &dif_tape_step_first_chip<T, Forward, IP>;
+    }
+};
+
 template<typename T, bool Forward>
 struct dif_tape_fill_first {
     template<std::size_t IP>
@@ -130,6 +148,14 @@ struct dif_tape_fill_last {
     template<std::size_t IP>
     void operator()(dif_step<T>& s) const noexcept {
         s.fn = &dif_tape_step_last<T, Forward, IP>;
+    }
+};
+
+template<typename T, bool Forward>
+struct dif_tape_fill_last_chip {
+    template<std::size_t IP>
+    void operator()(dif_step<T>& s) const noexcept {
+        s.fn = &dif_tape_step_last<T, Forward, IP, true>;
     }
 };
 
@@ -219,7 +245,11 @@ ADM_ALWAYS_INLINE void dif_tape_push_last(std::vector<dif_step<T>>& tv, const di
     st.src = static_cast<std::uint8_t>(ping);
     st.es = dtw.rowperm.empty() ? std::uint8_t{0} : std::uint8_t{4};
     st.sim = static_cast<std::uint8_t>(ping);
-    dispatch_dif_radix(dtw.radices[p], dif_tape_fill_last<T, Forward>{}, st);
+    if (dif_is_generic_radix(dtw.radices[p]))
+        poet::dispatch(poet::throw_on_no_match, dif_tape_fill_last_chip<T, Forward>{},
+                       poet::dispatch_param<dif_generic_radix_seq>{dtw.radices[p]}, st);
+    else
+        dispatch_dif_radix(dtw.radices[p], dif_tape_fill_last<T, Forward>{}, st);
     tv.push_back(st);
 }
 
@@ -244,7 +274,14 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
             st.dim = static_cast<std::uint8_t>(es_bit(0) ? 2 : 0);
             st.es = static_cast<std::uint8_t>(es_bit(0) << 1);
             st.ido = N / dtw.radices[0];
-            dispatch_dif_radix(dtw.radices[0], dif_tape_fill_first<T, Forward>{}, st);
+            if (dif_is_generic_radix(dtw.radices[0]))
+                poet::dispatch(poet::throw_on_no_match,
+                               dif_tape_fill_first_chip<T, Forward>{},
+                               poet::dispatch_param<dif_generic_radix_seq>{
+                                   dtw.radices[0]},
+                               st);
+            else
+                dispatch_dif_radix(dtw.radices[0], dif_tape_fill_first<T, Forward>{}, st);
             tv.push_back(st);
         }
 

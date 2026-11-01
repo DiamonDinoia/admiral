@@ -102,6 +102,13 @@ inline constexpr std::size_t kE2Len64MinL3PerCoreBytes = std::size_t{2} << 20;
 
 [[nodiscard]] inline std::size_t e2_len_cap() { return e2_len_cap_of(cpu_cache()); }
 
+// The dif gate of make_nd_axis_state, named for callers that must know the line route
+// before the axis state exists (strides_plan decides its slab pool width in its
+// constructor, while the axis states themselves build lazily).
+[[nodiscard]] constexpr bool axis_dif_wanted(std::size_t length, bool innermost, bool col_ok) {
+    return !innermost && col_ok && is_codelet_supported(length);
+}
+
 template<typename T>
 [[nodiscard]] inline nd_axis_state<T> make_nd_axis_state(std::size_t length, std::size_t inner,
                                                          bool is_forward, bool innermost,
@@ -125,7 +132,7 @@ template<typename T>
     }
     // col_ok=false: the caller always dispatches by line strides (strides_plan with
     // istride == 1 runs only the per-line plan arms), so the column twiddle set is dead.
-    if (!innermost && col_ok && is_codelet_supported(length)) {
+    if (axis_dif_wanted(length, innermost, col_ok)) {
         st.dif = true;
         const std::size_t e2_cap = std::min(e2_len_cap(), kFourStepLeafMax);
         // A col length below 8 pays only when the col body can vectorise the block: with the narrow

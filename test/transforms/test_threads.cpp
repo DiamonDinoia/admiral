@@ -756,4 +756,129 @@ TEMPLATE_TEST_CASE("concurrent execute on one plan: correctness at nthreads=1 an
     }
 }
 
+// ---------------------------------------------------------------------------
+// First-call lazy-build race: 8 forward and 8 inverse threads start together on
+// one fresh plan and race the call_once builds of the two axis halves; every
+// output must match the single-thread result.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+constexpr std::size_t kRaceReps = 200;
+constexpr std::size_t kPerDir = 8;
+
+template<typename T, typename Make, typename Run>
+void race_lazy_build(const char* what, Make make, Run run, std::size_t elems,
+                     std::size_t len, std::size_t reps) {
+    INFO(what);
+    const auto in = make_input<T>(elems, 0x51A7u);
+    const double tol = forecast_tol<T>(len);
+    std::vector<std::complex<T>> ref_fwd(elems), ref_inv(elems);
+    {
+        const auto p = make();
+        run(p, true, in.data(), ref_fwd.data());
+        run(p, false, in.data(), ref_inv.data());
+    }
+    std::vector<std::vector<std::complex<T>>> out(2 * kPerDir,
+                                                  std::vector<std::complex<T>>(elems));
+    for (std::size_t rep = 0; rep < reps; ++rep) {
+        const auto p = make();
+        spin_barrier bar(2 * kPerDir);
+        std::vector<std::thread> ts;
+        for (std::size_t t = 0; t < 2 * kPerDir; ++t) {
+            const bool fwd = t < kPerDir;
+            ts.emplace_back([&bar, &p, &run, &in, &out, t, fwd] {
+                bar.arrive();
+                bar.wait();
+                run(p, fwd, in.data(), out[t].data());
+            });
+        }
+        for (auto& th : ts) th.join();
+        for (std::size_t t = 0; t < 2 * kPerDir; ++t)
+            REQUIRE(relerrtwonorm(out[t], t < kPerDir ? ref_fwd : ref_inv) < tol);
+    }
+}
+
+template<typename T>
+void race_lazy_configs(const admiral::options& opts, std::size_t reps) {
+    constexpr std::size_t N = 256;
+    const auto one_dir = [](const auto& p, bool fwd, const auto* s, auto* d) {
+        if (fwd) p.forward(s, d);
+        else     p.inverse(s, d);
+    };
+    race_lazy_build<T>("plan<T> 1-D", [&] { return admiral::plan<T>({N}, opts); },
+                       one_dir, N, N, reps);
+    race_lazy_build<T>("strides_plan<T> numpy 1-D",
+                       [&] { return admiral::strides_plan<T>(N, 1, 1, N, 1, N, opts); },
+                       one_dir, N, N, reps);
+    constexpr std::size_t len = 64, nbatch = 32;
+    race_lazy_build<T>("strides_plan<T> slab",
+                       [&] {
+                           return admiral::strides_plan<T>(len, nbatch, nbatch, 1, 1, len,
+                                                           opts);
+                       },
+                       one_dir, len * nbatch, len, reps);
+}
+
+}  // namespace
+
+TEST_CASE("first forward and inverse calls race the lazy plan builds", "[threads][lazy]") {
+    const admiral::options opts;
+    race_lazy_configs<float>(opts, kRaceReps);
+    race_lazy_configs<double>(opts, kRaceReps);
+}
+
+// ---------------------------------------------------------------------------
+// Repeated-run rebuild guard: once a direction is built, later runs must not
+// build it again. A rebuild allocates twiddle tables per call; a steady-state
+// run allocates nothing (scratch comes from the stack or the allocator).
+// ---------------------------------------------------------------------------
+
+#include <cstdlib>
+#include <new>
+
+namespace {
+std::atomic<long> g_allocs{0};
+// The replacements below stay out of line: when GCC inlines them into callers it reports
+// -Wmismatched-new-delete on the malloc/free bodies of the matched replacement pair.
+[[gnu::noinline]] void count_alloc() noexcept { g_allocs.fetch_add(1, std::memory_order_relaxed); }
+}
+
+[[gnu::noinline]] void* operator new(std::size_t n) {
+    count_alloc();
+    if (void* p = std::malloc(n ? n : 1)) return p;
+    throw std::bad_alloc{};
+}
+[[gnu::noinline]] void* operator new[](std::size_t n) { return ::operator new(n); }
+[[gnu::noinline]] void operator delete(void* p) noexcept { std::free(p); }
+[[gnu::noinline]] void operator delete[](void* p) noexcept { std::free(p); }
+[[gnu::noinline]] void operator delete(void* p, std::size_t) noexcept { std::free(p); }
+[[gnu::noinline]] void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
+
+TEST_CASE("repeated runs on a warm plan do not rebuild the lazy state", "[threads][lazy]") {
+    const admiral::options opts{1, admiral::effort::estimate};
+    constexpr std::size_t N = 256;
+    const auto in = make_input<double>(N, 0x5A5Au);
+    std::vector<std::complex<double>> out(N);
+    {
+        admiral::strides_plan<double> p(N, 1, 1, N, 1, N, opts);
+        p.forward(in.data(), out.data());
+        p.inverse(in.data(), out.data());
+        const long a0 = g_allocs.load(std::memory_order_relaxed);
+        for (int i = 0; i < 100; ++i) p.forward(in.data(), out.data());
+        for (int i = 0; i < 100; ++i) p.inverse(in.data(), out.data());
+        REQUIRE(g_allocs.load(std::memory_order_relaxed) == a0);
+    }
+    {
+        auto buf = in;
+        admiral::plan<double> p(N, opts);
+        p.forward(buf.data());
+        p.inverse(buf.data());
+        const long a0 = g_allocs.load(std::memory_order_relaxed);
+        for (int i = 0; i < 100; ++i) p.forward(buf.data());
+        for (int i = 0; i < 100; ++i) p.inverse(buf.data());
+        REQUIRE(g_allocs.load(std::memory_order_relaxed) == a0);
+    }
+}
+
 #endif

@@ -329,10 +329,10 @@ real_adm_plan<T>::real_adm_plan(std::size_t N, admiral::effort eff)
         const std::size_t half = N_ / 2;
         tw_.resize(half + 1);
         portable_trig::turns_memo memo;
-        for (std::size_t k = 0; k <= half; ++k) {
-            const auto [sn, cs] = portable_trig::sincos_turns<true>(k, N_, &memo);
-            tw_[k] = std::complex<T>(static_cast<T>(cs), static_cast<T>(sn));
-        }
+        // One batched row replaces per-entry sincos calls. Entries carry the product rounding
+        // every dif twiddle row already carries (seed times block reseed); the recombine
+        // consumers multiply this table into the same data stream the dif tables feed.
+        geom_twiddle_row_packed<T, true>(1, N_, half + 1, tw_.data(), &memo);
     }
 }
 

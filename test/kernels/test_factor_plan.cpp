@@ -257,3 +257,33 @@ TEMPLATE_TEST_CASE("four_step split: argmin, admissible, and order-blind",
         REQUIRE(gate_four_step_cost(sym.n1, sym.n2) == floor_cost);
     }
 }
+
+TEMPLATE_TEST_CASE("baked elected chain table rows match this build's live election",
+                   "[factor_plan]", float, double) {
+    using namespace admiral::detail;
+    constexpr bool is_f32 = sizeof(TestType) == 4;
+    const dif_elected_view view =
+        is_f32 ? dif_elected_view{dif_elected_table_f32, dif_elected_table_f32_len}
+               : dif_elected_view{dif_elected_table_f64, dif_elected_table_f64_len};
+    std::size_t prev = 0;
+    for (std::size_t i = 0; i < view.len; ++i) {
+        const dif_elected_row& row = view.rows[i];
+        CAPTURE(row.n);
+        if (i > 0) REQUIRE(row.n > prev);
+        prev = row.n;
+        std::size_t prod = 1;
+        for (std::size_t k = 0; k < row.count; ++k) prod *= row.radix[k];
+        REQUIRE(prod == row.n);
+        // rows are read only on builds whose radix set is the set the table was made
+        // for (the wide-register set); there every radix must be in that set, and the
+        // row must equal the live election so a valid-but-wrong row cannot slip in
+        if constexpr (dif_wide_radices) {
+            for (std::size_t k = 0; k < row.count; ++k)
+                if (!dif_is_generic_radix(row.radix[k]))
+                    REQUIRE(in_seq(dif_radix_set{}, row.radix[k]));
+            const dif_factor_plan live = dif_elected_chain<TestType, false>(row.n);
+            REQUIRE(live.count == row.count);
+            for (std::size_t k = 0; k < row.count; ++k) REQUIRE(live[k] == row.radix[k]);
+        }
+    }
+}

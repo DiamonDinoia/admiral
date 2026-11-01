@@ -6,6 +6,7 @@
 #include <complex>
 #include <concepts>
 #include <cstddef>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -232,29 +233,26 @@ private:
     }
 
     void r2c_even_scalar(const T* in, std::complex<T>* out, std::size_t rows) const {
-        const std::size_t M = M_, half = N_ / 2;
-        soa_scratch<T, 1> z_sc(2 * (M == 0 ? 1 : M));
+        const std::size_t M = M_;
+        soa_scratch<T, 1> z_sc(2 * M);
         std::complex<T>* z = reinterpret_cast<std::complex<T>*>(z_sc.buf(0));
         for (std::size_t r = 0; r < rows; ++r) {
             const T* xr = in + r * N_;
-            for (std::size_t j = 0; j < M; ++j) z[j] = std::complex<T>(xr[2 * j], xr[2 * j + 1]);
+            std::memcpy(reinterpret_cast<T*>(z), xr, N_ * sizeof(T));
             fwd_.execute(span<std::complex<T>>(z, M));
-            std::complex<T>* Xr = out + r * Nh_;
-            for (std::size_t k = 0; k <= half; ++k) Xr[k] = r2c_even_bin(z, tw_[k], M, k);
+            r2c_even_recombine(z, tw_.data(), out + r * Nh_, M);
         }
     }
 
     void c2r_even_scalar(const std::complex<T>* in, T* out, std::size_t rows) const {
         const plan_impl<T>& inv = lazy_inv();
         const std::size_t M = M_;
-        soa_scratch<T, 1> Z_sc(2 * (M == 0 ? 1 : M));
-        std::complex<T>* Z = reinterpret_cast<std::complex<T>*>(Z_sc.buf(0));
         for (std::size_t r = 0; r < rows; ++r) {
-            const std::complex<T>* Xr = in + r * Nh_;
-            for (std::size_t k = 0; k < M; ++k) Z[k] = c2r_even_bin(Xr, tw_[k], M, k);
+            // The output row already holds M complex values in place: the recombine writes
+            // them there and the inverse runs in place, so no pack loop is needed.
+            std::complex<T>* Z = reinterpret_cast<std::complex<T>*>(out + r * N_);
+            c2r_even_recombine(in + r * Nh_, tw_.data(), Z, M);
             inv.execute(span<std::complex<T>>(Z, M));
-            T* xr = out + r * N_;
-            for (std::size_t j = 0; j < M; ++j) { xr[2 * j] = Z[j].real(); xr[2 * j + 1] = Z[j].imag(); }
         }
     }
 

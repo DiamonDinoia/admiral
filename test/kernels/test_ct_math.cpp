@@ -313,7 +313,8 @@ TEST_CASE("a runtime table entry stays within the memo accuracy contract", "[ct_
             }
         }
         INFO("den " << den << " two-level memo worst " << worst_ulp << " in 2^-52 vs the fold");
-        REQUIRE(worst_ulp <= 8.0);
+        // Measured max is 1.5 absolute ulp across den 360..3000 (sweep, logs/plan-fast).
+        REQUIRE(worst_ulp <= 2.0);
     }
 }
 

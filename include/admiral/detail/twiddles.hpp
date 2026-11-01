@@ -555,6 +555,11 @@ template<typename T>
     dif_chain_list out;
     out.cap = (std::max)(std::size_t{1}, (std::min)(want, kDifCandidates));
     const double fuse_g = dif_fuse_discount<T>(N);
+    // Branch and bound for the single-best election (want == 1): every stage of a scored
+    // chain costs at least fuse_g times its plain stage cost, so a prefix whose discounted
+    // plain cost already reaches the best complete chain cannot win. The explored set
+    // shrinks; the winning chain and every recursion-side decision are unchanged.
+    double bound = std::numeric_limits<double>::infinity();
     const auto score = [&](std::size_t len) {
         dif_fuse sched[dif_factor_plan::max_passes]{};
         dif_fusion_schedule_into<T>(N, chain, len, sched);
@@ -568,8 +573,9 @@ template<typename T>
         dif_factor_plan p;
         for (std::size_t i = 0; i < len; ++i) p.push(chain[i]);
         out.offer(p, cost);
+        bound = (std::min)(bound, cost);
     };
-    auto rec = [&](auto&& self, std::size_t rem, std::size_t len) -> void {
+    auto rec = [&](auto&& self, std::size_t rem, std::size_t len, double part) -> void {
         if (rem == 1) {
             score(len);
             return;
@@ -579,12 +585,15 @@ template<typename T>
         for (std::size_t ci = 0; ci < n_cands; ++ci) {
             const std::size_t r = cands[ci];
             if (rem % r == 0) {
+                const double part2 = part + dif_stage_cost<T>(N, rem, r);
+                if (want == 1 && fuse_g > 0.0 && fuse_g <= 1.0 && fuse_g * part2 >= bound)
+                    continue;
                 chain[len] = r;
-                self(self, rem / r, len + 1);
+                self(self, rem / r, len + 1, part2);
             }
         }
     };
-    rec(rec, N, 0);
+    rec(rec, N, 0, 0.0);
     return out;
 }
 

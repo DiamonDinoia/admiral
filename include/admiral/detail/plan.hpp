@@ -153,17 +153,28 @@ private:
         if (size == 0) ADM_UNLIKELY return {measured_choice{}, 1, dif_override};
         if (dif_override) return {measured_choice{route_kind::iterative_dif, {}}, nthreads, dif_override};
         const auto elect = [&](std::size_t nt) {
-            return eff != admiral::effort::estimate
-                       ? measured_route(size, is_forward, nt)
-                       : measured_choice{select_route(size, nt), {}};
+            if (eff != admiral::effort::estimate) return measured_route(size, is_forward, nt);
+            measured_choice ch{};
+            ch.route = select_route(size, nt, &ch.dif_chain);
+            if (ch.route == route_kind::iterative_dif && ch.dif_chain.count == 0)
+                ch.dif_chain = detail::dif_elected_chain<T>(size);
+            return ch;
         };
         if (nthreads != 0) return {elect(nthreads), nthreads, dif_override};
         const std::size_t P = resolve_nthreads(0);
-        measured_choice route_est{select_route(size, P), {}};
-        if (route_est.route != route_kind::four_step_large)
+        measured_choice route_est{};
+        route_est.route = select_route(size, P, &route_est.dif_chain);
+        if (route_est.route != route_kind::four_step_large) {
             // Auto resolved to serial, so elect at that width. Returning the P-wide estimate
             // would downgrade effort::measure to effort::estimate on every non-large route.
-            return {eff == admiral::effort::estimate ? route_est : elect(1), 1, dif_override};
+            if (eff == admiral::effort::estimate) {
+                if (route_est.route == route_kind::iterative_dif &&
+                    route_est.dif_chain.count == 0)
+                    route_est.dif_chain = detail::dif_elected_chain<T>(size);
+                return {route_est, 1, dif_override};
+            }
+            return {elect(1), 1, dif_override};
+        }
         const std::size_t nt = resolve_nthreads(0, size, kLargeDispatches, large_work_ns(size), 0);
         measured_choice ch = elect(nt);
         if (ch.route != route_kind::four_step_large)
@@ -389,11 +400,23 @@ public:
     }
 
 private:
-    static route_kind select_route(std::size_t size, std::size_t nthreads) {
+    static route_kind select_route(std::size_t size, std::size_t nthreads,
+                                   dif_factor_plan* dif_out = nullptr) {
         {
             const auto& ranking = base_route_ranking<T>(size);
             for (std::size_t i = 0; i < ranking.count; ++i) {
                 const route_kind rk = form_to_route(ranking.form[i]);
+                // The dif availability check pays a full chain election; the builder below
+                // would elect the same deterministic chain again, so hand it out.
+                if (rk == route_kind::iterative_dif) {
+                    if (detail::has_single_bit(size) || is_codelet_supported(size)) return rk;
+                    const dif_factor_plan chain = detail::dif_elected_chain<T>(size);
+                    if (detail::dif_chain_shape_ok<T>(size, chain)) {
+                        if (dif_out != nullptr) *dif_out = chain;
+                        return rk;
+                    }
+                    continue;
+                }
                 if (route_available(rk, size)) return rk;
             }
         }

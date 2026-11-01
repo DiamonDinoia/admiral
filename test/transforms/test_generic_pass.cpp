@@ -189,6 +189,16 @@ TEMPLATE_TEST_CASE("boundary-generic chains transform correctly", "[coverage][ge
         require_close(out, reference_dft<T>(in, true), fft_tol<T>(4));
     }
     {
+        // Inverse coverage for the generic-first pass (odd-review P2): the mutation
+        // plane_refs<Forward> -> plane_refs<true> in dif_pass_first_prime fails only here.
+        // Radix 16 sits in the wide dif_radix_set only; narrow builds force 8*2 at the
+        // same n so the generic-first shape is covered there too.
+        const auto chain = poet::vector_register_count() >= 32 ? dif_factor_plan{13, 16}
+                                                               : dif_factor_plan{13, 8, 2};
+        check_forced<T>(208, chain, true, false);
+        check_forced<T>(208, chain, false, false);
+    }
+    {
         REQUIRE(P::route_available(R::iterative_dif, 9603u));
         REQUIRE(P::route_available(R::iterative_dif, 776u));
         impulse_flat<T>(9603, 2.0);

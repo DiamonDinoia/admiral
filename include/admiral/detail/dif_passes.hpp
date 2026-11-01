@@ -1225,7 +1225,7 @@ void dif_pass_last(const T* ccre, const T* ccim,
         return;
     }
     if (2 * (l1 - b) >= W) {
-        dif_pass_last_block<T, Forward, IP, W>(ccre, ccim, data, l1, l1 - W,
+        dif_pass_last_block<T, Forward, IP, W, Chiplet>(ccre, ccim, data, l1, l1 - W,
                                                scale_val, rowperm);
         return;
     }

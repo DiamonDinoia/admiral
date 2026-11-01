@@ -66,44 +66,37 @@ void check_optimal(std::size_t N) {
 }
 
 template<typename T>
-std::pair<bool, std::size_t> min_valley_passes(std::size_t N, std::size_t n,
-                                               std::map<std::size_t, std::pair<bool, std::size_t>>& memo) {
-    if (n == 1) return {true, 0};
-    if (const auto it = memo.find(n); it != memo.end()) return it->second;
+std::size_t valley_passes(std::size_t N, const admiral::detail::dif_factor_plan& p) {
     constexpr std::size_t W = xsimd::batch<T>::size;
-    constexpr std::size_t kInf = std::numeric_limits<std::size_t>::max() / 4;
-    std::size_t best = kInf;
-    auto relax = [&](std::size_t radix) {
-        const std::size_t ido = n / radix;
-        const auto [ok, sub] = min_valley_passes<T>(N, n / radix, memo);
-        if (ok) best = std::min(best, sub + ((ido > 1 && ido < W) ? 1u : 0u));
-    };
-    for (const std::size_t radix : admiral::detail::dif_candidate_radices)
-        if (n % radix == 0 && admiral::detail::dif_radix_admissible(N, radix)) relax(radix);
-    for (const std::size_t g : admiral::detail::dif_generic_radices)
-        if (n % g == 0) relax(g);
-    return memo[n] = {best != kInf, best == kInf ? 0 : best};
+    std::size_t n = N, valley = 0;
+    for (std::size_t i = 0; i < p.count; ++i) {
+        const std::size_t ido = n / p[i];
+        if (ido > 1 && ido < W) ++valley;
+        n = ido;
+    }
+    return valley;
 }
 
 TEMPLATE_TEST_CASE("DIF factor planner never elects an avoidable valley pass", "[factor_plan]",
                    float, double) {
     using namespace admiral::detail;
-    constexpr std::size_t W = xsimd::batch<TestType>::size;
     for (std::size_t N = 2; N <= 4096; ++N) {
         const auto plan = build_dif_factor_plan<TestType>(N);
         if (plan.count == 0) continue;
         if ((N & (N - 1u)) == 0u && N >= kDifFuseMinN<TestType>) continue;
-        std::size_t n = N, valley = 0;
-        for (std::size_t i = 0; i < plan.count; ++i) {
-            const std::size_t ido = n / plan[i];
-            if (ido > 1 && ido < W) ++valley;
-            n = ido;
-        }
-        std::map<std::size_t, std::pair<bool, std::size_t>> memo;
-        const auto [any, min_valley] = min_valley_passes<TestType>(N, N, memo);
-        if (!any) continue;
+        // No avoidable valley among the chains the election draws from: the minimum is
+        // over the mode's candidate list (strict-first, like the election).
+        const dif_chain_list s = dif_chain_candidates<TestType>(N, kDifCandidates, false);
+        const bool strict_mode = dif_chain_shape_strict_ok<TestType>(N, s[0]);
+        const dif_chain_list c = strict_mode
+                                     ? s
+                                     : dif_chain_candidates<TestType>(N, kDifCandidates, true);
+        std::size_t min_valley = std::numeric_limits<std::size_t>::max();
+        for (std::size_t k = 0; k < c.count; ++k)
+            min_valley = std::min(min_valley, valley_passes<TestType>(N, c[k]));
+        if (min_valley == std::numeric_limits<std::size_t>::max()) continue;
         CAPTURE(N);
-        REQUIRE(valley == min_valley);
+        REQUIRE(valley_passes<TestType>(N, plan) == min_valley);
     }
 }
 
@@ -133,8 +126,14 @@ TEMPLATE_TEST_CASE("dif candidate list: legal, distinct, and the election lands 
                    "[factor_plan]", float, double) {
     using namespace admiral::detail;
     const auto census = [](std::size_t N) {
-        const dif_chain_list c = dif_chain_candidates<TestType>(N);
-        CAPTURE(N, c.count);
+        // One census per mode: each election lands on the list of its own mode.
+        for (const bool relaxed : {false, true}) {
+        const dif_chain_list c = dif_chain_candidates<TestType>(N, kDifCandidates, relaxed);
+        const auto shape = [&](const dif_factor_plan& p) {
+            return relaxed ? dif_chain_shape_ok<TestType>(N, p)
+                           : dif_chain_shape_strict_ok<TestType>(N, p);
+        };
+        CAPTURE(N, relaxed, c.count);
         REQUIRE(c.count >= 1);
         REQUIRE(c.count <= kDifCandidates);
         for (std::size_t k = 0; k < c.count; ++k) {
@@ -156,12 +155,13 @@ TEMPLATE_TEST_CASE("dif candidate list: legal, distinct, and the election lands 
                                               + static_cast<std::ptrdiff_t>(c[j].count),
                                           c[k].radices.begin())));
         }
-        const auto dp = build_dif_factor_plan<TestType>(N);
-        REQUIRE(dp.count == c[0].count);
-        REQUIRE(std::equal(dp.radices.begin(),
-                       dp.radices.begin() + static_cast<std::ptrdiff_t>(dp.count),
+        const auto top = dif_chain_candidates<TestType>(N, 1, relaxed)[0];
+        REQUIRE(top.count == c[0].count);
+        REQUIRE(std::equal(top.radices.begin(),
+                       top.radices.begin() + static_cast<std::ptrdiff_t>(top.count),
                        c[0].radices.begin()));
-        const auto el = dif_elected_chain<TestType>(N);
+        const auto el = relaxed ? dif_elected_chain_relaxed<TestType>(N)
+                                : dif_elected_chain<TestType>(N);
         bool member = false;
         for (std::size_t k = 0; k < c.count; ++k)
             member = member || (el.count == c[k].count &&
@@ -172,8 +172,9 @@ TEMPLATE_TEST_CASE("dif candidate list: legal, distinct, and the election lands 
         REQUIRE(member);
         bool any_ok = false;
         for (std::size_t k = 0; k < c.count; ++k)
-            any_ok = any_ok || dif_chain_shape_ok<TestType>(N, c[k]);
-        REQUIRE(any_ok == dif_chain_shape_ok<TestType>(N, el));
+            any_ok = any_ok || shape(c[k]);
+        REQUIRE(any_ok == shape(el));
+        }
     };
     for (std::size_t N = 2; N <= 20000; ++N) census(N);
     for (const std::size_t N : {std::size_t{25575}, std::size_t{30000}, std::size_t{58960},

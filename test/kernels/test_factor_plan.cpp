@@ -80,9 +80,8 @@ std::pair<bool, std::size_t> min_valley_passes(std::size_t N, std::size_t n,
     };
     for (const std::size_t radix : admiral::detail::dif_candidate_radices)
         if (n % radix == 0 && admiral::detail::dif_radix_admissible(N, radix)) relax(radix);
-    if (n != N)
-        for (const std::size_t g : admiral::detail::dif_generic_radices)
-            if (n % g == 0 && n / g > 1) relax(g);
+    for (const std::size_t g : admiral::detail::dif_generic_radices)
+        if (n % g == 0) relax(g);
     return memo[n] = {best != kInf, best == kInf ? 0 : best};
 }
 
@@ -147,12 +146,8 @@ TEMPLATE_TEST_CASE("dif candidate list: legal, distinct, and the election lands 
                 for (std::size_t i = 0; i < c[k].count; ++i) {
                     const std::size_t r = c[k][i];
                     CAPTURE(i, r);
-                    if (dif_is_generic_radix(r)) {
-                        REQUIRE(i > 0);
-                        REQUIRE(i + 1 < c[k].count);
-                    } else {
+                    if (!dif_is_generic_radix(r))
                         REQUIRE(in_seq(dif_radix_set{}, r));
-                    }
                 }
             for (std::size_t j = 0; j < k; ++j)
                 REQUIRE_FALSE((c[j].count == c[k].count &&
@@ -189,16 +184,15 @@ TEMPLATE_TEST_CASE("dif candidate list: legal, distinct, and the election lands 
         census(N);
 }
 
-TEMPLATE_TEST_CASE("starved generic tail bounds chain availability from both sides",
+TEMPLATE_TEST_CASE("generic radices are admissible at any chain position",
                    "[factor_plan]", float, double) {
     using namespace admiral::detail;
-    constexpr std::size_t W = xsimd::batch<TestType>::size;
-    if constexpr (W > 2) {
-        CHECK_FALSE(dif_chain_shape_ok<TestType>(188, dif_factor_plan{2, 47, 2}));
-        CHECK(dif_chain_shape_ok<TestType>(124, dif_factor_plan{2, 31, 2}));
-    }
-    static_assert(W <= 16);
+    CHECK(dif_chain_shape_ok<TestType>(188, dif_factor_plan{2, 47, 2}));
+    CHECK(dif_chain_shape_ok<TestType>(124, dif_factor_plan{2, 31, 2}));
     CHECK(dif_chain_shape_ok<TestType>(1504, dif_factor_plan{2, 47, 4, 4}));
+    CHECK(dif_chain_shape_ok<TestType>(94, dif_factor_plan{2, 47}));
+    CHECK(dif_chain_shape_ok<TestType>(94, dif_factor_plan{47, 2}));
+    CHECK_FALSE(dif_chain_shape_ok<TestType>(188, dif_factor_plan{2, 211, 2}));
 }
 
 TEMPLATE_TEST_CASE("a wide radix in the valley outprices a narrow one", "[factor_plan]",

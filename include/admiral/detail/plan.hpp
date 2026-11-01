@@ -523,8 +523,12 @@ plan_impl<T>::plan_impl(std::size_t size, bool is_forward, routed_plan rp, bool 
     if (size == 0) ADM_UNLIKELY {
         throw size_error("Plan size must be greater than 0");
     }
-    if (rp.dif_override && !route_available(route_kind::iterative_dif, size)) ADM_UNLIKELY
-        throw unsupported_error("forced dif: size is not 11-smooth");
+    if (rp.dif_override) {
+        std::size_t cover = 1;
+        for (std::size_t p = 0; p < rp.dif_override->count; ++p) cover *= (*rp.dif_override)[p];
+        if (cover != size) ADM_UNLIKELY
+            throw unsupported_error("forced dif: chain does not multiply to size");
+    }
     const dif_factor_plan* chain =
         rp.dif_override != nullptr        ? rp.dif_override
         : rp.ch.dif_chain.count != 0 ? &rp.ch.dif_chain

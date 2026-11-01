@@ -51,6 +51,35 @@ struct dif_factor_plan {
     }
 };
 
+// Baked chains for 235-smooth sizes up to 4096: generated from the live DP (see the
+// plan-arena round-2 record); the runtime probe proves the tables byte-identical to a
+// dif_chain_candidates election on the same arch.
+struct dif_elected_row {
+    std::uint32_t n;
+    std::uint8_t count;
+    std::uint8_t radix[15];
+};
+
+#include "elected_chains.inc"
+
+struct dif_elected_view {
+    const dif_elected_row* rows;
+    std::size_t len;
+};
+
+[[nodiscard]] inline const dif_elected_row* dif_elected_lookup(std::size_t n,
+                                                               std::uint8_t is_f32) {
+    const std::uint32_t key = static_cast<std::uint32_t>(n);
+    const dif_elected_view view =
+        is_f32 ? dif_elected_view{dif_elected_table_f32, dif_elected_table_f32_len}
+               : dif_elected_view{dif_elected_table_f64, dif_elected_table_f64_len};
+    const auto* at = std::lower_bound(view.rows, view.rows + view.len, key,
+                                      [](const dif_elected_row& r, std::uint32_t k) {
+                                          return r.n < k;
+                                      });
+    return (at != view.rows + view.len && at->n == key) ? at : nullptr;
+}
+
 inline constexpr bool dif_wide_radices = poet::vector_register_count() >= 32;
 using dif_radix_set = std::conditional_t<
     dif_wide_radices,
@@ -833,8 +862,23 @@ template<typename T>
     return out;
 }
 
-template<typename T>
+template<typename T, bool Baked = true>
 [[nodiscard]] inline dif_factor_plan dif_elected_chain(std::size_t N) {
+    // The baked table freezes the wide-register DP's picks: several rows name radices
+    // outside the narrow dif_radix_set, so only builds whose radix set is the one the
+    // table was made for may read it; every other build runs the live election below.
+    // dif_wide_radices is constant per target, so the gate costs nothing at runtime.
+    static_assert(sizeof(T) == 8 || sizeof(T) == 4);
+    if constexpr (Baked && dif_wide_radices) {
+        if (N <= 4096) {
+            if (const dif_elected_row* row =
+                    dif_elected_lookup(N, std::uint8_t{sizeof(T) == 4})) {
+                dif_factor_plan p;
+                for (std::size_t i = 0; i < row->count; ++i) p.push(row->radix[i]);
+                return p;
+            }
+        }
+    }
     // The base election's exact call pattern (beam-1 probe, list rescan only when the
     // probe fails shape) under the base chain contract: byte-identical output to the
     // base planner at every size, so no route or chain outside the admitted class moves.

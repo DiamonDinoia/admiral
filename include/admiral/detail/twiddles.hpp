@@ -310,13 +310,6 @@ template<typename T>
     return radix >= kValleyWideRadix ? 2.0 * kValleyPenalty : kValleyPenalty;
 }
 
-inline constexpr std::size_t kGenericStarvedTailMinRadix = 47;
-
-template<typename T>
-[[nodiscard]] constexpr bool dif_generic_tail_starved(std::size_t g, std::size_t ido) {
-    return g >= kGenericStarvedTailMinRadix && ido < xsimd::batch<T>::size;
-}
-
 inline constexpr double kConvCyc = 2.891;
 
 template<typename T>
@@ -333,11 +326,11 @@ template<typename T>
 [[nodiscard]] constexpr double dif_generic_stage_cost(std::size_t N, std::size_t n,
                                                       std::size_t g) {
     const std::size_t ido = n / g;
-    if (dif_generic_tail_starved<T>(g, ido))
-        return 2.0 * kValleyPenalty * static_cast<double>(N);
     constexpr std::size_t W = xsimd::batch<T>::size;
-    const double mask_waste = static_cast<double>((ido + W - 1u) / W * W)
-                              / static_cast<double>(ido);
+    // ido == 1 is the across-row terminal pass: full lanes, no mask waste.
+    const double mask_waste =
+        ido == 1 ? 1.0
+                 : static_cast<double>((ido + W - 1u) / W * W) / static_cast<double>(ido);
     if constexpr (dif_surface_is_analytic<T>) {
         const std::size_t B = dif_pass_footprint_bytes<T>(N, g, ido);
         const double per_elem = generic_prime_cost<T>(g) * mask_waste
@@ -603,11 +596,7 @@ template<typename T>
     std::size_t prefix = 1;
     for (std::size_t i = 0; i < p.count; ++i) {
         const std::size_t r = p[i];
-        if (!in_seq(dif_radix_set{}, r)) {
-            if (!dif_is_generic_radix(r)) return false;
-            if (i == 0 || i + 1 == p.count) return false;
-            if (dif_generic_tail_starved<T>(r, N / (prefix * r))) return false;
-        }
+        if (!in_seq(dif_radix_set{}, r) && !dif_is_generic_radix(r)) return false;
         prefix *= r;
     }
     return prefix == N;
@@ -719,10 +708,9 @@ template<typename T>
         };
         for (std::size_t k = 0; k < nrad; ++k)
             if (n % radices[k] == 0) expand(radices[k], dif_stage_cost<T>(N, n, radices[k]));
-        if (n != N)
-            for (std::size_t k = 0; k < ngen; ++k)
-                if (n % generics[k] == 0 && n / generics[k] != 1)
-                    expand(generics[k], dif_generic_stage_cost<T>(N, n, generics[k]));
+        for (std::size_t k = 0; k < ngen; ++k)
+            if (n % generics[k] == 0)
+                expand(generics[k], dif_generic_stage_cost<T>(N, n, generics[k]));
     }
 
     const auto rebuild = [&](std::size_t k) {
@@ -827,9 +815,6 @@ template<typename T>
             if (!in_seq(dif_radix_set{}, planned[p]) && !dif_is_generic_radix(planned[p]))
                 ADM_UNLIKELY
                 throw unsupported_error("forced dif: radix is not in dif_radix_set");
-            if (dif_is_generic_radix(planned[p]) &&
-                (p == 0 || p + 1 == planned.count)) ADM_UNLIKELY
-                throw unsupported_error("forced dif: generic radix must be a middle pass");
         }
 
     std::size_t l1 = 1;
@@ -851,7 +836,7 @@ template<typename T>
         l1 *= ip;
     }
 
-    if (fuse_packed && !s.radices.empty()) {
+    if (fuse_packed && !s.radices.empty() && !dif_is_generic_radix(s.radices[0])) {
         constexpr std::size_t W = xsimd::batch<T>::size;
         const std::size_t ip0 = s.radices[0], ido0 = N / ip0;
         const std::size_t flat = 2 * (ip0 - 1) * ido0 * sizeof(T);

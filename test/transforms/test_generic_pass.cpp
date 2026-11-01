@@ -165,14 +165,13 @@ TEMPLATE_TEST_CASE("elected generic-pass sizes: route + impulse flatness", "[acc
     }
 }
 
-TEMPLATE_TEST_CASE("boundary-generic chains stay out of iterative_dif", "[coverage][generic]",
+TEMPLATE_TEST_CASE("boundary-generic chains transform correctly", "[coverage][generic]",
                    float, double) {
     using T = TestType;
     using P = plan_impl<T>;
     using R = typename P::route_kind;
     for (const std::size_t N :
          {std::size_t{13}, std::size_t{26}, std::size_t{65}, std::size_t{806}}) {
-        REQUIRE_FALSE(P::route_available(R::iterative_dif, N));
         std::vector<std::complex<T>> in(N), out(N);
         in = make_signal<T>(N);
         const exec_options<T> one{T(1)};
@@ -181,18 +180,17 @@ TEMPLATE_TEST_CASE("boundary-generic chains stay out of iterative_dif", "[covera
         require_close(out, reference_dft<T>(in, true), fft_tol<T>(4));
     }
     {
-        const auto bad = dif_factor_plan{3, 31};
+        const auto chain = dif_factor_plan{3, 31};
         std::vector<std::complex<T>> in(93), out(93);
+        in = make_signal<T>(93);
         const exec_options<T> one{T(1)};
-        REQUIRE_THROWS(([&] {
-            plan_impl<T> pl(93, true, 1, &bad);
-            pl.execute(in.data(), out.data(), one);
-        }()));
+        plan_impl<T> pl(93, true, 1, &chain);
+        pl.execute(in.data(), out.data(), one);
+        require_close(out, reference_dft<T>(in, true), fft_tol<T>(4));
     }
     {
-        constexpr std::size_t W = xsimd::batch<T>::size;
         REQUIRE(P::route_available(R::iterative_dif, 9603u));
-        REQUIRE(P::route_available(R::iterative_dif, 776u) == (W <= 4));
+        REQUIRE(P::route_available(R::iterative_dif, 776u));
         impulse_flat<T>(9603, 2.0);
     }
 }

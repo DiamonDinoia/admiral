@@ -55,9 +55,32 @@ namespace portable_trig {
 // turns_memo and passes it down: the memo lives for one plan build, is rebuilt when the den
 // changes, and holds at most 2*sqrt(2^24) doubles.
 
+// __extension__ keeps -Wpedantic quiet about the 128-bit type: the reduce path needs
+// an exact 64x64->128 product, which ISO C++ does not name.
+__extension__ typedef unsigned __int128 u128;
+
 struct turns_memo {
     // Two-level lookup covers dens 8..2^24.
     static constexpr std::size_t kTwoLevelDenMax = std::size_t{1} << 24;
+
+    // num % den without a hardware divide, with one exactness fixup: m = floor(2^64/den)+1
+    // makes floor(num*m/2^64) either the true quotient or one above it, and never below the
+    // true quotient (m*den - 2^64 < den, so q - q_true <= num/2^64 < 1). The clamp restores
+    // q <= q_true, leaving the remainder in [0, 2*den) for one final fixup.
+    std::size_t reduce(std::size_t num, std::size_t den) {
+        if (num < den) return num;
+        if (den != mod_den_) {
+            mod_den_ = den;
+            mod_minv_ = static_cast<std::size_t>(
+                ((static_cast<u128>(1) << 64) / den) + 1);
+        }
+        std::size_t q = static_cast<std::size_t>(
+            (static_cast<u128>(num) * mod_minv_) >> 64);
+        q -= (q != 0 && q * den > num);
+        std::size_t r = num - q * den;
+        if (r >= den) r -= den;
+        return r;
+    }
 
     std::pair<double, double> get_two(std::size_t num, std::size_t d) {
         // One table build also serves every den that divides it: w^(num/d) = w^(num*s/D)
@@ -213,6 +236,8 @@ struct turns_memo {
     unsigned two_fold = 0;
     std::size_t scale_den_ = 0;
     std::size_t scale_map_ = 0;
+    std::size_t mod_den_ = 0;
+    std::size_t mod_minv_ = 0;
     dif_buf<double> two_lo_s, two_lo_c, two_hi_s, two_hi_c;
     std::unique_ptr<double[]> owned_;
     double* ext_base_ = nullptr;
@@ -251,12 +276,17 @@ ADM_QWAVE_INLINE std::pair<double, double> sincos_turns(std::size_t num, std::si
         }
 #endif
     }
+    if (memo != nullptr && den >= 8 && den <= turns_memo::kTwoLevelDenMax) {
+        num = memo->reduce(num, den);
+        if constexpr (Forward) {
+            if (num != 0) num = den - num;
+        }
+        return memo->get_two(num, den);
+    }
     num %= den;
     if constexpr (Forward) {
         if (num != 0) num = den - num;
     }
-    if (memo != nullptr && den >= 8 && den <= turns_memo::kTwoLevelDenMax)
-        return memo->get_two(num, den);
     const ct_sincos_v<double> w = sincos_turns_eval<double>(false, num, den);
     return {w.s, w.c};
 }

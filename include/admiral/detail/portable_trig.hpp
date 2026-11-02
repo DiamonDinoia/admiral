@@ -69,8 +69,16 @@ struct turns_memo {
             else
                 build_two(d);
         }
-        const std::size_t lo = num_d & (two_q - 1);
-        const std::size_t hi = num_d >> two_shift;
+        // Quadrant folding: the table holds one quadrant (den dividable by 4) and the
+        // axis swap/sign restores the full circle exactly; the libm build is 4x smaller.
+        std::size_t rem = num_d, quad = 0;
+        if (two_fold != 0) {
+            const std::size_t quarter = two_den >> 2;
+            quad = num_d / quarter;
+            rem = num_d - quad * quarter;
+        }
+        const std::size_t lo = rem & (two_q - 1);
+        const std::size_t hi = rem >> two_shift;
         const double ls = two_lo_s[lo], lc = two_lo_c[lo];
         const double hs = two_hi_s[hi], hc = two_hi_c[hi];
         // Compensated product: TwoProd tails plus a TwoSum keep the entry at about one double
@@ -79,12 +87,20 @@ struct turns_memo {
         const double q1 = lc * hs, e2 = std::fma(lc, hs, -q1);
         const double sh = p1 + q1;
         const double ts = sh - p1;
-        const double s = sh + ((p1 - (sh - ts)) + (q1 - ts) + e1 + e2);
+        double s = sh + ((p1 - (sh - ts)) + (q1 - ts) + e1 + e2);
         const double p2 = lc * hc, e3 = std::fma(lc, hc, -p2);
         const double r2 = ls * hs, e4 = std::fma(ls, hs, -r2);
         const double ch = p2 - r2;
         const double tc = ch - p2;
-        const double c = ch + ((p2 - (ch - tc)) + (-r2 - tc) + e3 - e4);
+        double c = ch + ((p2 - (ch - tc)) + (-r2 - tc) + e3 - e4);
+        if (quad == 1 || quad == 3) {
+            const double t = s;
+            s = (quad == 1) ? c : -c;
+            c = (quad == 1) ? -t : t;
+        } else if (quad == 2) {
+            s = -s;
+            c = -c;
+        }
         return {s, c};
     }
 
@@ -96,6 +112,7 @@ struct turns_memo {
         ext_off_ = 0;
     }
     [[nodiscard]] static std::size_t table_elems(std::size_t d) {
+        if (d % 4u == 0) d /= 4u;
         std::size_t shift = 0;
         while ((std::size_t{1} << shift) * (std::size_t{1} << shift) < d) ++shift;
         const std::size_t q = std::size_t{1} << shift;
@@ -153,10 +170,18 @@ struct turns_memo {
 
     void build_two(std::size_t d) {
         two_den = d;
+        // Quadrant fold: dens dividable by 4 store one quadrant and rebuild the rest with an
+        // exact axis swap/sign at read time. Odd or 2-mod-4 dens keep the full circle.
+        std::size_t dd = d;
+        two_fold = 0;
+        if (d % 4u == 0) {
+            dd = d / 4;
+            two_fold = 1;
+        }
         two_shift = 0;
-        while ((std::size_t{1} << two_shift) * (std::size_t{1} << two_shift) < d) ++two_shift;
+        while ((std::size_t{1} << two_shift) * (std::size_t{1} << two_shift) < dd) ++two_shift;
         two_q = std::size_t{1} << two_shift;
-        const std::size_t nh = (d + two_q - 1) / two_q;
+        const std::size_t nh = (dd + two_q - 1) / two_q;
         // One block per table build, where the plan attached a region carved from its own
         // arena or from this unique_ptr fallback (as the earlier per-side vector storage).
         const std::size_t need = 2 * (two_q + nh);
@@ -172,6 +197,7 @@ struct turns_memo {
         two_lo_c = {base + two_q, two_q};
         two_hi_s = {base + 2 * two_q, nh};
         two_hi_c = {base + 2 * two_q + nh, nh};
+        // Phase den stays d; the fold only truncates the table extent to one quadrant.
         libm_base(1, two_q, d, two_lo_s.data(), two_lo_c.data());      // w^(i/d),   i < q
         libm_base(two_q, nh, d, two_hi_s.data(), two_hi_c.data());     // w^(j*q/d), j < nh
     }
@@ -179,6 +205,7 @@ struct turns_memo {
     std::size_t two_den = 0;
     unsigned two_shift = 0;
     std::size_t two_q = 0;
+    unsigned two_fold = 0;
     dif_buf<double> two_lo_s, two_lo_c, two_hi_s, two_hi_c;
     std::unique_ptr<double[]> owned_;
     double* ext_base_ = nullptr;

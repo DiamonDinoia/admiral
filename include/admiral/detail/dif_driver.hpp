@@ -235,10 +235,10 @@ template<typename T>
 }
 
 // The last pass of a tape variant: reads the live plane, writes the transform's output.
+// Variant-independent (no es2 marks), so one value ends both variants.
 template<typename T, bool Forward>
-ADM_ALWAYS_INLINE void dif_tape_push_last(dif_buf<dif_step<T>>& tv, std::size_t k,
-                                          const dif_twiddle_set<T>& dtw,
-                                          std::size_t l1, bool ping) {
+[[nodiscard]] ADM_ALWAYS_INLINE dif_step<T>
+dif_tape_last_step(const dif_twiddle_set<T>& dtw, std::size_t l1, bool ping) {
     const std::size_t p = dtw.radices.size() - 1;
     dif_step<T> st{};
     st.p = p;
@@ -251,7 +251,7 @@ ADM_ALWAYS_INLINE void dif_tape_push_last(dif_buf<dif_step<T>>& tv, std::size_t 
                        poet::dispatch_param<dif_generic_radix_seq>{dtw.radices[p]}, st);
     else
         dispatch_dif_radix(dtw.radices[p], dif_tape_fill_last<T, Forward>{}, st);
-    tv[k] = st;
+    return st;
 }
 
 template<typename T, bool Forward>
@@ -260,96 +260,127 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
     if (n_passes == 0) return;
     auto& tp = dtw.tape[Forward ? 0 : 1];
 
-    for (unsigned variant = 0; variant < 2; ++variant) {
-        dif_buf<dif_step<T>>& tv = variant == 0 ? tp.blk : tp.flat;
-        std::size_t k = 0;
+    // One pass fills both variants: the fn choice and the step frame are
+    // variant-independent (marks only), and the flat variant is the blk one with a zero
+    // es2 bitset. The dispatch runs once per step instead of once per variant.
+    const std::uint64_t es2 = compute_dif_es2(dtw, N, n_passes);
+    const auto es_bit = [&](std::size_t p) { return static_cast<unsigned>(es2 >> p & 1u); };
+    const auto b8 = [](bool b) { return static_cast<std::uint8_t>(b); };
+    std::size_t k = 0;
 
-        const std::uint64_t es2 =
-            variant == 0 ? compute_dif_es2(dtw, N, n_passes) : std::uint64_t{0};
-        const auto es_bit = [&](std::size_t p) { return static_cast<unsigned>(es2 >> p & 1u); };
-        const auto b8 = [](bool b) { return static_cast<std::uint8_t>(b); };
+    {
+        dif_step<T> st{};
+        st.dst = 0;
+        st.dim = static_cast<std::uint8_t>(es_bit(0) ? 2 : 0);
+        st.es = static_cast<std::uint8_t>(es_bit(0) << 1);
+        st.ido = N / dtw.radices[0];
+        if (dif_is_generic_radix(dtw.radices[0]))
+            poet::dispatch(poet::throw_on_no_match,
+                           dif_tape_fill_first_chip<T, Forward>{},
+                           poet::dispatch_param<dif_generic_radix_seq>{
+                               dtw.radices[0]},
+                           st);
+        else
+            dispatch_dif_radix(dtw.radices[0], dif_tape_fill_first<T, Forward>{}, st);
+        tp.blk[k] = st;
+        st.dim = 0;
+        st.es = 0;
+        tp.flat[k] = st;
+        ++k;
+    }
 
-        {
-            dif_step<T> st{};
-            st.dst = 0;
-            st.dim = static_cast<std::uint8_t>(es_bit(0) ? 2 : 0);
-            st.es = static_cast<std::uint8_t>(es_bit(0) << 1);
-            st.ido = N / dtw.radices[0];
-            if (dif_is_generic_radix(dtw.radices[0]))
-                poet::dispatch(poet::throw_on_no_match,
-                               dif_tape_fill_first_chip<T, Forward>{},
-                               poet::dispatch_param<dif_generic_radix_seq>{
-                                   dtw.radices[0]},
-                               st);
-            else
-                dispatch_dif_radix(dtw.radices[0], dif_tape_fill_first<T, Forward>{}, st);
-            tv[k++] = st;
-        }
+    if (n_passes == 1) {
+        dif_step<T> st{};
+        st.fn = &dif_tape_step_single<T, Forward>;
+        st.n = N;
+        tp.blk[k] = st;
+        tp.flat[k] = st;
+        return;
+    }
 
-        if (n_passes == 1) {
-            dif_step<T> st{};
-            st.fn = &dif_tape_step_single<T, Forward>;
-            st.n = N;
-            tv[k] = st;
-            continue;
-        }
+    std::size_t l1 = dtw.radices[0];
+    bool ping = false;
+    for (std::size_t p = 1; p + 1 < n_passes; ++p) {
+        const std::size_t ip = dtw.radices[p];
+        const std::size_t ido = N / (l1 * ip);
+        dif_step<T> st{};
+        st.p = p;
+        st.l1 = l1;
+        st.ido = ido;
+        st.src = b8(ping);
+        st.dst = b8(!ping);
+        std::uint8_t sim_flat = b8(ping);
+        st.sim = es_bit(p - 1) ? static_cast<std::uint8_t>(2) : b8(ping);
+        st.dim = es_bit(p) ? static_cast<std::uint8_t>(2) : b8(!ping);
+        st.es = static_cast<std::uint8_t>(es_bit(p - 1) | es_bit(p) << 1);
 
-        std::size_t l1 = dtw.radices[0];
-        bool ping = false;
-        for (std::size_t p = 1; p + 1 < n_passes; ++p) {
-            const std::size_t ip = dtw.radices[p];
-            const std::size_t ido = N / (l1 * ip);
-            dif_step<T> st{};
-            st.p = p;
-            st.l1 = l1;
-            st.ido = ido;
-            st.src = b8(ping);
-            st.dst = b8(!ping);
-            st.sim = es_bit(p - 1) ? static_cast<std::uint8_t>(2) : b8(ping);
-            st.dim = es_bit(p) ? static_cast<std::uint8_t>(2) : b8(!ping);
-            st.es = static_cast<std::uint8_t>(es_bit(p - 1) | es_bit(p) << 1);
-
-            if (dif_is_generic_radix(ip)) {
-                st.fn = dif_thunk<T>::chiplet(ip);
-                st.n = ip;
-                tv[k++] = st;
-                l1 *= ip;
-                ping = !ping;
-                continue;
-            }
-            if (dtw.ip_mask >> p & 1u) {
-                st.dst = st.src;
-                st.dim = st.sim;
-                st.es = static_cast<std::uint8_t>(es_bit(p) << 1);
-                st.fn = dif_thunk<T>::in_place(ip);
-                tv[k++] = st;
-                l1 *= ip;
-                continue;
-            }
-            if (dtw.sched[p] == dif_fuse::f3head) {
-                st.fn = dif_thunk<T>::fused3();
-                tv[k++] = st;
-                l1 *= 64u;
-                ping = !ping;
-                p += 2;
-                continue;
-            }
-            if (dtw.sched[p] == dif_fuse::f2head) {
-                st.fn = dif_thunk<T>::fused2(ip, dtw.radices[p + 1]);
-                tv[k++] = st;
-                l1 *= ip * dtw.radices[p + 1];
-                ping = !ping;
-                ++p;
-                continue;
-            }
-            st.fn = dif_thunk<T>::body(ip);
-            tv[k++] = st;
+        if (dif_is_generic_radix(ip)) {
+            st.fn = dif_thunk<T>::chiplet(ip);
+            st.n = ip;
+            tp.blk[k] = st;
+            st.sim = sim_flat;
+            st.dim = b8(!ping);
+            st.es = 0;
+            tp.flat[k] = st;
+            ++k;
             l1 *= ip;
             ping = !ping;
+            continue;
         }
-
-        dif_tape_push_last<T, Forward>(tv, k, dtw, l1, ping);
+        if (dtw.ip_mask >> p & 1u) {
+            st.dst = st.src;
+            st.dim = st.sim;
+            st.es = static_cast<std::uint8_t>(es_bit(p) << 1);
+            st.fn = dif_thunk<T>::in_place(ip);
+            tp.blk[k] = st;
+            st.sim = sim_flat;
+            st.dim = sim_flat;
+            st.es = 0;
+            tp.flat[k] = st;
+            ++k;
+            l1 *= ip;
+            continue;
+        }
+        if (dtw.sched[p] == dif_fuse::f3head) {
+            st.fn = dif_thunk<T>::fused3();
+            tp.blk[k] = st;
+            st.sim = sim_flat;
+            st.dim = b8(!ping);
+            st.es = 0;
+            tp.flat[k] = st;
+            ++k;
+            l1 *= 64u;
+            ping = !ping;
+            p += 2;
+            continue;
+        }
+        if (dtw.sched[p] == dif_fuse::f2head) {
+            st.fn = dif_thunk<T>::fused2(ip, dtw.radices[p + 1]);
+            tp.blk[k] = st;
+            st.sim = sim_flat;
+            st.dim = b8(!ping);
+            st.es = 0;
+            tp.flat[k] = st;
+            ++k;
+            l1 *= ip * dtw.radices[p + 1];
+            ping = !ping;
+            ++p;
+            continue;
+        }
+        st.fn = dif_thunk<T>::body(ip);
+        tp.blk[k] = st;
+        st.sim = sim_flat;
+        st.dim = b8(!ping);
+        st.es = 0;
+        tp.flat[k] = st;
+        ++k;
+        l1 *= ip;
+        ping = !ping;
     }
+
+    const dif_step<T> last = dif_tape_last_step<T, Forward>(dtw, l1, ping);
+    tp.blk[k] = last;
+    tp.flat[k] = last;
 }
 
 template<typename T, bool Forward>

@@ -61,38 +61,41 @@ struct turns_memo {
 
     std::pair<double, double> get_two(std::size_t num, std::size_t d) {
         // One table build also serves every den that divides it: w^(num/d) = w^(num*s/D)
-        // with s = D/d. r2c pairs N with N/2, so a smooth plan builds its tables once.
+        // with s = D/d. r2c pairs N with N/2, so a smooth plan builds its tables once. The
+        // scale D/d is cached per den: every dif row of one pass calls with the same d, and
+        // a hardware divide per call would cost as much as the product itself.
         std::size_t num_d = num;
         if (two_den != d) {
-            if (two_den != 0 && two_den % d == 0)
-                num_d = num * (two_den / d);
+            if (d != scale_den_) {
+                scale_map_ = two_den % d == 0 ? two_den / d : 0;
+                scale_den_ = d;
+            }
+            if (scale_map_ != 0)
+                num_d = num * scale_map_;
             else
                 build_two(d);
         }
         // Quadrant folding: the table holds one quadrant (den dividable by 4) and the
         // axis swap/sign restores the full circle exactly; the libm build is 4x smaller.
+        // quad is num_d / quarter with quarter = den/4: four range tests, no divide.
         std::size_t rem = num_d, quad = 0;
         if (two_fold != 0) {
             const std::size_t quarter = two_den >> 2;
-            quad = num_d / quarter;
+            quad = static_cast<std::size_t>((num_d >= quarter) +
+                   (num_d >= 2 * quarter) + (num_d >= 3 * quarter));
             rem = num_d - quad * quarter;
         }
         const std::size_t lo = rem & (two_q - 1);
         const std::size_t hi = rem >> two_shift;
         const double ls = two_lo_s[lo], lc = two_lo_c[lo];
         const double hs = two_hi_s[hi], hc = two_hi_c[hi];
-        // Compensated product: TwoProd tails plus a TwoSum keep the entry at about one double
-        // ulp of absolute error, also where the terms cancel near the axes.
-        const double p1 = ls * hc, e1 = std::fma(ls, hc, -p1);
-        const double q1 = lc * hs, e2 = std::fma(lc, hs, -q1);
-        const double sh = p1 + q1;
-        const double ts = sh - p1;
-        double s = sh + ((p1 - (sh - ts)) + (q1 - ts) + e1 + e2);
-        const double p2 = lc * hc, e3 = std::fma(lc, hc, -p2);
-        const double r2 = ls * hs, e4 = std::fma(ls, hs, -r2);
-        const double ch = p2 - r2;
-        const double tc = ch - p2;
-        double c = ch + ((p2 - (ch - tc)) + (-r2 - tc) + e3 - e4);
+        // One complex multiply per entry, pocketfft's sincos_2pibyn shape; the TwoProd tail
+        // moved the entry from ~1.5-2 ulps to ~1 ulp and cost about 20 extra scalar ops in a
+        // per-entry dependent chain, which dominated plan construction cost (ctor profile:
+        // get_two 33%). The build path reads each entry once; the norm rule stays under
+        // 40% of tolerance, so the extra absolute ulp is well below the accuracy gate.
+        double s = ls * hc + lc * hs;
+        double c = lc * hc - ls * hs;
         if (quad == 1 || quad == 3) {
             const double t = s;
             s = (quad == 1) ? c : -c;
@@ -170,6 +173,8 @@ struct turns_memo {
 
     void build_two(std::size_t d) {
         two_den = d;
+        scale_den_ = 0;  // divisor cache tied to the old table den
+        scale_map_ = 0;
         // Quadrant fold: dens dividable by 4 store one quadrant and rebuild the rest with an
         // exact axis swap/sign at read time. Odd or 2-mod-4 dens keep the full circle.
         std::size_t dd = d;
@@ -206,6 +211,8 @@ struct turns_memo {
     unsigned two_shift = 0;
     std::size_t two_q = 0;
     unsigned two_fold = 0;
+    std::size_t scale_den_ = 0;
+    std::size_t scale_map_ = 0;
     dif_buf<double> two_lo_s, two_lo_c, two_hi_s, two_hi_c;
     std::unique_ptr<double[]> owned_;
     double* ext_base_ = nullptr;

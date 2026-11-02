@@ -130,6 +130,38 @@ struct turns_memo {
         return {s, c};
     }
 
+    // Snapshot for a vectorized one-row fill: every get_two-side table decision runs once
+    // here (build on a miss, divisor scale otherwise), so the fill walks the reduced index
+    // per block and reads plain tables. quarter is two_den when the den keeps the full
+    // circle, which parks the fold compares at false.
+    struct two_row_view {
+        const double* lo_s;
+        const double* lo_c;
+        const double* hi_s;
+        const double* hi_c;
+        std::size_t den;      // index-space modulus (two_den)
+        std::size_t qmask;    // two_q - 1
+        unsigned shift;       // two_shift
+        std::size_t quarter;  // fold span, or den when no fold
+        std::size_t step_d;   // step*scale mod den
+    };
+    [[nodiscard]] two_row_view row_view(std::size_t step, std::size_t d) {
+        std::size_t scale = 1;
+        if (two_den != d) {
+            if (d != scale_den_) {
+                scale_map_ = two_den % d == 0 ? two_den / d : 0;
+                scale_den_ = d;
+            }
+            if (scale_map_ != 0)
+                scale = scale_map_;
+            else
+                build_two(d);
+        }
+        return {two_lo_s.data(), two_lo_c.data(), two_hi_s.data(), two_hi_c.data(),
+                two_den, two_q - 1, two_shift,
+                two_fold != 0 ? (two_den >> 2) : two_den, reduce(step * scale, two_den)};
+    }
+
     // External backing the plan carves from its single block: table_elems(den) must cover the
     // largest den the memo will serve (this plan's top den; divisor dens reuse the build).
     void attach(double* base, std::size_t elems) {

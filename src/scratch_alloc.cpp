@@ -59,15 +59,7 @@ std::atomic<long> g_scratch_allocs{0};
 // is mmap'd and munmap'd and the next execute re-faults all of it, which is what snmalloc's
 // page-release path avoids. Measured on ccmlin075 (SPR), glibc 2.34, alloc/touch/free to steady
 // state: the flip sits between 31 MiB (0 faults per cycle, mallinfo2 hblks 0) and 32 MiB (faults
-// every cycle, hblks 1). The threaded gate sweep reads the same crossover from timing.
-//
-// Below the line snmalloc loses, and NOT for want of something to remove: at 16 threads the 8 MiB
-// per-worker blocks re-fault 8240 pages per execute under glibc and 0 under snmalloc, and snmalloc
-// is still ~9% slower on that cell. Fewer faults, less kernel time, the same address returned with
-// its contents intact, and a slower kernel. A base-offset sweep across the L2 set period and
-// PR_SET_THP_DISABLE both fail to recover it. The mechanism is open; the line is where it stops
-// mattering. Re-derive it with the threaded gate sweep, never by nudging the constant until one
-// cell passes.
+// every cycle, hblks 1).
 inline constexpr std::size_t kSnmallocMinBytes = std::size_t{32} << 20;
 
 // valgrind grants no single mapping past 32 GiB (measured, valgrind 3.26.0, Linux 5.14), and
@@ -97,10 +89,18 @@ std::atomic<bool> g_snmalloc_live{false};
 
 long scratch_alloc_count() noexcept { return g_scratch_allocs.load(std::memory_order_relaxed); }
 
+// Small-band cutoff measured with tools/alloc_band_probe.cpp (per-call alloc/free pairs,
+// median of 31, serial and 16 threads, Xeon w5-3435X, glibc 2.34; full conditions in the
+// probe): snmalloc wins serial to 512 KiB and is within 20% at 16 threads there, then
+// collapses from 2 MiB in both modes (708 vs 125 ns serial, 36.2 us vs 0.69 us threaded)
+// and wins again at 32 MiB (3614 vs 4894 ns serial). Re-derive with the probe.
+inline constexpr std::size_t kSnmallocSmallMaxBytes = std::size_t{512} << 10;
+
 void* scratch_alloc(std::size_t bytes, std::size_t align) {
     g_scratch_allocs.fetch_add(1, std::memory_order_relaxed);
 #ifndef ADM_SCRATCH_SYSTEM_ALLOC
-    if (!use_system_alloc() && bytes >= kSnmallocMinBytes) {
+    if (!use_system_alloc() &&
+        (bytes >= kSnmallocMinBytes || bytes <= kSnmallocSmallMaxBytes)) {
         void* p = snmalloc::libc::memalign(align, bytes);
         if (p != nullptr) g_snmalloc_live.store(true, std::memory_order_release);
         return p;

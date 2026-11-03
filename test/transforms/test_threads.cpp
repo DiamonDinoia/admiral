@@ -487,7 +487,12 @@ namespace {
 struct spin_barrier {
     explicit spin_barrier(int n) : cnt(n) {}
     void arrive() { cnt.fetch_sub(1, std::memory_order_release); }
-    void wait()   { while (cnt.load(std::memory_order_acquire) != 0) {} }
+    void wait()
+    {
+        // Yield: a bare spin convoys under TSan and oversubscription and livelocks
+        // the lazy-build race (68 min hang observed); the yield keeps the entry race.
+        while (cnt.load(std::memory_order_acquire) != 0) std::this_thread::yield();
+    }
     std::atomic<int> cnt;
 };
 

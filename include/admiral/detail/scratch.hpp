@@ -17,6 +17,8 @@ inline constexpr std::size_t SBO_MAX = 4096;
 
 inline constexpr std::size_t SBO_PAD = 16;
 
+// The measured worst-case chain frame is 160-176 KiB (guard-page probe at the SBO_MAX
+// boundary, c2c and r2c on f64 and f32): the arrays alone are ~129 KiB, the frame fits.
 static_assert(4 * (SBO_MAX + SBO_PAD) * sizeof(double) <= 192u * 1024u,
               "soa_scratch<double,4> stack frame exceeds the 192 KB budget");
 

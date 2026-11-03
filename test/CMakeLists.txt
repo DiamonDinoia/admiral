@@ -4,6 +4,7 @@ set(ADM_TEST_SOURCES
     kernels/test_ct_root.cpp
     kernels/test_dag_census.cpp
     transforms/test_threads.cpp
+    transforms/test_real_lazy.cpp
     transforms/test_alloc.cpp
     kernels/test_iterative.cpp
     transforms/test_nd.cpp

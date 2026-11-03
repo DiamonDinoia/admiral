@@ -214,7 +214,7 @@ struct turns_memo {
         // plain double product (each mirror would otherwise carry s2's own rounding).
         constexpr double s2h = 0x1.6a09e667f3bcdp-1;
         constexpr double s2l = -4.8336466567264567e-17;
-        const auto diag = [s2h, s2l](double t) { return std::fma(s2h, t, s2l * t); };
+        const auto diag = [](double t) { return std::fma(s2h, t, s2l * t); };
         for (std::size_t k = 0; k < count; ++k) {
             const std::size_t m = k * step;
             const std::size_t oct = (8 * m) / d;

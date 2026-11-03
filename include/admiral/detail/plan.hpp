@@ -150,12 +150,15 @@ private:
 #ifdef ADM_PIN_PLAN_ESTIMATE
         eff = admiral::effort::estimate;  // measurement knob: measure/automatic cannot race
 #endif
+        const bool measured_eff = eff == admiral::effort::automatic
+                                  || eff == admiral::effort::measure;
+        const bool price_build = eff == admiral::effort::fast;
         if (size == 0) ADM_UNLIKELY return {measured_choice{}, 1, dif_override};
         if (dif_override) return {measured_choice{route_kind::iterative_dif, {}}, nthreads, dif_override};
         const auto elect = [&](std::size_t nt) {
-            if (eff != admiral::effort::estimate) return measured_route(size, is_forward, nt);
+            if (measured_eff) return measured_route(size, is_forward, nt);
             measured_choice ch{};
-            ch.route = select_route(size, nt, &ch.dif_chain);
+            ch.route = select_route(size, nt, &ch.dif_chain, price_build);
             if (ch.route == route_kind::iterative_dif && ch.dif_chain.count == 0)
                 ch.dif_chain = detail::dif_elected_chain<T>(size);
             return ch;
@@ -163,11 +166,11 @@ private:
         if (nthreads != 0) return {elect(nthreads), nthreads, dif_override};
         const std::size_t P = resolve_nthreads(0);
         measured_choice route_est{};
-        route_est.route = select_route(size, P, &route_est.dif_chain);
+        route_est.route = select_route(size, P, &route_est.dif_chain, price_build);
         if (route_est.route != route_kind::four_step_large) {
             // Auto resolved to serial, so elect at that width. Returning the P-wide estimate
             // would downgrade effort::measure to effort::estimate on every non-large route.
-            if (eff == admiral::effort::estimate) {
+            if (!measured_eff) {
                 if (route_est.route == route_kind::iterative_dif &&
                     route_est.dif_chain.count == 0)
                     route_est.dif_chain = detail::dif_elected_chain<T>(size);
@@ -403,7 +406,8 @@ public:
 
 private:
     static route_kind select_route(std::size_t size, std::size_t nthreads,
-                                   dif_factor_plan* dif_out = nullptr) {
+                                   dif_factor_plan* dif_out = nullptr,
+                                   bool price_build = false) {
         {
             const auto& ranking = base_route_ranking<T>(size);
             for (std::size_t i = 0; i < ranking.count; ++i) {
@@ -421,7 +425,14 @@ private:
                     }
                     continue;
                 }
-                if (route_available(rk, size)) return rk;
+                if (route_available(rk, size)) {
+                    // The fitted ranking prices execute only. Under one-shot pricing a
+                    // fitted Rader route must also win the build+execute gate, else fall
+                    // through to the priced ladder below.
+                    if (price_build && rk == route_kind::rader
+                        && !rader_beats_bluestein<T>(size, true)) continue;
+                    return rk;
+                }
             }
         }
         if (is_codelet_catalog(size)) return route_kind::codelet;
@@ -435,12 +446,15 @@ private:
             return route_kind::iterative_dif;
         }
         const bool four = four_step_supported(size) && four_step_beats_bluestein<T>(size);
-        const bool rad = rader_supported(size) && rader_beats_bluestein<T>(size);
+        const bool rad = rader_supported(size) && rader_beats_bluestein<T>(size, price_build);
         // The relaxed generic-end chain is the odd-prime class. Admit it only where the
         // base route has no dedicated engine (four_step or whole-size Bluestein): that is
         // what keeps codelet/rader/good_thomas sizes on the route the base elected
-        // (odd-review Check 5: those losses ran 1.1-3.6x).
-        if (four || !rad) {
+        // (odd-review Check 5: those losses ran 1.1-3.6x). Under one-shot pricing a rader
+        // loss on build cost is not "no engine": only an engine-less size may hand the seat
+        // to the chain.
+        const bool chain_seat = price_build ? !rader_supported(size) : !rad;
+        if (four || chain_seat) {
             const dif_factor_plan chain = detail::dif_elected_chain_relaxed<T>(size);
             if (detail::dif_chain_shape_ok<T>(size, chain)) {
                 if (dif_out != nullptr) *dif_out = chain;

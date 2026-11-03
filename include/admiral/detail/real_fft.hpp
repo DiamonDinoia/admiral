@@ -3,6 +3,7 @@
 // Real input of length N through one complex FFT of length N/2: pack even and odd samples as
 // real and imaginary, then untangle. Sorensen et al., IEEE Trans. ASSP 35 (1987) 849.
 
+#include <atomic>
 #include <complex>
 #include <concepts>
 #include <cstddef>
@@ -233,13 +234,14 @@ private:
     }
 
     void r2c_even_scalar(const T* in, std::complex<T>* out, std::size_t rows) const {
+        const plan_impl<T>& fwd = lazy_fwd();
         const std::size_t M = M_;
         soa_scratch<T, 1> z_sc(2 * M);
         std::complex<T>* z = reinterpret_cast<std::complex<T>*>(z_sc.buf(0));
         for (std::size_t r = 0; r < rows; ++r) {
             const T* xr = in + r * N_;
             std::memcpy(reinterpret_cast<T*>(z), xr, N_ * sizeof(T));
-            fwd_.execute(span<std::complex<T>>(z, M));
+            fwd.execute(span<std::complex<T>>(z, M));
             r2c_even_recombine(z, tw_.data(), out + r * Nh_, M);
         }
     }
@@ -257,12 +259,13 @@ private:
     }
 
     void r2c_odd(const T* in, std::complex<T>* out, std::size_t rows, thread_pool* pool) const {
+        const plan_impl<T>& fwd = lazy_fwd();
         parallel_for(pool, rows, rows * N_, [&](std::size_t b, std::size_t e, std::size_t) {
             const auto c = detail::make_aligned_buffer<std::complex<T>>(N_);
             for (std::size_t r = b; r < e; ++r) {
                 const T* xr = in + r * N_;
                 for (std::size_t i = 0; i < N_; ++i) c[i] = std::complex<T>(xr[i], T(0));
-                fwd_.execute(span<std::complex<T>>(c.get(), N_));
+                fwd.execute(span<std::complex<T>>(c.get(), N_));
                 std::complex<T>* Xr = out + r * Nh_;
                 for (std::size_t k = 0; k < Nh_; ++k) Xr[k] = c[k];
             }
@@ -284,15 +287,41 @@ private:
         });
     }
 
-    // The inverse c2c plan builds on first c2r call, not in the constructor: one plan
-    // object per numpy call executes one direction, so the eager twin was half the small-N
-    // plan cost. Same tables, same values: construction order does not change the bits.
-    const plan_impl<T>& lazy_inv() const {
-        std::call_once(inv_once_, [this] {
-            inv_.emplace(M_, false, std::size_t{1}, nullptr, eff_, false, &memo_);
+    // One lazy c2c twin: the acquire load is the hot path, the factory runs under the
+    // build mutex only while the slot is unset. One mutex covers both twins: each build
+    // writes the turns_memo caches the other build reads, so the builds serialize. A
+    // build that throws leaves the slot unset, and the next call retries it.
+    struct twin_slot {
+        mutable std::optional<plan_impl<T>> st;
+        mutable std::atomic<bool> ready{false};
+    };
+
+    template<typename F>
+    const plan_impl<T>& lazy_twin(twin_slot& slot, F&& build) const {
+        if (!slot.ready.load(std::memory_order_acquire)) {
+            std::lock_guard<std::mutex> lock(build_mtx_);
+            if (!slot.ready.load(std::memory_order_relaxed)) {
+                slot.st.emplace(build());
+                slot.ready.store(true, std::memory_order_release);
+            }
+        }
+        return *slot.st;
+    }
+
+    // The forward and the inverse c2c twins build on first use, not in the constructor:
+    // one plan object per numpy call executes one direction, so an eager twin was half
+    // the small-N plan cost. Same tables, same values: build order does not change the bits.
+    const plan_impl<T>& lazy_fwd() const {
+        return lazy_twin(fwd_, [&] {
+            return plan_impl<T>(M_, true, std::size_t{1}, nullptr, eff_, false, &memo_);
         });
-        if (!inv_) throw internal_error("inverse plan not built");
-        return *inv_;
+    }
+
+    // The inverse twin: c2r calls this on first use, r2c never does.
+    const plan_impl<T>& lazy_inv() const {
+        return lazy_twin(inv_, [&] {
+            return plan_impl<T>(M_, false, std::size_t{1}, nullptr, eff_, false, &memo_);
+        });
     }
 
     // The batched tile tables matter only when a call brings at least W rows; a per-call
@@ -317,14 +346,13 @@ private:
     // behind it. The half-length c2c state keeps its own single arena block.
     dif_arena block_;
     static dif_arena make_plan_block(std::size_t N, bool even, portable_trig::turns_memo* memo);
-    // Carve the recombine row from block_ and fill it at den N, before fwd_ reads the memo.
+    // Carve the recombine row from block_ and fill it at den N, before a twin reads the memo.
     static dif_buf<std::complex<T>> fill_recombine_tw(std::size_t N, bool even,
                                                       dif_arena& block,
                                                       portable_trig::turns_memo* memo);
     dif_buf<std::complex<T>> tw_;
-    plan_impl<T> fwd_;
-    mutable std::optional<plan_impl<T>> inv_;
-    mutable std::once_flag inv_once_;
+    mutable twin_slot fwd_, inv_;
+    mutable std::mutex build_mtx_;
     mutable bool batched_ = false;
     mutable std::once_flag tab_once_;
     mutable vp::multipass_tables<T> tab_;
@@ -337,8 +365,7 @@ real_adm_plan<T>::real_adm_plan(std::size_t N, admiral::effort eff)
       eff_(eff),
       memo_(),
       block_(make_plan_block(N, even_, &memo_)),
-      tw_(fill_recombine_tw(N, even_, block_, &memo_)),
-      fwd_(M_, true, 1, nullptr, eff, false, &memo_) {
+      tw_(fill_recombine_tw(N, even_, block_, &memo_)) {
 }
 
 // One block per real plan: the recombine row up front, the memo's two-level circle tables
@@ -359,9 +386,9 @@ dif_arena real_adm_plan<T>::make_plan_block(std::size_t N, bool even,
 // One batched row replaces per-entry sincos calls. Entries carry the product rounding
 // every dif twiddle row already carries (seed times block reseed); the recombine
 // consumers multiply this table into the same data stream the dif tables feed.
-// It runs BEFORE the half-length c2c state construction (member order), so that state's
-// dif tables at den N/2 read the same two-level circle over den N instead of building
-// their own: one table build per plan, one sincos batch total.
+// It runs in the constructor, before any c2c twin builds, so the twins' dif tables at
+// den N/2 read the same two-level circle over den N instead of building their own: one
+// table build per plan, one sincos batch total.
 template<typename T>
 dif_buf<std::complex<T>> real_adm_plan<T>::fill_recombine_tw(std::size_t N, bool even,
                                                              dif_arena& block,

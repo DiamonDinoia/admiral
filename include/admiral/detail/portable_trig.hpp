@@ -7,6 +7,10 @@
 #include <utility>
 #include <vector>
 
+#if defined(_MSC_VER) && !defined(__clang__)
+#  include <intrin.h>
+#endif
+
 #include "ct_math.hpp"
 #include "scratch.hpp"
 
@@ -55,10 +59,6 @@ namespace portable_trig {
 // turns_memo and passes it down: the memo lives for one plan build, is rebuilt when the den
 // changes, and holds at most 2*sqrt(2^24) doubles.
 
-// __extension__ keeps -Wpedantic quiet about the 128-bit type: the reduce path needs
-// an exact 64x64->128 product, which ISO C++ does not name.
-__extension__ typedef unsigned __int128 u128;
-
 struct turns_memo {
     // Two-level lookup covers dens 8..2^24.
     static constexpr std::size_t kTwoLevelDenMax = std::size_t{1} << 24;
@@ -71,11 +71,10 @@ struct turns_memo {
         if (num < den) return num;
         if (den != mod_den_) {
             mod_den_ = den;
-            mod_minv_ = static_cast<std::size_t>(
-                ((static_cast<u128>(1) << 64) / den) + 1);
+            // max/den lands one below floor(2^64/den) exactly where den is a power of two.
+            mod_minv_ = ~std::size_t{0} / den + 1 + ((den & (den - 1)) == 0 ? 1u : 0u);
         }
-        std::size_t q = static_cast<std::size_t>(
-            (static_cast<u128>(num) * mod_minv_) >> 64);
+        std::size_t q = mul_hi(num, mod_minv_);
         q -= (q != 0 && q * den > num);
         std::size_t r = num - q * den;
         if (r >= den) r -= den;
@@ -178,6 +177,19 @@ struct turns_memo {
     }
 
    private:
+    // The exact 64x64->high-64 product the reduce path needs, which ISO C++ does not name:
+    // MSVC gets _umul128 and the GNU compilers their 128-bit type (cxx_compat.hpp's shape).
+    [[nodiscard]] static std::size_t mul_hi(std::size_t a, std::size_t b) {
+#if defined(_MSC_VER) && !defined(__clang__)
+        unsigned long long hi = 0;
+        [[maybe_unused]] const unsigned long long lo = _umul128(a, b, &hi);
+        return static_cast<std::size_t>(hi);
+#elif defined(__GNUC__) || defined(__clang__)
+        __extension__ typedef unsigned __int128 u128;
+        return static_cast<std::size_t>((static_cast<u128>(a) * b) >> 64);
+#endif
+    }
+
     static void libm_sincos(double x, double& s, double& c) {
 // __builtin_sincos is GCC-only: clang predefines __GNUC__ and has no such builtin.
 #if defined(__GNUC__) && !defined(__clang__)

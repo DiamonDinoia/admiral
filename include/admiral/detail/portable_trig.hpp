@@ -63,15 +63,15 @@ struct turns_memo {
     // Two-level lookup covers dens 8..2^24.
     static constexpr std::size_t kTwoLevelDenMax = std::size_t{1} << 24;
 
-    // num % den without a hardware divide, with one exactness fixup: m = floor(2^64/den)+1
-    // makes floor(num*m/2^64) either the true quotient or one above it, and never below the
-    // true quotient (m*den - 2^64 < den, so q - q_true <= num/2^64 < 1). The clamp restores
-    // q <= q_true, leaving the remainder in [0, 2*den) for one final fixup.
+    // num % den without a hardware divide, with one exactness fixup: m = floor(2^W/den)+1,
+    // W the word bits, makes floor(num*m/2^W) either the true quotient or one above it, and
+    // never below the true quotient (m*den - 2^W < den, so q - q_true <= num/2^W < 1). The
+    // clamp restores q <= q_true, leaving the remainder in [0, 2*den) for one final fixup.
     std::size_t reduce(std::size_t num, std::size_t den) {
         if (num < den) return num;
         if (den != mod_den_) {
             mod_den_ = den;
-            // max/den lands one below floor(2^64/den) exactly where den is a power of two.
+            // max/den lands one below floor(2^W/den) exactly where den is a power of two.
             mod_minv_ = ~std::size_t{0} / den + 1 + ((den & (den - 1)) == 0 ? 1u : 0u);
         }
         std::size_t q = mul_hi(num, mod_minv_);
@@ -177,16 +177,22 @@ struct turns_memo {
     }
 
    private:
-    // The exact 64x64->high-64 product the reduce path needs, which ISO C++ does not name:
-    // MSVC gets _umul128 and the GNU compilers their 128-bit type (cxx_compat.hpp's shape).
+    // The exact word x word -> high-word product the reduce path needs, which ISO C++ does
+    // not name at 64 bits: MSVC gets _umul128, the GNU compilers their 128-bit type
+    // (cxx_compat.hpp's shape), and 32-bit words the long long product ISO C++ names.
     [[nodiscard]] static std::size_t mul_hi(std::size_t a, std::size_t b) {
 #if defined(_MSC_VER) && !defined(__clang__)
+        static_assert(sizeof(std::size_t) == 8, "_umul128 needs 64-bit words");
         unsigned long long hi = 0;
         [[maybe_unused]] const unsigned long long lo = _umul128(a, b, &hi);
         return static_cast<std::size_t>(hi);
-#elif defined(__GNUC__) || defined(__clang__)
+#elif defined(__SIZEOF_INT128__)
         __extension__ typedef unsigned __int128 u128;
-        return static_cast<std::size_t>((static_cast<u128>(a) * b) >> 64);
+        return static_cast<std::size_t>((static_cast<u128>(a) * b) >> (sizeof(std::size_t) * 8));
+#else
+        static_assert(sizeof(std::size_t) <= 4, "64-bit words need __int128 or _umul128");
+        return static_cast<std::size_t>(
+            (static_cast<unsigned long long>(a) * b) >> (sizeof(std::size_t) * 8));
 #endif
     }
 

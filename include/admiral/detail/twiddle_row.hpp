@@ -57,66 +57,91 @@ geom_table_entry(portable_trig::turns_memo* memo,
     return {c, s};
 }
 
-// One row of w^(step*(i0+i)/den) from the row view: the window offset rides the anchor
-// leg only, like the wrapped rows.
+// One fill's per-entry value: the circle class is decided once per fill (pow2_circle_ok)
+// because the mode probe is not free and cannot change within a fill.
 template<bool Forward>
+ADM_ALWAYS_INLINE std::pair<double, double>
+fill_entry(std::size_t idx, std::size_t den, [[maybe_unused]] bool circle,
+           portable_trig::turns_memo* memo) {
+#ifdef ADM_POW2_CIRCLE
+    if (circle) return portable_trig::sincos_turns_circle<Forward>(idx, den);
+#endif
+    return portable_trig::sincos_turns<Forward>(idx, den, memo);
+}
+
+// One row of w^(step*(i0+i)/den) from the row view: the window offset rides the anchor
+// leg only, like the wrapped rows. The fold runs in double and casts at store: the cast
+// before the vector product keeps float rows at the exact bits the scalar fill carried.
+template<typename T, bool Forward>
 void geom_row_batched(portable_trig::turns_memo* memo, std::size_t step, std::size_t den,
-                      std::size_t n, double* ADM_RESTRICT re, double* ADM_RESTRICT im,
+                      std::size_t n, T* ADM_RESTRICT re, T* ADM_RESTRICT im,
                       std::size_t i0) {
-    using B = xsimd::batch<double>;
+    using B = xsimd::batch<T>;
     constexpr std::size_t W = B::size;
     const auto v = memo->row_view(step, den);
     if (n < W) {
-        for (std::size_t i = 0; i < n; ++i)
-            std::tie(re[i], im[i]) = geom_table_entry<Forward>(memo, v, i0 + i);
+        for (std::size_t i = 0; i < n; ++i) {
+            const auto [c, s] = geom_table_entry<Forward>(memo, v, i0 + i);
+            re[i] = static_cast<T>(c);
+            im[i] = static_cast<T>(s);
+        }
         return;
     }
-    alignas(B::arch_type::alignment()) double seed_re[W], seed_im[W];
-    for (std::size_t l = 0; l < W; ++l)
-        std::tie(seed_re[l], seed_im[l]) = geom_table_entry<Forward>(memo, v, l);
+    alignas(B::arch_type::alignment()) T seed_re[W], seed_im[W];
+    for (std::size_t l = 0; l < W; ++l) {
+        const auto [c, s] = geom_table_entry<Forward>(memo, v, l);
+        seed_re[l] = static_cast<T>(c);
+        seed_im[l] = static_cast<T>(s);
+    }
     const B sre = B::load_aligned(seed_re);
     const B sim = B::load_aligned(seed_im);
     const std::size_t blocks = n / W;
     for (std::size_t b = 0; b < blocks; ++b) {
         const auto [a_re, a_im] = geom_table_entry<Forward>(memo, v, i0 + b * W);
         B are = sre, aim = sim;
-        cmul_ip(are, aim, B(a_re), B(a_im));
+        cmul_ip(are, aim, B(static_cast<T>(a_re)), B(static_cast<T>(a_im)));
         are.store_unaligned(re + b * W);
         aim.store_unaligned(im + b * W);
     }
-    for (std::size_t i = blocks * W; i < n; ++i)
-        std::tie(re[i], im[i]) = geom_table_entry<Forward>(memo, v, i0 + i);
+    for (std::size_t i = blocks * W; i < n; ++i) {
+        const auto [c, s] = geom_table_entry<Forward>(memo, v, i0 + i);
+        re[i] = static_cast<T>(c);
+        im[i] = static_cast<T>(s);
+    }
 }
 
 // Same fill into interleaved complex storage.
-template<bool Forward>
+template<typename T, bool Forward>
 void geom_row_batched_packed(portable_trig::turns_memo* memo, std::size_t step,
                              std::size_t den, std::size_t n,
-                             std::complex<double>* ADM_RESTRICT out) {
-    using B = xsimd::batch<double>;
+                             std::complex<T>* ADM_RESTRICT out) {
+    using B = xsimd::batch<T>;
     constexpr std::size_t W = B::size;
     const auto v = memo->row_view(step, den);
     if (n < W) {
         for (std::size_t i = 0; i < n; ++i) {
             const auto [cre, cim] = geom_table_entry<Forward>(memo, v, i);
-            out[i] = std::complex<double>(cre, cim);
+            out[i] = std::complex<T>(static_cast<T>(cre), static_cast<T>(cim));
         }
         return;
     }
-    alignas(B::arch_type::alignment()) double seed_re[W], seed_im[W];
-    for (std::size_t l = 0; l < W; ++l)
-        std::tie(seed_re[l], seed_im[l]) = geom_table_entry<Forward>(memo, v, l);
+    alignas(B::arch_type::alignment()) T seed_re[W], seed_im[W];
+    for (std::size_t l = 0; l < W; ++l) {
+        const auto [c, s] = geom_table_entry<Forward>(memo, v, l);
+        seed_re[l] = static_cast<T>(c);
+        seed_im[l] = static_cast<T>(s);
+    }
     const B sre = B::load_aligned(seed_re);
     const B sim = B::load_aligned(seed_im);
     const std::size_t blocks = n / W;
     for (std::size_t b = 0; b < blocks; ++b) {
         const auto [a_re, a_im] = geom_table_entry<Forward>(memo, v, b * W);
         B are = sre, aim = sim;
-        cmul_ip(are, aim, B(a_re), B(a_im));
-        alignas(B::arch_type::alignment()) double re[W], im[W];
+        cmul_ip(are, aim, B(static_cast<T>(a_re)), B(static_cast<T>(a_im)));
+        alignas(B::arch_type::alignment()) T re[W], im[W];
         are.store_aligned(re);
         aim.store_aligned(im);
-        double* dst = reinterpret_cast<double*>(out + b * W);
+        T* dst = reinterpret_cast<T*>(out + b * W);
         for (std::size_t i = 0; i < W; ++i) {
             dst[2 * i] = re[i];
             dst[2 * i + 1] = im[i];
@@ -124,7 +149,7 @@ void geom_row_batched_packed(portable_trig::turns_memo* memo, std::size_t step,
     }
     for (std::size_t i = blocks * W; i < n; ++i) {
         const auto [cre, cim] = geom_table_entry<Forward>(memo, v, i);
-        out[i] = std::complex<double>(cre, cim);
+        out[i] = std::complex<T>(static_cast<T>(cre), static_cast<T>(cim));
     }
 }
 
@@ -149,15 +174,14 @@ void geom_twiddle_row(std::size_t step, std::size_t den, std::size_t n,
     using B = xsimd::batch<T>;
     constexpr std::size_t W = B::size;
 
-    if constexpr (std::is_same_v<T, double>) {
-        if (geom_batched_ok(den, memo)) {
-            geom_row_batched<Forward>(memo, step, den, n, re, im, i0);
-            return;
-        }
+    if (geom_batched_ok(den, memo)) {
+        geom_row_batched<T, Forward>(memo, step, den, n, re, im, i0);
+        return;
     }
 
+    const bool circle = portable_trig::pow2_circle_ok(den);
     const auto exact = [&](std::size_t i) {
-        const auto [sn, cs] = portable_trig::sincos_turns<Forward>(step * (i0 + i), den, memo);
+        const auto [sn, cs] = fill_entry<Forward>(step * (i0 + i), den, circle, memo);
         return std::pair<T, T>{static_cast<T>(cs), static_cast<T>(sn)};
     };
 
@@ -170,7 +194,7 @@ void geom_twiddle_row(std::size_t step, std::size_t den, std::size_t n,
     // The window offset rides the anchor leg only: putting it on both legs would shift every
     // entry by step*i0 twice.
     for (std::size_t l = 0; l < W; ++l) {
-        const auto [sn, cs] = portable_trig::sincos_turns<Forward>(step * l, den, memo);
+        const auto [sn, cs] = fill_entry<Forward>(step * l, den, circle, memo);
         seed_re[l] = static_cast<T>(cs);
         seed_im[l] = static_cast<T>(sn);
     }
@@ -197,15 +221,14 @@ void geom_twiddle_row_packed(std::size_t step, std::size_t den, std::size_t n,
     using B = xsimd::batch<T>;
     constexpr std::size_t W = B::size;
 
-    if constexpr (std::is_same_v<T, double>) {
-        if (geom_batched_ok(den, memo)) {
-            geom_row_batched_packed<Forward>(memo, step, den, n, out);
-            return;
-        }
+    if (geom_batched_ok(den, memo)) {
+        geom_row_batched_packed<T, Forward>(memo, step, den, n, out);
+        return;
     }
 
+    const bool circle = portable_trig::pow2_circle_ok(den);
     const auto exact = [&](std::size_t i) {
-        const auto [sn, cs] = portable_trig::sincos_turns<Forward>(step * i, den, memo);
+        const auto [sn, cs] = fill_entry<Forward>(step * i, den, circle, memo);
         return std::pair<T, T>{static_cast<T>(cs), static_cast<T>(sn)};
     };
 

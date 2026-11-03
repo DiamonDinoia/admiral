@@ -176,7 +176,7 @@ if(ADM_DISPATCH)
                     -DTAG=${tag} -DLIST=${CMAKE_CURRENT_BINARY_DIR}/tier_${tag}.list
                     -DOUT=${CMAKE_CURRENT_BINARY_DIR}/tier_${tag}
                     -P ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/rename_tier.cmake
-            DEPENDS ${eng} ${CMAKE_CURRENT_BINARY_DIR}/tier_${tag}.list
+            DEPENDS ${eng} $<TARGET_OBJECTS:${eng}> ${CMAKE_CURRENT_BINARY_DIR}/tier_${tag}.list
                     ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/rename_tier.cmake
             VERBATIM)
         list(APPEND ADM_TIER_OBJECTS ${renamed})

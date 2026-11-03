@@ -80,6 +80,14 @@ struct dif_elected_view {
     return (at != view.rows + view.len && at->n == key) ? at : nullptr;
 }
 
+// The baked rows freeze gen_chain_table.cpp's live election on one build. The election is a
+// pure function of the cost-model key (sizeof(T), xsimd::batch<T>::size,
+// poet::vector_register_count()), so a row is valid only at the generation key: 64-byte
+// vectors over 32 registers. Every other build must run the live election.
+template<typename T>
+inline constexpr bool dif_elected_table_applies =
+    xsimd::batch<T>::size * sizeof(T) == 64 && poet::vector_register_count() == 32;
+
 inline constexpr bool dif_wide_radices = poet::vector_register_count() >= 32;
 using dif_radix_set = std::conditional_t<
     dif_wide_radices,
@@ -864,12 +872,12 @@ template<typename T>
 
 template<typename T, bool Baked = true>
 [[nodiscard]] inline dif_factor_plan dif_elected_chain(std::size_t N) {
-    // The baked table freezes the wide-register DP's picks: several rows name radices
-    // outside the narrow dif_radix_set, so only builds whose radix set is the one the
-    // table was made for may read it; every other build runs the live election below.
-    // dif_wide_radices is constant per target, so the gate costs nothing at runtime.
+    // Several baked rows name radices outside the narrow dif_radix_set and the picks are
+    // frozen at the generation key, so only a build at that key may read the table
+    // (dif_elected_table_applies, constant per target); every other build runs the live
+    // election below.
     static_assert(sizeof(T) == 8 || sizeof(T) == 4);
-    if constexpr (Baked && dif_wide_radices) {
+    if constexpr (Baked && dif_elected_table_applies<T>) {
         if (N <= 4096) {
             if (const dif_elected_row* row =
                     dif_elected_lookup(N, std::uint8_t{sizeof(T) == 4})) {

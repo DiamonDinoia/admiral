@@ -179,7 +179,8 @@ struct turns_memo {
 
    private:
     static void libm_sincos(double x, double& s, double& c) {
-#if defined(__GNUC__) || defined(__clang__)
+// __builtin_sincos is GCC-only: clang predefines __GNUC__ and has no such builtin.
+#if defined(__GNUC__) && !defined(__clang__)
         __builtin_sincos(x, &s, &c);
 #else
         s = std::sin(x);

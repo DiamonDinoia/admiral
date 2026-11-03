@@ -220,3 +220,17 @@ TEST_CASE("col dif: first_src copy-in requires its own stride", "[iterative][col
                                           cc2.data(), cc3.data(), dtw, 1.0, src.data(),
                                           4)));
 }
+
+TEST_CASE("a one-direction build carries only that direction's tape", "[iterative_dif][tape]") {
+    for (const std::size_t N : {std::size_t{256}, std::size_t{1000}, std::size_t{1024}}) {
+        const auto fwd = build_dif_twiddle_set<double>(N, nullptr, true, nullptr, true, false);
+        REQUIRE_FALSE(fwd.tape[0].blk.empty());
+        REQUIRE(fwd.tape[1].blk.empty());
+        const auto inv = build_dif_twiddle_set<double>(N, nullptr, true, nullptr, false, true);
+        REQUIRE(inv.tape[0].blk.empty());
+        REQUIRE_FALSE(inv.tape[1].blk.empty());
+        const auto both = build_dif_twiddle_set<double>(N);
+        REQUIRE_FALSE(both.tape[0].blk.empty());
+        REQUIRE_FALSE(both.tape[1].blk.empty());
+    }
+}

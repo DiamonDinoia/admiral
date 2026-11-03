@@ -153,7 +153,7 @@ template<typename T>
             const bool pow2 = detail::has_single_bit(length);
             if (small_inner && pow2) { r4 = build_radix4_plan(length); ov = &r4; }
         }
-        st.dtw = build_dif_twiddle_set<T>(length, ov, false, memo);
+        st.dtw = build_dif_twiddle_set<T>(length, ov, false, memo, is_forward, !is_forward);
     }
     st.plan.emplace(length, is_forward, nthreads, nullptr, eff, pin, memo);
     return st;

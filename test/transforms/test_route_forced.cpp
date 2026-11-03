@@ -705,3 +705,25 @@ TEMPLATE_TEST_CASE("fast3d cube execution matches the separable 3-D reference",
         }
     }
 }
+
+TEMPLATE_TEST_CASE("one-shot pricing routes large primes on build+execute",
+                   "[route][oneshot]", float, double) {
+    using P = admiral::detail::plan_impl<TestType>;
+    const auto route_of = [](std::size_t n, admiral::effort eff) {
+        const P p(n, true, std::size_t(1), nullptr, eff, false);
+        return std::string(p.route_name());
+    };
+    // effort::fast prices the plan build into the route choice. Bluestein wins the measured
+    // one-shot fresh plan+execute at every tested prime (2026-11-03 interleaved arms, us):
+    // 97 f64 9.25 vs 9.55, 1009 f64 71.0 vs 87.5, 4099 f64 261 vs 434,
+    // 65537 f64 6712 vs 9307, 65537 f32 4096 vs 7537.
+    for (const std::size_t n : {97u, 1009u, 4099u, 65537u}) {
+        CAPTURE(n);
+        CHECK(route_of(n, admiral::effort::fast) == "bluestein");
+    }
+    // The default keeps the execute-priced routes. At 65537 a reused plan still runs Rader
+    // (arch-independent gate). At 1009 it follows the execute-only gate, whatever it says.
+    CHECK(route_of(65537, admiral::effort::estimate) == "rader");
+    CHECK(route_of(1009, admiral::effort::estimate) ==
+          (admiral::detail::rader_beats_bluestein<TestType>(1009) ? "rader" : "bluestein"));
+}

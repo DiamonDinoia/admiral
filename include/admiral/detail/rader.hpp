@@ -60,16 +60,38 @@ inline constexpr double kRaderCostPerElement = 17.0;
     return bluestein_model_cost(N);
 }
 
+// One-shot build costs (effort::fast): what a plan ctor spends before the first execute.
+// Fitted to the measured one-shot arms (fresh plan+execute per call, 2026-11-03): the
+// model's build+execute ratio must track the measured rader/bluestein totals, 1.39 at
+// 65537 f64, 1.23 at 1009 f64, 1.05 at 97 f64. The gate adds these to the execute model,
+// so a plan thrown away after one run pays build+execute.
+inline constexpr double kRaderBuildPerElement = 125.0;
+
+[[nodiscard]] inline double rader_build_cost(std::size_t p) {
+    return kRaderBuildPerElement * double(p - 1) + estimated_plan_cost(p - 1);
+}
+
+inline constexpr double kBluesteinBuildPerPadLog = 0.55;
+inline constexpr double kBluesteinBuildPerElement = 4.0;
+
+[[nodiscard]] inline double bluestein_build_cost(std::size_t N) {
+    const std::size_t pad = bluestein_choose_pad(N);
+    return kBluesteinBuildPerPadLog * double(pad) * std::log2(double(pad)) +
+           kBluesteinBuildPerElement * double(N);
+}
+
 inline constexpr double kRaderGateF32 = 1.0;
 inline constexpr double kRaderGateF64Wide = 1.06;
 inline constexpr double kRaderGateF64Narrow = 1.30;
 
 template<typename T>
-[[nodiscard]] inline bool rader_beats_bluestein(std::size_t p) {
+[[nodiscard]] inline bool rader_beats_bluestein(std::size_t p, bool with_build = false) {
     constexpr std::size_t W = xsimd::batch<T>::size;
     constexpr double ratio =
         sizeof(T) == 4 ? kRaderGateF32 : (W >= 8 ? kRaderGateF64Wide : kRaderGateF64Narrow);
-    return rader_model_cost(p) < ratio * bluestein_model_cost(p);
+    const double r = rader_model_cost(p) + (with_build ? rader_build_cost(p) : 0.0);
+    const double b = bluestein_model_cost(p) + (with_build ? bluestein_build_cost(p) : 0.0);
+    return r < ratio * b;
 }
 
 template<typename T>

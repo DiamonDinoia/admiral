@@ -45,9 +45,11 @@ template<typename T> struct r2r_state;
 // `inverse` applies the reciprocal kind scaled by 1/(2*N), so forward then inverse round-trips.
 enum class r2r_kind { dct2, dct3, dst2, dst3 };
 
-// `estimate` routes from the fitted cost model. `automatic` and `measure` also time the top
-// candidates at construction, so the route depends on the host.
-enum class effort { estimate, automatic, measure };
+// `estimate` routes from the fitted cost model. `fast` also prices the plan build into that
+// model: a plan that runs once and is thrown away (one-shot wrappers) pays build+execute, so
+// it picks the cheapest build+execute route, not the cheapest execute. `automatic` and
+// `measure` also time the top candidates at construction, so the route depends on the host.
+enum class effort { estimate, automatic, measure, fast };
 
 struct options {
     // `0` auto: serial below 2^15 elements, else the power-of-two width minimising modelled work

@@ -274,14 +274,18 @@ TEMPLATE_TEST_CASE("baked elected chain table rows match this build's live elect
         std::size_t prod = 1;
         for (std::size_t k = 0; k < row.count; ++k) prod *= row.radix[k];
         REQUIRE(prod == row.n);
-        // rows are read only on builds whose radix set is the set the table was made
-        // for (the wide-register set); there every radix must be in that set, and the
-        // row must equal the live election so a valid-but-wrong row cannot slip in
-        if constexpr (dif_wide_radices) {
+        // No build may ship a chain its live election would not elect. On a build at the
+        // table's generation key (dif_elected_table_applies) the row is that election and
+        // the checks below pin the table content; on every other build the table must not
+        // be read, so the shipped chain equals the live election there.
+        const dif_factor_plan live = dif_elected_chain<TestType, false>(row.n);
+        const dif_factor_plan shipped = dif_elected_chain<TestType, true>(row.n);
+        REQUIRE(shipped.count == live.count);
+        for (std::size_t k = 0; k < live.count; ++k) REQUIRE(shipped[k] == live[k]);
+        if constexpr (dif_elected_table_applies<TestType>) {
             for (std::size_t k = 0; k < row.count; ++k)
                 if (!dif_is_generic_radix(row.radix[k]))
                     REQUIRE(in_seq(dif_radix_set{}, row.radix[k]));
-            const dif_factor_plan live = dif_elected_chain<TestType, false>(row.n);
             REQUIRE(live.count == row.count);
             for (std::size_t k = 0; k < row.count; ++k) REQUIRE(live[k] == row.radix[k]);
         }

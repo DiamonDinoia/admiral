@@ -28,6 +28,10 @@ if(NOT ADM_CXX_STANDARD MATCHES "^(17|20|23)$")
 endif()
 
 option(ADM_USE_FAST_MATH "Enable -ffast-math for relaxed floating-point math" ON)
+option(ADM_TRIG_TEST_SHIM "Test-only: perturb twiddle trig like a non-correctly-rounded CRT" OFF)
+if(ADM_TRIG_TEST_SHIM)
+    add_compile_definitions(ADM_TRIG_TEST_SHIM)
+endif()
 
 set(ADM_TARGET_ARCH "native" CACHE STRING
     "Target microarchitecture: native, none, or an arch/CPU name (x86-64-v3, armv8-a, power8). CompilerOptions.cmake picks -march= or -mcpu= from CMAKE_SYSTEM_PROCESSOR")

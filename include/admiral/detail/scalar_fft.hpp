@@ -16,6 +16,7 @@
 #include <admiral/errors.hpp>
 
 #include "butterfly.hpp"
+#include "ct_math.hpp"
 #include "cxx_compat.hpp"
 #include "math.hpp"
 #include "real_recombine.hpp"
@@ -34,7 +35,11 @@ inline std::complex<T> scalar_twiddle(std::size_t k, std::size_t n, bool forward
     const std::size_t q = k4 / n;
     const T rem = static_cast<T>(k4 % n) / static_cast<T>(4 * n);
     const T ang = T(2) * detail::numbers::pi_v<T> * rem;
-    const T c = std::cos(ang), sn = std::sin(ang);
+    T c = std::cos(ang), sn = std::sin(ang);
+#ifdef ADM_TRIG_TEST_SHIM
+    c = static_cast<T>(trig_test_shim(double(ang), double(c)));
+    sn = static_cast<T>(trig_test_shim(double(-ang), double(sn)));
+#endif
     T re, im;
     switch (q) {
     case 0: re = c;   im = sn;  break;

@@ -196,14 +196,36 @@ struct turns_memo {
 #endif
     }
 
-    static void libm_sincos(double x, double& s, double& c) {
-// __builtin_sincos is GCC-only: clang predefines __GNUC__ and has no such builtin.
-#if defined(__GNUC__) && !defined(__clang__)
-        __builtin_sincos(x, &s, &c);
-#else
-        s = std::sin(x);
-        c = std::cos(x);
-#endif
+    // sin/cos of a first-octant residual angle without the platform CRT: the Taylor tails of
+    // the ct_dd fold (ct_math.hpp sincos_turns_fold_dbl) at double precision, alternating sums
+    // of the term recurrence with reciprocal steps (one multiply per term, no divide). Table
+    // accuracy then carries no libm rounding: the MSVC CRT's ~1 ulp error put the memo
+    // contract at 2.5 ulp and the transform norm above tolerance (CI 125981420115). One
+    // merged loop serves both tails; each tail stops at its own term threshold, so a small
+    // angle pays only the terms it needs. The term sequences are bit-identical to the
+    // separate-loop fold.
+    static void series_sincos(double x, double& s, double& c) {
+        static constexpr double kSinStep[] = {1.0 / 20.0, 1.0 / 42.0, 1.0 / 72.0,
+                                              1.0 / 110.0, 1.0 / 156.0, 1.0 / 210.0,
+                                              1.0 / 272.0, 1.0 / 342.0};
+        static constexpr double kCosStep[] = {1.0 / 12.0, 1.0 / 30.0, 1.0 / 56.0,
+                                              1.0 / 90.0, 1.0 / 132.0, 1.0 / 182.0,
+                                              1.0 / 240.0, 1.0 / 306.0};
+        const double x2 = x * x;
+        double t = x * x2 * (1.0 / 6.0), ts = t;
+        double u = x2 * 0.5, tu = u;
+        for (unsigned k = 2; k <= 9 && (t > 0x1p-56 || u > 0x1p-56); ++k) {
+            if (t > 0x1p-56) {
+                t *= x2 * kSinStep[k - 2];
+                ts = (k & 1) ? ts + t : ts - t;
+            }
+            if (u > 0x1p-56) {
+                u *= x2 * kCosStep[k - 2];
+                tu = (k & 1) ? tu + u : tu - u;
+            }
+        }
+        s = x - ts;
+        c = 1.0 - tu;
     }
 
     // Table of w^(k*step/d) for k = 0..count-1, evaluated like pocketfft's sincos_2pibyn:
@@ -226,9 +248,9 @@ struct turns_memo {
             const std::size_t oct = (8 * m) / d;
             const std::size_t rem = 8 * m - oct * d;
             double rs, rc;
-            libm_sincos(std::fma(static_cast<double>(rem), phl,
-                                 static_cast<double>(rem) * phh),
-                        rs, rc);
+            series_sincos(std::fma(static_cast<double>(rem), phl,
+                                   static_cast<double>(rem) * phh),
+                          rs, rc);
             double s, c;
             switch (oct & 7) {
                 case 0: s = rs;                     c = rc;                     break;

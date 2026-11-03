@@ -317,38 +317,53 @@ struct turns_memo {
     std::size_t ext_elems_ = 0, ext_off_ = 0;
 };
 
+// The power-of-two circle class: one fill decides it once (pow2_circle_ok) because the
+// run-time long double mode cannot change within a fill and the probe is not free.
+[[nodiscard]] inline bool pow2_circle_ok([[maybe_unused]] std::size_t den) noexcept {
+    if constexpr (std::numeric_limits<long double>::is_iec559) {
+#ifdef ADM_POW2_CIRCLE
+        return den >= 8 && den <= kPow2CircleDen && (den & (den - 1)) == 0 &&
+               ld_full_precision();
+#endif
+    }
+    return false;
+}
+
+#ifdef ADM_POW2_CIRCLE
+// The straight circle read: bit-identical to the fold sincos_turns runs for the same
+// index, at one load per entry.
+template<bool Forward>
+ADM_QWAVE_INLINE std::pair<double, double> sincos_turns_circle(std::size_t num,
+                                                               std::size_t den) {
+#ifdef ADM_CIRCLE_COUNTR_ZERO
+    const unsigned l2 = static_cast<unsigned>(std::countr_zero(den));
+#else
+    unsigned l2 = 0;
+    for (std::size_t d = den; d > 1; d >>= 1) ++l2;
+#endif
+    num &= den - 1;
+    if constexpr (Forward) {
+        if (num != 0) num = den - num;
+    }
+    const ct_sincos_v<double> w = pow2_circle[num << (16 - l2)];
+    return {w.s, w.c};
+}
+#endif
+
 template<bool Forward>
 ADM_QWAVE_INLINE std::pair<double, double> sincos_turns(std::size_t num, std::size_t den,
                                                         turns_memo* memo = nullptr) {
-    if constexpr (std::numeric_limits<long double>::is_iec559) {
 #ifdef ADM_POW2_CIRCLE
-        // A power-of-two den reads the precomputed circle: one load replaces the series
-        // fold and every run-time long double operation. The circle holds doubles folded
-        // from 64-bit-mantissa long double values, so the ADM_POW2_CIRCLE switch keeps
-        // the other long double formats (double, binary128, composite) on the run-time
-        // fold, whose own bits differ there. The ld_full_precision probe gates the read
-        // for the same reason it gates the memo and the fold below: a degraded run-time
-        // long double (valgrind, x87 precision control) runs the double fold for the same
-        // dens, and a run-time result must equal the fold of the same run-time mode. The
-        // branch carries its own reduce and flip so the pow2 path never pays an idiv; the
-        // generic reduce below repeats them for the rest.
-        if (den >= 8 && den <= kPow2CircleDen && (den & (den - 1)) == 0 &&
-            ld_full_precision()) {
-#ifdef ADM_CIRCLE_COUNTR_ZERO
-            const unsigned l2 = static_cast<unsigned>(std::countr_zero(den));
-#else
-            unsigned l2 = 0;
-            for (std::size_t d = den; d > 1; d >>= 1) ++l2;
+    // A power-of-two den reads the precomputed circle: one load replaces the series
+    // fold and every run-time long double operation. The circle holds doubles folded
+    // from 64-bit-mantissa long double values, so the ADM_POW2_CIRCLE switch keeps
+    // the other long double formats (double, binary128, composite) on the run-time
+    // fold, whose own bits differ there. The ld_full_precision probe gates the read
+    // for the same reason it gates the memo and the fold below: a degraded run-time
+    // long double (valgrind, x87 precision control) runs the double fold for the same
+    // dens, and a run-time result must equal the fold of the same run-time mode.
+    if (pow2_circle_ok(den)) return sincos_turns_circle<Forward>(num, den);
 #endif
-            num &= den - 1;
-            if constexpr (Forward) {
-                if (num != 0) num = den - num;
-            }
-            const ct_sincos_v<double> w = pow2_circle[num << (16 - l2)];
-            return {w.s, w.c};
-        }
-#endif
-    }
     if (memo != nullptr && den >= 8 && den <= turns_memo::kTwoLevelDenMax) {
         num = memo->reduce(num, den);
         if constexpr (Forward) {

@@ -305,6 +305,7 @@ private:
                 slot.ready.store(true, std::memory_order_release);
             }
         }
+        if (!slot.st) throw internal_error("c2c twin not built");
         return *slot.st;
     }
 

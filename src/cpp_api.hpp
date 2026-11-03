@@ -65,6 +65,7 @@ public:
                 ready.store(true, std::memory_order_release);
             }
         }
+        if (!st) throw internal_error("lazy state not built");
         return *st;
     }
 

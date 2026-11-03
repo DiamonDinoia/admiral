@@ -590,7 +590,7 @@ template<typename T>
     // chain costs at least fuse_g times its plain stage cost, so a prefix whose discounted
     // plain cost already reaches the best complete chain cannot win. The explored set
     // shrinks; the winning chain and every recursion-side decision are unchanged.
-    double bound = std::numeric_limits<double>::infinity();
+    double bound = (std::numeric_limits<double>::max)();
     const auto score = [&](std::size_t len) {
         dif_fuse sched[dif_factor_plan::max_passes]{};
         dif_fusion_schedule_into<T>(N, chain, len, sched);

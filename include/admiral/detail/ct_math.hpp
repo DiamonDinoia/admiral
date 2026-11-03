@@ -415,6 +415,19 @@ template<typename F = double>
     return sincos_turns_eval<F>(conjugate, num, den);
 }
 
+#ifdef ADM_TRIG_TEST_SHIM
+// Test shim: models a platform CRT whose sin/cos are not correctly rounded (MSVC's are
+// within about 1 ulp and its error is not zero-mean over a table). Each value moves one ulp
+// away from zero, the coherent end of the +-1 ulp class: a per-argument mixed sign reproduces
+// the memo-contract failure but cancels in the transform norm (measured both). x == 0 and
+// v == 0 stay exact (every CRT returns sin 0 = 0 and cos 0 = 1). Used at the trig calls that
+// feed twiddle values; test-only, compiled when the build defines ADM_TRIG_TEST_SHIM.
+[[nodiscard]] inline double trig_test_shim(double x, double v) {
+    if (v == 0.0 || x == 0.0) return v;
+    return std::nextafter(v, v * 2.0);
+}
+#endif
+
 // Exact root-of-unity classification of the stage-twiddle constants. Every twiddle the
 // butterfly and granule arms special-case is one of the eight octant constants (rem == 0:
 // the folded (s, c) is an exact {0, +-1, +-sqrt2/2} pair at every precision) or a generic

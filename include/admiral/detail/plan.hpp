@@ -194,8 +194,8 @@ private:
             m.st.template emplace<good_thomas_state>();
             break;
         case route_kind::iterative_dif:
-            m.st.template emplace<dif_state>(
-                dif_state{build_dif_twiddle_set<T>(size, dif_override, true, memo)});
+            m.st.template emplace<dif_state>(dif_state{
+                build_dif_twiddle_set<T>(size, dif_override, true, memo, is_forward, !is_forward)});
             break;
         case route_kind::four_step: {
             const four_step_split split = choose_four_step_split_exec<T>(size);

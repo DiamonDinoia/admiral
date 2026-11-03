@@ -980,7 +980,9 @@ template<typename T>
 [[nodiscard]] dif_twiddle_set<T> build_dif_twiddle_set(std::size_t N,
                                          const dif_factor_plan* override_plan = nullptr,
                                          bool fuse_packed = true,
-                                         portable_trig::turns_memo* memo = nullptr) {
+                                         portable_trig::turns_memo* memo = nullptr,
+                                         bool want_fwd_tape = true,
+                                         bool want_inv_tape = true) {
     dif_twiddle_set<T> s;
     std::optional<portable_trig::turns_memo> local_memo;
     if (memo == nullptr) {
@@ -1083,7 +1085,8 @@ template<typename T>
             lf *= planned[p];
         }
         bytes += rowperm_n * sizeof(std::uint32_t) + 64;
-        bytes += 4u * steps * sizeof(dif_step<T>) + 256;
+        bytes += 2u * ((want_fwd_tape ? 1u : 0u) + (want_inv_tape ? 1u : 0u)) * steps *
+                 sizeof(dif_step<T>) + 256;
         s.arena.alloc(bytes);
     }
     s.passes = s.arena.template carve<dif_pass_tables<T>>(np);
@@ -1113,10 +1116,14 @@ template<typename T>
         }
         if (rowperm_n != 0) s.rowperm = s.arena.template carve<std::uint32_t>(rowperm_n);
         if (steps != 0) {
-            s.tape[0].blk = s.arena.template carve<dif_step<T>>(steps);
-            s.tape[0].flat = s.arena.template carve<dif_step<T>>(steps);
-            s.tape[1].blk = s.arena.template carve<dif_step<T>>(steps);
-            s.tape[1].flat = s.arena.template carve<dif_step<T>>(steps);
+            if (want_fwd_tape) {
+                s.tape[0].blk = s.arena.template carve<dif_step<T>>(steps);
+                s.tape[0].flat = s.arena.template carve<dif_step<T>>(steps);
+            }
+            if (want_inv_tape) {
+                s.tape[1].blk = s.arena.template carve<dif_step<T>>(steps);
+                s.tape[1].flat = s.arena.template carve<dif_step<T>>(steps);
+            }
         }
     }
     s.ip_mask = ip_mask;
@@ -1206,8 +1213,8 @@ template<typename T>
     }
 
     if (steps != 0) {
-        dif_build_tape<T, true>(s, N);
-        dif_build_tape<T, false>(s, N);
+        if (want_fwd_tape) dif_build_tape<T, true>(s, N);
+        if (want_inv_tape) dif_build_tape<T, false>(s, N);
     }
 
     return s;

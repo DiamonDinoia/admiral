@@ -54,9 +54,20 @@ private:
         return true;
     }
 
+    // The batched tile path runs W rows through one ping-pong vector scratch of
+    // 2 * W * N_ * sizeof(T) bytes and a W-wide transpose at both ends. The rule:
+    // batch the rows only while one tile's scratch fits the L1 data cache. For
+    // longer rows the scratch spills to L2 on every butterfly pass and the
+    // one-row-at-a-time path wins. The test is the tile footprint in bytes, not a
+    // row count, so one threshold covers every width and element size.
+    bool tile_fits_l1() const {
+        constexpr std::size_t kL1DataBytes = 32 * 1024;
+        return 2 * W * N_ * sizeof(T) <= kL1DataBytes;
+    }
+
     void r2c_even(const T* in, std::complex<T>* out, std::size_t rows, thread_pool* pool) const {
         std::size_t done = 0;
-        if (rows >= W && tiles_batched()) {
+        if (rows >= W && tile_fits_l1() && tiles_batched()) {
             const std::size_t ntiles = rows / W;
             run_tiles(pool, ntiles, rows * N_, [&](std::size_t t, V* sc) {
                 r2c_even_tile(in + t * W * N_, out + t * W * Nh_, sc);
@@ -68,7 +79,7 @@ private:
 
     void c2r_even(const std::complex<T>* in, T* out, std::size_t rows, thread_pool* pool) const {
         std::size_t done = 0;
-        if (rows >= W && tiles_batched()) {
+        if (rows >= W && tile_fits_l1() && tiles_batched()) {
             const std::size_t ntiles = rows / W;
             run_tiles(pool, ntiles, rows * N_, [&](std::size_t t, V* sc) {
                 c2r_even_tile(in + t * W * Nh_, out + t * W * N_, sc);

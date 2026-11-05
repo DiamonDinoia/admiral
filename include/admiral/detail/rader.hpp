@@ -104,10 +104,24 @@ public:
 
         m.gpow.resize(m.L);
         m.ginvpow.resize(m.L);
-        // gpow[q] = g^q mod p by one modular multiply per entry; the same values the
-        // square-and-multiply ct_powmod(g, q, p) produced, at a twentieth of the divides.
+        // gpow[q] = g^q mod p by one modular multiply per entry. For p < 2^32 the product
+        // fits one word and mu = floor(2^64/p)+1 estimates its quotient to at most one
+        // above the true one, so one correction returns the exact residue at multiply cost;
+        // ct_mul_mod's hardware divide per entry dominated the rader ctor at r2c 97.
+        // Larger mods and 32-bit words keep the divide.
+        const std::size_t mu = (sizeof(std::size_t) == 8 && p < (std::size_t{1} << 32))
+                                   ? ~std::size_t{0} / p + 1
+                                   : 0;
+        const auto mul_mod = [p, mu](std::size_t a, std::size_t b) {
+            if (mu == 0) return ct_mul_mod(a, b, p);
+            const std::size_t prod = a * b;
+            std::size_t q = portable_trig::turns_memo::mul_hi(prod, mu);
+            if (q != 0) --q;  // q <= true quotient, so the residue below needs no wrap
+            const std::size_t r = prod - q * p;
+            return r >= p ? r - p : r;
+        };
         m.gpow[0] = 1 % p;
-        for (std::size_t q = 1; q < m.L; ++q) m.gpow[q] = ct_mul_mod(m.gpow[q - 1], g, p);
+        for (std::size_t q = 1; q < m.L; ++q) m.gpow[q] = mul_mod(m.gpow[q - 1], g);
         for (std::size_t q = 0; q < m.L; ++q) m.ginvpow[q] = m.gpow[(m.L - q) % m.L];
 
         m.inner = pick_inner(m.L);

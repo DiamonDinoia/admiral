@@ -25,12 +25,6 @@
 #  define ADM_POW2_CIRCLE 1
 #endif
 
-#include <version>
-#if defined(__cpp_lib_bitops) && __cpp_lib_bitops >= 201907L
-#  include <bit>
-#  define ADM_CIRCLE_COUNTR_ZERO
-#endif
-
 // Local twin of macros.hpp's ADM_ALWAYS_INLINE: this header sits inside the include span
 // of headers that pair macros.hpp with undef_macros.hpp, so it cannot join that pairing.
 #if defined(_MSC_VER) && !defined(__clang__)
@@ -345,12 +339,7 @@ struct turns_memo {
 template<bool Forward>
 ADM_QWAVE_INLINE std::pair<double, double> sincos_turns_circle(std::size_t num,
                                                                std::size_t den) {
-#ifdef ADM_CIRCLE_COUNTR_ZERO
-    const unsigned l2 = static_cast<unsigned>(std::countr_zero(den));
-#else
-    unsigned l2 = 0;
-    for (std::size_t d = den; d > 1; d >>= 1) ++l2;
-#endif
+    const unsigned l2 = static_cast<unsigned>(countr_zero(den));
     num &= den - 1;
     if constexpr (Forward) {
         if (num != 0) num = den - num;
@@ -399,4 +388,3 @@ ADM_QWAVE_INLINE std::pair<double, double> sincos_turns(std::size_t num, std::si
 }
 
 #undef ADM_QWAVE_INLINE
-#undef ADM_CIRCLE_COUNTR_ZERO

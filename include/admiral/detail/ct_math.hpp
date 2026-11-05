@@ -545,7 +545,7 @@ template<typename T>
     const std::size_t phi = p - 1;
     // Prime factors of phi, once: the per-candidate test then costs one powmod per
     // factor, not a scan over every q <= phi.
-    std::size_t fac[16];
+    std::size_t fac[16] = {};
     std::size_t nfac = 0;
     std::size_t x = phi;
     for (std::size_t q = 2; q * q <= x; ++q) {

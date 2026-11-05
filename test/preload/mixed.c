@@ -6,6 +6,10 @@
  * With "control", it makes no c2c plan and prints its heap delta. The driver passes that delta
  * as the baseline of a run: a platform allocation that hits both runs cancels out, and a leak in
  * the plan path of admiral hits the run only. A plain number argument is that baseline.
+ * One warmup run precedes the baseline. The plan path pays one-time init at its first run (the
+ * engine allocator sets its thread up and keeps one chunk in use to the thread end). The warmup
+ * run pays that init, so the measured run shows only what each run leaves behind. A leak pays on
+ * all runs and the check rejects it.
  * Each array prints as "<tag> <index> <re> <im>". The control prints no arrays. */
 #include <fftw3.h>
 
@@ -19,6 +23,7 @@
 
 static int leak_one; /* main sets it: skip one destroy_plan */
 static int control;  /* main sets it: no c2c plan, print the heap delta */
+static int warmup;   /* main sets it: the warmup run pays one-time init, prints no arrays */
 
 static double sample(long i, int part) {
     return sin(0.41 * (double)i + 0.9 * (double)part) + 0.5 * cos(0.07 * (double)(i * i));
@@ -50,7 +55,7 @@ static double sample(long i, int part) {
         PFX##_execute(pg);                                                                    \
         if (!control) PFX##_execute(pc);                                                      \
         PFX##_execute_dft(pg, d, e);                                                          \
-        if (!control) {                                                                       \
+        if (!control && !warmup) {                                                            \
             for (int i = 0; i < N / 2 + 1; ++i)                                               \
                 printf("%sr %d " FMT " " FMT "\n", tag, i, (double)rc[i][0], (double)rc[i][1]);   \
             for (int i = 0; i < N; ++i)                                                       \
@@ -63,7 +68,7 @@ static double sample(long i, int part) {
         PFX##_destroy_plan(pr);                                                               \
         PFX##_destroy_plan(pg);                                                               \
         if (!control) {                                                                       \
-            if (leak_one) leak_one = 0;                                                       \
+            if (leak_one && !warmup) leak_one = 0;                                            \
             else PFX##_destroy_plan(pc);                                                      \
         }                                                                                     \
         PFX##_free(a);                                                                        \
@@ -99,6 +104,14 @@ int main(int argc, char** argv) {
     if (argc > 1 && strcmp(argv[1], "leak") == 0) leak_one = 1;
     else if (argc > 1 && strcmp(argv[1], "control") == 0) control = 1;
     else if (argc > 1) baseline = strtoull(argv[1], NULL, 10);
+    /* One warmup run before the baseline, in all modes: it pays the one-time init of the paths
+     * of the run. */
+    warmup = 1;
+    mixed_d("d");
+    mixed_f("f");
+    fftw_cleanup();
+    fftwf_cleanup();
+    warmup = 0;
     const size_t before = heap_in_use();
     int rc = 0;
     rc |= mixed_d("d");

@@ -176,10 +176,10 @@ struct turns_memo {
         return 2 * (q + (d + q - 1) / q);
     }
 
-   private:
-    // The exact word x word -> high-word product the reduce path needs, which ISO C++ does
-    // not name at 64 bits: MSVC gets _umul128, the GNU compilers their 128-bit type
-    // (cxx_compat.hpp's shape), and 32-bit words the long long product ISO C++ names.
+    // The exact word x word -> high-word product the reduce and the gpow walk need, which
+    // ISO C++ does not name at 64 bits: MSVC gets _umul128, the GNU compilers their 128-bit
+    // type (cxx_compat.hpp's shape), and 32-bit words the long long product ISO C++ names.
+    // Public for rader.hpp's Barrett residue walk.
     [[nodiscard]] static std::size_t mul_hi(std::size_t a, std::size_t b) {
 #if defined(_MSC_VER) && !defined(__clang__)
         static_assert(sizeof(std::size_t) == 8, "_umul128 needs 64-bit words");
@@ -195,6 +195,8 @@ struct turns_memo {
             (static_cast<unsigned long long>(a) * b) >> (sizeof(std::size_t) * 8));
 #endif
     }
+
+   private:
 
     // sin/cos of a first-octant residual angle without the platform CRT: the Taylor tails of
     // the ct_dd fold (ct_math.hpp sincos_turns_fold_dbl) at double precision, alternating sums
@@ -243,10 +245,12 @@ struct turns_memo {
         constexpr double s2h = 0x1.6a09e667f3bcdp-1;
         constexpr double s2l = -4.8336466567264567e-17;
         const auto diag = [](double t) { return std::fma(s2h, t, s2l * t); };
+        // Octant walk with a running (oct, rem) pair: carries 8*(k*step) exactly, so every
+        // angle stays bit-identical, at one divide per table instead of one per entry.
+        const std::size_t oct_jump = (8 * step) / d;
+        const std::size_t rem_jump = 8 * step - oct_jump * d;
+        std::size_t oct = 0, rem = 0;
         for (std::size_t k = 0; k < count; ++k) {
-            const std::size_t m = k * step;
-            const std::size_t oct = (8 * m) / d;
-            const std::size_t rem = 8 * m - oct * d;
             double rs, rc;
             series_sincos(std::fma(static_cast<double>(rem), phl,
                                    static_cast<double>(rem) * phh),
@@ -264,6 +268,12 @@ struct turns_memo {
             }
             out_s[k] = s;
             out_c[k] = c;
+            rem += rem_jump;
+            oct += oct_jump;
+            if (rem >= d) {
+                rem -= d;
+                ++oct;
+            }
         }
     }
 

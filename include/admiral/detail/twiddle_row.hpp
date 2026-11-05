@@ -228,7 +228,8 @@ void geom_twiddle_row(std::size_t step, std::size_t den, std::size_t n,
     }
 #endif
 
-    const bool circle = portable_trig::pow2_circle_ok(den);
+    const bool circle = false;
+    (void)circle;
     const auto exact = [&](std::size_t i) {
         const auto [sn, cs] = fill_entry<Forward>(step * (i0 + i), den, circle, memo);
         return std::pair<T, T>{static_cast<T>(cs), static_cast<T>(sn)};

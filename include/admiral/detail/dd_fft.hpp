@@ -99,17 +99,98 @@ struct dd_const {
     double rh, rl, ih, il;
 };
 
-inline dd_const dd_split(const ct_sincos_v<ct_dd>& w) { return {w.c.hi, w.c.lo, w.s.hi, w.s.lo}; }
+template<typename F>
+inline dd_const dd_split(const ct_sincos_v<F>& w) {
+    return {w.c.hi, w.c.lo, w.s.hi, w.s.lo};
+}
 
 inline dd_const dd_conj(dd_const w) { return {w.rh, w.rl, -w.ih, -w.il}; }
+
+// ct_dd without the volatile pins. The pins cost about 14 store round trips per add and hold
+// every link-time copy of the ct_dd bodies to one rounding where -ffast-math can reassociate
+// them; this file's TUs build with -fno-fast-math (kDdStrictFp, src/inst_api_ld.cpp), so the
+// pinned and plain formulas are bit-identical there. The plain arithmetic runs the dd build
+// fills only, never in a fast-math TU.
+struct ct_dd_plain {
+    double hi = 0, lo = 0;
+    ct_dd_plain() = default;
+    constexpr ct_dd_plain(double h, double l) : hi(h), lo(l) {}
+    template<typename A,
+             std::enable_if_t<std::is_integral_v<A> || std::is_same_v<A, double>, int> = 0>
+    constexpr ct_dd_plain(A a) : hi(static_cast<double>(a)) {}
+};
+
+constexpr ct_dd_plain dd_plain_two_sum(double a, double b) {
+    const double s = a + b, bb = s - a;
+    return {s, (a - (s - bb)) + (b - bb)};
+}
+
+constexpr ct_dd_plain dd_plain_fast_two_sum(double a, double b) {
+    const double s = a + b;
+    return {s, b - (s - a)};
+}
+
+constexpr ct_dd_plain dd_plain_two_prod(double a, double b) {
+    const double p = a * b;
+    return {p, std::fma(a, b, -p)};
+}
+
+constexpr ct_dd_plain operator-(ct_dd_plain a) { return {-a.hi, -a.lo}; }
+
+constexpr ct_dd_plain operator+(ct_dd_plain a, ct_dd_plain b) {
+    const ct_dd_plain s = dd_plain_two_sum(a.hi, b.hi), t = dd_plain_two_sum(a.lo, b.lo);
+    const ct_dd_plain u = dd_plain_fast_two_sum(s.hi, s.lo + t.hi);
+    return dd_plain_fast_two_sum(u.hi, u.lo + t.lo);
+}
+
+constexpr ct_dd_plain operator-(ct_dd_plain a, ct_dd_plain b) { return a + -b; }
+
+constexpr ct_dd_plain operator*(ct_dd_plain a, ct_dd_plain b) {
+    const ct_dd_plain p = dd_plain_two_prod(a.hi, b.hi);
+    return dd_plain_fast_two_sum(p.hi, p.lo + (a.hi * b.lo + a.lo * b.hi));
+}
+
+constexpr ct_dd_plain operator/(ct_dd_plain a, ct_dd_plain b) {
+    const double q1 = a.hi / b.hi;
+    const ct_dd_plain r1 = a - b * q1;
+    const double q2 = r1.hi / b.hi;
+    const ct_dd_plain r2 = r1 - b * q2;
+    return dd_plain_fast_two_sum(q1, q2) + r2.hi / b.hi;
+}
+
+constexpr bool operator<(ct_dd_plain a, ct_dd_plain b) {
+    return a.hi < b.hi || (a.hi == b.hi && a.lo < b.lo);
+}
+constexpr bool operator<=(ct_dd_plain a, ct_dd_plain b) { return !(b < a); }
+constexpr ct_dd_plain& operator+=(ct_dd_plain& a, ct_dd_plain b) { return a = a + b; }
+constexpr ct_dd_plain& operator*=(ct_dd_plain& a, ct_dd_plain b) { return a = a * b; }
+
+template<>
+inline constexpr ct_dd_plain ct_pi<ct_dd_plain>{0x1.921fb54442d18p+1, 0x1.1a62633145c07p-53};
+template<>
+inline constexpr ct_dd_plain ct_sqrt2<ct_dd_plain>{0x1.6a09e667f3bcdp+0,
+                                                   -0x1.bdd3413b26456p-54};
+}
+}
+
+template<>
+struct std::numeric_limits<admiral::detail::ct_dd_plain> {
+    static constexpr bool is_specialized = true;
+    static constexpr int digits = 104;
+    static constexpr admiral::detail::ct_dd_plain epsilon() { return {0x1p-104, 0}; }
+};
+
+namespace admiral {
+namespace detail {
 
 // w_n^e = exp(-2 pi i e / n) for every e from two series anchors plus a recurrence:
 // w^e = w^(B (e / B)) w^(e % B). Each table fills by one complex multiply per entry from a
 // single sincos anchor (w^B for coarse, w^1 for fine), so the build runs 2 dd sincos instead
-// of 2 sqrt(n). A fill is a unit-circle rotation, so a table drifts about length * 2^-104 in
-// magnitude and phase; at length <= sqrt(n) that stays far inside the long double class
-// (measured max error in tools/ check). ponytail: re-anchor each table per block if a plan
-// ever exceeds n ~ 2^28, where sqrt(n) * 2^-104 nears 2^-90.
+// of 2 sqrt(n). The arithmetic is ct_dd_plain: the fills run inside one plan build and the
+// pinned ct_dd costs about 14 store round trips per add. A fill is a unit-circle rotation, so
+// a table drifts about length * 2^-104 in magnitude and phase; at length <= sqrt(n) that stays
+// far inside the long double class (measured max error in tools/ check). ponytail: re-anchor
+// each table per block if a plan ever exceeds n ~ 2^28, where sqrt(n) * 2^-104 nears 2^-90.
 class dd_roots {
 public:
     explicit dd_roots(std::size_t n) : n_(n) {
@@ -117,32 +198,33 @@ public:
         const std::size_t nc = (n_ + b_ - 1) / b_;
         coarse_.resize(nc);
         fine_.resize(b_);
-        const ct_sincos_v<ct_dd> one{ct_dd(0), ct_dd(1)};
+        const ct_sincos_v<ct_dd_plain> one{ct_dd_plain(0), ct_dd_plain(1)};
         coarse_[0] = fine_[0] = one;
         if (b_ > 1) {
-            fine_[1] = sincos_turns_eval<ct_dd>(true, 1, n_);
+            fine_[1] = sincos_turns_eval<ct_dd_plain>(true, 1, n_);
             for (std::size_t e = 2; e < b_; ++e) fine_[e] = cmul(fine_[e - 1], fine_[1]);
         }
         if (nc > 1) {
-            coarse_[1] = sincos_turns_eval<ct_dd>(true, b_, n_);
+            coarse_[1] = sincos_turns_eval<ct_dd_plain>(true, b_, n_);
             for (std::size_t e = 2; e < nc; ++e) coarse_[e] = cmul(coarse_[e - 1], coarse_[1]);
         }
     }
 
     [[nodiscard]] dd_const operator()(std::size_t e) const {
         e %= n_;
-        const ct_sincos_v<ct_dd>& a = coarse_[e / b_];
-        const ct_sincos_v<ct_dd>& b = fine_[e % b_];
+        const ct_sincos_v<ct_dd_plain>& a = coarse_[e / b_];
+        const ct_sincos_v<ct_dd_plain>& b = fine_[e % b_];
         return dd_split(cmul(a, b));
     }
 
 private:
     // exp(i (pa + pb)) from two {sin, cos} pairs; the same combine operator() applies.
-    static ct_sincos_v<ct_dd> cmul(const ct_sincos_v<ct_dd>& a, const ct_sincos_v<ct_dd>& b) {
+    static ct_sincos_v<ct_dd_plain> cmul(const ct_sincos_v<ct_dd_plain>& a,
+                                         const ct_sincos_v<ct_dd_plain>& b) {
         return {a.s * b.c + a.c * b.s, a.c * b.c - a.s * b.s};
     }
     std::size_t n_, b_ = 1;
-    std::vector<ct_sincos_v<ct_dd>> coarse_, fine_;
+    std::vector<ct_sincos_v<ct_dd_plain>> coarse_, fine_;
 };
 
 ADM_ALWAYS_INLINE void dd_twiddle(const dd_const& w, gdd& yr, gdd& yi) {

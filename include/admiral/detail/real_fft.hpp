@@ -188,8 +188,10 @@ private:
             xsimd::transpose(tm, tm + W);
             poet::static_for<0, H>([&](auto m) {
                 const std::size_t kk = k + m, p = H - 1 - m;
-                const V Xkr = tk[2 * m], Xki = tk[2 * m + 1];
-                const V Xmr = tm[2 * p], Xmi = tm[2 * p + 1];
+                // kk == 0 pairs DC with Nyquist: their imaginary parts are
+                // ignored, matching c2r_even_recombine's edge bin.
+                const V Xkr = tk[2 * m], Xki = (kk == 0) ? V(T(0)) : tk[2 * m + 1];
+                const V Xmr = tm[2 * p], Xmi = (kk == 0) ? V(T(0)) : tm[2 * p + 1];
                 const V twr(tw_[kk].real()), twi(tw_[kk].imag());
                 const auto [Zr, Zi] = c2r_recombine(Xkr, Xki, Xmr, Xmi, hv, twr, twi);
                 cur_re[kk] = Zr;
@@ -200,8 +202,9 @@ private:
             alignas(V) T xkr[W], xki[W], xmr[W], xmi[W];
             for (std::size_t l = 0; l < W; ++l) {
                 const std::complex<T>* Xr = in + l * Nh_;
-                xkr[l] = Xr[k].real();     xki[l] = Xr[k].imag();
-                xmr[l] = Xr[M - k].real(); xmi[l] = Xr[M - k].imag();
+                // k == 0 pairs DC with Nyquist: imaginary parts ignored.
+                xkr[l] = Xr[k].real();     xki[l] = (k == 0) ? T(0) : Xr[k].imag();
+                xmr[l] = Xr[M - k].real(); xmi[l] = (k == 0) ? T(0) : Xr[M - k].imag();
             }
             const V Xkr = V::load_aligned(xkr), Xki = V::load_aligned(xki);
             const V Xmr = V::load_aligned(xmr), Xmi = V::load_aligned(xmi);

@@ -110,7 +110,10 @@ inline void r2c_even_recombine(const std::complex<T>* z, const std::complex<T>* 
 template <typename T>
 inline void c2r_even_recombine(const std::complex<T>* X, const std::complex<T>* tw,
                                std::complex<T>* Z, std::size_t M) {
-    Z[0] = c2r_even_bin(X[0], X[M], tw[0]);
+    // Edge bins: the imaginary parts of DC and Nyquist are ignored, matching
+    // pocketfft's c2r. The spectrum input stays read-only for direct feeds.
+    Z[0] = c2r_even_bin(std::complex<T>(X[0].real(), T(0)),
+                       std::complex<T>(X[M].real(), T(0)), tw[0]);
     const std::size_t kmax = (M - 1) / 2;
     std::size_t k = 1;
 #if defined(__AVX512F__)

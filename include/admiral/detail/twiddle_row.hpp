@@ -209,45 +209,15 @@ void geom_row_batched_packed(portable_trig::turns_memo* memo, std::size_t step,
     return true;
 }
 
-// Same circle fill into interleaved complex storage: same seed/anchor fold and the same
-// scalar interleave the general packed path carries, so entries keep their ulp class.
+// Same circle fill into interleaved complex storage. Straight per-entry stores here, no
+// seed/anchor fold: the circle value is already a {sin, cos} pair, so one load and one
+// complex store per entry beat the fold plus its scalar interleave. Entries land at the
+// circle's own accuracy (~1 ulp), tighter than the fold's product rounding.
 template<typename T, bool Forward>
 void geom_row_circle_packed(std::size_t step, std::size_t den, std::size_t n,
                             std::complex<T>* ADM_RESTRICT out, std::size_t i0) {
-    using B = xsimd::batch<T>;
-    constexpr std::size_t W = B::size;
     std::size_t idx = step * i0;
-    if (n < W) {
-        for (std::size_t i = 0; i < n; ++i, idx += step) {
-            const auto [sn, cs] = portable_trig::sincos_turns_circle<Forward>(idx, den);
-            out[i] = std::complex<T>(static_cast<T>(cs), static_cast<T>(sn));
-        }
-        return;
-    }
-    alignas(B::arch_type::alignment()) T seed_re[W], seed_im[W];
-    for (std::size_t l = 0; l < W; ++l) {
-        const auto [sn, cs] = portable_trig::sincos_turns_circle<Forward>(step * l, den);
-        seed_re[l] = static_cast<T>(cs);
-        seed_im[l] = static_cast<T>(sn);
-    }
-    const B sre = B::load_aligned(seed_re);
-    const B sim = B::load_aligned(seed_im);
-    const std::size_t blocks = n / W;
-    const std::size_t step_w = step * W;
-    for (std::size_t b = 0; b < blocks; ++b, idx += step_w) {
-        const auto [a_im, a_re] = portable_trig::sincos_turns_circle<Forward>(idx, den);
-        B are = sre, aim = sim;
-        cmul_ip(are, aim, B(static_cast<T>(a_re)), B(static_cast<T>(a_im)));
-        alignas(B::arch_type::alignment()) T re[W], im[W];
-        are.store_aligned(re);
-        aim.store_aligned(im);
-        T* dst = reinterpret_cast<T*>(out + b * W);
-        for (std::size_t i = 0; i < W; ++i) {
-            dst[2 * i] = re[i];
-            dst[2 * i + 1] = im[i];
-        }
-    }
-    for (std::size_t i = blocks * W; i < n; ++i, idx += step) {
+    for (std::size_t i = 0; i < n; ++i, idx += step) {
         const auto [sn, cs] = portable_trig::sincos_turns_circle<Forward>(idx, den);
         out[i] = std::complex<T>(static_cast<T>(cs), static_cast<T>(sn));
     }

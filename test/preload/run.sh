@@ -118,7 +118,8 @@ check "c2c app: the shim looked up only fftw_cleanup and fftwf_cleanup in real F
 # mixed checks that no heap is left, and the glibc tcache would hide freed chunks from that count.
 # Each heap run is judged against a control run of the same program in the same environment. The
 # control makes no c2c plan, so its delta is the platform baseline. A platform allocation that
-# survives in both runs cancels out. A leak in the plan path of admiral hits the run only.
+# survives in both runs cancels out. A leak in the plan path of admiral hits the run only. mixed
+# runs one warmup pass first, so a one-time init of the plan path does not land in the check.
 export GLIBC_TUNABLES=glibc.malloc.tcache_count=0
 cc -o mixed "$here/mixed.c" "${fftw_cflags[@]}" "${fftw_libs[@]}" -lm
 plain_base=$(timeout 60 ./mixed control)

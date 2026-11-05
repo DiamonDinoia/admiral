@@ -116,11 +116,17 @@ check "c2c app: the shim looked up only fftw_cleanup and fftwf_cleanup in real F
 # Mixed plans. Real FFTW makes the r2c and guru plans (the shim has no such planner) and the
 # shim makes the c2c plans. The shim must hand the real plans on to real FFTW.
 # mixed checks that no heap is left, and the glibc tcache would hide freed chunks from that count.
+# Each heap run is judged against a control run of the same program in the same environment. The
+# control makes no c2c plan, so its delta is the platform baseline. A platform allocation that
+# survives in both runs cancels out. A leak in the plan path of admiral hits the run only.
 export GLIBC_TUNABLES=glibc.malloc.tcache_count=0
 cc -o mixed "$here/mixed.c" "${fftw_cflags[@]}" "${fftw_libs[@]}" -lm
-timeout 60 ./mixed >mixed_plain.out
+plain_base=$(timeout 60 ./mixed control)
+timeout 60 ./mixed "$plain_base" >mixed_plain.out
+preload_base=$(timeout 60 env LD_PRELOAD="$shim" LD_DEBUG=bindings ./mixed control \
+    2>mixed_control.log)
 check "mixed plans: mixed runs under the preload" exits 0 mixed_preload.out mixed_preload.log \
-    env LD_PRELOAD="$shim" LD_DEBUG=bindings ./mixed
+    env LD_PRELOAD="$shim" LD_DEBUG=bindings ./mixed "$preload_base"
 check "mixed plans: preloaded output matches plain output" \
     compare mixed_plain.out mixed_preload.out 8
 exports=$(nm -D --defined-only "$shim" | awk '{ print $3 }')
@@ -153,7 +159,9 @@ cc -c -o mixed.o "$here/mixed.c" "${fftw_cflags[@]}"
 c++ -o mixed_static mixed.o "$PREFIX/lib/libadmiral_fftw.a" "${fftw_libs[@]}" -ldl -pthread
 check "static shim: mixed_static holds the shim's fftw_execute" \
     grep -q ' T fftw_execute$' <(nm --defined-only mixed_static)
-check "static shim: mixed_static runs" exits 0 mixed_static.out mixed_static.err ./mixed_static
+static_base=$(timeout 60 ./mixed_static control)
+check "static shim: mixed_static runs" exits 0 mixed_static.out mixed_static.err \
+    ./mixed_static "$static_base"
 check "static shim: output matches plain output" compare mixed_plain.out mixed_static.out 8
 
 # A plugin that links FFTW, opened with dlopen(RTLD_LOCAL) as Python opens an extension module.

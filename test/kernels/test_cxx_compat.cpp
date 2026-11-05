@@ -11,6 +11,11 @@
 
 namespace cx = admiral::detail;
 
+static_assert(cx::countr_zero(1u) == 0, "");
+static_assert(cx::countr_zero(8u) == 3, "");
+static_assert(cx::countr_zero(1u << 31) == 31, "");
+static_assert(cx::countr_zero(1ull << 63) == 63, "");
+
 TEST_CASE("compat: span parity at this standard", "[kernels][compat]") {
     std::vector<double> v{1.0, 2.0, 3.0, 4.0};
 
@@ -56,6 +61,13 @@ TEST_CASE("compat: bit helpers agree with the shift-count definitions", "[kernel
     const std::array hay{1, 2, 3};
     REQUIRE(cx::const_find(hay.begin(), hay.end(), 7) == hay.end());
     REQUIRE(cx::const_find(hay.begin(), hay.end(), 2) == hay.begin() + 1);
+}
+
+TEST_CASE("compat: countr_zero hits every power of two at run time", "[kernels][compat]") {
+    volatile unsigned v32 = 0;   // keep the loop run time so the builtin path is exercised
+    volatile unsigned long long v64 = 0;
+    for (int i = 0; i < 32; ++i) REQUIRE(cx::countr_zero(1u << i | v32) == i);
+    for (int i = 0; i < 64; ++i) REQUIRE(cx::countr_zero(1ull << i | v64) == i);
 }
 
 TEST_CASE("compat: span binds a temporary only through const elements", "[kernels][compat]") {

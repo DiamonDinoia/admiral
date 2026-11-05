@@ -31,6 +31,7 @@
 // is the spelling that check was made against, so MSVC gets the standard equivalent and nobody else
 // changes.
 #if defined(_MSC_VER) && !defined(__clang__)
+#  include <intrin.h>
 #  include <atomic>
 #  define ADM_COMPILER_BARRIER() std::atomic_signal_fence(std::memory_order_seq_cst)
 #else
@@ -200,14 +201,32 @@ template <class U>
 [[nodiscard]] constexpr std::enable_if_t<std::is_unsigned_v<U>, int>
 countr_zero(U x) noexcept {
     if (x == 0) return std::numeric_limits<U>::digits;
+    // Compile time: the loop keeps the function usable in constant expressions. Run time:
+    // the ctz instruction, through the compiler builtin or intrinsic.
+    if (ADM_IS_CONSTANT_EVALUATED()) {
+        int n = 0;
+        while ((x & 1) == 0) { x >>= 1; ++n; }
+        return n;
+    }
 #if defined(__GNUC__) || defined(__clang__)
     if constexpr (sizeof(U) <= sizeof(unsigned int)) return __builtin_ctz(x);
     else if constexpr (sizeof(U) <= sizeof(unsigned long)) return __builtin_ctzl(x);
     else return __builtin_ctzll(x);
 #else
-    int n = 0;
-    while ((x & 1) == 0) { x >>= 1; ++n; }
-    return n;
+    unsigned long i = 0;
+    if constexpr (sizeof(U) <= sizeof(unsigned long)) {
+        _BitScanForward(&i, static_cast<unsigned long>(x));
+    } else {
+#  if defined(_M_IX86)
+        if (!_BitScanForward(&i, static_cast<unsigned long>(x))) {
+            _BitScanForward(&i, static_cast<unsigned long>(x >> 32));
+            i += 32;
+        }
+#  else
+        _BitScanForward64(&i, static_cast<unsigned long long>(x));
+#  endif
+    }
+    return static_cast<int>(i);
 #endif
 }
 

@@ -192,6 +192,10 @@ foreach(test_src IN LISTS ADM_TEST_SOURCES)
     adm_add_test(${test_name} ${test_src})
 endforeach()
 
+# The codelet-census TU peaks at 4590 MiB under asan g++-14. Beside a pooled dif TU that pair
+# crosses the 15 GiB runner, so it joins the same one-slot pool (see src/ADM_HEAVY_SOURCES).
+set_property(TARGET test_codelet PROPERTY JOB_POOL_COMPILE heavy)
+
 # The engine's fast-math flag set on one test TU: on the narrow long double cells the engine
 # compiles sincos_turns_fold_dbl under fast math, and this build runs the fold in that codegen
 # on every platform. The TU carries no libm reference (its dd reference is pinned itself), so

@@ -12,15 +12,15 @@ NM=${NM:-nm}
 # size-preserving symbol rename still counts as a mover.
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 fail=0; moved=0; equal=0
-for o in "$M"/src/CMakeFiles/admiral_engine.dir/*.o; do
+for o in "$M"/src/CMakeFiles/admiral_engine.dir/*.o "$M"/src/CMakeFiles/admiral_engine_heavy.dir/*.o; do
     b=$(basename "$o")
-    p="$O/src/CMakeFiles/admiral_engine.dir/$b"
+    p="$O/src/CMakeFiles/$(basename "$(dirname "$o")")/$b"
     if [ ! -f "$p" ]; then echo "MISSING in OFF: $b"; fail=1; continue; fi
     "$NM" --defined-only -S "$o" | sort > "$T/m.txt"
     "$NM" --defined-only -S "$p" | sort > "$T/o.txt"
     if cmp -s "$T/m.txt" "$T/o.txt"; then equal=$((equal + 1)); else moved=$((moved + 1)); fail=1; fi
 done
-extra=$(for o in "$O"/src/CMakeFiles/admiral_engine.dir/*.o; do b=$(basename "$o"); [ -f "$M/src/CMakeFiles/admiral_engine.dir/$b" ] || echo "$b"; done | wc -l)
+extra=$(for o in "$O"/src/CMakeFiles/admiral_engine.dir/*.o "$O"/src/CMakeFiles/admiral_engine_heavy.dir/*.o; do b=$(basename "$o"); [ -f "$M/src/CMakeFiles/$(basename "$(dirname "$o")")/$b" ] || echo "$b"; done | wc -l)
 echo "engine objects: $equal equal, $moved moved, $extra extra-in-OFF"
 [ "$moved" = 0 ] && [ "$extra" = 0 ] || fail=1
 exit $fail

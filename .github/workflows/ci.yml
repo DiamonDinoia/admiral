@@ -24,11 +24,16 @@ env:
   CMAKE_CXX_COMPILER_LAUNCHER: ccache
   CMAKE_C_COMPILER_LAUNCHER: ccache
   # x64 runners have 2 physical cores and 15 GiB of memory (free -g, rounded down). The limit is
-  # 75% of that, 11520 MiB. A level of 2 fits every measured job except the Debug cells of the
-  # build job. The tightest fit is asan g++-14: 2 x 5716 MiB (inst_dif_thunks_f) = 11432 MiB.
-  # The peaks are measured, per cell, on the runners (arm, macOS and Windows in runs 40359790304
-  # and 40363745014, 2026-10-26; the rest through a /usr/bin/time wrapper). arm64 fits at
+  # 75% of that, 11520 MiB. Peaks are measured per TU with a /usr/bin/time compiler launcher
+  # (g++ 14.2.0 here; the arm, macOS and Windows numbers come from the runners, runs 40359790304
+  # and 40363745014, 2026-10-26). The monsters are the four inst_dif_{f,d}_{fwd,inv} TUs:
+  # 6893 MiB at the v4 tier in Release, 9836 MiB in asan g++-14 (inst_dif_d_*: 4986 and 8718).
+  # Two at once overshoot the runner, so those compiles run in the one-slot "heavy" Ninja job
+  # pool (src/CMakeLists.txt), as does asan's test_codelet at 4590 MiB. No cell can schedule two
+  # pooled TUs at once, at any -j. The next peaks fit beside a pooled TU at level 3: 2928 MiB
+  # (test_dag_census, asan) and 2127 MiB (inst_col_f_*, v4 Release). arm64 fits at
   # 2 x 2552 MiB and macOS at 2 x 1690 MiB (inst_col_*), windows clang-cl at 2 x 4005 MiB.
+  # The Debug cells of the build job still run at level 1 (test_granule: 9123 MiB).
   # Known limit: MSVC test_ct_root.cpp.obj peaks at 16-21 GiB of commit charge (16231 MiB on
   # windows-2025, 20854 on windows-2022; commit is an upper bound of working set). The goal fails
   # at every level there; cl pages through it. The next-largest MSVC TU is 2550 MiB.

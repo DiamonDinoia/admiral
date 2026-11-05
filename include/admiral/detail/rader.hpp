@@ -104,7 +104,10 @@ public:
 
         m.gpow.resize(m.L);
         m.ginvpow.resize(m.L);
-        for (std::size_t q = 0; q < m.L; ++q) m.gpow[q] = ct_powmod(g, q, p);
+        // gpow[q] = g^q mod p by one modular multiply per entry; the same values the
+        // square-and-multiply ct_powmod(g, q, p) produced, at a twentieth of the divides.
+        m.gpow[0] = 1 % p;
+        for (std::size_t q = 1; q < m.L; ++q) m.gpow[q] = ct_mul_mod(m.gpow[q - 1], g, p);
         for (std::size_t q = 0; q < m.L; ++q) m.ginvpow[q] = m.gpow[(m.L - q) % m.L];
 
         m.inner = pick_inner(m.L);

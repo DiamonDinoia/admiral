@@ -103,24 +103,44 @@ inline dd_const dd_split(const ct_sincos_v<ct_dd>& w) { return {w.c.hi, w.c.lo, 
 
 inline dd_const dd_conj(dd_const w) { return {w.rh, w.rl, -w.ih, -w.il}; }
 
-// w_n^e = exp(-2 pi i e / n) for every e from 2 sqrt(n) series runs: w^e = w^(B (e / B)) w^(e % B).
+// w_n^e = exp(-2 pi i e / n) for every e from two series anchors plus a recurrence:
+// w^e = w^(B (e / B)) w^(e % B). Each table fills by one complex multiply per entry from a
+// single sincos anchor (w^B for coarse, w^1 for fine), so the build runs 2 dd sincos instead
+// of 2 sqrt(n). A fill is a unit-circle rotation, so a table drifts about length * 2^-104 in
+// magnitude and phase; at length <= sqrt(n) that stays far inside the long double class
+// (measured max error in tools/ check). ponytail: re-anchor each table per block if a plan
+// ever exceeds n ~ 2^28, where sqrt(n) * 2^-104 nears 2^-90.
 class dd_roots {
 public:
     explicit dd_roots(std::size_t n) : n_(n) {
         while (b_ * b_ < n_) ++b_;
-        for (std::size_t e = 0; e < n_; e += b_)
-            coarse_.push_back(sincos_turns_eval<ct_dd>(true, e, n_));
-        for (std::size_t e = 0; e < b_; ++e) fine_.push_back(sincos_turns_eval<ct_dd>(true, e, n_));
+        const std::size_t nc = (n_ + b_ - 1) / b_;
+        coarse_.resize(nc);
+        fine_.resize(b_);
+        const ct_sincos_v<ct_dd> one{ct_dd(0), ct_dd(1)};
+        coarse_[0] = fine_[0] = one;
+        if (b_ > 1) {
+            fine_[1] = sincos_turns_eval<ct_dd>(true, 1, n_);
+            for (std::size_t e = 2; e < b_; ++e) fine_[e] = cmul(fine_[e - 1], fine_[1]);
+        }
+        if (nc > 1) {
+            coarse_[1] = sincos_turns_eval<ct_dd>(true, b_, n_);
+            for (std::size_t e = 2; e < nc; ++e) coarse_[e] = cmul(coarse_[e - 1], coarse_[1]);
+        }
     }
 
     [[nodiscard]] dd_const operator()(std::size_t e) const {
         e %= n_;
         const ct_sincos_v<ct_dd>& a = coarse_[e / b_];
         const ct_sincos_v<ct_dd>& b = fine_[e % b_];
-        return dd_split({a.c * b.s + a.s * b.c, a.c * b.c - a.s * b.s});
+        return dd_split(cmul(a, b));
     }
 
 private:
+    // exp(i (pa + pb)) from two {sin, cos} pairs; the same combine operator() applies.
+    static ct_sincos_v<ct_dd> cmul(const ct_sincos_v<ct_dd>& a, const ct_sincos_v<ct_dd>& b) {
+        return {a.s * b.c + a.c * b.s, a.c * b.c - a.s * b.s};
+    }
     std::size_t n_, b_ = 1;
     std::vector<ct_sincos_v<ct_dd>> coarse_, fine_;
 };

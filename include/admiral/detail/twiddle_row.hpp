@@ -73,6 +73,7 @@ fill_entry(std::size_t idx, std::size_t den, [[maybe_unused]] bool circle,
 // running-index read. The seed/anchor fold matches the general path below at the same
 // product rounding, and the whole loop body is inline (the general path's per-entry lambda
 // call cost dominated small builds: c2c 256 filled rows at 45% of the one-shot).
+#ifdef ADM_POW2_CIRCLE
 template<typename T, bool Forward>
 void geom_row_circle(std::size_t step, std::size_t den, std::size_t n, T* ADM_RESTRICT re,
                      T* ADM_RESTRICT im, std::size_t i0) {
@@ -110,6 +111,7 @@ void geom_row_circle(std::size_t step, std::size_t den, std::size_t n, T* ADM_RE
         im[i] = static_cast<T>(sn);
     }
 }
+#endif
 
 // One row of w^(step*(i0+i)/den) from the row view: the window offset rides the anchor
 // leg only, like the wrapped rows. The fold runs in double and casts at store: the cast

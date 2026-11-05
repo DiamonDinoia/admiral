@@ -256,7 +256,11 @@ template<typename F>
 
 template <typename G>
 [[nodiscard]] constexpr ct_sincos_v<G> sincos_octant_mix(std::size_t oct, const ct_sincos_v<G>& r) {
-    constexpr G inv_sqrt2 = ct_sqrt2<G> / G(2);
+    // const, not constexpr: G's arithmetic must not be forced into constant evaluation.
+    // ct_dd_plain's product runs std::fma, which is not a constant expression in clang.
+    // A constexpr local here rejected every clang cell (CI E1/E3). The compile-time folds
+    // (double, long double, ct_dd) still constant-fold this initializer.
+    const G inv_sqrt2 = ct_sqrt2<G> / G(2);
     G bc = 0, bs = 0;
     switch (oct) {
         case 0: bc = 1;            bs = 0;            break;

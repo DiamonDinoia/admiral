@@ -321,6 +321,7 @@ tierflag = {"floor": re.compile(r"-march=x86-64-v[34]\b|/arch:AVX(2|512)\b", re.
 bad = mid = 0
 for e in ccj:
     out, cmd = e.get("output", ""), e["command"]
+    out = out.replace("_heavy.dir", ".dir")  # one class per source; the heavy pool is not a class
     cls = None
     for tag, cls_dir in (("v3", "admiral_engine_v3.dir"), ("v4", "admiral_engine_v4.dir")):
         if "/%s/" % cls_dir in out or out.endswith(cls_dir + ".o"):

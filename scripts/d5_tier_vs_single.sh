@@ -40,7 +40,7 @@ sizes_of() { # object -> newline table: every defined symbol's size, sorted nume
     "$NM" --defined-only -S "$1" | grep -vE "$ERRS" | awk '$4!=""{print $2}' | sort -n
 }
 counterpart() { # single-ISA object holding $1: the engine or the codelets of the base build
-    for d in admiral_engine.dir admiral_codelets.dir; do
+    for d in admiral_engine.dir admiral_engine_heavy.dir admiral_codelets.dir; do
         [ -f "$2/src/CMakeFiles/$d/$1" ] && { printf '%s\n' "$2/src/CMakeFiles/$d/$1"; return 0; }
     done
     return 1

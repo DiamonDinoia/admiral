@@ -17,6 +17,16 @@ set(ADM_TIER_SOURCES
     inst_nd_f.cpp inst_nd_d.cpp
     inst_real_f.cpp inst_real_d.cpp
     inst_api_f.cpp inst_api_d.cpp inst_api_ld.cpp)
+# The dif instantiation TUs are the memory monsters. A /usr/bin/time compiler launcher measures
+# 6893 MiB of peak RSS at the v4 tier (Release g++-14) and 9836 MiB under asan g++-14; two of
+# them at once overshoot the 15 GiB CI runner (ci.yml:26 holds the per-TU table). Each one
+# therefore compiles in the one-slot "heavy" Ninja job pool, in every config that builds them.
+# The pool is a target property (CMake ignores JOB_POOL_COMPILE on a source), which is why
+# these sources build in their own OBJECT library next to each engine variant.
+set(ADM_HEAVY_SOURCES inst_dif_f_fwd.cpp inst_dif_f_inv.cpp inst_dif_d_fwd.cpp inst_dif_d_inv.cpp)
+set(ADM_TIER_LIGHT_SOURCES ${ADM_TIER_SOURCES})
+list(REMOVE_ITEM ADM_TIER_LIGHT_SOURCES ${ADM_HEAVY_SOURCES})
+set_property(GLOBAL PROPERTY JOB_POOLS heavy=1)
 option(ADM_DISPATCH "Add run-time engine tiers above the floor (tier map: cmake/tiers/)" OFF)
 if(ADM_DISPATCH)
     if(NOT ADM_TIER_TAGS)
@@ -36,11 +46,11 @@ if(ADM_DISPATCH)
 endif()
 if(ADM_DISPATCH)
     add_library(admiral_engine OBJECT
-        ${ADM_TIER_SOURCES} api.cpp errors.cpp scratch_alloc.cpp large_route_probe.cpp)
+        ${ADM_TIER_LIGHT_SOURCES} api.cpp errors.cpp scratch_alloc.cpp large_route_probe.cpp)
     target_compile_definitions(admiral_engine PRIVATE ADM_DISPATCH)
 else()
     add_library(admiral_engine OBJECT
-        ${ADM_TIER_SOURCES} scratch_alloc.cpp large_route_probe.cpp)
+        ${ADM_TIER_LIGHT_SOURCES} scratch_alloc.cpp large_route_probe.cpp)
 endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -96,6 +106,25 @@ if(WIN32)
 endif()
 adm_apply_build_profile(admiral_engine)
 
+# The heavy dif TUs, pooled one compile at a time (see the ADM_HEAVY_SOURCES note). Same flags
+# as admiral_engine, so the split moves objects without moving a single flag.
+add_library(admiral_engine_heavy OBJECT ${ADM_HEAVY_SOURCES})
+set_property(TARGET admiral_engine_heavy PROPERTY JOB_POOL_COMPILE heavy)
+if(ADM_DISPATCH)
+    target_compile_definitions(admiral_engine_heavy PRIVATE ADM_DISPATCH)
+endif()
+target_compile_features(admiral_engine_heavy PRIVATE cxx_std_${ADM_CXX_STANDARD})
+target_include_directories(admiral_engine_heavy PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${ADM_GENERATED_INCLUDE_DIR})
+target_link_libraries(admiral_engine_heavy PRIVATE xsimd poet::poet snmalloc ${ADM_THREADS_LIB})
+target_compile_definitions(admiral_engine_heavy PRIVATE ADM_BUILDING)
+if(WIN32)
+    target_compile_definitions(admiral_engine_heavy PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+adm_apply_build_profile(admiral_engine_heavy)
+
 add_library(admiral_codelets STATIC
     ${ADM_CODELET_GENERATED}
     ${CMAKE_CURRENT_BINARY_DIR}/codelet_dispatch.cpp)
@@ -114,7 +143,7 @@ adm_apply_build_profile(admiral_codelets PUBLIC)
 # only thing that decides the shipped ABI; admiral.map names the public entities for exactly
 # that reason. ELF only: a PE has no visibility attribute and admiral_internal is not a DLL.
 if(NOT WIN32)
-    foreach(target admiral_engine admiral_codelets)
+    foreach(target admiral_engine admiral_engine_heavy admiral_codelets)
         set_target_properties(${target} PROPERTIES CXX_VISIBILITY_PRESET default)
     endforeach()
 endif()
@@ -137,12 +166,14 @@ if(ADM_DISPATCH)
         set(_adm_obj_ext .o)
     endif()
     file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/floor.list
-         CONTENT "$<JOIN:$<TARGET_OBJECTS:admiral_engine>,\n>\n$<JOIN:$<TARGET_OBJECTS:admiral_codelets>,\n>\n")
+         CONTENT "$<JOIN:$<TARGET_OBJECTS:admiral_engine>,\n>\n$<JOIN:$<TARGET_OBJECTS:admiral_engine_heavy>,\n>\n$<JOIN:$<TARGET_OBJECTS:admiral_codelets>,\n>\n")
     foreach(tag ${ADM_TIER_TAGS})
         set(eng admiral_engine_${tag})
         add_library(${eng} OBJECT
-            ${ADM_TIER_SOURCES} ${ADM_CODELET_GENERATED}
+            ${ADM_TIER_LIGHT_SOURCES} ${ADM_CODELET_GENERATED}
             ${CMAKE_CURRENT_BINARY_DIR}/codelet_dispatch.cpp)
+        add_library(${eng}_heavy OBJECT ${ADM_HEAVY_SOURCES})
+        set_property(TARGET ${eng}_heavy PROPERTY JOB_POOL_COMPILE heavy)
         target_compile_features(${eng} PRIVATE cxx_std_${ADM_CXX_STANDARD})
         target_include_directories(${eng} PRIVATE
             ${PROJECT_SOURCE_DIR}/include
@@ -162,8 +193,25 @@ if(ADM_DISPATCH)
             set_target_properties(${eng} PROPERTIES CXX_VISIBILITY_PRESET default)
         endif()
 
+        # The heavy dif TUs of this tier, pooled one compile at a time (see ADM_HEAVY_SOURCES).
+        target_compile_features(${eng}_heavy PRIVATE cxx_std_${ADM_CXX_STANDARD})
+        target_include_directories(${eng}_heavy PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${CMAKE_CURRENT_SOURCE_DIR}
+            ${ADM_GENERATED_INCLUDE_DIR})
+        target_link_libraries(${eng}_heavy PRIVATE xsimd poet::poet snmalloc ${ADM_THREADS_LIB})
+        target_compile_definitions(${eng}_heavy PRIVATE ADM_BUILDING ADM_DISPATCH ADM_STATIC_DEFINE)
+        if(WIN32)
+            target_compile_definitions(${eng}_heavy PRIVATE _CRT_SECURE_NO_WARNINGS)
+        endif()
+        adm_apply_build_profile(${eng}_heavy)
+        target_link_libraries(${eng}_heavy PRIVATE admiral_tier_${tag}_flags)
+        if(NOT WIN32)
+            set_target_properties(${eng}_heavy PROPERTIES CXX_VISIBILITY_PRESET default)
+        endif()
+
         file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/tier_${tag}.list
-             CONTENT "$<JOIN:$<TARGET_OBJECTS:${eng}>,\n>\n")
+             CONTENT "$<JOIN:$<TARGET_OBJECTS:${eng}>,\n>\n$<JOIN:$<TARGET_OBJECTS:${eng}_heavy>,\n>\n")
         set(renamed "")
         foreach(src ${ADM_TIER_SOURCES} ${ADM_CODELET_GENERATED}
                     ${CMAKE_CURRENT_BINARY_DIR}/codelet_dispatch.cpp)
@@ -176,7 +224,7 @@ if(ADM_DISPATCH)
                     -DTAG=${tag} -DLIST=${CMAKE_CURRENT_BINARY_DIR}/tier_${tag}.list
                     -DOUT=${CMAKE_CURRENT_BINARY_DIR}/tier_${tag}
                     -P ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/rename_tier.cmake
-            DEPENDS ${eng} $<TARGET_OBJECTS:${eng}> ${CMAKE_CURRENT_BINARY_DIR}/tier_${tag}.list
+            DEPENDS ${eng} $<TARGET_OBJECTS:${eng}> ${eng}_heavy $<TARGET_OBJECTS:${eng}_heavy> ${CMAKE_CURRENT_BINARY_DIR}/tier_${tag}.list
                     ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/rename_tier.cmake
             VERBATIM)
         list(APPEND ADM_TIER_OBJECTS ${renamed})
@@ -214,11 +262,13 @@ if(WIN32)
     set(adm_internal_scope INTERFACE)
     target_sources(admiral_internal INTERFACE
         $<TARGET_OBJECTS:admiral_engine>
+        $<TARGET_OBJECTS:admiral_engine_heavy>
         ${ADM_TIER_OBJECTS})
     target_link_libraries(admiral_internal INTERFACE admiral_codelets)
 else()
     add_library(admiral_internal SHARED
         $<TARGET_OBJECTS:admiral_engine>
+        $<TARGET_OBJECTS:admiral_engine_heavy>
         $<TARGET_OBJECTS:admiral_codelets>
         ${ADM_TIER_OBJECTS})
     set(adm_internal_scope PUBLIC)

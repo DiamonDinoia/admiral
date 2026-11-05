@@ -209,20 +209,6 @@ void geom_row_batched_packed(portable_trig::turns_memo* memo, std::size_t step,
     return true;
 }
 
-// Same circle fill into interleaved complex storage. Straight per-entry stores here, no
-// seed/anchor fold: the circle value is already a {sin, cos} pair, so one load and one
-// complex store per entry beat the fold plus its scalar interleave. Entries land at the
-// circle's own accuracy (~1 ulp), tighter than the fold's product rounding.
-template<typename T, bool Forward>
-void geom_row_circle_packed(std::size_t step, std::size_t den, std::size_t n,
-                            std::complex<T>* ADM_RESTRICT out, std::size_t i0) {
-    std::size_t idx = step * i0;
-    for (std::size_t i = 0; i < n; ++i, idx += step) {
-        const auto [sn, cs] = portable_trig::sincos_turns_circle<Forward>(idx, den);
-        out[i] = std::complex<T>(static_cast<T>(cs), static_cast<T>(sn));
-    }
-}
-
 template<typename T, bool Forward>
 void geom_twiddle_row(std::size_t step, std::size_t den, std::size_t n,
                       T* ADM_RESTRICT re, T* ADM_RESTRICT im,
@@ -288,13 +274,6 @@ void geom_twiddle_row_packed(std::size_t step, std::size_t den, std::size_t n,
         geom_row_batched_packed<T, Forward>(memo, step, den, n, out);
         return;
     }
-
-#ifdef ADM_POW2_CIRCLE
-    if (portable_trig::pow2_circle_ok(den)) {
-        geom_row_circle_packed<T, Forward>(step, den, n, out, 0);
-        return;
-    }
-#endif
 
     const bool circle = portable_trig::pow2_circle_ok(den);
     const auto exact = [&](std::size_t i) {

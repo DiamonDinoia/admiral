@@ -543,11 +543,21 @@ template<typename T>
 
 [[nodiscard]] constexpr std::size_t ct_primitive_root(std::size_t p) {
     const std::size_t phi = p - 1;
+    // Prime factors of phi, once: the per-candidate test then costs one powmod per
+    // factor, not a scan over every q <= phi.
+    std::size_t fac[16];
+    std::size_t nfac = 0;
+    std::size_t x = phi;
+    for (std::size_t q = 2; q * q <= x; ++q) {
+        if (x % q != 0) continue;
+        fac[nfac++] = q;
+        while (x % q == 0) x /= q;
+    }
+    if (x > 1) fac[nfac++] = x;
     for (std::size_t g = 2; g < p; ++g) {
         bool ok = true;
-        for (std::size_t q = 2; q <= phi; ++q) {
-            if (phi % q != 0 || !ct_is_prime(q)) continue;
-            if (ct_powmod(g, phi / q, p) == 1) { ok = false; break; }
+        for (std::size_t i = 0; i < nfac; ++i) {
+            if (ct_powmod(g, phi / fac[i], p) == 1) { ok = false; break; }
         }
         if (ok) return g;
     }

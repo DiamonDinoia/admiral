@@ -212,7 +212,7 @@ countr_zero(U x) noexcept {
     if constexpr (sizeof(U) <= sizeof(unsigned int)) return __builtin_ctz(x);
     else if constexpr (sizeof(U) <= sizeof(unsigned long)) return __builtin_ctzl(x);
     else return __builtin_ctzll(x);
-#else
+#elif defined(_MSC_VER) && _MSC_VER >= 1928
     unsigned long i = 0;
     if constexpr (sizeof(U) <= sizeof(unsigned long)) {
         _BitScanForward(&i, static_cast<unsigned long>(x));
@@ -227,6 +227,10 @@ countr_zero(U x) noexcept {
 #  endif
     }
     return static_cast<int>(i);
+#else
+    int n = 0;
+    while ((x & 1) == 0) { x >>= 1; ++n; }
+    return n;
 #endif
 }
 

@@ -191,22 +191,85 @@ namespace detail {
 // a table drifts about length * 2^-104 in magnitude and phase; at length <= sqrt(n) that stays
 // far inside the long double class (measured max error in tools/ check). ponytail: re-anchor
 // each table per block if a plan ever exceeds n ~ 2^28, where sqrt(n) * 2^-104 nears 2^-90.
+
+// The block length dd_roots folds its anchors at: the smallest b with b * b >= n.
+[[nodiscard]] constexpr std::size_t dd_root_block(std::size_t n) {
+    std::size_t b = 1;
+    while (b * b < n) ++b;
+    return b;
+}
+
+// Both anchors of one dd_roots build (w_n^1 and w_n^b), folded at compile time for a
+// power-of-two den. The constant evaluation runs the ct_dd arm of the one fold
+// (sincos_turns_eval) and is bit-identical to the run-time ct_dd_plain arm here: the ct_dd
+// pins round each step once, the plain formulas are the same roundings in this file's strict
+// TU (see ct_dd_plain above), and both fold the same series. A build then reads the pair
+// instead of running two double-double series, about half of a small long double plan build.
+// Every other den runs the live fold, unchanged.
+struct dd_anchor_pair {
+    ct_sincos_v<ct_dd_plain> fine, coarse;
+};
+
+template<std::size_t N>
+[[nodiscard]] constexpr dd_anchor_pair dd_anchor_ct() {
+    const ct_sincos_v<ct_dd> f = sincos_turns_eval<ct_dd>(true, 1, N);
+    const ct_sincos_v<ct_dd> c = sincos_turns_eval<ct_dd>(true, dd_root_block(N), N);
+    const auto plain = [](ct_dd v) constexpr { return ct_dd_plain(v.hi, v.lo); };
+    return {{plain(f.s), plain(f.c)}, {plain(c.s), plain(c.c)}};
+}
+
+// The variable forces constant evaluation: a constexpr call from a run-time switch would
+// otherwise compile to the live fold.
+template<std::size_t N>
+inline constexpr dd_anchor_pair dd_anchor_v = dd_anchor_ct<N>();
+
+[[nodiscard]] inline dd_anchor_pair dd_anchor(std::size_t n) {
+    // The case values and template arguments are plain powers of two: a shift expression
+    // in either slot is valid C++ but cppcheck's parser rejects it (syntaxError).
+    switch (n) {
+    case 2:       return dd_anchor_v<2>;
+    case 4:       return dd_anchor_v<4>;
+    case 8:       return dd_anchor_v<8>;
+    case 16:      return dd_anchor_v<16>;
+    case 32:      return dd_anchor_v<32>;
+    case 64:      return dd_anchor_v<64>;
+    case 128:     return dd_anchor_v<128>;
+    case 256:     return dd_anchor_v<256>;
+    case 512:     return dd_anchor_v<512>;
+    case 1024:    return dd_anchor_v<1024>;
+    case 2048:    return dd_anchor_v<2048>;
+    case 4096:    return dd_anchor_v<4096>;
+    case 8192:    return dd_anchor_v<8192>;
+    case 16384:   return dd_anchor_v<16384>;
+    case 32768:   return dd_anchor_v<32768>;
+    case 65536:   return dd_anchor_v<65536>;
+    case 131072:  return dd_anchor_v<131072>;
+    case 262144:  return dd_anchor_v<262144>;
+    case 524288:  return dd_anchor_v<524288>;
+    case 1048576: return dd_anchor_v<1048576>;
+    default:
+        return {sincos_turns_eval<ct_dd_plain>(true, 1, n),
+                sincos_turns_eval<ct_dd_plain>(true, dd_root_block(n), n)};
+    }
+}
+
 class dd_roots {
 public:
     explicit dd_roots(std::size_t n) : n_(n) {
-        while (b_ * b_ < n_) ++b_;
+        b_ = dd_root_block(n_);
         const std::size_t nc = (n_ + b_ - 1) / b_;
         coarse_.resize(nc);
         fine_.resize(b_);
         const ct_sincos_v<ct_dd_plain> one{ct_dd_plain(0), ct_dd_plain(1)};
         coarse_[0] = fine_[0] = one;
         if (b_ > 1) {
-            fine_[1] = sincos_turns_eval<ct_dd_plain>(true, 1, n_);
+            const dd_anchor_pair a = dd_anchor(n_);
+            fine_[1] = a.fine;
             for (std::size_t e = 2; e < b_; ++e) fine_[e] = cmul(fine_[e - 1], fine_[1]);
-        }
-        if (nc > 1) {
-            coarse_[1] = sincos_turns_eval<ct_dd_plain>(true, b_, n_);
-            for (std::size_t e = 2; e < nc; ++e) coarse_[e] = cmul(coarse_[e - 1], coarse_[1]);
+            if (nc > 1) {
+                coarse_[1] = a.coarse;
+                for (std::size_t e = 2; e < nc; ++e) coarse_[e] = cmul(coarse_[e - 1], coarse_[1]);
+            }
         }
     }
 

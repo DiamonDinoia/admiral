@@ -187,7 +187,12 @@ template<typename T>
         constexpr std::size_t kPageCols = 4096 / sizeof(std::complex<T>);
         const std::size_t cap =
             (cpu_cache().l3 * 3 / 4 / (len * sizeof(std::complex<T>))) & ~(W - 1);
-        return std::min(run_len, std::max(kTwoLines, std::min(kPageCols, cap)));
+        // The strip buffer is 2 * pitch * group complex. Sizing only against L3 let it reach
+        // 2.1 MB at len=256 f64, past this host's 2 MB L2, where every execute_many pass
+        // re-streamed it through L2 (measured: 1.25x of the L2-fitted group at 2d_256 fft).
+        const std::size_t l2cap =
+            (cpu_cache().l2 / 2 / (2 * (len + W) * sizeof(std::complex<T>))) & ~(W - 1);
+        return std::min(run_len, std::max(kTwoLines, std::min({kPageCols, cap, l2cap})));
     }
     return std::min<std::size_t>(run_len, kTwoLines);
 }

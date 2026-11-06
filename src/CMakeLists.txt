@@ -38,10 +38,12 @@ if(ADM_DISPATCH)
     if(CMAKE_INTERPROCEDURAL_OPTIMIZATION)
         message(FATAL_ERROR "ADM_DISPATCH conflicts with CMAKE_INTERPROCEDURAL_OPTIMIZATION: LTO objects hold IR, not machine code, and the tier rename needs machine code")
     endif()
-    find_program(ADM_LLVM_NM llvm-nm)
-    find_program(ADM_LLVM_OBJCOPY llvm-objcopy)
-    if(NOT ADM_LLVM_NM OR NOT ADM_LLVM_OBJCOPY)
-        message(FATAL_ERROR "ADM_DISPATCH needs llvm-nm and llvm-objcopy (nm=${ADM_LLVM_NM}, objcopy=${ADM_LLVM_OBJCOPY})")
+    # llvm-nm/llvm-objcopy preferred; GNU binutils nm/objcopy do the same rename job
+    # (cmake/rename_tier.cmake); a tool that cannot do it fails loud there.
+    find_program(ADM_TIER_NM NAMES llvm-nm nm)
+    find_program(ADM_TIER_OBJCOPY NAMES llvm-objcopy objcopy)
+    if(NOT ADM_TIER_NM OR NOT ADM_TIER_OBJCOPY)
+        message(FATAL_ERROR "ADM_DISPATCH needs nm and objcopy, llvm or GNU binutils (nm=${ADM_TIER_NM}, objcopy=${ADM_TIER_OBJCOPY})")
     endif()
 endif()
 if(ADM_DISPATCH)
@@ -220,7 +222,7 @@ if(ADM_DISPATCH)
         endforeach()
         add_custom_command(OUTPUT ${renamed}
             COMMAND ${CMAKE_COMMAND}
-                    -DNM=${ADM_LLVM_NM} -DOBJCOPY=${ADM_LLVM_OBJCOPY}
+                    -DNM=${ADM_TIER_NM} -DOBJCOPY=${ADM_TIER_OBJCOPY}
                     -DTAG=${tag} -DLIST=${CMAKE_CURRENT_BINARY_DIR}/tier_${tag}.list
                     -DOUT=${CMAKE_CURRENT_BINARY_DIR}/tier_${tag}
                     -P ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/rename_tier.cmake

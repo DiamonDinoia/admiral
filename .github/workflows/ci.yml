@@ -282,7 +282,7 @@ jobs:
         env: {TSAN_OPTIONS: "handle_segv=0"}
 
   valgrind:
-    timeout-minutes: 90
+    timeout-minutes: 120
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1

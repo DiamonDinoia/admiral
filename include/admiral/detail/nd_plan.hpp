@@ -213,6 +213,15 @@ template<typename T>
     if (2 * run_len <= xsimd::batch<T>::size
         && len * inner * sizeof(std::complex<T>) > col_cache_budget(nthreads))
         return line_route::transposed;
+    // Packed half-spectrum column passes (r2c/c2r columns, run_len = len/2 + 1) run faster
+    // through the strip route in a band of run_len per SIMD width. Measured on this host
+    // (W=4 f64, W=8 f32, six interleaved reps each): 2d_256 f64 0.93x and 2d_512 f32 0.87x
+    // win inside the band (run_len/W 32); 2d_256 f32 1.04x and 2d_512 f64 1.01x sit just
+    // outside it; c2c full-run columns (2d_256 1.00x) and non-pow2 len 100 columns (1.25x)
+    // stay on col_dif.
+    if (has_single_bit(len) && run_len > len / 2 && run_len < len &&
+        run_len >= 24 * xsimd::batch<T>::size && run_len <= 48 * xsimd::batch<T>::size)
+        return line_route::transposed;
     return line_route::col_dif;
 }
 

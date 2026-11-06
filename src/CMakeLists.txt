@@ -151,9 +151,10 @@ if(NOT WIN32)
 endif()
 
 # ADM_DISPATCH: the floor is ADM_TARGET_ARCH=${ADM_TIER_FLOOR}. The engine and the codelets build once
-# more per tier. cmake/rename_tier.cmake then gives every external symbol that a tier defines,
-# except the tier entry, the prefix admiral_<tag>_, so no symbol of one tier can bind to
-# another. Local symbols keep their names: they bind inside one object and cannot cross a tier.
+# one more per tier. cmake/rename_tier.cmake then gives every symbol that a tier defines, except
+# the tier entry and @feat.00, the prefix admiral_<tag>_, so no symbol of one tier can bind to
+# another. The rename covers local symbols too: a local COMDAT group signature binds a tier's
+# groups to the floor's by name at link time (check_dispatch.sh (a) pins the prefixed state).
 # The per-source COMPILE_OPTIONS of this file (the col pin and the inst_api_ld strict-FP set)
 # ride the tier copies through CMake's directory-scoped source properties; check (g) asserts
 # this per tier from compile_commands.json. Tier code keeps master's mutable header statics

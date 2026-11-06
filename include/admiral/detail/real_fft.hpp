@@ -275,13 +275,18 @@ private:
     void r2c_odd(const T* in, std::complex<T>* out, std::size_t rows, thread_pool* pool) const {
         const plan_impl<T>& fwd = lazy_fwd();
         parallel_for(pool, rows, rows * N_, [&](std::size_t b, std::size_t e, std::size_t) {
-            const auto c = detail::make_aligned_buffer<std::complex<T>>(N_);
+            const auto cbuf = detail::make_aligned_buffer<std::complex<T>>(N_);
+            std::complex<T>* c = cbuf.get();
             for (std::size_t r = b; r < e; ++r) {
                 const T* xr = in + r * N_;
-                for (std::size_t i = 0; i < N_; ++i) c[i] = std::complex<T>(xr[i], T(0));
-                fwd.execute(span<std::complex<T>>(c.get(), N_));
-                std::complex<T>* Xr = out + r * Nh_;
-                for (std::size_t k = 0; k < Nh_; ++k) Xr[k] = c[k];
+                // Pack each real sample as a complex with a zero imaginary lane: one
+                // vector interleave of W reals against a zero batch, then a scalar tail.
+                std::size_t i = 0;
+                for (; i + W <= N_; i += W)
+                    aos_interleave<T>(reinterpret_cast<T*>(c + i), V::load_unaligned(xr + i), V(T(0)));
+                for (; i < N_; ++i) c[i] = std::complex<T>(xr[i], T(0));
+                fwd.execute(span<std::complex<T>>(c, N_));
+                std::memcpy(out + r * Nh_, c, Nh_ * sizeof(std::complex<T>));
             }
         });
     }
@@ -289,14 +294,23 @@ private:
     void c2r_odd(const std::complex<T>* in, T* out, std::size_t rows, thread_pool* pool) const {
         const plan_impl<T>& inv = lazy_inv();
         parallel_for(pool, rows, rows * N_, [&](std::size_t b, std::size_t e, std::size_t) {
-            const auto c = detail::make_aligned_buffer<std::complex<T>>(N_);
+            const auto cbuf = detail::make_aligned_buffer<std::complex<T>>(N_);
+            std::complex<T>* c = cbuf.get();
             for (std::size_t r = b; r < e; ++r) {
                 const std::complex<T>* Xr = in + r * Nh_;
-                for (std::size_t k = 0; k < Nh_; ++k) c[k] = Xr[k];
+                std::memcpy(c, Xr, Nh_ * sizeof(std::complex<T>));
                 for (std::size_t k = Nh_; k < N_; ++k) c[k] = std::conj(Xr[N_ - k]);
-                inv.execute(span<std::complex<T>>(c.get(), N_));
+                inv.execute(span<std::complex<T>>(c, N_));
                 T* xr = out + r * N_;
-                for (std::size_t i = 0; i < N_; ++i) xr[i] = c[i].real();
+                // Unpack the real lane of each complex result: one vector deinterleave of
+                // W complex against a scalar tail.
+                std::size_t i = 0;
+                for (; i + W <= N_; i += W) {
+                    V re, im;
+                    aos_deinterleave<T>(reinterpret_cast<const T*>(c + i), re, im);
+                    re.store_unaligned(xr + i);
+                }
+                for (; i < N_; ++i) xr[i] = c[i].real();
             }
         });
     }

@@ -26,6 +26,7 @@ set(ADM_TEST_SOURCES
     transforms/test_axis.cpp
     transforms/test_strides.cpp
     transforms/test_large_align.cpp
+    transforms/test_align_det.cpp
     transforms/test_generic_pass.cpp
     transforms/test_r2r.cpp
     accuracy/test_ulp.cpp

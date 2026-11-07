@@ -365,12 +365,6 @@ private:
     static dif_buf<std::complex<T>> fill_recombine_tw(std::size_t N, bool even,
                                                       dif_arena& block,
                                                       portable_trig::turns_memo* memo);
-    // Address anchor for the extern "C" rows-batch entries below: the explicit
-    // class instantiations in src/inst_real_f.cpp and src/inst_real_d.cpp
-    // instantiate this member, and the taken addresses emit the entry symbols
-    // (an unused inline function has no symbol). A binding that cannot include
-    // this header declares the entries itself and links them from the library.
-    static std::pair<const void*, const void*> rows_batch_entries();
     dif_buf<std::complex<T>> tw_;
     mutable twin_slot fwd_, inv_;
     mutable std::mutex build_mtx_;
@@ -421,35 +415,10 @@ dif_buf<std::complex<T>> real_adm_plan<T>::fill_recombine_tw(std::size_t N, bool
     return tw;
 }
 
-// Row-batched entries for bindings that cannot include engine detail headers
-// (the numpy gufunc loops hold the prototypes): one plan built per call, one
-// execute over all rows, no state kept between calls. POD arguments only.
-extern "C" inline void admiral_r2c_rows_f32(const float* in, std::complex<float>* out,
-                                            std::size_t rows, std::size_t n) {
-    real_adm_plan<float>(n, admiral::effort::estimate).r2c(in, out, rows, nullptr);
-}
-extern "C" inline void admiral_c2r_rows_f32(const std::complex<float>* in, float* out,
-                                            std::size_t rows, std::size_t n) {
-    real_adm_plan<float>(n, admiral::effort::estimate).c2r(in, out, rows, nullptr);
-}
-extern "C" inline void admiral_r2c_rows_f64(const double* in, std::complex<double>* out,
-                                            std::size_t rows, std::size_t n) {
-    real_adm_plan<double>(n, admiral::effort::estimate).r2c(in, out, rows, nullptr);
-}
-extern "C" inline void admiral_c2r_rows_f64(const std::complex<double>* in, double* out,
-                                            std::size_t rows, std::size_t n) {
-    real_adm_plan<double>(n, admiral::effort::estimate).c2r(in, out, rows, nullptr);
-}
-
-template<typename T>
-std::pair<const void*, const void*> real_adm_plan<T>::rows_batch_entries() {
-    if constexpr (std::is_same_v<T, float>)
-        return {reinterpret_cast<const void*>(&admiral_r2c_rows_f32),
-                reinterpret_cast<const void*>(&admiral_c2r_rows_f32)};
-    else
-        return {reinterpret_cast<const void*>(&admiral_r2c_rows_f64),
-                reinterpret_cast<const void*>(&admiral_c2r_rows_f64)};
-}
+// The row-batched entries for bindings (admiral_r2c_rows_f32/f64 and
+// admiral_c2r_rows_f32/f64) live in src/inst_real_f.cpp and src/inst_real_d.cpp.
+// A binding that cannot include this header declares the entries itself and links
+// them from the library.
 
 template<typename T>
 void real_adm_plan<T>::r2c(const T* in, std::complex<T>* out, std::size_t rows,

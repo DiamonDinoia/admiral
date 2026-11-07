@@ -52,7 +52,8 @@ struct r2r_state {
     virtual void inverse(const T* in, T* out, std::optional<T> fct) const = 0;
 };
 
-// One tier's entry points. axis, strides and r2r stay null for long double.
+// One tier's entry points. axis, strides, r2r and the row-batch entries stay null
+// for long double.
 template<typename T>
 struct tier_ops {
     std::unique_ptr<plan_state<T>> (*plan)(span<const std::size_t>, const options&);
@@ -71,6 +72,9 @@ struct tier_ops {
                     std::optional<T>);
     void (*one_c2r)(std::complex<T>*, T*, span<const std::size_t>, const options&,
                     std::optional<T>);
+    // The row-batched real entries (admiral_r2c_rows_* / admiral_c2r_rows_*).
+    void (*r2c_rows)(const T*, std::complex<T>*, std::size_t, std::size_t);
+    void (*c2r_rows)(const std::complex<T>*, T*, std::size_t, std::size_t);
 };
 
 // Called by the run-time dispatch mechanism of xsimd once per precision with the best available

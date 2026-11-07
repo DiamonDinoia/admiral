@@ -646,6 +646,18 @@ void one_shot_c2r(std::complex<T>* spec, T* out, span<const std::size_t> shape,
     }
 }
 
+// The row-batched real entries (admiral_r2c_rows_* / admiral_c2r_rows_*): one plan
+// built per call, one execute over all rows, no state kept between calls.
+template<typename T>
+void rows_batch_r2c(const T* in, std::complex<T>* out, std::size_t rows, std::size_t n) {
+    detail::real_adm_plan<T>(n, effort::estimate).r2c(in, out, rows, nullptr);
+}
+
+template<typename T>
+void rows_batch_c2r(const std::complex<T>* in, T* out, std::size_t rows, std::size_t n) {
+    detail::real_adm_plan<T>(n, effort::estimate).c2r(in, out, rows, nullptr);
+}
+
 #endif  // ADM_DISPATCH
 
 }
@@ -766,6 +778,8 @@ const tier_ops<T>* tier_entry::operator()(Arch, T*) const noexcept {
                                     size_t, size_t, size_t, size_t, const options&>;
             t.r2r = &make_state<r2r_state<T>, r2r_state_impl<T>, size_t, r2r_kind, size_t,
                                 const options&>;
+            t.r2c_rows = &rows_batch_r2c<T>;
+            t.c2r_rows = &rows_batch_c2r<T>;
         }
         t.one_1d = &one_shot_1d<T>;
         t.one_nd = &one_shot_nd<T>;

@@ -1053,10 +1053,11 @@ private:
         auto b = make_aligned_buffer<double>(elems);
         std::fill_n(b.get(), elems, 0.0);
         const int sb = 48 - bit_width(pad_ - 1);
-        const auto put = [sb](double* p, double h, double l) {
-            const double a = std::ldexp(h, sb), r = std::nearbyint(a);
+        const double sb_scale = std::ldexp(1.0, sb);
+        const auto put = [sb_scale](double* p, double h, double l) {
+            const double a = h * sb_scale, r = std::nearbyint(a);
             p[0] = r;
-            p[kDdW] = (a - r) + std::ldexp(l, sb);
+            p[kDdW] = (a - r) + l * sb_scale;
         };
         const dd_roots w(2 * n_);
         for (std::size_t j = 0, e = 0; j < n_; e = (e + 2 * j + 1) % (2 * n_), ++j) {

@@ -1011,38 +1011,6 @@ template<typename T, std::size_t IP, std::size_t R, typename V>
     }
 }
 
-template<typename T, bool Forward, std::size_t IP, bool Chiplet = false>
-ADM_COLD ADM_NOINLINE void dif_pass_last_scalar_rows(const T* ccre,
-                                            const T* ccim,
-                                            std::complex<T>* data,
-                                            std::size_t l1, std::size_t b, T scale_val,
-                                            const std::uint32_t* rowperm) {
-    for (; b < l1; ++b) {
-        const std::size_t rb = rowperm ? std::size_t(rowperm[b]) : b;
-        const std::size_t o0 = IP * rb;
-        T tr[IP], ti[IP];
-        for (std::size_t j = 0; j < IP; ++j) {
-            const std::size_t off = o0 + j;
-            tr[j] = ccre[off];
-            ti[j] = ccim[off];
-        }
-        if constexpr (Chiplet) {
-            T yr[IP], yi[IP];
-            rader_apply<IP, T, T>(tr, ti, 1, yr, yi);
-            for (std::size_t k = 0; k < IP; ++k) {
-                const auto [xr, xi] = plane_vals<Forward>(yr[k] * scale_val, yi[k] * scale_val);
-                data[b + l1 * k] = std::complex<T>(xr, xi);
-            }
-        } else {
-            dif_butterfly_terminal<T, IP>(tr, ti, [&](const auto k, T sr, T si) {
-                const auto [xr, xi] = plane_vals<Forward>(sr * scale_val, si * scale_val);
-                data[b + l1 * k] = std::complex<T>(xr, xi);
-            });
-        }
-    }
-}
-
-
 template<typename T, std::size_t IP>
 struct dif_last_batch {
     static constexpr std::size_t Wn = xsimd::batch<T>::size;
@@ -1204,11 +1172,12 @@ void dif_pass_last(const T* ccre, const T* ccim,
     // interleave-store targets. At four or fewer row blocks the block is the bigger half
     // of that trade (pass-level A/B, arena-misaligned output: ~20% win unpeeled at 3-4
     // blocks at W=8 f64 and W=16 f32; ~16% loss at 8 blocks), so peel only past 4W.
+    // The peel may only move block boundaries (store targets): every row is computed by
+    // one dif_pass_last_block of W rows, so no address can change any output bit.
     if (const std::size_t peel = l1 > 4u * W ? aos_store_align_peel<T, W>(data, l1, l1) : 0;
         peel != 0 && l1 >= peel + W) {
-        poet::dispatch(dif_last_tail_invoke<T, Forward, IP, Chiplet>,
-                       poet::dispatch_param<dif_last_tail_seq<W>>{peel},
-                       ccre, ccim, data, l1, std::size_t{0}, scale_val, rowperm);
+        dif_pass_last_block<T, Forward, IP, W, Chiplet>(ccre, ccim, data, l1, std::size_t{0},
+                                               scale_val, rowperm);
         for (b = peel; b + W <= l1; b += W)
             dif_pass_last_block<T, Forward, IP, W, Chiplet>(ccre, ccim, data, l1, b, scale_val,
                                                   rowperm);
@@ -1224,13 +1193,10 @@ void dif_pass_last(const T* ccre, const T* ccim,
                        ccre, ccim, data, l1, std::size_t{0}, scale_val, rowperm);
         return;
     }
-    if (2 * (l1 - b) >= W) {
-        dif_pass_last_block<T, Forward, IP, W, Chiplet>(ccre, ccim, data, l1, l1 - W,
-                                               scale_val, rowperm);
-        return;
-    }
-    dif_pass_last_scalar_rows<T, Forward, IP, Chiplet>(ccre, ccim, data, l1, b, scale_val,
-                                                       rowperm);
+    // The overlapping block at l1 - W covers the leftover rows; its overlap rows get the
+    // same bits the earlier blocks wrote, since one kernel computes each row.
+    dif_pass_last_block<T, Forward, IP, W, Chiplet>(ccre, ccim, data, l1, l1 - W,
+                                           scale_val, rowperm);
 }
 
 }

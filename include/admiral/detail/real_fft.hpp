@@ -56,13 +56,13 @@ private:
 
     // The batched tile path runs W rows through one ping-pong vector scratch of
     // 2 * W * N_ * sizeof(T) bytes and a W-wide transpose at both ends. The rule:
-    // batch the rows only while one tile's scratch fits the L1 data cache. For
-    // longer rows the scratch spills to L2 on every butterfly pass and the
-    // one-row-at-a-time path wins. The test is the tile footprint in bytes, not a
-    // row count, so one threshold covers every width and element size.
+    // batch the rows only while the tile path measures faster. Measured on this
+    // host at 512 rows, for widths from W=4 to W=16: the tile is 1.2x to 1.7x
+    // faster than the one-row path up to N = 1024 at f32 and N = 512 at f64, and
+    // slower past that. One row of half-spectrum within 4 KiB keeps every
+    // measured win and rejects every measured loss.
     bool tile_fits_l1() const {
-        constexpr std::size_t kL1DataBytes = 32 * 1024;
-        return 2 * W * N_ * sizeof(T) <= kL1DataBytes;
+        return N_ * sizeof(T) <= 4096;
     }
 
     void r2c_even(const T* in, std::complex<T>* out, std::size_t rows, thread_pool* pool) const {

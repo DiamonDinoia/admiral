@@ -157,6 +157,154 @@ TEST_CASE("long double r2c/c2r with an explicit fct scale every element", "[long
     }
 }
 
+namespace {
+
+constexpr lt_t kTwoPi = 2 * admiral::detail::numbers::pi_v<lt_t>;
+
+// Unnormalized DFT along one axis of a row-major N-D array: lines of length `len` at
+// stride `st`, sign -1 for forward and +1 for inverse.
+void axis_dft(std::vector<lc_t>& y, std::size_t len, std::size_t st, std::size_t nlines,
+              bool inv) {
+    std::vector<lc_t> tmp(y.size());
+    for (std::size_t i = 0; i < nlines; ++i) {
+        const std::size_t p = i / st, q = i - p * st;
+        for (std::size_t j = 0; j < len; ++j) {
+            lc_t acc(0, 0);
+            for (std::size_t l = 0; l < len; ++l) {
+                const lt_t ang = kTwoPi * static_cast<lt_t>(j * l) / static_cast<lt_t>(len);
+                acc += y[p * len * st + q + l * st] *
+                       lc_t(std::cos(ang), inv ? std::sin(ang) : -std::sin(ang));
+            }
+            tmp[p * len * st + q + j * st] = acc;
+        }
+    }
+    y = std::move(tmp);
+}
+
+// The N-D real inverse at fct 1, computed as the axis-by-axis 1-D chain in long double:
+// unnormalized c2c inverse on the outer axes of the half spectrum, then one c2r per row.
+// The c2r completes the Hermitian spectrum and reads the real part, so the imaginary
+// parts of the DC and Nyquist bins do not reach the output (pocketfft's rule).
+std::vector<lt_t> chain_inverse(const std::vector<lc_t>& half,
+                                const std::vector<std::size_t>& shape) {
+    const std::size_t n = shape.back(), nh = n / 2 + 1;
+    std::size_t rows = 1;
+    for (std::size_t d = 0; d + 1 < shape.size(); ++d) rows *= shape[d];
+    std::vector<lc_t> y = half;
+    std::size_t st = nh;
+    for (std::size_t d = shape.size() - 1; d-- > 0;) {
+        axis_dft(y, shape[d], st, rows * nh / (shape[d] * st) * st, true);
+        st *= shape[d];
+    }
+    std::vector<lt_t> out(rows * n);
+    for (std::size_t r = 0; r < rows; ++r)
+        for (std::size_t j = 0; j < n; ++j) {
+            lc_t acc(0, 0);
+            for (std::size_t k = 0; k < n; ++k) {
+                const std::size_t kk = k <= n / 2 ? k : n - k;
+                lc_t xk = y[r * nh + kk];
+                if (k > n / 2) xk = std::conj(xk);
+                if (k == 0 || (n % 2 == 0 && k == n / 2)) xk.imag(0);
+                const lt_t ang = kTwoPi * static_cast<lt_t>(k * j) / static_cast<lt_t>(n);
+                acc += xk * lc_t(std::cos(ang), std::sin(ang));
+            }
+            out[r * n + j] = acc.real();
+        }
+    return out;
+}
+
+// The forward of the same chain: one r2c per row, then unnormalized c2c forward on the
+// outer axes.
+std::vector<lc_t> chain_forward(const std::vector<lt_t>& x,
+                                const std::vector<std::size_t>& shape) {
+    const std::size_t n = shape.back(), nh = n / 2 + 1;
+    std::size_t rows = 1;
+    for (std::size_t d = 0; d + 1 < shape.size(); ++d) rows *= shape[d];
+    std::vector<lc_t> y(rows * nh);
+    for (std::size_t r = 0; r < rows; ++r)
+        for (std::size_t k = 0; k < nh; ++k) {
+            lc_t acc(0, 0);
+            for (std::size_t j = 0; j < n; ++j) {
+                const lt_t ang = kTwoPi * static_cast<lt_t>(k * j) / static_cast<lt_t>(n);
+                acc += x[r * n + j] * lc_t(std::cos(ang), -std::sin(ang));
+            }
+            y[r * nh + k] = acc;
+        }
+    std::size_t st = nh;
+    for (std::size_t d = shape.size() - 1; d-- > 0;) {
+        axis_dft(y, shape[d], st, rows * nh / (shape[d] * st) * st, false);
+        st *= shape[d];
+    }
+    return y;
+}
+
+// The f32 and f64 controls run the same data against the same reference.
+template<typename T>
+void require_nd_real_control(const std::vector<std::size_t>& shape,
+                             const std::vector<lc_t>& spec, const std::vector<lt_t>& x,
+                             const std::vector<lc_t>& want_fwd,
+                             const std::vector<lt_t>& want) {
+    admiral::plan_r2c<T> rp(shape);
+    std::vector<T> xt(x.size());
+    for (std::size_t i = 0; i < x.size(); ++i) xt[i] = static_cast<T>(x[i]);
+    std::vector<std::complex<T>> fwd(rp.cplx_size());
+    rp.forward(xt.data(), fwd.data());
+    std::vector<lc_t> fwd_ref(fwd.size());
+    for (std::size_t i = 0; i < fwd.size(); ++i)
+        fwd_ref[i] = {static_cast<lt_t>(fwd[i].real()), static_cast<lt_t>(fwd[i].imag())};
+    require_close(fwd_ref, want_fwd, fft_tol<T>());
+
+    std::vector<std::complex<T>> spec_t(spec.size());
+    for (std::size_t i = 0; i < spec.size(); ++i)
+        spec_t[i] = {static_cast<T>(spec[i].real()), static_cast<T>(spec[i].imag())};
+    std::vector<T> back(x.size());
+    rp.inverse(spec_t.data(), back.data(), T(1));
+    std::vector<lt_t> back_ref(back.size());
+    for (std::size_t i = 0; i < back.size(); ++i) back_ref[i] = static_cast<lt_t>(back[i]);
+    require_close(back_ref, want, fft_tol<T>());
+}
+
+}
+
+TEST_CASE("long double N-D real inverse matches the 1-D chain", "[longdouble][real]") {
+    // Rank 2 and 3, even and odd last-axis lengths, including the (2, 4) repro shape and
+    // lengths on both c2r engines. The half spectra keep the DC and Nyquist bins complex:
+    // the chain drops those imaginary parts and the plan must do the same.
+    const std::vector<std::vector<std::size_t>> shapes = {
+        {2, 4}, {3, 4}, {2, 5}, {3, 5}, {4, 12}, {3, 7}, {2, 16}, {2, 9},
+        {2, 3, 4}, {2, 3, 5}, {3, 2, 4}, {2, 3, 16}};
+    std::uniform_real_distribution<lt_t> unif(-1, 1);
+    for (const auto& shape : shapes) {
+        INFO("shape");
+        for (const std::size_t e : shape) INFO(" " << e);
+        std::size_t total = 1;
+        for (const std::size_t e : shape) total *= e;
+        const std::size_t n = shape.back(), nh = n / 2 + 1, rows = total / n;
+
+        std::vector<lc_t> spec(rows * nh);
+        for (auto& v : spec) v = {unif(rng), unif(rng)};
+        std::vector<lt_t> x(total);
+        for (auto& v : x) v = unif(rng);
+
+        // The forward on a real signal: a control on the reference.
+        const auto want_fwd = chain_forward(x, shape);
+        admiral::plan_r2c<lt_t> rp(shape);
+        std::vector<lc_t> fwd(rp.cplx_size());
+        rp.forward(x.data(), fwd.data());
+        require_close_lt(want_fwd, fwd);
+
+        // The unnormalized inverse of a general half spectrum, fct 1.
+        const auto want = chain_inverse(spec, shape);
+        auto spec2 = spec;
+        std::vector<lt_t> back(total);
+        rp.inverse(spec2.data(), back.data(), lt_t(1));
+        require_close_lt(want, back);
+
+        require_nd_real_control<double>(shape, spec, x, want_fwd, want);
+        require_nd_real_control<float>(shape, spec, x, want_fwd, want);
+    }
+}
+
 TEST_CASE("long double plans validate extents like the SIMD path", "[longdouble][error]") {
     // A zero extent or overflowing product throws at plan time instead of SIGFPE at
     // execute; r2c rejects an empty shape, matching nd_runtime_plan and nd_real_plan.

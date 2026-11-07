@@ -406,7 +406,9 @@ public:
         }
         const std::size_t M = n_ / 2;
         std::complex<T>* z = buf;
-        for (std::size_t k = 0; k < M; ++k) z[k] = c2r_even_bin(spec, tw_[k], M, k);
+        // The recombine drops the imaginary parts of DC and Nyquist, matching pocketfft's
+        // c2r and the odd path above.
+        c2r_even_recombine(spec, tw_.data(), z, M);
         eng_.template execute<false>(z, T(1), tid);
         const T inv_m = extra_scale / T(M);
         for (std::size_t j = 0; j < M; ++j) {

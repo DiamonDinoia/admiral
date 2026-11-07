@@ -1162,7 +1162,13 @@ private:
             return;
         }
         auto* z = reinterpret_cast<std::complex<T>*>(out);
-        const unsigned emax = ld_max_exponent(spec, nh_);
+        // The imaginary parts of DC and Nyquist are ignored, matching c2r_even_recombine.
+        soa_scratch<T, 1> sp_sc(2 * nh_);
+        auto* sp = reinterpret_cast<std::complex<T>*>(sp_sc.buf(0));
+        std::copy_n(spec, nh_, sp);
+        sp[0] = {sp[0].real(), T(0)};
+        sp[m_] = {sp[m_].real(), T(0)};
+        const unsigned emax = ld_max_exponent(sp, nh_);
         if (emax == kLdExpInfNan) ADM_UNLIKELY {
             std::fill_n(out, n_, std::numeric_limits<T>::quiet_NaN());
             return;
@@ -1179,11 +1185,11 @@ private:
         for (std::size_t k0 = 0; k0 < m_; k0 += kDdW) {
             const std::size_t valid = std::min(kDdW, m_ - k0);
             gdd ar, ai, br, bi, wr, wi;
-            dd_load_ld<true>(spec + k0, valid, g.s, blk);
+            dd_load_ld<true>(sp + k0, valid, g.s, blk);
             dd_load(blk, ar, ai);
             // X_(M-k0-l) to lane l: the run that ends at X_(M-k0), reversed. The index of lane
             // l is valid - 1 - l mod kDdW, so the zero lanes past valid stay zero.
-            dd_load_ld<true>(spec + m_ - k0 - (valid - 1), valid, g.s, blk);
+            dd_load_ld<true>(sp + m_ - k0 - (valid - 1), valid, g.s, blk);
             dd_load(blk, br, bi);
             const dd_u64 idx = (rev + dd_u64(valid)) & dd_u64(kDdW - 1);
             const auto turn = [&idx](const gdd& v) {

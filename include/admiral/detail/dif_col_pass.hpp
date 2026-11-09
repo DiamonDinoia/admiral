@@ -125,7 +125,7 @@ template<typename T, bool Forward, bool HiHalf>
 inline constexpr col_emit_terminal_masked_t<T, Forward, HiHalf> col_emit_terminal_masked{};
 
 // Terminal scale+interleave through a store policy: dif_col_pass_last and
-// dif_col_pass_last_staged pass the c-walk policy (col_store_peel/full/suffix), the fused
+// dif_col_pass_last_staged pass the c-walk policy (col_store_full/suffix), the fused
 // passes pass col_store_full.
 template<typename T, bool Forward>
 struct col_emit_terminal_t {
@@ -662,19 +662,9 @@ inline constexpr std::size_t kColdifDietMinLen = 1024;
 inline constexpr std::size_t kColdifFirstMinLen = 128;
 
 // The last-pass store policies as named stateless functors, the invoke-table idiom: one type
-// per T instead of one closure type per pass instantiation (the trio was cloned in
-// dif_col_pass_last and dif_col_pass_last_staged). The peel/suffix count is a call argument,
+// per T instead of one closure type per pass instantiation (the duo was cloned in
+// dif_col_pass_last and dif_col_pass_last_staged). The suffix count is a call argument,
 // never member state: value-carrying functor objects defeat gcc's SRA.
-template<typename T>
-struct col_store_peel_t {
-    template<typename V>
-    void operator()(T* d, V r, V i, std::size_t n) const {
-        aos_interleave_prefix_n<T>(d, r, i, n);
-    }
-};
-template<typename T>
-inline constexpr col_store_peel_t<T> col_store_peel{};
-
 template<typename T>
 struct col_store_full_t {
     template<typename V>
@@ -711,8 +701,6 @@ void dif_col_pass_last(const T* ccre, const T* ccim,
         return;
     }
 
-    const std::size_t peel = aos_store_align_peel<T>(data, axis_stride, B);
-
     for (std::size_t b = 0; b < l1; ++b) {
         const auto vec_block = [&](std::size_t c, auto store, std::size_t n) {
             batch tr[IP], ti[IP];
@@ -727,10 +715,6 @@ void dif_col_pass_last(const T* ccre, const T* ccim,
             });
         };
         std::size_t c = 0;
-        if (peel > 0) {
-            vec_block(0, col_store_peel<T>, peel);
-            c = peel;
-        }
         for (; c + W <= B; c += W) vec_block(c, col_store_full<T>, 0);
         if (c < B) {
             const std::size_t m0 = c - (B - W);
@@ -753,8 +737,6 @@ void dif_col_pass_last_staged(const T* ccre, const T* ccim,
         return;
     }
 
-    const std::size_t peel = aos_store_align_peel<T>(data, axis_stride, B);
-
     for (std::size_t b = 0; b < l1; ++b) {
         const auto vec_block = [&](std::size_t c, auto store, std::size_t n) {
             const auto load_in = [&](const auto j, batch& lr, batch& li) {
@@ -767,10 +749,6 @@ void dif_col_pass_last_staged(const T* ccre, const T* ccim,
                 });
         };
         std::size_t c = 0;
-        if (peel > 0) {
-            vec_block(0, col_store_peel<T>, peel);
-            c = peel;
-        }
         for (; c + W <= B; c += W) vec_block(c, col_store_full<T>, 0);
         if (c < B) {
             const std::size_t m0 = c - (B - W);

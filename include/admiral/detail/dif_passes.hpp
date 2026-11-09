@@ -1168,24 +1168,16 @@ void dif_pass_last(const T* ccre, const T* ccim,
     constexpr std::size_t W = batch_t::size;
     assert(ido == 1);
     std::size_t b = 0;
-    // The peel trades one full-price butterfly block per call for cache-line-aligned
-    // interleave-store targets. At four or fewer row blocks the block is the bigger half
-    // of that trade (pass-level A/B, arena-misaligned output: ~20% win unpeeled at 3-4
-    // blocks at W=8 f64 and W=16 f32; ~16% loss at 8 blocks), so peel only past 4W.
-    // The peel may only move block boundaries (store targets): every row is computed by
-    // one dif_pass_last_block of W rows, so no address can change any output bit.
-    if (const std::size_t peel = l1 > 4u * W ? aos_store_align_peel<T, W>(data, l1, l1) : 0;
-        peel != 0 && l1 >= peel + W) {
-        dif_pass_last_block<T, Forward, IP, W, Chiplet>(ccre, ccim, data, l1, std::size_t{0},
-                                               scale_val, rowperm);
-        for (b = peel; b + W <= l1; b += W)
-            dif_pass_last_block<T, Forward, IP, W, Chiplet>(ccre, ccim, data, l1, b, scale_val,
-                                                  rowperm);
-    } else {
-        for (; b + W <= l1; b += W)
-            dif_pass_last_block<T, Forward, IP, W, Chiplet>(ccre, ccim, data, l1, b, scale_val,
-                                                  rowperm);
-    }
+    // Block boundaries are a function of (l1, W) only: the output address may pick the store
+    // instruction, never the compute schedule. An address-chosen peel recomputed overlap rows
+    // at shifted lane positions, and codegen that rounds two lane positions of one kernel
+    // differently (MSVC 19.51 under /fp:fast, 1-2 ulp in the stage-twiddle multiplies) made
+    // the output bits a function of the caller's allocator. ponytail: the peel's aligned-store
+    // win (~16% at 8 blocks on a misaligned output) goes with it; restore only behind a
+    // lane-position-pinned butterfly dialect.
+    for (; b + W <= l1; b += W)
+        dif_pass_last_block<T, Forward, IP, W, Chiplet>(ccre, ccim, data, l1, b, scale_val,
+                                              rowperm);
     if (b == l1) return;
     if (l1 < W) {
         poet::dispatch(dif_last_tail_invoke<T, Forward, IP, Chiplet>,

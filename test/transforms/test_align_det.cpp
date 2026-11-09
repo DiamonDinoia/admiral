@@ -81,6 +81,29 @@ void run_grid(const void* tmpl, std::size_t in_bytes, std::size_t out_elems, Exe
     REQUIRE(bad == 0);
 }
 
+// In place (src == dst) through the same offsets: the aliasing wiring and the last-pass
+// overlap block must give the same bits at every offset of the one buffer.
+template<typename T, typename Exec>
+void run_grid_inplace(const void* tmpl, std::size_t bytes, Exec&& exec) {
+    align_arena buf(bytes);
+    std::vector<unsigned char> base(bytes), got(bytes);
+    int bad = 0;
+    bool first = true;
+    for (int off : kOffsets) {
+        std::memcpy(buf.at(off), tmpl, bytes);
+        exec(buf.at(off), buf.at(off));
+        std::memcpy(got.data(), buf.at(off), bytes);
+        if (first) {
+            base = got;
+            first = false;
+        } else if (base != got) {
+            ++bad;
+        }
+    }
+    INFO("in-place alignment cells that differ: " << bad << " of 16");
+    REQUIRE(bad == 0);
+}
+
 }
 
 TEMPLATE_TEST_CASE("c2c output bits do not depend on buffer alignment", "[align][det]", double,
@@ -92,6 +115,21 @@ TEMPLATE_TEST_CASE("c2c output bits do not depend on buffer alignment", "[align]
         INFO("c2c n = " << n);
         run_grid<TestType>(in.data(), n * sizeof(std::complex<TestType>), n,
                            [&](const void* src, void* dst) {
+            plan.forward(static_cast<const std::complex<TestType>*>(src),
+                         static_cast<std::complex<TestType>*>(dst));
+        });
+    }
+}
+
+TEMPLATE_TEST_CASE("c2c in-place output bits do not depend on buffer alignment", "[align][det]",
+                   double, float) {
+    const admiral::options opts{.nthreads = 0, .eff = admiral::effort::estimate};
+    for (std::size_t n = 16; n <= 65536; n *= 2) {
+        const auto in = c2c_input<TestType>(n);
+        const admiral::strides_plan<TestType> plan(n, 1, 1, 0, 1, 0, opts);
+        INFO("c2c n = " << n);
+        run_grid_inplace<TestType>(in.data(), n * sizeof(std::complex<TestType>),
+                                   [&](const void* src, void* dst) {
             plan.forward(static_cast<const std::complex<TestType>*>(src),
                          static_cast<std::complex<TestType>*>(dst));
         });

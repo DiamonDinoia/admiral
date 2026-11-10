@@ -248,6 +248,31 @@ if(ADM_DISPATCH)
     set_tests_properties(test_dispatch PROPERTIES SKIP_RETURN_CODE 2)
 endif()
 
+# Binding rule 4 sweep: the nondet2 `align_sweep.cpp` protocol, one run per dispatch tier of
+# this build. Every (in_off, out_off) in {0..120 step 8}^2 must give bit-identical output and
+# any differing cell exits non-zero. ADM_TEST_TIER pins the tier through tier_select.cpp; a
+# tier the runner lacks exits 2 and that entry skips. Its own main: not a Catch2 TU (the
+# test_dispatch rule).
+add_executable(test_align_sweep transforms/test_align_sweep.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tier_select.cpp)
+target_include_directories(test_align_sweep PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+if(ADM_DISPATCH)
+    target_compile_definitions(test_align_sweep PRIVATE ADM_DISPATCH)
+    target_include_directories(test_align_sweep PRIVATE ${PROJECT_SOURCE_DIR}/src)
+endif()
+target_link_libraries(test_align_sweep PRIVATE admiral_internal)
+if(TARGET project_warnings)
+    target_link_libraries(test_align_sweep PRIVATE project_warnings)
+endif()
+add_test(NAME test_align_sweep COMMAND test_align_sweep)
+if(ADM_DISPATCH)
+    foreach(tag IN LISTS ADM_TIER_TAGS)
+        add_test(NAME test_align_sweep.${tag} COMMAND test_align_sweep)
+        set_tests_properties(test_align_sweep.${tag} PROPERTIES
+            ENVIRONMENT "ADM_TEST_TIER=${tag}" SKIP_RETURN_CODE 2)
+    endforeach()
+endif()
+
 # Bit-identity digest driver (test/digest). scripts/validate.sh's `digest` arm builds
 # this target in two builds -- shipped and ADM_USE_FAST_MATH=OFF -- and diffs both
 # against the committed goldens in test/digest/golden. It registers NO ctest test: the

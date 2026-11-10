@@ -124,19 +124,18 @@ struct col_emit_terminal_masked_t {
 template<typename T, bool Forward, bool HiHalf>
 inline constexpr col_emit_terminal_masked_t<T, Forward, HiHalf> col_emit_terminal_masked{};
 
-// Terminal scale+interleave through a store policy: dif_col_pass_last and
-// dif_col_pass_last_staged pass the c-walk policy (col_store_full/suffix), the fused
-// passes pass col_store_full.
+// Terminal scale+interleave: the same full-tile store for every caller, so the block bodies
+// stay textually identical and the code that computes a row never changes with the address.
 template<typename T, bool Forward>
 struct col_emit_terminal_t {
-    template<typename K, typename V, typename Store>
+    template<typename K, typename V>
     void operator()(const K k, V sr, V si, std::complex<T>* data,
                     std::size_t axis_stride, std::size_t l1, std::size_t b,
-                    std::size_t c, T scale_val, const Store store, std::size_t n) const {
+                    std::size_t c, T scale_val) const {
         T* dst = reinterpret_cast<T*>(data + (b + l1 * k) * axis_stride + c);
         const V sv(scale_val);
         const auto [xr, xi] = plane_vals<Forward>(sr * sv, si * sv);
-        store(dst, xr, xi, n);
+        aos_interleave<T>(dst, xr, xi);
     }
 };
 template<typename T, bool Forward>
@@ -661,29 +660,11 @@ inline constexpr std::size_t kColdifDietMinLen = 1024;
 // pass's L3-resident regression class, while the first pass's wins sit at chains 128/256.
 inline constexpr std::size_t kColdifFirstMinLen = 128;
 
-// The last-pass store policies as named stateless functors, the invoke-table idiom: one type
-// per T instead of one closure type per pass instantiation (the duo was cloned in
-// dif_col_pass_last and dif_col_pass_last_staged). The suffix count is a call argument,
-// never member state: value-carrying functor objects defeat gcc's SRA.
-template<typename T>
-struct col_store_full_t {
-    template<typename V>
-    void operator()(T* d, V r, V i, std::size_t) const {
-        aos_interleave<T>(d, r, i);
-    }
-};
-template<typename T>
-inline constexpr col_store_full_t<T> col_store_full{};
-
-template<typename T>
-struct col_store_suffix_t {
-    template<typename V>
-    void operator()(T* d, V r, V i, std::size_t m0) const {
-        aos_interleave_suffix_n<T>(d, r, i, m0);
-    }
-};
-template<typename T>
-inline constexpr col_store_suffix_t<T> col_store_suffix{};
+// The last-pass c-walk is one call site per pass: the peel shifts block boundaries so full
+// blocks store cache-line-aligned segments, and each block passes its store range (head
+// prefix, full, tail suffix) as call arguments. One call site keeps one inlined kernel per
+// pass instantiation: a second clone that computes any row lets MSVC 19.51 round the clones
+// apart under /fp:fast and the output bits then move with the caller's allocator.
 
 template<typename T, bool Forward, std::size_t IP>
 void dif_col_pass_last(const T* ccre, const T* ccim,
@@ -701,8 +682,11 @@ void dif_col_pass_last(const T* ccre, const T* ccim,
         return;
     }
 
+    const std::size_t peel = aos_store_align_peel<T>(data, axis_stride, B);
+    const std::size_t tail0 = B - W;
+
     for (std::size_t b = 0; b < l1; ++b) {
-        const auto vec_block = [&](std::size_t c, auto store, std::size_t n) {
+        const auto vec_block = [&](std::size_t c) {
             batch tr[IP], ti[IP];
             for (std::size_t j = 0; j < IP; ++j) {
                 const std::size_t p = j + IP * b;
@@ -711,14 +695,19 @@ void dif_col_pass_last(const T* ccre, const T* ccim,
             }
             dif_butterfly_terminal<T, IP>(tr, ti, [&](const auto k, batch sr, batch si) {
                 col_emit_terminal<T, Forward>(k, sr, si, data, axis_stride, l1, b, c,
-                                              scale_val, store, n);
+                                              scale_val);
             });
         };
+        // One call site: the peel shifts the block boundaries so full blocks store
+        // cache-line-aligned segments, and every block runs the same full-tile body. The
+        // later stores overwrite the earlier ones in a fixed order, so the address never
+        // changes the code that computes a column.
         std::size_t c = 0;
-        for (; c + W <= B; c += W) vec_block(c, col_store_full<T>, 0);
-        if (c < B) {
-            const std::size_t m0 = c - (B - W);
-            vec_block(B - W, col_store_suffix<T>, m0);
+        for (;;) {
+            vec_block(c);
+            if (c >= tail0) break;
+            c = (c == 0 && peel != 0 && peel <= tail0) ? peel
+              : (c + W <= tail0 ? c + W : tail0);
         }
     }
 }
@@ -737,22 +726,27 @@ void dif_col_pass_last_staged(const T* ccre, const T* ccim,
         return;
     }
 
+    const std::size_t peel = aos_store_align_peel<T>(data, axis_stride, B);
+    const std::size_t tail0 = B - W;
+
     for (std::size_t b = 0; b < l1; ++b) {
-        const auto vec_block = [&](std::size_t c, auto store, std::size_t n) {
+        const auto vec_block = [&](std::size_t c) {
             const auto load_in = [&](const auto j, batch& lr, batch& li) {
                 col_load_planar<T>(j, lr, li, ccre, ccim, IP * b, B, c);
             };
             staged_dif_butterfly<T, IP, batch>(
                 load_in, [&](const auto k, batch sr, batch si) {
                     col_emit_terminal<T, Forward>(k, sr, si, data, axis_stride, l1, b, c,
-                                                  scale_val, store, n);
+                                                  scale_val);
                 });
         };
+        // One call site, same boundary walk as dif_col_pass_last.
         std::size_t c = 0;
-        for (; c + W <= B; c += W) vec_block(c, col_store_full<T>, 0);
-        if (c < B) {
-            const std::size_t m0 = c - (B - W);
-            vec_block(B - W, col_store_suffix<T>, m0);
+        for (;;) {
+            vec_block(c);
+            if (c >= tail0) break;
+            c = (c == 0 && peel != 0 && peel <= tail0) ? peel
+              : (c + W <= tail0 ? c + W : tail0);
         }
     }
 }
@@ -779,7 +773,7 @@ void dif_col_pass_fused(std::complex<T>* data, std::size_t axis_stride,
                 }
                 dif_butterfly_terminal<T, IP>(tr, ti, [&](const auto k, batch sr, batch si) {
                     col_emit_terminal<T, Forward>(k, sr, si, data, axis_stride, l1, b, c,
-                                                  scale_val, col_store_full<T>, 0);
+                                                  scale_val);
                 });
             }
         }
@@ -849,7 +843,7 @@ void dif_col_pass_fused_staged(std::complex<T>* data, std::size_t axis_stride,
                 staged_dif_butterfly<T, IP, batch>(load_in,
                                                    [&](const auto k, batch sr, batch si) {
                     col_emit_terminal<T, Forward>(k, sr, si, data, axis_stride, l1, b, c,
-                                                  scale_val, col_store_full<T>, 0);
+                                                  scale_val);
                 });
             }
         }

@@ -1137,7 +1137,12 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
         const batch_t sv(scale_val);
         for (std::size_t k = 0; k < IP; ++k) {
             const auto [xr, xi] = plane_vals<Forward>(out_re[k] * sv, out_im[k] * sv);
-            aos_interleave_prefix<Rows>(reinterpret_cast<T*>(data + b + l1 * k), xr, xi);
+            T* dst = reinterpret_cast<T*>(data + b + l1 * k);
+            if constexpr (Rows == W) {
+                aos_interleave<T>(dst, xr, xi);
+            } else {
+                aos_interleave_prefix<Rows>(dst, xr, xi);
+            }
         }
     }
 }
@@ -1167,28 +1172,31 @@ void dif_pass_last(const T* ccre, const T* ccim,
     using batch_t = typename dif_last_batch<T, IP>::type;
     constexpr std::size_t W = batch_t::size;
     assert(ido == 1);
-    std::size_t b = 0;
-    // Block boundaries are a function of (l1, W) only: the output address may pick the store
-    // instruction, never the compute schedule. An address-chosen peel recomputed overlap rows
-    // at shifted lane positions, and codegen that rounds two lane positions of one kernel
-    // differently (MSVC 19.51 under /fp:fast, 1-2 ulp in the stage-twiddle multiplies) made
-    // the output bits a function of the caller's allocator. ponytail: the peel's aligned-store
-    // win (~16% at 8 blocks on a misaligned output) goes with it; restore only behind a
-    // lane-position-pinned butterfly dialect.
-    for (; b + W <= l1; b += W)
-        dif_pass_last_block<T, Forward, IP, W, Chiplet>(ccre, ccim, data, l1, b, scale_val,
-                                              rowperm);
-    if (b == l1) return;
     if (l1 < W) {
         poet::dispatch(dif_last_tail_invoke<T, Forward, IP, Chiplet>,
                        poet::dispatch_param<dif_last_tail_seq<W>>{l1},
                        ccre, ccim, data, l1, std::size_t{0}, scale_val, rowperm);
         return;
     }
-    // The overlapping block at l1 - W covers the leftover rows; its overlap rows get the
-    // same bits the earlier blocks wrote, since one kernel computes each row.
-    dif_pass_last_block<T, Forward, IP, W, Chiplet>(ccre, ccim, data, l1, l1 - W,
-                                           scale_val, rowperm);
+    // The output address may pick the store strategy and the block boundaries, never the
+    // compute code. The peel shifts the boundaries so full blocks store cache-line-aligned
+    // segments (its measured win, ~16% at 8 blocks on a misaligned output). Every block is
+    // the same full-tile body at the one call below, so no address-derived value can change
+    // the code that computes a row: the later stores overwrite the earlier ones in a fixed
+    // order and the last writer of each column is the same computation in every cell. The
+    // old peel called the kernel at two sites: MSVC 19.51 rounds the clones apart under
+    // /fp:fast (1-2 ulp in the stage-twiddle multiplies) and the output bits then move with
+    // the caller's allocator.
+    const std::size_t peel = l1 > 4u * W ? aos_store_align_peel<T, W>(data, l1, l1) : 0;
+    const std::size_t tail0 = l1 - W;
+    std::size_t b = 0;
+    for (;;) {
+        dif_pass_last_block<T, Forward, IP, W, Chiplet>(ccre, ccim, data, l1, b, scale_val,
+                                                        rowperm);
+        if (b >= tail0) break;
+        b = (b == 0 && peel != 0 && peel <= tail0) ? peel
+          : (b + W <= tail0 ? b + W : tail0);
+    }
 }
 
 }

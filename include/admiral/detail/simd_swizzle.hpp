@@ -242,6 +242,21 @@ ADM_ALWAYS_INLINE void aos_interleave_prefix(T* ADM_RESTRICT dst, Batch re, Batc
     }
 }
 
+template<typename T, std::size_t Wc = xsimd::batch<T>::size>
+[[nodiscard]] ADM_ALWAYS_INLINE std::size_t aos_store_align_peel(const std::complex<T>* data,
+                                                   std::size_t stride, std::size_t B) {
+    constexpr std::size_t LANE = kCacheLine / sizeof(std::complex<T>);
+    if constexpr (LANE <= 1 || Wc < LANE) {
+        return 0;
+    } else {
+        if (stride % LANE != 0) return 0;
+        const std::size_t off =
+            (reinterpret_cast<std::uintptr_t>(data) / sizeof(std::complex<T>)) % LANE;
+        const std::size_t peel = (LANE - off) % LANE;
+        return peel < B ? peel : B;
+    }
+}
+
 template<std::size_t M0, typename T, typename Batch = xsimd::batch<T>>
 ADM_ALWAYS_INLINE void aos_interleave_suffix(T* ADM_RESTRICT dst, Batch re, Batch im) {
     constexpr std::size_t W = Batch::size;
@@ -333,17 +348,9 @@ struct real_run_copy {
     }
 };
 
-template<typename T, typename Batch = xsimd::batch<T>>
-ADM_ALWAYS_INLINE void aos_interleave_suffix_n(T* ADM_RESTRICT dst, Batch re, Batch im,
-                                               std::size_t m0) {
-    constexpr std::size_t W = Batch::size;
-    if (m0 == 0) { aos_interleave<T, Batch>(dst, re, im); return; }
-    poet::static_for<1, std::ptrdiff_t{W}>([&](auto M) {
-        constexpr std::size_t M_0{M.value};
-        if (M_0 == m0) aos_interleave_suffix<M_0, T, Batch>(dst, re, im);
-    });
-}
-
+// The block boundaries move with the output address, and the full-tile stores above are the
+// only store strategy: a peeled grid stores cache-line-aligned segments without a split
+// store, and head and tail overlap it in a fixed order.
 }
 }
 

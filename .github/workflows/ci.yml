@@ -46,7 +46,7 @@ jobs:
   # about which diagnostics are errors, and a warning class only one of them raises is invisible
   # until that one is in the matrix.
   build:
-    timeout-minutes: 45
+    timeout-minutes: 90
     # The Debug test_granule TU peaks at 9123 MiB (gcc-14) and 7682 MiB (llvm-21). Two of them
     # exceed the limit, so Debug cells compile one TU at a time.
     env:

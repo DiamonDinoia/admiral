@@ -864,9 +864,10 @@ nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forwa
     m.def_fct = m.def_sp.fct;
     // Rank 1, serial, codelet route: execute() calls the codelet directly. A debug call keeps
     // the traced chain.
-    m.fast1d = m.shape.size() == 1 && m.shape[0] > 1 && m.pool == nullptr &&
-               m.axes[0].plan &&
-               m.axes[0].plan->route() == plan_impl<T>::route_kind::codelet;
+    if (m.shape.size() == 1 && m.shape[0] > 1 && m.pool == nullptr) {
+        const std::optional<plan_impl<T>>& p0 = m.axes[0].plan;
+        m.fast1d = p0 && p0->route() == plan_impl<T>::route_kind::codelet;
+    }
 }
 
 template<typename T>

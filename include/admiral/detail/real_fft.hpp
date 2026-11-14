@@ -250,13 +250,12 @@ private:
     void r2c_even_scalar(const T* in, std::complex<T>* out, std::size_t rows) const {
         const plan_impl<T>& fwd = lazy_fwd();
         const std::size_t M = M_;
-        soa_scratch<T, 1> z_sc(2 * M);
-        std::complex<T>* z = reinterpret_cast<std::complex<T>*>(z_sc.buf(0));
         for (std::size_t r = 0; r < rows; ++r) {
-            const T* xr = in + r * N_;
-            std::memcpy(reinterpret_cast<T*>(z), xr, N_ * sizeof(T));
-            fwd.execute(span<std::complex<T>>(z, M));
-            r2c_even_recombine(z, tw_.data(), out + r * Nh_, M);
+            // The c2c reads the real row as M complex values and writes the first M slots of
+            // the half spectrum; the recombine then works in that row.
+            std::complex<T>* Xr = out + r * Nh_;
+            fwd.execute(reinterpret_cast<const std::complex<T>*>(in + r * N_), Xr);
+            r2c_even_recombine(Xr, tw_.data(), Xr, M);
         }
     }
 

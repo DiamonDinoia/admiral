@@ -79,11 +79,13 @@ inline __m512d c2r_even_bin_vec(__m512d a, __m512d b, __m512d tw) {
 #endif
 
 // The full recombine pass: edges k=0 and k=M, mirrored pairs (k, M-k), middle bin.
+// Xr may equal z: each step loads both bins of a pair before it stores either.
 template <typename T>
 inline void r2c_even_recombine(const std::complex<T>* z, const std::complex<T>* tw,
                                std::complex<T>* Xr, std::size_t M) {
-    Xr[0] = r2c_even_bin(z[0], z[0], tw[0]);
-    Xr[M] = r2c_even_bin(z[0], z[0], tw[M]);
+    const std::complex<T> z0 = z[0];
+    Xr[0] = r2c_even_bin(z0, z0, tw[0]);
+    Xr[M] = r2c_even_bin(z0, z0, tw[M]);
     const std::size_t kmax = (M - 1) / 2;
     std::size_t k = 1;
 #if defined(__AVX512F__)

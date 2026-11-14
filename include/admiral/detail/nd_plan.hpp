@@ -642,6 +642,12 @@ void nd_apply_axis(std::complex<T>* data, std::size_t total, std::size_t len,
 
 template<typename T>
 class nd_runtime_plan {
+    struct scale_plan {
+        bool custom;
+        T fct;
+        std::size_t scale_axis;
+    };
+
     struct M {
         std::vector<std::size_t> shape;
         bool is_forward = false;
@@ -651,6 +657,10 @@ class nd_runtime_plan {
         bool fuse_planes = false;
         bool fast2d = false;
         bool fast3d = false;
+        bool fast1d = false;
+        // The default-fct scale: make_scale_plan reads only plan-invariant members.
+        scale_plan def_sp{false, T(1), 0};
+        T def_fct = T(1);
     } m;
 
 public:
@@ -724,11 +734,6 @@ private:
         }
     }
 
-    struct scale_plan {
-        bool custom;
-        T fct;
-        std::size_t scale_axis;
-    };
     [[nodiscard]] scale_plan make_scale_plan(std::optional<T> fct) const {
         const T def = default_transform_fct<T>(m.is_forward, m.total);
         const T f = fct.value_or(def);
@@ -855,10 +860,24 @@ nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forwa
             m.fast3d = (admit4 || admit8) && m.shape[1] == n && m.shape[2] == n;
         }
     }
+    m.def_sp = make_scale_plan(std::nullopt);
+    m.def_fct = m.def_sp.fct;
+    // Rank 1, serial, codelet route: execute() calls the codelet directly. A debug call keeps
+    // the traced chain.
+    m.fast1d = m.shape.size() == 1 && m.shape[0] > 1 && m.pool == nullptr &&
+               m.axes[0].plan &&
+               m.axes[0].plan->route() == plan_impl<T>::route_kind::codelet;
 }
 
 template<typename T>
 void nd_runtime_plan<T>::execute(std::complex<T>* data, const exec_options<T>& opts) const {
+    if (m.fast1d && opts.debug == 0) {
+        const T f = opts.fct.value_or(m.def_fct);
+        if (m.is_forward) codelet_dispatch<T, true >(data, data, m.shape[0]);
+        else              codelet_dispatch<T, false>(data, data, m.shape[0]);
+        if (f != T(1)) scale_inplace(data, m.shape[0], f);
+        return;
+    }
     if (m.fast2d && opts.debug == 0) { execute_fast2d(data, opts.fct); return; }
     if constexpr (kGranuleFmaddsub)
         if (m.fast3d && opts.debug == 0) { execute_fast3d(data, data, opts.fct); return; }
@@ -866,7 +885,7 @@ void nd_runtime_plan<T>::execute(std::complex<T>* data, const exec_options<T>& o
     if (ndim == 1) {
         const nd_axis_state<T>& ax0 = m.axes[0];
         if (ax0.plan) {
-            const scale_plan sp = make_scale_plan(opts.fct);
+            const scale_plan sp = opts.fct ? make_scale_plan(opts.fct) : m.def_sp;
             ax0.plan->execute(span<std::complex<T>>(data, m.total),
                               {sp.custom ? std::optional<T>(sp.fct) : std::nullopt, opts.debug});
             return;
@@ -879,7 +898,7 @@ template<typename T>
 void nd_runtime_plan<T>::execute_nd(std::complex<T>* data, const exec_options<T>& opts) const {
     const std::size_t ndim = m.shape.size();
     if (opts.debug >= dbg_route) ADM_UNLIKELY trace(opts.debug, "in-place");
-    const scale_plan sp = make_scale_plan(opts.fct);
+    const scale_plan sp = opts.fct ? make_scale_plan(opts.fct) : m.def_sp;
     const std::size_t plane_axes = m.fuse_planes ? 2 : ndim;
     const std::size_t plane = m.fuse_planes ? m.shape[ndim - 1] * m.shape[ndim - 2] : m.total;
     if (m.fuse_planes && opts.debug >= dbg_route) ADM_UNLIKELY dbg_print("  fused planes");
@@ -908,17 +927,24 @@ template<typename T>
 void nd_runtime_plan<T>::execute(const std::complex<T>* src, std::complex<T>* dst,
                                  const exec_options<T>& opts) const {
     if (src == dst) { execute(dst, opts); return; }
+    if (m.fast1d && opts.debug == 0) {
+        const T f = opts.fct.value_or(m.def_fct);
+        if (m.is_forward) codelet_dispatch<T, true >(src, dst, m.shape[0]);
+        else              codelet_dispatch<T, false>(src, dst, m.shape[0]);
+        if (f != T(1)) scale_inplace(dst, m.shape[0], f);
+        return;
+    }
     if constexpr (kGranuleFmaddsub)
         if (m.fast3d && opts.debug == 0) { execute_fast3d(src, dst, opts.fct); return; }
     if (m.shape.empty()) {
-        const scale_plan sp = make_scale_plan(opts.fct);
+        const scale_plan sp = opts.fct ? make_scale_plan(opts.fct) : m.def_sp;
         *dst = sp.custom ? *src * sp.fct : *src;
         return;
     }
     if (m.shape.size() == 1) {
         const nd_axis_state<T>& ax0 = m.axes[0];
         if (ax0.plan) {
-            const scale_plan sp = make_scale_plan(opts.fct);
+            const scale_plan sp = opts.fct ? make_scale_plan(opts.fct) : m.def_sp;
             ax0.plan->execute(src, dst,
                               {sp.custom ? std::optional<T>(sp.fct) : std::nullopt, opts.debug});
             return;
@@ -934,7 +960,7 @@ void nd_runtime_plan<T>::execute_nd(const std::complex<T>* src, std::complex<T>*
     const std::size_t len = m.shape[ndim - 1];
     if (opts.debug >= dbg_route) ADM_UNLIKELY trace(opts.debug, "oop");
     const nd_axis_state<T>& in_st = m.axes[ndim - 1];
-    const scale_plan sp = make_scale_plan(opts.fct);
+    const scale_plan sp = opts.fct ? make_scale_plan(opts.fct) : m.def_sp;
     const exec_options<T> row_opts{axis_fct(sp, ndim - 1)};
     const std::size_t plane = m.fuse_planes ? len * m.shape[ndim - 2] : m.total;
     if (m.fuse_planes && opts.debug >= dbg_route) ADM_UNLIKELY dbg_print("  fused planes");

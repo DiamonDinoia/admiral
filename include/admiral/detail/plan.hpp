@@ -103,6 +103,8 @@ private:
         route_kind route;
         route_state st;
         std::unique_ptr<thread_pool> pool;
+        // A function of (is_forward, size), both fixed for the plan's life.
+        T def_fct = default_transform_fct<T>(is_forward, size);
     } m;
 
     [[nodiscard]] static std::unique_ptr<thread_pool> make_route_pool(std::size_t nthreads,
@@ -291,6 +293,7 @@ public:
 
     [[nodiscard]] std::size_t size() const noexcept { return m.size; }
     [[nodiscard]] bool is_forward() const noexcept { return m.is_forward; }
+    [[nodiscard]] route_kind route() const noexcept { return m.route; }
 
     [[nodiscard]] const char* route_name() const noexcept {
         switch (m.route) {
@@ -876,10 +879,17 @@ void plan_impl<T>::execute(span<std::complex<T>> data, const exec_options<T>& op
 template<typename T>
 ADM_HOT void plan_impl<T>::execute(const std::complex<T>* src, std::complex<T>* dst,
                                    const exec_options<T>& opts) const {
-    const T fct = opts.fct.value_or(default_transform_fct<T>(m.is_forward, m.size));
+    const T fct = opts.fct.value_or(m.def_fct);
     if (opts.debug >= dbg_route) ADM_UNLIKELY
         trace(opts.debug, src == dst ? "in-place" : "oop", fct);
     if (m.size == 1) ADM_UNLIKELY { *dst = *src * fct; return; }
+    // The arithmetic of execute_route(codelet) plus apply_scale, without the variant visit.
+    if (m.route == route_kind::codelet) {
+        if (m.is_forward) codelet_dispatch<T, true >(src, dst, m.size);
+        else              codelet_dispatch<T, false>(src, dst, m.size);
+        apply_scale(dst, fct);
+        return;
+    }
     if (m.is_forward) execute_impl<true>(src, dst, fct);
     else              execute_impl<false>(src, dst, fct);
 }
@@ -887,7 +897,7 @@ ADM_HOT void plan_impl<T>::execute(const std::complex<T>* src, std::complex<T>* 
 template<typename T>
 void plan_impl<T>::execute_many(std::complex<T>* data, std::size_t n, std::size_t stride,
                                 const exec_options<T>& opts) const {
-    const T fct = opts.fct.value_or(default_transform_fct<T>(m.is_forward, m.size));
+    const T fct = opts.fct.value_or(m.def_fct);
     if (opts.debug >= dbg_route) ADM_UNLIKELY trace(opts.debug, "many", fct, n, stride);
     if (m.size == 1) ADM_UNLIKELY {
         for (std::size_t r = 0; r < n; ++r) data[r * stride] *= fct;

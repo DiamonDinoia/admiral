@@ -21,6 +21,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <type_traits>
 #include <vector>
 
@@ -507,15 +508,18 @@ ADM_ALWAYS_INLINE void dd_store_ld(const double* src, const dd_grid& g,
 template<typename T>
 class dd_lines {
 public:
-    explicit dd_lines(std::size_t n) : n_(n) {
+    explicit dd_lines(std::size_t n) : dd_lines(n, dd_roots(n), 1) {}
+
+    // The roots of a line of n are w_n^j = w_N^(j * step) of a parent table w of N = n * step:
+    // the four-step lines read the table of the whole transform and fold no anchors of their own.
+    dd_lines(std::size_t n, const dd_roots& w, std::size_t step) : n_(n) {
         static_assert(kDdStrictFp<T>, "the dd engine needs -fno-fast-math");
-        const dd_roots w(n_);
         std::size_t m = n_;
         while (m > 1) {
             const std::size_t p = factor(m);
             if (p == 0) break;
             level_state ls{p, m, std::vector<dd_const>(m)};
-            for (std::size_t j = 0; j < m; ++j) ls.tw[j] = w(j * (n_ / m));
+            for (std::size_t j = 0; j < m; ++j) ls.tw[j] = w(j * (n_ / m) * step);
             levels_.push_back(std::move(ls));
             m /= p;
         }
@@ -524,7 +528,8 @@ public:
             blue_ = std::make_unique<blue_state>(leaf_);
         } else if (leaf_ > 1) {
             dft_tab_.resize(leaf_);
-            for (std::size_t j = 0; j < leaf_; ++j) dft_tab_[j] = dd_conj(w(j * (n_ / leaf_)));
+            for (std::size_t j = 0; j < leaf_; ++j)
+                dft_tab_[j] = dd_conj(w(j * (n_ / leaf_) * step));
         }
         build_perm();
     }
@@ -757,10 +762,13 @@ public:
     // blocked: n1 and n2 are multiples of kDdW, so the lanes of every element are one aligned
     // block of kDdW consecutive indices.
     dd_four_step(std::size_t n, bool blocked)
-        : n_(n), n1_(split(n, blocked).n1), n2_(n / n1_), nb1_((n1_ + kDdW - 1) / kDdW),
-          nb2_((n2_ + kDdW - 1) / kDdW), a_(n1_), b_(n2_) {
+        : dd_four_step(n, split(n, blocked).n1, dd_roots(n)) {}
+
+    // One root table of n serves the twist table and both line engines.
+    dd_four_step(std::size_t n, std::size_t n1, const dd_roots& root)
+        : n_(n), n1_(n1), n2_(n / n1_), nb1_((n1_ + kDdW - 1) / kDdW),
+          nb2_((n2_ + kDdW - 1) / kDdW), a_(n1_, root, n2_), b_(n2_, root, n1_) {
         tw_ = make_aligned_buffer<double>(nb2_ * n1_ * kDdElem);
-        const dd_roots root(n_);
         for (std::size_t jb = 0; jb < nb2_; ++jb)
             for (std::size_t k1 = 0; k1 < n1_; ++k1) {
                 double* t = tw_.get() + (jb * n1_ + k1) * kDdElem;
@@ -927,9 +935,14 @@ inline constexpr std::size_t kDdMinLen = 8;
 template<typename T>
 class dd_c2c {
 public:
+    // Below kDdMinLen the x87 engine runs the transform, so the dd engine is not built.
     explicit dd_c2c(std::size_t n, std::size_t = 1)
-        : n_(n), pad_(blue_pad(n)), fs_(pad_ != 0 ? pad_ : n_, pad_ != 0) {
-        if (n_ < kDdMinLen) x87_ = std::make_unique<scalar_c2c<T>>(n_);
+        : n_(n), pad_(n < kDdMinLen ? 0 : blue_pad(n)) {
+        if (n_ < kDdMinLen) {
+            x87_ = std::make_unique<scalar_c2c<T>>(n_);
+            return;
+        }
+        fs_.emplace(pad_ != 0 ? pad_ : n_, pad_ != 0);
         if (pad_ != 0) build_blue();
     }
 
@@ -980,14 +993,14 @@ public:
     template<typename Load, typename Store>
     void transform(const Load& load, const Store& store, thread_pool* pool) const {
         if (pad_ == 0) {
-            fs_.run(load, store, pool);
+            fs_->run(load, store, pool);
             return;
         }
         // a = x * chirp, z = swap(FFT(a) * bmul), x = chirp * swap(FFT(z)): the second run is the
         // inverse transform, and bmul carries its 1 / pad.
         soa_scratch<double, 1> z_sc(pad_ * kDdElem / kDdW);
         double* z = z_sc.buf(0);
-        fs_.run(
+        fs_->run(
             [&](std::size_t j, std::size_t, double* dst) {
                 if (j >= n_) {
                     std::fill_n(dst, kDdElem, 0.0);
@@ -1003,7 +1016,7 @@ public:
                 dd_store(z + k / kDdW * kDdElem, im, re);
             },
             pool);
-        fs_.run(
+        fs_->run(
             [&](std::size_t j, std::size_t, double* dst) {
                 std::copy_n(z + j / kDdW * kDdElem, kDdElem, dst);
             },
@@ -1074,7 +1087,7 @@ private:
             }
         }
         bmul_ = make_aligned_buffer<double>(elems);
-        fs_.run(
+        fs_->run(
             [&](std::size_t j, std::size_t, double* dst) {
                 std::copy_n(b.get() + j / kDdW * kDdElem, kDdElem, dst);
             },
@@ -1095,7 +1108,7 @@ private:
     }
 
     std::size_t n_, pad_;
-    dd_four_step<T> fs_;
+    std::optional<dd_four_step<T>> fs_;
     aligned_buffer<double> chirp_, bmul_;
     std::unique_ptr<scalar_c2c<T>> x87_;
 };
@@ -1117,9 +1130,14 @@ template<typename T>
 class dd_r2c {
 public:
     explicit dd_r2c(std::size_t n, std::size_t = 1)
-        : n_(n), nh_(n / 2 + 1), m_(n % 2 == 0 ? n / 2 : n), eng_(m_) {
-        if (m_ < kDdMinLen) x87_ = std::make_unique<scalar_r2c_1d<T>>(n_);
-        if (x87_ || n_ % 2 != 0) return;
+        : n_(n), nh_(n / 2 + 1), m_(n % 2 == 0 ? n / 2 : n) {
+        // Below kDdMinLen the x87 r2c runs the transform, so the dd engine is not built.
+        if (m_ < kDdMinLen) {
+            x87_ = std::make_unique<scalar_r2c_1d<T>>(n_);
+            return;
+        }
+        eng_.emplace(m_);
+        if (n_ % 2 != 0) return;
         const std::size_t nb = m_ / kDdW + 1;
         tw_ = make_aligned_buffer<double>(nb * kDdElem);
         const dd_roots w(n_);
@@ -1159,7 +1177,7 @@ private:
             soa_scratch<T, 1> buf_sc(2 * n_);
             auto* buf = reinterpret_cast<std::complex<T>*>(buf_sc.buf(0));
             for (std::size_t i = 0; i < n_; ++i) buf[i] = {in[i], T(0)};
-            eng_.template execute_dd<true>(buf, T(1), 1, nullptr);
+            eng_->template execute_dd<true>(buf, T(1), 1, nullptr);
             std::copy_n(buf, nh_, out);
             return;
         }
@@ -1176,7 +1194,7 @@ private:
         const std::size_t stride = m_ + 2 * kDdW;
         soa_scratch<double, 1> zs_sc(4 * stride);
         double* zs = zs_sc.buf(0);
-        eng_.transform(
+        eng_->transform(
             [&](std::size_t j, std::size_t valid, double* dst) {
                 dd_load_ld<true>(z + j, valid, g.s, dst);
             },
@@ -1221,7 +1239,7 @@ private:
             auto* buf = reinterpret_cast<std::complex<T>*>(buf_sc.buf(0));
             for (std::size_t k = 0; k < nh_; ++k) buf[k] = spec[k];
             for (std::size_t k = nh_; k < n_; ++k) buf[k] = std::conj(spec[n_ - k]);
-            eng_.template execute_dd<false>(buf, extra_scale, n_, nullptr);
+            eng_->template execute_dd<false>(buf, extra_scale, n_, nullptr);
             for (std::size_t i = 0; i < n_; ++i) out[i] = buf[i].real();
             return;
         }
@@ -1269,7 +1287,7 @@ private:
             for (std::size_t c = 0; c < 4; ++c) rows[c].store_unaligned(zs + c * stride + k0);
         }
         // The inverse runs forward on swap(2 Z); dd_store_ld<false> swaps back.
-        eng_.transform(
+        eng_->transform(
             [&](std::size_t j, std::size_t valid, double* dst) {
                 const auto live = lane_prefix_mask<double>(valid);
                 for (std::size_t c = 0; c < 4; ++c)
@@ -1283,7 +1301,7 @@ private:
     }
 
     std::size_t n_, nh_, m_;
-    dd_c2c<T> eng_;
+    std::optional<dd_c2c<T>> eng_;
     aligned_buffer<double> tw_;
     std::unique_ptr<scalar_r2c_1d<T>> x87_;
 };

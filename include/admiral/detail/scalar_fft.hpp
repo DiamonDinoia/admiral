@@ -144,12 +144,14 @@ private:
             dft<forward>(x, off, level, tid);
     }
 
+    // The n x n matrix holds n distinct roots: n sincos calls fill it, not n * n.
     void build_direct(std::size_t n) {
         direct_n_ = n;
+        std::vector<std::complex<T>> w(n);
+        for (std::size_t j = 0; j < n; ++j) w[j] = scalar_twiddle<T>(j, n, true);
         direct_mat_.resize(n * n);
         for (std::size_t k = 0; k < n; ++k)
-            for (std::size_t j = 0; j < n; ++j)
-                direct_mat_[k * n + j] = scalar_twiddle<T>((j * k) % n, n, true);
+            for (std::size_t j = 0; j < n; ++j) direct_mat_[k * n + j] = w[(j * k) % n];
     }
 
     template<bool forward>

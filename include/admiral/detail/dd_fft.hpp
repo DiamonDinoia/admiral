@@ -184,6 +184,42 @@ struct std::numeric_limits<admiral::detail::ct_dd_plain> {
 namespace admiral {
 namespace detail {
 
+// The term ratios of the sine and cosine series, 1 / ((2k - 1) 2k) and 1 / (2k (2k + 1)) for
+// k = 1 .. 15, each rounded once from ct_dd at compile time. 15 terms reach 2^-104 at pi / 4.
+struct dd_series_ratios {
+    ct_dd_plain c[15], s[15];
+};
+
+inline constexpr dd_series_ratios kDdSeriesRatios = [] {
+    dd_series_ratios r{};
+    for (unsigned k = 1; k <= 15; ++k) {
+        const ct_dd c = ct_dd(1.0) / ct_dd(double((2 * k - 1) * (2 * k)));
+        const ct_dd s = ct_dd(1.0) / ct_dd(double((2 * k) * (2 * k + 1)));
+        r.c[k - 1] = ct_dd_plain(c.hi, c.lo);
+        r.s[k - 1] = ct_dd_plain(s.hi, s.lo);
+    }
+    return r;
+}();
+
+// The run-time dd series. The generic series divides by a dd denominator for each term; here
+// each term is two dd products by a ratio from the table above. A ratio carries one rounding of
+// 2^-106, so the sums stay within a few 2^-104 of the division form.
+template<>
+[[nodiscard]] inline ct_sincos_v<ct_dd_plain> sincos_small_eval<ct_dd_plain>(ct_dd_plain x) {
+    const ct_dd_plain mx2 = -(x * x);
+    ct_dd_plain cterm = 1, csum = 1, sterm = x, ssum = x;
+    for (unsigned i = 0; i < 15; ++i) {
+        cterm *= mx2 * kDdSeriesRatios.c[i];
+        csum += cterm;
+        sterm *= mx2 * kDdSeriesRatios.s[i];
+        ssum += sterm;
+        const double ca = cterm.hi < 0 ? -cterm.hi : cterm.hi;
+        const double sa = sterm.hi < 0 ? -sterm.hi : sterm.hi;
+        if (ca + ca <= 0x1p-104 && sa + sa <= 0x1p-104) break;
+    }
+    return {ssum, csum};
+}
+
 // w_n^e = exp(-2 pi i e / n) for every e from two series anchors plus a recurrence:
 // w^e = w^(B (e / B)) w^(e % B). Each table fills by one complex multiply per entry from a
 // single sincos anchor (w^B for coarse, w^1 for fine), so the build runs 2 dd sincos instead
@@ -202,9 +238,9 @@ namespace detail {
 
 // Both anchors of one dd_roots build (w_n^1 and w_n^b), folded at compile time for a
 // power-of-two den. The constant evaluation runs the ct_dd arm of the one fold
-// (sincos_turns_eval) and is bit-identical to the run-time ct_dd_plain arm here: the ct_dd
-// pins round each step once, the plain formulas are the same roundings in this file's strict
-// TU (see ct_dd_plain above), and both fold the same series. A build then reads the pair
+// (sincos_turns_eval) and agrees with the run-time ct_dd_plain arm here to a few 2^-104: both
+// fold the same series, the run-time arm with the term ratios rounded once (see
+// sincos_small_eval<ct_dd_plain> above). A build then reads the pair
 // instead of running two double-double series, about half of a small long double plan build.
 // Every other den runs the live fold, unchanged.
 struct dd_anchor_pair {

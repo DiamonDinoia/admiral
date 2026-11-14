@@ -83,29 +83,35 @@ inline C reverse_lanes(const C& c) {
 template <typename T>
 inline constexpr bool kRecombineSimd = std::is_same_v<T, float> || std::is_same_v<T, double>;
 
-// Pairs (k, M - k) for k = 1 .. kmax, H of them per step, while a full step fits. Returns the
-// first k it did not do. Each step loads all its bins before it stores, so out may equal in.
-template <bool Forward, typename T>
+// Pairs (k, M - k) for k = 1 .. kmax, L of them per step, while a full step fits, then the same
+// at L / 2 down to 4 lanes: a 2-lane step costs more in lane shuffles than the two scalar pairs
+// it replaces. Returns the first k it did not do. Each step loads all its bins before it
+// stores, so out may equal in.
+template <bool Forward, typename T, std::size_t L = xsimd::batch<T>::size>
 inline std::size_t even_recombine_simd(const std::complex<T>* in, const std::complex<T>* tw,
-                                       std::complex<T>* out, std::size_t M) {
-    using C = xsimd::batch<std::complex<T>>;
-    constexpr std::size_t H = C::size;
-    const std::size_t kend = (M - 1) / 2 + 1;
-    std::size_t k = 1;
-    for (; k + H <= kend; k += H) {
-        const std::size_t lo = M - k - H + 1;
-        const C a = C::load_unaligned(in + k), b = C::load_unaligned(in + lo);
-        const C ta = C::load_unaligned(tw + k), tb = C::load_unaligned(tw + lo);
-        const C ar = reverse_lanes(a), br = reverse_lanes(b);
-        if constexpr (Forward) {
-            r2c_even_bins(a, br, ta).store_unaligned(out + k);
-            r2c_even_bins(b, ar, tb).store_unaligned(out + lo);
-        } else {
-            c2r_even_bins(a, br, ta).store_unaligned(out + k);
-            c2r_even_bins(b, ar, tb).store_unaligned(out + lo);
+                                       std::complex<T>* out, std::size_t M, std::size_t k = 1) {
+    using R = xsimd::make_sized_batch_t<T, L>;
+    if constexpr (L >= 2 && !std::is_void_v<R>) {
+        using C = xsimd::batch<std::complex<T>, typename R::arch_type>;
+        const std::size_t kend = (M - 1) / 2 + 1;
+        for (; k + L <= kend; k += L) {
+            const std::size_t lo = M - k - L + 1;
+            const C a = C::load_unaligned(in + k), b = C::load_unaligned(in + lo);
+            const C ta = C::load_unaligned(tw + k), tb = C::load_unaligned(tw + lo);
+            const C ar = reverse_lanes(a), br = reverse_lanes(b);
+            if constexpr (Forward) {
+                r2c_even_bins(a, br, ta).store_unaligned(out + k);
+                r2c_even_bins(b, ar, tb).store_unaligned(out + lo);
+            } else {
+                c2r_even_bins(a, br, ta).store_unaligned(out + k);
+                c2r_even_bins(b, ar, tb).store_unaligned(out + lo);
+            }
         }
+        if constexpr (L / 2 >= 4) return even_recombine_simd<Forward, T, L / 2>(in, tw, out, M, k);
+        else return k;
+    } else {
+        return k;
     }
-    return k;
 }
 
 // The full recombine pass: edges k=0 and k=M, mirrored pairs (k, M-k), middle bin.

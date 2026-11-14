@@ -39,6 +39,23 @@ namespace admiral {
 namespace detail {
 namespace portable_trig {
 
+// pi / (4 d) as double-double for each den d up to kPhaseDenMax, folded at compile time, because
+// the run-time ct_dd division pins each step. A folded entry is at least as near pi / (4 d) as
+// the run-time quotient.
+inline constexpr std::size_t kPhaseDenMax = 256;
+struct phase_table {
+    double hi[kPhaseDenMax + 1], lo[kPhaseDenMax + 1];
+};
+inline constexpr phase_table kPhase = [] {
+    phase_table t{};
+    for (std::size_t d = 1; d <= kPhaseDenMax; ++d) {
+        const ct_dd p = ct_pi<ct_dd> / ct_dd{4.0 * static_cast<double>(d), 0.0};
+        t.hi[d] = p.hi;
+        t.lo[d] = p.lo;
+    }
+    return t;
+}();
+
 // Runtime roots of unity for plan tables. Accuracy contract: the transform's error sits at
 // machine precision in norm (the relative L2 transform error stays within 1.25x of stock
 // pocketfft's and inside 4 * eps * log2(size), gated by test/plans/test_norm_gate.cpp).
@@ -232,7 +249,9 @@ struct turns_memo {
     // the transform reads as a systematic rotation. Base error is ~1 absolute ulp.
     void libm_base(std::size_t step, std::size_t count, std::size_t d, double* out_s,
                    double* out_c) {
-        const ct_dd phdd = ct_pi<ct_dd> / ct_dd{4.0 * static_cast<double>(d), 0.0};
+        const ct_dd phdd = d <= kPhaseDenMax
+                               ? ct_dd{kPhase.hi[d], kPhase.lo[d]}
+                               : ct_pi<ct_dd> / ct_dd{4.0 * static_cast<double>(d), 0.0};
         const double phh = phdd.hi, phl = phdd.lo;
         // sqrt(1/2) as double-double: the diagonal mirror s2*t stays inside one ulp of the
         // plain double product (each mirror would otherwise carry s2's own rounding).

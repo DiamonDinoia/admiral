@@ -1029,14 +1029,14 @@ public:
     template<typename Load, typename Store>
     void transform(const Load& load, const Store& store, thread_pool* pool) const {
         if (pad_ == 0) {
-            fs_->run(load, store, pool);
+            fs().run(load, store, pool);
             return;
         }
         // a = x * chirp, z = swap(FFT(a) * bmul), x = chirp * swap(FFT(z)): the second run is the
         // inverse transform, and bmul carries its 1 / pad.
         soa_scratch<double, 1> z_sc(pad_ * kDdElem / kDdW);
         double* z = z_sc.buf(0);
-        fs_->run(
+        fs().run(
             [&](std::size_t j, std::size_t, double* dst) {
                 if (j >= n_) {
                     std::fill_n(dst, kDdElem, 0.0);
@@ -1052,7 +1052,7 @@ public:
                 dd_store(z + k / kDdW * kDdElem, im, re);
             },
             pool);
-        fs_->run(
+        fs().run(
             [&](std::size_t j, std::size_t, double* dst) {
                 std::copy_n(z + j / kDdW * kDdElem, kDdElem, dst);
             },
@@ -1123,7 +1123,7 @@ private:
             }
         }
         bmul_ = make_aligned_buffer<double>(elems);
-        fs_->run(
+        fs().run(
             [&](std::size_t j, std::size_t, double* dst) {
                 std::copy_n(b.get() + j / kDdW * kDdElem, kDdElem, dst);
             },
@@ -1141,6 +1141,12 @@ private:
             e[2 * kDdW] = im.hi;
             e[3 * kDdW] = im.lo;
         }
+    }
+
+    // Engaged exactly when x87_ is null; every caller runs after the x87_ test.
+    const dd_four_step<T>& fs() const {
+        if (!fs_) ADM_UNLIKELY throw internal_error("dd engine not built");
+        return *fs_;
     }
 
     std::size_t n_, pad_;
@@ -1213,7 +1219,7 @@ private:
             soa_scratch<T, 1> buf_sc(2 * n_);
             auto* buf = reinterpret_cast<std::complex<T>*>(buf_sc.buf(0));
             for (std::size_t i = 0; i < n_; ++i) buf[i] = {in[i], T(0)};
-            eng_->template execute_dd<true>(buf, T(1), 1, nullptr);
+            eng().template execute_dd<true>(buf, T(1), 1, nullptr);
             std::copy_n(buf, nh_, out);
             return;
         }
@@ -1230,7 +1236,7 @@ private:
         const std::size_t stride = m_ + 2 * kDdW;
         soa_scratch<double, 1> zs_sc(4 * stride);
         double* zs = zs_sc.buf(0);
-        eng_->transform(
+        eng().transform(
             [&](std::size_t j, std::size_t valid, double* dst) {
                 dd_load_ld<true>(z + j, valid, g.s, dst);
             },
@@ -1275,7 +1281,7 @@ private:
             auto* buf = reinterpret_cast<std::complex<T>*>(buf_sc.buf(0));
             for (std::size_t k = 0; k < nh_; ++k) buf[k] = spec[k];
             for (std::size_t k = nh_; k < n_; ++k) buf[k] = std::conj(spec[n_ - k]);
-            eng_->template execute_dd<false>(buf, extra_scale, n_, nullptr);
+            eng().template execute_dd<false>(buf, extra_scale, n_, nullptr);
             for (std::size_t i = 0; i < n_; ++i) out[i] = buf[i].real();
             return;
         }
@@ -1323,7 +1329,7 @@ private:
             for (std::size_t c = 0; c < 4; ++c) rows[c].store_unaligned(zs + c * stride + k0);
         }
         // The inverse runs forward on swap(2 Z); dd_store_ld<false> swaps back.
-        eng_->transform(
+        eng().transform(
             [&](std::size_t j, std::size_t valid, double* dst) {
                 const auto live = lane_prefix_mask<double>(valid);
                 for (std::size_t c = 0; c < 4; ++c)
@@ -1334,6 +1340,12 @@ private:
                 dd_store_ld<false>(src, g, z + k, valid);
             },
             nullptr);
+    }
+
+    // Engaged exactly when x87_ is null; every caller runs after the x87_ test.
+    const dd_c2c<T>& eng() const {
+        if (!eng_) ADM_UNLIKELY throw internal_error("dd engine not built");
+        return *eng_;
     }
 
     std::size_t n_, nh_, m_;

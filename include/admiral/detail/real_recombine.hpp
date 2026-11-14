@@ -4,9 +4,7 @@
 #include <cstddef>
 #include <type_traits>
 
-#if defined(__AVX512F__)
-#include <immintrin.h>
-#endif
+#include "simd.hpp"
 
 namespace admiral {
 namespace detail {
@@ -47,36 +45,68 @@ inline std::complex<T> c2r_even_bin(const std::complex<T>* X, std::complex<T> tw
     return c2r_even_bin(X[k], X[M - k], tw);
 }
 
-#if defined(__AVX512F__)
-// Four mirrored bins per step. The element ops mirror r2c_even_bin/c2r_even_bin order.
-inline __m512d r2c_even_bin_vec(__m512d a, __m512d b, __m512d tw) {
-    const __m512d half = _mm512_set1_pd(0.5);
-    const __m512d ar = _mm512_permute_pd(a, 0x00), ai = _mm512_permute_pd(a, 0xFF);
-    const __m512d br = _mm512_permute_pd(b, 0x00), bi = _mm512_permute_pd(b, 0xFF);
-    const __m512d wr = _mm512_permute_pd(tw, 0x00), wi = _mm512_permute_pd(tw, 0xFF);
-    const __m512d zer = _mm512_mul_pd(_mm512_add_pd(ar, br), half);
-    const __m512d zei = _mm512_mul_pd(_mm512_sub_pd(ai, bi), half);
-    const __m512d zor = _mm512_mul_pd(_mm512_add_pd(ai, bi), half);
-    const __m512d zoi = _mm512_mul_pd(_mm512_sub_pd(br, ar), half);
-    const __m512d re = _mm512_sub_pd(_mm512_fmadd_pd(wr, zor, zer), _mm512_mul_pd(wi, zoi));
-    const __m512d im = _mm512_fmadd_pd(wi, zor, _mm512_fmadd_pd(wr, zoi, zei));
-    return _mm512_mask_blend_pd(0xAA, re, im);
+// The xsimd form of the bins above: lane i of a, b and tw holds bin k + i, its mirror and its
+// twiddle.
+template <typename C>
+inline C r2c_even_bins(const C& a, const C& b, const C& tw) {
+    using R = typename C::real_batch;
+    const R h(typename R::value_type(0.5));
+    const R zer = (a.real() + b.real()) * h, zei = (a.imag() - b.imag()) * h;
+    const R zor = (a.imag() + b.imag()) * h, zoi = (b.real() - a.real()) * h;
+    return C(xsimd::fma(tw.real(), zor, zer) - tw.imag() * zoi,
+             xsimd::fma(tw.imag(), zor, xsimd::fma(tw.real(), zoi, zei)));
 }
 
-inline __m512d c2r_even_bin_vec(__m512d a, __m512d b, __m512d tw) {
-    const __m512d half = _mm512_set1_pd(0.5);
-    const __m512d ar = _mm512_permute_pd(a, 0x00), ai = _mm512_permute_pd(a, 0xFF);
-    const __m512d br = _mm512_permute_pd(b, 0x00), bi = _mm512_permute_pd(b, 0xFF);
-    const __m512d wr = _mm512_permute_pd(tw, 0x00), wi = _mm512_permute_pd(tw, 0xFF);
-    const __m512d zer = _mm512_mul_pd(_mm512_add_pd(ar, br), half);
-    const __m512d zei = _mm512_mul_pd(_mm512_sub_pd(ai, bi), half);
-    const __m512d vor = _mm512_mul_pd(_mm512_sub_pd(ar, br), half);
-    const __m512d voi = _mm512_mul_pd(_mm512_add_pd(ai, bi), half);
-    const __m512d zor = _mm512_fmadd_pd(wi, voi, _mm512_mul_pd(wr, vor));
-    const __m512d zoi = _mm512_fnmadd_pd(wi, vor, _mm512_mul_pd(wr, voi));
-    return _mm512_mask_blend_pd(0xAA, _mm512_sub_pd(zer, zoi), _mm512_add_pd(zei, zor));
+template <typename C>
+inline C c2r_even_bins(const C& a, const C& b, const C& tw) {
+    using R = typename C::real_batch;
+    const R h(typename R::value_type(0.5));
+    const R zer = (a.real() + b.real()) * h, zei = (a.imag() - b.imag()) * h;
+    const R vor = (a.real() - b.real()) * h, voi = (a.imag() + b.imag()) * h;
+    const R zor = xsimd::fma(tw.imag(), voi, tw.real() * vor);
+    const R zoi = xsimd::fnma(tw.imag(), vor, tw.real() * voi);
+    return C(zer - zoi, zei + zor);
 }
-#endif
+
+struct lane_reverse {
+    static constexpr std::size_t get(std::size_t i, std::size_t n) { return n - 1 - i; }
+};
+
+template <typename C>
+inline C reverse_lanes(const C& c) {
+    using R = typename C::real_batch;
+    using index = xsimd::as_unsigned_integer_t<typename R::value_type>;
+    constexpr auto rev = xsimd::make_batch_constant<index, lane_reverse, typename R::arch_type>();
+    return C(xsimd::swizzle(c.real(), rev), xsimd::swizzle(c.imag(), rev));
+}
+
+template <typename T>
+inline constexpr bool kRecombineSimd = std::is_same_v<T, float> || std::is_same_v<T, double>;
+
+// Pairs (k, M - k) for k = 1 .. kmax, H of them per step, while a full step fits. Returns the
+// first k it did not do. Each step loads all its bins before it stores, so out may equal in.
+template <bool Forward, typename T>
+inline std::size_t even_recombine_simd(const std::complex<T>* in, const std::complex<T>* tw,
+                                       std::complex<T>* out, std::size_t M) {
+    using C = xsimd::batch<std::complex<T>>;
+    constexpr std::size_t H = C::size;
+    const std::size_t kend = (M - 1) / 2 + 1;
+    std::size_t k = 1;
+    for (; k + H <= kend; k += H) {
+        const std::size_t lo = M - k - H + 1;
+        const C a = C::load_unaligned(in + k), b = C::load_unaligned(in + lo);
+        const C ta = C::load_unaligned(tw + k), tb = C::load_unaligned(tw + lo);
+        const C ar = reverse_lanes(a), br = reverse_lanes(b);
+        if constexpr (Forward) {
+            r2c_even_bins(a, br, ta).store_unaligned(out + k);
+            r2c_even_bins(b, ar, tb).store_unaligned(out + lo);
+        } else {
+            c2r_even_bins(a, br, ta).store_unaligned(out + k);
+            c2r_even_bins(b, ar, tb).store_unaligned(out + lo);
+        }
+    }
+    return k;
+}
 
 // The full recombine pass: edges k=0 and k=M, mirrored pairs (k, M-k), middle bin.
 // Xr may equal z: each step loads both bins of a pair before it stores either.
@@ -88,19 +118,7 @@ inline void r2c_even_recombine(const std::complex<T>* z, const std::complex<T>* 
     Xr[M] = r2c_even_bin(z0, z0, tw[M]);
     const std::size_t kmax = (M - 1) / 2;
     std::size_t k = 1;
-#if defined(__AVX512F__)
-    if constexpr (std::is_same_v<T, double>) {
-        for (; k + 3 <= kmax; k += 4) {
-            const __m512d va = _mm512_loadu_pd(&z[k]);
-            const __m512d vbl = _mm512_loadu_pd(&z[M - k - 3]);
-            const __m512i rev = _mm512_setr_epi64(6, 7, 4, 5, 2, 3, 0, 1);
-            const __m512d vb = _mm512_permutexvar_pd(rev, vbl);
-            const __m512d var = _mm512_permutexvar_pd(rev, va);
-            _mm512_storeu_pd(&Xr[k], r2c_even_bin_vec(va, vb, _mm512_loadu_pd(&tw[k])));
-            _mm512_storeu_pd(&Xr[M - k - 3], r2c_even_bin_vec(vbl, var, _mm512_loadu_pd(&tw[M - k - 3])));
-        }
-    }
-#endif
+    if constexpr (kRecombineSimd<T>) k = even_recombine_simd<true>(z, tw, Xr, M);
     for (; k <= kmax; ++k) {
         const std::complex<T> zk = z[k], zb = z[M - k];
         Xr[k] = r2c_even_bin(zk, zb, tw[k]);
@@ -118,19 +136,7 @@ inline void c2r_even_recombine(const std::complex<T>* X, const std::complex<T>* 
                        std::complex<T>(X[M].real(), T(0)), tw[0]);
     const std::size_t kmax = (M - 1) / 2;
     std::size_t k = 1;
-#if defined(__AVX512F__)
-    if constexpr (std::is_same_v<T, double>) {
-        for (; k + 3 <= kmax; k += 4) {
-            const __m512d va = _mm512_loadu_pd(&X[k]);
-            const __m512d vbl = _mm512_loadu_pd(&X[M - k - 3]);
-            const __m512i rev = _mm512_setr_epi64(6, 7, 4, 5, 2, 3, 0, 1);
-            const __m512d vb = _mm512_permutexvar_pd(rev, vbl);
-            const __m512d var = _mm512_permutexvar_pd(rev, va);
-            _mm512_storeu_pd(&Z[k], c2r_even_bin_vec(va, vb, _mm512_loadu_pd(&tw[k])));
-            _mm512_storeu_pd(&Z[M - k - 3], c2r_even_bin_vec(vbl, var, _mm512_loadu_pd(&tw[M - k - 3])));
-        }
-    }
-#endif
+    if constexpr (kRecombineSimd<T>) k = even_recombine_simd<false>(X, tw, Z, M);
     for (; k <= kmax; ++k) {
         const std::complex<T> Xk = X[k], Xm = X[M - k];
         Z[k] = c2r_even_bin(Xk, Xm, tw[k]);

@@ -59,9 +59,7 @@ struct ct_dd {
 // is free to reassociate an error-free transform away. The volatile round trips in the two
 // sums pin each step to one double rounding on every compiler, so no codegen can collapse
 // them.
-#if defined(_MSC_VER)
-#  pragma float_control(precise, on, push)
-#endif
+ADM_FP_PRECISE_BEGIN
 
 constexpr ct_dd dd_two_sum(double a, double b) {
     if (!ADM_IS_CONSTANT_EVALUATED()) {
@@ -409,9 +407,7 @@ template<typename F>
     }
 }
 
-#if defined(_MSC_VER)
-#  pragma float_control(pop)
-#endif
+ADM_FP_PRECISE_END
 
 template<typename F = double>
 [[nodiscard]] ADM_CONSTEVAL ct_sincos_v<F> ct_sincos_turns(bool conjugate, std::size_t num,

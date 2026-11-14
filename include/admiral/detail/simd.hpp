@@ -1,5 +1,7 @@
 #pragma once
 
+#include "cxx_compat.hpp"
+
 #include <xsimd/config/xsimd_config.hpp>
 
 #ifdef XSIMD_NO_SUPPORTED_ARCHITECTURE
@@ -18,6 +20,8 @@ template<> struct make_sized_batch<double, 2> { using type = batch<double>; };
 #include <xsimd/xsimd.hpp>
 #endif
 
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC reset_options
-#endif
+// Under -ffast-math, xsimd_constants.hpp wraps its constants in
+// `#pragma GCC optimize("signed-zeros")`. Each later declaration then carries its own
+// optimization node, and gcc 16 does not inline across two nodes that differ. The reset puts
+// back the command-line options.
+ADM_RESET_FP_OPTIONS

@@ -63,6 +63,21 @@
 #  define ADM_UNREACHABLE() std::abort()
 #endif
 
+// The compiler pragmas of the library. ADM_FP_PRECISE_BEGIN/END: the precise fp model for a
+// region on cl and clang-cl. ADM_RESET_FP_OPTIONS: gcc only, see simd.hpp.
+#if defined(_MSC_VER)
+#  define ADM_FP_PRECISE_BEGIN __pragma(float_control(precise, on, push))
+#  define ADM_FP_PRECISE_END __pragma(float_control(pop))
+#else
+#  define ADM_FP_PRECISE_BEGIN
+#  define ADM_FP_PRECISE_END
+#endif
+#if defined(__GNUC__) && !defined(__clang__)
+#  define ADM_RESET_FP_OPTIONS _Pragma("GCC reset_options")
+#else
+#  define ADM_RESET_FP_OPTIONS
+#endif
+
 #if __has_include(<span>)
 #  include <span>
 #endif

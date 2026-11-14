@@ -42,6 +42,16 @@ public:
 
     void c2r(const std::complex<T>* in, T* out, std::size_t rows, thread_pool* pool = nullptr) const;
 
+    // One row and no pool: the rank-1 serial path, without the row loop and the tile test.
+    void r2c_row(const T* in, std::complex<T>* out) const {
+        if (even_) r2c_even_scalar(in, out, 1);
+        else       r2c_odd(in, out, 1, nullptr);
+    }
+    void c2r_row(const std::complex<T>* in, T* out) const {
+        if (even_) c2r_even_scalar(in, out, 1);
+        else       c2r_odd(in, out, 1, nullptr);
+    }
+
 private:
     using V = xsimd::batch<T>;
     static constexpr std::size_t W = V::size;
@@ -325,15 +335,19 @@ private:
 
     template<typename F>
     const plan_impl<T>& lazy_twin(twin_slot& slot, F&& build) const {
-        if (!slot.ready.load(std::memory_order_acquire)) {
-            std::lock_guard<std::mutex> lock(build_mtx_);
-            if (!slot.ready.load(std::memory_order_relaxed)) {
-                slot.st.emplace(build());
-                slot.ready.store(true, std::memory_order_release);
-            }
-        }
-        if (!slot.st) throw internal_error("c2c twin not built");
+        if (!slot.ready.load(std::memory_order_acquire)) ADM_UNLIKELY build_twin(slot, build);
+        if (!slot.st) ADM_UNLIKELY throw internal_error("c2c twin not built");
         return *slot.st;
+    }
+
+    // The locked build, out of line so that the ready test inlines into each caller.
+    template<typename F>
+    ADM_NOINLINE ADM_COLD void build_twin(twin_slot& slot, F& build) const {
+        std::lock_guard<std::mutex> lock(build_mtx_);
+        if (!slot.ready.load(std::memory_order_relaxed)) {
+            slot.st.emplace(build());
+            slot.ready.store(true, std::memory_order_release);
+        }
     }
 
     // The forward and the inverse c2c twins build on first use, not in the constructor:
@@ -461,6 +475,18 @@ public:
     void inverse(std::complex<T>* spec, T* out, const exec_options<T>& opts = {}) const;
 
 private:
+    // The rank >= 2 or threaded paths, out of line so that the rank-1 path keeps a small frame.
+    ADM_NOINLINE void forward_rows(const T* in, std::complex<T>* out) const {
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+        m.rp->r2c(in, out, m.rows, m.pool.get());
+        run_outer(out, m.fwd_axes, true, m.pool.get());
+    }
+    ADM_NOINLINE void inverse_rows(std::complex<T>* spec, T* out) const {
+        run_outer(spec, m.inv_axes, false, m.pool.get());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+        m.rp->c2r(spec, out, m.rows, m.pool.get());
+    }
+
     void run_outer(std::complex<T>* data, const std::vector<nd_axis_state<T>>& axes,
                    bool is_forward, thread_pool* pool) const {
         const std::size_t nouter = axes.size();
@@ -484,6 +510,7 @@ private:
         std::optional<real_adm_plan<T>> rp;
         std::vector<nd_axis_state<T>> fwd_axes, inv_axes;
         std::unique_ptr<thread_pool> pool;
+        bool fast1d = false;  // rank 1 and no pool
     } m;
 
     ADM_NOINLINE ADM_COLD void trace(unsigned level, const char* how,
@@ -547,14 +574,18 @@ nd_real_plan<T>::nd_real_plan(span<const std::size_t> shape, std::size_t nthread
         }
     }
     if (nthreads > 1) m.pool = std::make_unique<thread_pool>(nthreads, pin);
+    m.fast1d = n == 1 && !m.pool;
 }
 
 template<typename T>
 void nd_real_plan<T>::forward(const T* in, std::complex<T>* out, const exec_options<T>& opts) const {
     if (opts.debug >= dbg_route) ADM_UNLIKELY trace(opts.debug, "fwd", m.fwd_axes);
-    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
-    m.rp->r2c(in, out, m.rows, m.pool.get());
-    run_outer(out, m.fwd_axes, true, m.pool.get());
+    if (m.fast1d) {
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+        m.rp->r2c_row(in, out);
+    } else {
+        forward_rows(in, out);
+    }
     if (opts.fct && *opts.fct != T(1))
         for (std::size_t i = 0; i < m.total_c; ++i) out[i] *= *opts.fct;
 }
@@ -562,9 +593,12 @@ void nd_real_plan<T>::forward(const T* in, std::complex<T>* out, const exec_opti
 template<typename T>
 void nd_real_plan<T>::inverse(std::complex<T>* spec, T* out, const exec_options<T>& opts) const {
     if (opts.debug >= dbg_route) ADM_UNLIKELY trace(opts.debug, "inv", m.inv_axes);
-    run_outer(spec, m.inv_axes, false, m.pool.get());
-    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
-    m.rp->c2r(spec, out, m.rows, m.pool.get());
+    if (m.fast1d) {
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+        m.rp->c2r_row(spec, out);
+    } else {
+        inverse_rows(spec, out);
+    }
     if (opts.fct) {
         const std::size_t Nr = real_size();
         const T def = inv_extent<T>(Nr);

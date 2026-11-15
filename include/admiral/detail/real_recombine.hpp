@@ -9,6 +9,13 @@
 namespace admiral {
 namespace detail {
 
+// The recombine row is tw[k] = exp(-i pi k / M), so tw[M - k] = -conj(tw[k]) exactly: the row
+// holds only k = 0 .. M / 2 and the upper half comes from this mirror.
+template <typename T>
+inline std::complex<T> mirror_tw(const std::complex<T>& t) {
+    return {-t.real(), t.imag()};
+}
+
 template <typename T>
 inline std::complex<T> r2c_even_bin(const std::complex<T>& zk, const std::complex<T>& zb,
                                    std::complex<T> tw) {
@@ -97,14 +104,16 @@ inline std::size_t even_recombine_simd(const std::complex<T>* in, const std::com
         for (; k + L <= kend; k += L) {
             const std::size_t lo = M - k - L + 1;
             const C a = C::load_unaligned(in + k), b = C::load_unaligned(in + lo);
-            const C ta = C::load_unaligned(tw + k), tb = C::load_unaligned(tw + lo);
-            const C ar = reverse_lanes(a), br = reverse_lanes(b);
+            // Lane i of the upper step is bin lo + i. In reversed lane order its inputs are br, a
+            // and the mirror of ta, so the upper step needs no reversed twiddle load.
+            const C ta = C::load_unaligned(tw + k), tm(-ta.real(), ta.imag());
+            const C br = reverse_lanes(b);
             if constexpr (Forward) {
                 r2c_even_bins(a, br, ta).store_unaligned(out + k);
-                r2c_even_bins(b, ar, tb).store_unaligned(out + lo);
+                reverse_lanes(r2c_even_bins(br, a, tm)).store_unaligned(out + lo);
             } else {
                 c2r_even_bins(a, br, ta).store_unaligned(out + k);
-                c2r_even_bins(b, ar, tb).store_unaligned(out + lo);
+                reverse_lanes(c2r_even_bins(br, a, tm)).store_unaligned(out + lo);
             }
         }
         if constexpr (L / 2 >= 4) return even_recombine_simd<Forward, T, L / 2>(in, tw, out, M, k);
@@ -114,21 +123,22 @@ inline std::size_t even_recombine_simd(const std::complex<T>* in, const std::com
     }
 }
 
-// The full recombine pass: edges k=0 and k=M, mirrored pairs (k, M-k), middle bin.
+// The full recombine pass: edges k=0 and k=M, mirrored pairs (k, M-k), middle bin. tw holds
+// k = 0 .. M / 2.
 // Xr may equal z: each step loads both bins of a pair before it stores either.
 template <typename T>
 inline void r2c_even_recombine(const std::complex<T>* z, const std::complex<T>* tw,
                                std::complex<T>* Xr, std::size_t M) {
     const std::complex<T> z0 = z[0];
     Xr[0] = r2c_even_bin(z0, z0, tw[0]);
-    Xr[M] = r2c_even_bin(z0, z0, tw[M]);
+    Xr[M] = r2c_even_bin(z0, z0, mirror_tw(tw[0]));
     const std::size_t kmax = (M - 1) / 2;
     std::size_t k = 1;
     if constexpr (kRecombineSimd<T>) k = even_recombine_simd<true>(z, tw, Xr, M);
     for (; k <= kmax; ++k) {
         const std::complex<T> zk = z[k], zb = z[M - k];
         Xr[k] = r2c_even_bin(zk, zb, tw[k]);
-        Xr[M - k] = r2c_even_bin(zb, zk, tw[M - k]);
+        Xr[M - k] = r2c_even_bin(zb, zk, mirror_tw(tw[k]));
     }
     if ((M & 1) == 0) Xr[M / 2] = r2c_even_bin(z[M / 2], z[M / 2], tw[M / 2]);
 }
@@ -146,7 +156,7 @@ inline void c2r_even_recombine(const std::complex<T>* X, const std::complex<T>* 
     for (; k <= kmax; ++k) {
         const std::complex<T> Xk = X[k], Xm = X[M - k];
         Z[k] = c2r_even_bin(Xk, Xm, tw[k]);
-        Z[M - k] = c2r_even_bin(Xm, Xk, tw[M - k]);
+        Z[M - k] = c2r_even_bin(Xm, Xk, mirror_tw(tw[k]));
     }
     if ((M & 1) == 0) Z[M / 2] = c2r_even_bin(X[M / 2], X[M / 2], tw[M / 2]);
 }

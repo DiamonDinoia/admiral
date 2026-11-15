@@ -202,7 +202,8 @@ private:
                 const std::size_t kk = k + m, kb = (kk == 0) ? 0 : (M - kk);
                 const V zkr = Gre[kk], zki = Gim[kk];
                 const V zcr = Gre[kb], zci = -Gim[kb];
-                const V twr(tw_[kk].real()), twi(tw_[kk].imag());
+                const auto w = tw_at(kk);
+                const V twr(w.real()), twi(w.imag());
                 const auto [Xr, Xi] = r2c_recombine(zkr, zki, zcr, zci, hv, twr, twi);
                 t[2 * m] = Xr;
                 t[2 * m + 1] = Xi;
@@ -216,7 +217,8 @@ private:
             const std::size_t ka = (k == M) ? 0 : k, kb = (ka == 0) ? 0 : (M - ka);
             const V zkr = Gre[ka], zki = Gim[ka];
             const V zcr = Gre[kb], zci = -Gim[kb];
-            const V twr(tw_[k].real()), twi(tw_[k].imag());
+            const auto w = tw_at(k);
+            const V twr(w.real()), twi(w.imag());
             const auto [Xr, Xi] = r2c_recombine(zkr, zki, zcr, zci, hv, twr, twi);
             alignas(V) T xr[W], xi[W];
             Xr.store_aligned(xr); Xi.store_aligned(xi);
@@ -248,7 +250,8 @@ private:
                 // ignored, matching c2r_even_recombine's edge bin.
                 const V Xkr = tk[2 * m], Xki = (kk == 0) ? V(T(0)) : tk[2 * m + 1];
                 const V Xmr = tm[2 * p], Xmi = (kk == 0) ? V(T(0)) : tm[2 * p + 1];
-                const V twr(tw_[kk].real()), twi(tw_[kk].imag());
+                const auto w = tw_at(kk);
+                const V twr(w.real()), twi(w.imag());
                 const auto [Zr, Zi] = c2r_recombine(Xkr, Xki, Xmr, Xmi, hv, twr, twi);
                 cur_re[kk] = Zr;
                 cur_im[kk] = Zi;
@@ -264,7 +267,8 @@ private:
             }
             const V Xkr = V::load_aligned(xkr), Xki = V::load_aligned(xki);
             const V Xmr = V::load_aligned(xmr), Xmi = V::load_aligned(xmi);
-            const V twr(tw_[k].real()), twi(tw_[k].imag());
+            const auto w = tw_at(k);
+            const V twr(w.real()), twi(w.imag());
             const auto [Zr, Zi] = c2r_recombine(Xkr, Xki, Xmr, Xmi, hv, twr, twi);
             cur_re[k] = Zr;
             cur_im[k] = Zi;
@@ -427,7 +431,10 @@ private:
     static dif_buf<std::complex<T>> fill_recombine_tw(std::size_t N, bool even,
                                                       dif_arena& block,
                                                       portable_trig::turns_memo* memo);
-    dif_buf<std::complex<T>> tw_;
+    dif_buf<std::complex<T>> tw_;  // k = 0 .. M / 2; see mirror_tw
+    std::complex<T> tw_at(std::size_t k) const {
+        return 2 * k <= M_ ? tw_[k] : mirror_tw(tw_[M_ - k]);
+    }
     mutable twin_slot fwd_, inv_;
     mutable std::mutex build_mtx_;
     mutable bool batched_ = false;
@@ -454,7 +461,7 @@ template<typename T>
 dif_arena real_adm_plan<T>::make_plan_block(std::size_t N, bool even,
                                             portable_trig::turns_memo* memo) {
     dif_arena block;
-    const std::size_t tw_bytes = even ? (N / 2 + 1) * sizeof(std::complex<T>) : 0;
+    const std::size_t tw_bytes = even ? (N / 4 + 1) * sizeof(std::complex<T>) : 0;
     const std::size_t memo_elems = portable_trig::turns_memo::table_elems(N);
     block.alloc(tw_bytes + memo_elems * sizeof(double) + 128);
     dif_buf<double> region = block.template carve<double>(memo_elems);
@@ -473,9 +480,9 @@ dif_buf<std::complex<T>> real_adm_plan<T>::fill_recombine_tw(std::size_t N, bool
                                                              dif_arena& block,
                                                              portable_trig::turns_memo* memo) {
     if (!even) return {};
-    const std::size_t half = N / 2;
-    dif_buf<std::complex<T>> tw = block.template carve<std::complex<T>>(half + 1);
-    geom_twiddle_row_packed<T, true>(1, N, half + 1, tw.data(), memo);
+    const std::size_t quarter = N / 4;
+    dif_buf<std::complex<T>> tw = block.template carve<std::complex<T>>(quarter + 1);
+    geom_twiddle_row_packed<T, true>(1, N, quarter + 1, tw.data(), memo);
     return tw;
 }
 

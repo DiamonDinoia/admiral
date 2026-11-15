@@ -304,7 +304,8 @@ TEST_CASE("ULP: golden hash of a fixed f64 transform", "[accuracy][ulp][.golden]
 TEMPLATE_TEST_CASE("ULP: r2c matches a long-double DFT", "[accuracy][ulp]", float, double) {
     using T = TestType;
     margin m;
-    for (const std::size_t n : {8u, 16u, 25u, 26u, 27u, 34u, 60u, 128u, 210u, 1000u, 1024u}) {
+    for (const std::size_t n : {2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u, 16u,
+                                17u, 25u, 26u, 27u, 34u, 60u, 128u, 210u, 1000u, 1024u}) {
         std::mt19937 rng(13);
         std::uniform_real_distribution<T> u(-1, 1);
         std::vector<T> re(n);

@@ -33,6 +33,7 @@ set(ADM_TEST_SOURCES
     accuracy/test_norm_gate.cpp
     accuracy/test_analytical.cpp
     accuracy/test_long_double.cpp
+    accuracy/test_dd_ct_catalog.cpp
 )
 
 if(NOT ADM_ENABLE_THREADS)

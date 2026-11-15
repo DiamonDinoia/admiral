@@ -1072,21 +1072,25 @@ public:
     // The Bluestein length: the smallest blocked 7-smooth pad >= 2n - 1, or 0 when the direct
     // four-step costs less.
     static std::size_t blue_pad(std::size_t n) {
-        if (n < 2) return 0;
+        // The model below never prices Bluestein under the direct four-step at a 7-smooth n
+        // (every one up to 2^24 checked), so those skip its two split searches, about a fifth
+        // of a small plan build.
+        if (n < 2 || seven_smooth(n)) return 0;
         constexpr std::size_t blk = kDdW * kDdW;
         std::size_t pad = (2 * n - 1 + blk - 1) / blk * blk;
-        for (;; pad += blk) {
-            std::size_t v = pad / blk;
-            for (const std::size_t p : {2u, 3u, 5u, 7u})
-                while (v % p == 0) v /= p;
-            if (v == 1) break;
-        }
+        while (!seven_smooth(pad / blk)) pad += blk;
         const double blue = 2 * dd_four_step<T>::split(pad, true).cost +
                             kBlueOps * double(2 * n + pad) / double(kDdW);
         return blue < dd_four_step<T>::split(n, false).cost ? pad : 0;
     }
 
 private:
+    static bool seven_smooth(std::size_t v) {
+        for (const std::size_t p : {2u, 3u, 5u, 7u})
+            while (v % p == 0) v /= p;
+        return v == 1;
+    }
+
     // Vector operations of the chirp and spectrum products per element, against the units of
     // dd_lines::cost.
     static constexpr double kBlueOps = 2;

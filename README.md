@@ -148,9 +148,11 @@ library. The engine is compiled, so the C++ API ships for
 `std::complex<float>`, `std::complex<double>` and `std::complex<long double>`.
 The long-double transform covers `plan`, `plan_r2c` and the one-shots;
 `axis_plan`, `strides_plan` and `plan_r2r` stay float/double. Where the host
-long double is the x87 80-bit format with FMA the lines run a double-double
-engine on SIMD doubles; other targets run a scalar backend, because no SIMD ISA
-has 80-bit lanes. The exported target compiles at whatever `ADM_CXX_STANDARD`
+long double is the x87 80-bit format with FMA, lines longer than 17 run a
+double-double engine on SIMD doubles that rounds each output once. Lines of 17
+or fewer, and all lines on other targets, run a scalar backend, because no SIMD
+ISA has 80-bit lanes. Its error stays within a few eps in norm, scaled by the
+condition number. The exported target compiles at whatever `ADM_CXX_STANDARD`
 was configured with. The two builds are not link-compatible: every span in the
 API is `admiral::span`, which is `std::span` at C++20 and a polyfill of the
 same shape at C++17.

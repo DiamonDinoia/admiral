@@ -962,10 +962,14 @@ ADM_ALWAYS_INLINE void dd_cmul_table(const double* w, double* x) {
     dd_store(x, re, im);
 }
 
-// The shortest c2c the dd engine runs. Below it the x87 engine is faster: the panels fill few
-// lanes, and the conversions and transposes cost more than the transform. An odd r2c of 9 or 11
-// is slower than x87 too but keeps the dd engine for its 0.5 ulp.
-inline constexpr std::size_t kDdMinLen = 8;
+// The longest transform the x87 engine runs. Up to it one straight-line x87 codelet is faster
+// than the dd engine: the panels fill few lanes, and the conversions and transposes cost more
+// than the transform. The codelet keeps the norm-wise error within a few eps, but it does not
+// round each output once as the dd engine does.
+inline constexpr std::size_t kX87MaxLen = 17;
+
+// Selects the dd engine at every length.
+struct dd_engine_tag {};
 
 // 1-D long double c2c. The four-step runs n directly, or, when its cost model prices that higher,
 // runs Bluestein's chirp-z over a blocked four-step of length pad >= 2n - 1: a prime n gives
@@ -973,16 +977,15 @@ inline constexpr std::size_t kDdMinLen = 8;
 template<typename T>
 class dd_c2c {
 public:
-    // Below kDdMinLen the x87 engine runs the transform, so the dd engine is not built.
-    explicit dd_c2c(std::size_t n, std::size_t = 1)
-        : n_(n), pad_(n < kDdMinLen ? 0 : blue_pad(n)) {
-        if (n_ < kDdMinLen) {
-            x87_ = std::make_unique<scalar_c2c<T>>(n_);
-            return;
-        }
-        fs_.emplace(pad_ != 0 ? pad_ : n_, pad_ != 0);
-        if (pad_ != 0) build_blue();
+    // Up to kX87MaxLen the x87 engine runs the transform, so the dd engine is not built.
+    explicit dd_c2c(std::size_t n, std::size_t = 1) : n_(n), pad_(0) {
+        if (n_ <= kX87MaxLen) x87_ = std::make_unique<scalar_c2c<T>>(n_);
+        else build_dd();
     }
+
+    // dd_r2c pairs the bins of its half-length c2c on the dd grid, so that c2c always runs on
+    // the dd engine.
+    dd_c2c(std::size_t n, dd_engine_tag) : n_(n), pad_(0) { build_dd(); }
 
     [[nodiscard]] std::size_t size() const { return n_; }
 
@@ -1003,7 +1006,7 @@ public:
 
     // The dd path at scale fct / div. ADM_NOINLINE keeps its 64-byte stack realignment and
     // register saves off the x87 branch of execute: inlined, they cost 59 instructions a call
-    // below kDdMinLen.
+    // up to kX87MaxLen.
     template<bool forward>
     ADM_NOINLINE void execute_dd(std::complex<T>* x, T fct, std::size_t div,
                                  thread_pool* pool) const {
@@ -1149,6 +1152,12 @@ private:
         }
     }
 
+    void build_dd() {
+        pad_ = blue_pad(n_);
+        fs_.emplace(pad_ != 0 ? pad_ : n_, pad_ != 0);
+        if (pad_ != 0) build_blue();
+    }
+
     // Engaged exactly when x87_ is null; every caller runs after the x87_ test.
     const dd_four_step<T>& fs() const {
         if (!fs_) ADM_UNLIKELY throw internal_error("dd engine not built");
@@ -1179,12 +1188,12 @@ class dd_r2c {
 public:
     explicit dd_r2c(std::size_t n, std::size_t = 1)
         : n_(n), nh_(n / 2 + 1), m_(n % 2 == 0 ? n / 2 : n) {
-        // Below kDdMinLen the x87 r2c runs the transform, so the dd engine is not built.
-        if (m_ < kDdMinLen) {
+        // Up to kX87MaxLen the x87 r2c runs the transform, so the dd engine is not built.
+        if (n_ <= kX87MaxLen) {
             x87_ = std::make_unique<scalar_r2c_1d<T>>(n_);
             return;
         }
-        eng_.emplace(m_);
+        eng_.emplace(m_, dd_engine_tag{});
         if (n_ % 2 != 0) return;
         const std::size_t nb = m_ / kDdW + 1;
         tw_ = make_aligned_buffer<double>(nb * kDdElem);

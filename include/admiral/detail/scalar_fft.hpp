@@ -58,7 +58,12 @@ inline std::complex<T> maybe_conj(std::complex<T> w, bool conj) {
 template<typename T>
 class scalar_c2c {
 public:
-    explicit scalar_c2c(std::size_t n, std::size_t nthreads = 1) : n_(n), nthreads_(nthreads) {
+    explicit scalar_c2c(std::size_t n, std::size_t nthreads = 1)
+        : n_(n),
+          nthreads_(nthreads),
+          small_fwd_(pick_small<c2c_small_pick<T, true>>(n)),
+          small_inv_(pick_small<c2c_small_pick<T, false>>(n)) {
+        if (small_fwd_) return;
         if (n_ > 1 && n_ <= kDirectMax) {
             build_direct(n_);
             return;
@@ -90,6 +95,12 @@ public:
     template<bool forward>
     void execute(std::complex<T>* x, T fct, std::size_t tid,
                  thread_pool* pool = nullptr) const {
+        if (const c2c_small_fn<T> small = forward ? small_fwd_ : small_inv_) {
+            small(x);
+            if (fct != T(1))
+                for (std::size_t k = 0; k < n_; ++k) x[k] *= fct;
+            return;
+        }
         if (n_ <= 1) {
             if (fct != T(1)) x[0] *= fct;
             return;
@@ -293,6 +304,7 @@ private:
     std::size_t direct_n_ = 0;
     std::vector<std::complex<T>> direct_mat_;
     std::size_t nthreads_;
+    c2c_small_fn<T> small_fwd_, small_inv_;
 };
 
 template<typename T, typename Eng = scalar_c2c<T>>
@@ -371,7 +383,14 @@ template<typename T, typename Eng = scalar_c2c<T>>
 class scalar_r2c_1d {
 public:
     explicit scalar_r2c_1d(std::size_t n, std::size_t nthreads = 1)
-        : n_(n), nh_(n / 2 + 1), even_(n % 2 == 0), eng_(even_ ? n / 2 : n, nthreads) {
+        : n_(n),
+          nh_(n / 2 + 1),
+          even_(n % 2 == 0),
+          eng_(even_ ? n / 2 : n, nthreads),
+          small_fwd_(pick_small<r2c_small_pick<T>>(n)),
+          small_inv_(pick_small<c2r_small_pick<T>>(n)) {
+        // A codelet runs the whole transform, so the recombine twiddles are not built.
+        if (small_fwd_) return;
         tw_.resize(nh_);
         for (std::size_t k = 0; k < nh_; ++k) tw_[k] = scalar_twiddle<T>(k, n_, true);
     }
@@ -380,6 +399,10 @@ public:
     [[nodiscard]] std::size_t cplx_size() const { return nh_; }
 
     void forward(const T* in, std::complex<T>* out, std::size_t tid) const {
+        if (small_fwd_) {
+            small_fwd_(in, out);
+            return;
+        }
         soa_scratch<T, 1> buf_sc(2 * (even_ ? n_ / 2 : n_));
         auto buf = reinterpret_cast<std::complex<T>*>(buf_sc.buf(0));
         if (!even_) {
@@ -396,6 +419,12 @@ public:
     }
 
     void inverse(std::complex<T>* spec, T* out, T extra_scale, std::size_t tid) const {
+        if (small_inv_) {
+            small_inv_(spec, out);
+            const T inv_n = extra_scale / T(n_);
+            for (std::size_t i = 0; i < n_; ++i) out[i] *= inv_n;
+            return;
+        }
         soa_scratch<T, 1> buf_sc(2 * (even_ ? n_ / 2 : n_));
         auto buf = reinterpret_cast<std::complex<T>*>(buf_sc.buf(0));
         if (!even_) {
@@ -423,6 +452,8 @@ private:
     std::size_t n_, nh_;
     bool even_;
     Eng eng_;
+    r2c_small_fn<T> small_fwd_;
+    c2r_small_fn<T> small_inv_;
     std::vector<std::complex<T>> tw_;
 };
 

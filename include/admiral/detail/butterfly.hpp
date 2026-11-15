@@ -3,6 +3,7 @@
 // Cooley-Tukey decimation in frequency: Gentleman and Sande, AFIPS Fall Joint Comp. Conf. 1966.
 // Odd radices use Singleton's sum/difference DFT, IEEE Trans. Audio Electroacoust. 17 (1969) 93.
 
+#include <complex>
 #include <cstddef>
 #include <type_traits>
 #include <utility>
@@ -320,6 +321,85 @@ ADM_CONSTEVAL std::size_t dif_pass_unroll() {
     constexpr std::size_t budget = poet::vector_register_count();
     constexpr std::size_t u = budget / peak_live;
     return u < 1u ? 1u : u;
+}
+
+template<typename T>
+using r2c_small_fn = void (*)(const T*, std::complex<T>*);
+template<typename T>
+using c2r_small_fn = void (*)(const std::complex<T>*, T*);
+template<typename T>
+using c2c_small_fn = void (*)(std::complex<T>*);
+
+// The whole r2c of one small N as one straight-line DFT of the real row. The imaginary inputs
+// are zero and the bins above N / 2 are not stored, so the compiler drops their arithmetic.
+// All loads come before the first store, so `out` may alias `in`. The zero folding needs the
+// fast-math flags of the library build; without them the result is the same, only slower.
+template<std::size_t N, typename T>
+void r2c_small(const T* in, std::complex<T>* out) {
+    T tr[N], ti[N];
+    poet::static_for<0, N>([&](auto J) {
+        tr[J] = in[J];
+        ti[J] = T(0);
+    });
+    dif_butterfly<T, N, T>(tr, ti, [&](auto K, T re, T im) {
+        if constexpr (K <= N / 2) out[K] = std::complex<T>(re, im);
+    });
+}
+
+// The unscaled c2r of one small N from its N / 2 + 1 bins, as one straight-line DFT. Bin N - k
+// is the conjugate of bin k, and the imaginary parts of DC and Nyquist drop. The inverse DFT
+// is the forward DFT with the real and imaginary parts swapped on input and output.
+template<std::size_t N, typename T>
+void c2r_small(const std::complex<T>* in, T* out) {
+    T tr[N], ti[N];
+    poet::static_for<0, N>([&](auto J) {
+        constexpr std::size_t k = J <= N / 2 ? static_cast<std::size_t>(J) : N - J;
+        if constexpr (k == 0 || 2 * k == N) tr[J] = T(0);
+        else if constexpr (J <= N / 2) tr[J] = in[k].imag();
+        else tr[J] = -in[k].imag();
+        ti[J] = in[k].real();
+    });
+    dif_butterfly<T, N, T>(tr, ti, [&](auto K, T, T im) { out[K] = im; });
+}
+
+// One c2c of a small N in place, as one straight-line DFT. The inverse swaps the real and
+// imaginary parts on input and output. All loads come before the first store.
+template<std::size_t N, typename T, bool Forward>
+void c2c_small(std::complex<T>* x) {
+    T tr[N], ti[N];
+    poet::static_for<0, N>([&](auto J) {
+        tr[J] = Forward ? x[J].real() : x[J].imag();
+        ti[J] = Forward ? x[J].imag() : x[J].real();
+    });
+    dif_butterfly<T, N, T>(tr, ti, [&](auto K, T re, T im) {
+        x[K] = Forward ? std::complex<T>(re, im) : std::complex<T>(im, re);
+    });
+}
+
+template<typename T>
+struct r2c_small_pick {
+    template<std::size_t N>
+    r2c_small_fn<T> operator()() const { return &r2c_small<N, T>; }
+};
+
+template<typename T>
+struct c2r_small_pick {
+    template<std::size_t N>
+    c2r_small_fn<T> operator()() const { return &c2r_small<N, T>; }
+};
+
+template<typename T, bool Forward>
+struct c2c_small_pick {
+    template<std::size_t N>
+    c2c_small_fn<T> operator()() const { return &c2c_small<N, T, Forward>; }
+};
+
+// The codelet of Pick for N in [2, 17], else null.
+template<typename Pick>
+auto pick_small(std::size_t N) {
+    using sizes = std::integer_sequence<std::size_t, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
+                                        15, 16, 17>;
+    return poet::dispatch(Pick{}, poet::dispatch_param<sizes>{N});
 }
 
 }

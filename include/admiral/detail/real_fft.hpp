@@ -34,39 +34,6 @@
 namespace admiral {
 namespace detail {
 
-// The whole r2c of one small N as one straight-line DFT of the real row. The imaginary inputs
-// are zero and the bins above N / 2 are not stored, so the compiler drops their arithmetic.
-// All loads come before the first store, so `out` may alias `in`. The zero folding needs the
-// fast-math flags of the library build; without them the result is the same, only slower.
-template<std::size_t N, typename T>
-void r2c_small(const T* in, std::complex<T>* out) {
-    T tr[N], ti[N];
-    poet::static_for<0, N>([&](auto J) {
-        tr[J] = in[J];
-        ti[J] = T(0);
-    });
-    dif_butterfly<T, N, T>(tr, ti, [&](auto K, T re, T im) {
-        if constexpr (K <= N / 2) out[K] = std::complex<T>(re, im);
-    });
-}
-
-template<typename T>
-using r2c_small_fn = void (*)(const T*, std::complex<T>*);
-
-template<typename T>
-struct r2c_small_pick {
-    template<std::size_t N>
-    r2c_small_fn<T> operator()() const { return &r2c_small<N, T>; }
-};
-
-// The direct codelet for N in [2, 17], else null.
-template<typename T>
-r2c_small_fn<T> pick_r2c_small(std::size_t N) {
-    using sizes = std::integer_sequence<std::size_t, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
-                                        15, 16, 17>;
-    return poet::dispatch(r2c_small_pick<T>{}, poet::dispatch_param<sizes>{N});
-}
-
 template<typename T>
 class real_adm_plan {
 public:
@@ -451,7 +418,7 @@ real_adm_plan<T>::real_adm_plan(std::size_t N, admiral::effort eff)
       memo_(),
       block_(make_plan_block(N, even_, &memo_)),
       tw_(fill_recombine_tw(N, even_, block_, &memo_)),
-      small_fwd_(pick_r2c_small<T>(N)) {
+      small_fwd_(pick_small<r2c_small_pick<T>>(N)) {
 }
 
 // One block per real plan: the recombine row up front, the memo's two-level circle tables

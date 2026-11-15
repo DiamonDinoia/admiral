@@ -533,14 +533,67 @@ double worst_ulp(const std::vector<f128>& ref, const std::vector<lt_t>& got) {
 // put about 2^-103 of the largest output on an output of 2^-93 of it.
 constexpr double kRoundedUlp = 0.5 + 0x1p-7;
 
+// The norm-wise relative error ||got - ref|| / ||ref|| in units of u = 2^-64, the unit
+// roundoff of the 64-bit significand.
+double norm_err_u(const std::vector<f128>& ref, const std::vector<lt_t>& got) {
+    REQUIRE(ref.size() == got.size());
+    f128 err = 0, nrm = 0;
+    for (std::size_t i = 0; i < ref.size(); ++i) {
+        const f128 d = f128(got[i]) - ref[i];
+        err += d * d;
+        nrm += ref[i] * ref[i];
+    }
+    return std::sqrt(static_cast<double>(err / nrm)) * 0x1p64;
+}
+
+// The norm-wise condition number ||A|| ||x|| / ||A x|| of y = A x in the 2-norm. The DFT
+// matrix of n has ||A|| = sqrt(n), times the scale; a half spectrum keeps the same bound.
+double cond2(std::size_t n, f128 scale, const std::vector<f128>& x, const std::vector<f128>& y) {
+    f128 nx = 0, ny = 0;
+    for (const f128 v : x) nx += v * v;
+    for (const f128 v : y) ny += v * v;
+    return std::sqrt(static_cast<double>(f128(n) * scale * scale * nx / ny));
+}
+
+// A transform of n on the x87 engine is backward stable: its norm-wise relative error stays
+// within cond * 4 log2(n) u. log2 counts the butterfly levels, and 4 covers the rounding of
+// each level and of the twiddles.
+double x87_bound_u(std::size_t n, double cond) {
+    return cond * 4.0 * std::max(1.0, std::log2(static_cast<double>(n)));
+}
+
 struct rounding_tally {
     double dd = 0, control = std::numeric_limits<double>::infinity();
+    double x87 = 0;
     std::ostringstream routes;
 
-    // The dd output rounds correctly; the x87 engine's output, the positive control, does not.
+    // Up to kX87MaxLen the x87 engine runs the transform: its norm-wise error must stay
+    // within the bound of x87_bound_u. Above it the dd output rounds correctly, and the x87
+    // engine's output, the positive control, does not. x holds the inputs and scale the
+    // factor of the transform, for the condition number.
     void check(const char* what, std::size_t n, const std::vector<f128>& ref,
-               const std::vector<lt_t>& got, const std::vector<lt_t>& x87) {
-        const double e = worst_ulp(ref, got), c = worst_ulp(ref, x87);
+               const std::vector<lt_t>& got, const std::vector<lt_t>& x87_out,
+               const std::vector<f128>& x = {}, f128 scale = 1) {
+        if (n <= admiral::detail::kX87MaxLen) {
+            const double cond = cond2(n, scale, x, ref), bound = x87_bound_u(n, cond);
+            const double e = norm_err_u(ref, got);
+            INFO(what << " n=" << n << ": x87 norm error " << e << " u, cond " << cond
+                      << ", bound " << bound << " u");
+            REQUIRE(e <= bound);
+            // Positive control: the largest output moved by twice the bound fails.
+            auto off = got;
+            std::size_t i = 0;
+            for (std::size_t j = 1; j < ref.size(); ++j)
+                if (abs128(ref[j]) > abs128(ref[i])) i = j;
+            f128 nrm = 0;
+            for (const f128 r : ref) nrm += r * r;
+            const f128 step = f128(2.0 * bound * 0x1p-64) * f128(std::sqrt(static_cast<double>(nrm)));
+            off[i] = static_cast<lt_t>(f128(off[i]) + (f128(off[i]) < ref[i] ? -step : step));
+            REQUIRE(norm_err_u(ref, off) > bound);
+            x87 = std::max(x87, e / bound);
+            return;
+        }
+        const double e = worst_ulp(ref, got), c = worst_ulp(ref, x87_out);
         INFO(what << " n=" << n << ": dd " << e << " ulp, x87 control " << c << " ulp");
         REQUIRE(e <= kRoundedUlp);
         REQUIRE(c > kRoundedUlp);
@@ -549,12 +602,17 @@ struct rounding_tally {
     }
 };
 
-const char* c2c_route(std::size_t n) {
+// The route of the dd engine for a c2c of n.
+const char* dd_route(std::size_t n) {
     using admiral::detail::dd_c2c;
     using admiral::detail::dd_four_step;
-    if (n < admiral::detail::kDdMinLen) return "x87";
     if (dd_c2c<lt_t>::blue_pad(n) != 0) return "bluestein";
     return dd_four_step<lt_t>::split(n, false).n1 == 1 ? "line" : "four-step";
+}
+
+// The route of a c2c or r2c plan of n.
+const char* c2c_route(std::size_t n) {
+    return n <= admiral::detail::kX87MaxLen ? "x87" : dd_route(n);
 }
 
 void require_dd_engine() {
@@ -562,13 +620,14 @@ void require_dd_engine() {
         SKIP("long double is not x87 double-extended with fma here; the x87 engine runs");
 }
 
-TEST_CASE("long double c2c rounds every output correctly", "[longdouble][dd]") {
+TEST_CASE("long double c2c rounds every output correctly above the x87 lengths",
+          "[longdouble][dd]") {
     require_dd_engine();
     std::mt19937_64 gen(11);
     std::uniform_real_distribution<lt_t> unif(-1, 1);
     rounding_tally t;
-    for (const std::size_t n : {8u, 9u, 11u, 13u, 16u, 17u, 22u, 27u, 37u, 64u, 101u, 210u, 314u,
-                                471u, 1000u, 1024u}) {
+    for (const std::size_t n : {3u, 5u, 8u, 9u, 11u, 12u, 13u, 16u, 17u, 18u, 22u, 27u, 37u, 64u,
+                                101u, 210u, 314u, 471u, 1000u, 1024u}) {
         std::vector<lc_t> x(n);
         std::vector<c128> xq(n);
         for (std::size_t i = 0; i < n; ++i) {
@@ -579,17 +638,18 @@ TEST_CASE("long double c2c rounds every output correctly", "[longdouble][dd]") {
         admiral::plan<lt_t> p(n);
         admiral::detail::scalar_c2c<lt_t> x87(n);
         const auto fwd = dft128(xq, true), inv = dft128(xq, false);
+        const auto fx = flat(xq);
 
         auto y = x, z = x;
         p.forward(y.data());
         x87.execute<true>(z.data(), lt_t(1), 0);
-        t.check("forward", n, flat(fwd), flat(y), flat(z));
+        t.check("forward", n, flat(fwd), flat(y), flat(z), fx, 1);
 
         y = x;
         z = x;
         p.inverse(y.data(), lt_t(0.125));
         x87.execute<false>(z.data(), lt_t(0.125), 0);
-        t.check("inverse at 1/8", n, flat(inv, f128(0.125)), flat(y), flat(z));
+        t.check("inverse at 1/8", n, flat(inv, f128(0.125)), flat(y), flat(z), fx, f128(0.125));
 
         // The default scale folds in 1 / n exactly, not 1 / n rounded to long double.
         const lt_t def = admiral::detail::default_transform_fct<lt_t>(false, n);
@@ -597,22 +657,26 @@ TEST_CASE("long double c2c rounds every output correctly", "[longdouble][dd]") {
         z = x;
         p.inverse(y.data());
         x87.execute<false>(z.data(), def, 0);
-        t.check("inverse at the default scale", n, flat(inv, f128(1) / f128(n)), flat(y), flat(z));
+        t.check("inverse at the default scale", n, flat(inv, f128(1) / f128(n)), flat(y), flat(z),
+                fx, f128(1) / f128(n));
     }
     // 471 runs Bluestein at kDdW 4 and 8.
     REQUIRE(t.routes.str().find("bluestein") != std::string::npos);
-    WARN("c2c forward, inverse at 1/8 and at the default exact 1/n round correctly: worst "
-         << t.dd << " ulp of " << kRoundedUlp << " allowed; the x87 control exceeds it at every n "
-         << "(least " << t.control << " ulp); n:route" << t.routes.str());
+    WARN("c2c forward, inverse at 1/8 and at the default exact 1/n round correctly on the dd "
+         << "engine: worst " << t.dd << " ulp of " << kRoundedUlp << " allowed; the x87 control "
+         << "exceeds it at every n (least " << t.control << " ulp); the x87 lengths reach "
+         << t.x87 << " of their norm bound; n:route" << t.routes.str());
 }
 
-TEST_CASE("long double r2c and c2r round every output correctly", "[longdouble][dd]") {
+TEST_CASE("long double r2c and c2r round every output correctly above the x87 lengths",
+          "[longdouble][dd]") {
     require_dd_engine();
     std::mt19937_64 gen(13);
     std::uniform_real_distribution<lt_t> unif(-1, 1);
     rounding_tally t;
     for (const std::size_t n :
-         {9u, 11u, 16u, 17u, 22u, 34u, 64u, 101u, 202u, 255u, 471u, 628u, 1000u, 1024u}) {
+         {6u, 9u, 11u, 12u, 16u, 17u, 18u, 22u, 34u, 64u, 101u, 202u, 255u, 471u, 628u, 1000u,
+          1024u}) {
         const std::size_t nh = n / 2 + 1, m = n % 2 == 0 ? n / 2 : n;
         std::vector<lt_t> x(n);
         std::vector<c128> xq(n);
@@ -620,7 +684,11 @@ TEST_CASE("long double r2c and c2r round every output correctly", "[longdouble][
             x[i] = unif(gen);
             xq[i] = {f128(x[i]), 0};
         }
-        t.routes << ' ' << n << ':' << (n % 2 == 0 ? "half-" : "full-") << c2c_route(m);
+        t.routes << ' ' << n << ':'
+                 << (n <= admiral::detail::kX87MaxLen ? "x87"
+                     : n % 2 == 0                     ? "half-"
+                                                      : "full-")
+                 << (n <= admiral::detail::kX87MaxLen ? "" : dd_route(m));
         admiral::plan_r2c<lt_t> p(n);
         admiral::detail::scalar_r2c_1d<lt_t> x87(n);
         auto ref = dft128(xq, true);
@@ -628,7 +696,9 @@ TEST_CASE("long double r2c and c2r round every output correctly", "[longdouble][
         std::vector<lc_t> y(nh), z(nh);
         p.forward(x.data(), y.data());
         x87.forward(x.data(), z.data(), 0);
-        t.check("r2c", n, flat(ref), flat(y), flat(z));
+        std::vector<f128> fx(n);
+        for (std::size_t i = 0; i < n; ++i) fx[i] = xq[i].re;
+        t.check("r2c", n, flat(ref), flat(y), flat(z), fx, 1);
 
         // c2r of the reference spectrum rounded to long double, bins 0 and n / 2 real, at the
         // default scale 1 / n: the transform folds it in unrounded.
@@ -649,11 +719,12 @@ TEST_CASE("long double r2c and c2r round every output correctly", "[longdouble][
         auto s1 = spec, s2 = spec;
         p.inverse(s1.data(), o.data());
         x87.inverse(s2.data(), o87.data(), lt_t(1), 0);
-        t.check("c2r", n, rb, o, o87);
+        t.check("c2r", n, rb, o, o87, flat(full), f128(1) / f128(n));
     }
-    WARN("r2c and c2r at the default 1/n round correctly: worst " << t.dd << " ulp of "
-         << kRoundedUlp << " allowed; the x87 control exceeds it at every n (least " << t.control
-         << " ulp); n:route of the inner c2c" << t.routes.str());
+    WARN("r2c and c2r at the default 1/n round correctly on the dd engine: worst " << t.dd
+         << " ulp of " << kRoundedUlp << " allowed; the x87 control exceeds it at every n (least "
+         << t.control << " ulp); the x87 lengths reach " << t.x87
+         << " of their norm bound; n:route of the inner c2c" << t.routes.str());
 }
 
 // Bluestein at a large prime: pad 2^17 or more grows the grid most. Sampled bins against f128.
@@ -713,7 +784,7 @@ TEST_CASE("long double dd output scales exactly with the input exponent", "[long
     // The grid follows the largest input exponent, so 2^k x runs the same doubles as x. k spans
     // the long double range: outputs reach 2^16380 and 2^-16190.
     std::ostringstream routes;
-    for (const std::size_t n : {16u, 101u, 1000u}) {
+    for (const std::size_t n : {32u, 101u, 1000u}) {
         routes << ' ' << n << ':' << c2c_route(n);
         std::vector<lc_t> x(n);
         for (auto& v : x) v = {unif(gen), unif(gen)};
@@ -746,7 +817,7 @@ TEST_CASE("long double dd engine rounds subnormal outputs correctly", "[longdoub
     std::mt19937_64 gen(19);
     std::uniform_real_distribution<lt_t> unif(-1, 1);
     rounding_tally t;
-    for (const std::size_t n : {16u, 101u, 1000u}) {
+    for (const std::size_t n : {32u, 101u, 1000u}) {
         std::vector<lc_t> x(n);
         std::vector<c128> xq(n);
         for (std::size_t i = 0; i < n; ++i) {
@@ -772,22 +843,22 @@ TEST_CASE("long double dd engine rounds subnormal outputs correctly", "[longdoub
 TEST_CASE("long double dd engine rounds every lane of a batch that leaves the normal range",
           "[longdouble][dd]") {
     require_dd_engine();
-    constexpr std::size_t n = 16;
+    constexpr std::size_t n = 32;
     const lt_t third = lt_t(1) / 3;
     admiral::plan<lt_t> p(n);
     admiral::detail::scalar_c2c<lt_t> x87(n);
     std::mt19937_64 gen(23);
     double dd = 0, control = 0;
     for (int trial = 0; trial < 1000; ++trial) {
-        // x_j = a and x_0 = a + b rounded: X_0 = 15 a + x_0 stays normal at fct 1/3, X_k = x_0 - a
-        // for k > 0 falls below 2^-16382. Both are exact in f128.
+        // x_j = a and x_0 = a + b rounded: X_0 = (n - 1) a + x_0 stays normal at fct 1/3,
+        // X_k = x_0 - a for k > 0 falls below 2^-16382. Both are exact in f128.
         const lt_t a = std::ldexp(static_cast<lt_t>(gen() | std::uint64_t{1} << 63), -63 - 16330);
         const lt_t b = std::ldexp(static_cast<lt_t>(gen() | std::uint64_t{1} << 63), -63 - 16385);
         std::vector<lc_t> x(n, lc_t(a, 0));
         x[0].real(a + b);
         const f128 x0 = f128(x[0].real()), fq = f128(third);
         std::vector<f128> ref(2 * n, f128(0));
-        ref[0] = (f128(15) * f128(a) + x0) * fq;
+        ref[0] = (f128(n - 1) * f128(a) + x0) * fq;
         for (std::size_t k = 1; k < n; ++k) ref[2 * k] = (x0 - f128(a)) * fq;
         REQUIRE(std::fpclassify(static_cast<lt_t>(ref[2])) == FP_SUBNORMAL);
         auto y = x, z = x;
@@ -804,7 +875,7 @@ TEST_CASE("long double dd engine rounds every lane of a batch that leaves the no
     }
     // Positive control: the x87 engine rounds the sum and the scale apart.
     REQUIRE(control > kRoundedUlp);
-    WARN("a batch of one normal and 15 subnormal outputs at fct 1/3: worst " << dd << " ulp of "
+    WARN("a batch of one normal and " << n - 1 << " subnormal outputs at fct 1/3: worst " << dd << " ulp of "
          << kRoundedUlp << " allowed over 1000 trials; the x87 control reaches " << control
          << " ulp");
 }
@@ -816,7 +887,7 @@ TEST_CASE("long double dd engine rounds once at an extreme scale", "[longdouble]
     const lt_t third = lt_t(1) / 3;
     std::ostringstream routes;
     double dd = 0;
-    for (const std::size_t n : {16u, 101u}) {
+    for (const std::size_t n : {32u, 101u}) {
         std::vector<lc_t> x(n);
         std::vector<c128> xq(n);
         for (std::size_t i = 0; i < n; ++i) {
@@ -858,7 +929,7 @@ TEST_CASE("long double dd engine turns a non-finite input into an all-NaN output
     const lt_t inf = std::numeric_limits<lt_t>::infinity();
     for (const lt_t bad : {inf, -inf, std::numeric_limits<lt_t>::quiet_NaN()}) {
         CAPTURE(static_cast<double>(bad));
-        for (const std::size_t n : {16u, 101u}) {
+        for (const std::size_t n : {32u, 101u}) {
             CAPTURE(n);
             std::vector<lc_t> x(n, lc_t(1, -1));
             x[3].imag(bad);

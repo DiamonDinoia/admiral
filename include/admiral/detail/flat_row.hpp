@@ -52,6 +52,13 @@ inline constexpr bool kFlatRow =
     2u * N / V::size >= V::size / 2u && fr_shape<N, V>() &&
     2u * N / V::size + 4u <= usable_vector_regs(poet::vector_register_count());
 
+// One whole line of 64 at C == 4 (K == 16). Only the single-line codelet takes it; the batched
+// path keeps kFlatRow.
+template<unsigned N, typename V>
+inline constexpr bool kFlatRow64 =
+    XSIMD_TARGET_X86 != 0 && N == 64u && V::size == 8 &&
+    16u + 4u <= usable_vector_regs(poet::vector_register_count());
+
 // Swap re/im inside every complex element.
 struct fr_swap_pair {
     static constexpr std::size_t get(std::size_t i, std::size_t) { return i ^ 1; }
@@ -221,13 +228,15 @@ ADM_ALWAYS_INLINE void flat_row_apply(const T* ADM_RESTRICT srcp, T* ADM_RESTRIC
             (o1 * f).store_unaligned(dstp + (s0 + K / 2) * W);
         });
     } else {
-        static_assert(C == 4 && (K == 4 || K == 8), "lift shape derived for C == 4");
+        static_assert(C == 4 && (K == 4 || K == 8 || K == 16), "lift shape derived for C == 4");
         constexpr std::size_t G = K / 4;
         poet::static_for<0, G>([&](auto g) {
             // The two-level lo/hi merge net permutes lanes by [0,2,1,3] on its own
-            // (t0 = [qa.c0|qc.c0|qb.c0|qd.c0]), so sourcing in natural G-stride order is what
-            // lands the rev2-folded lifted cell: T_l lane c = sub-dft G*rev2(c) + g.
-            const V qa = d[g], qb = d[G + g], qc = d[2 * G + g], qd = d[3 * G + g];
+            // (t0 = [qa.c0|qc.c0|qb.c0|qd.c0]), so sourcing in G-stride order lands the
+            // rev2-folded lifted cell: T_l lane c = sub-dft G*rev2(c) + rev_G(g). The store
+            // slot G*l + g is then the natural output order. rev_G is the identity for G <= 2.
+            constexpr std::size_t r = G == 4 ? fr_rev2(g) : std::size_t{g};
+            const V qa = d[r], qb = d[G + r], qc = d[2 * G + r], qd = d[3 * G + r];
             const V A =
                 xsimd::shuffle(qa, qb, xsimd::make_batch_constant<index, fr_merge_lo<W>, arch>());
             const V B =

@@ -31,7 +31,7 @@ struct aos_sink {
     }
 };
 
-// A whole line of N in flat row registers: flat_tiny at 4 and 8, flat_row from 16 to 32. One
+// A whole line of N in flat row registers: flat_tiny at 4 and 8, flat_row from 16 to 64. One
 // line has no lane transposes to save, so flat_tiny takes every shape its output maps cover,
 // f32 included, not only the batched whitelist of kFlatTiny.
 template<unsigned N, typename V>
@@ -44,7 +44,7 @@ template<unsigned N, typename V>
 inline constexpr bool kFlatLine =
     (XSIMD_TARGET_X86 != 0 && ft_line_shape<N, V>() &&
      2u * N / V::size + 4u <= usable_vector_regs(poet::vector_register_count())) ||
-    kFlatRow<N, V>;
+    kFlatRow<N, V> || kFlatRow64<N, V>;
 template<unsigned N>
 inline constexpr bool kFlatLine<N, void> = false;
 

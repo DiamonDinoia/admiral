@@ -222,12 +222,13 @@ template<>
 
 // w_n^e = exp(-2 pi i e / n) for every e from two series anchors plus a recurrence:
 // w^e = w^(B (e / B)) w^(e % B). Each table fills by one complex multiply per entry from a
-// single sincos anchor (w^B for coarse, w^1 for fine), so the build runs 2 dd sincos instead
-// of 2 sqrt(n). The arithmetic is ct_dd_plain: the fills run inside one plan build and the
-// pinned ct_dd costs about 14 store round trips per add. A fill is a unit-circle rotation, so
-// a table drifts about length * 2^-104 in magnitude and phase; at length <= sqrt(n) that stays
-// far inside the long double class (measured max error in tools/ check). ponytail: re-anchor
-// each table per block if a plan ever exceeds n ~ 2^28, where sqrt(n) * 2^-104 nears 2^-90.
+// single sincos anchor (w^B for coarse, w^1 for fine), so the build runs one dd sincos fold
+// and its powering instead of 2 sqrt(n). The arithmetic is ct_dd_plain: the fills run inside
+// one plan build and the pinned ct_dd costs about 14 store round trips per add. A fill is a
+// unit-circle rotation, so a table drifts about length * 2^-104 in magnitude and phase; at
+// length <= sqrt(n) that stays far inside the long double class (measured max error in
+// tools/ check). ponytail: re-anchor each table per block if a plan ever exceeds n ~ 2^28,
+// where sqrt(n) * 2^-104 nears 2^-90.
 
 // The block length dd_roots folds its anchors at: the smallest b with b * b >= n.
 [[nodiscard]] constexpr std::size_t dd_root_block(std::size_t n) {
@@ -240,9 +241,9 @@ template<>
 // power-of-two den. The constant evaluation runs the ct_dd arm of the one fold
 // (sincos_turns_eval) and agrees with the run-time ct_dd_plain arm here to a few 2^-104: both
 // fold the same series, the run-time arm with the term ratios rounded once (see
-// sincos_small_eval<ct_dd_plain> above). A build then reads the pair
-// instead of running two double-double series, about half of a small long double plan build.
-// Every other den runs the live fold, unchanged.
+// sincos_small_eval<ct_dd_plain> above). A build then reads the pair instead of running a
+// double-double series. Every other den folds the fine anchor live and raises it to the
+// coarse anchor by multiply.
 struct dd_anchor_pair {
     ct_sincos_v<ct_dd_plain> fine, coarse;
 };
@@ -259,6 +260,18 @@ template<std::size_t N>
 // otherwise compile to the live fold.
 template<std::size_t N>
 inline constexpr dd_anchor_pair dd_anchor_v = dd_anchor_ct<N>();
+
+// w^b from one {sin, cos} pair by binary powering: the coarse anchor derives from the fine
+// anchor by complex multiply instead of a second sincos fold.
+[[nodiscard]] inline ct_sincos_v<ct_dd_plain> dd_cmul_pow(ct_sincos_v<ct_dd_plain> w,
+                                                          std::size_t b) {
+    ct_sincos_v<ct_dd_plain> r{ct_dd_plain(0), ct_dd_plain(1)};
+    for (; b != 0; b >>= 1) {
+        if ((b & 1) != 0) r = {r.s * w.c + r.c * w.s, r.c * w.c - r.s * w.s};
+        w = {w.s * w.c + w.c * w.s, w.c * w.c - w.s * w.s};
+    }
+    return r;
+}
 
 [[nodiscard]] inline dd_anchor_pair dd_anchor(std::size_t n) {
     // The case values and template arguments are plain powers of two: a shift expression
@@ -284,9 +297,10 @@ inline constexpr dd_anchor_pair dd_anchor_v = dd_anchor_ct<N>();
     case 262144:  return dd_anchor_v<262144>;
     case 524288:  return dd_anchor_v<524288>;
     case 1048576: return dd_anchor_v<1048576>;
-    default:
-        return {sincos_turns_eval<ct_dd_plain>(true, 1, n),
-                sincos_turns_eval<ct_dd_plain>(true, dd_root_block(n), n)};
+    default: {
+        const ct_sincos_v<ct_dd_plain> fine = sincos_turns_eval<ct_dd_plain>(true, 1, n);
+        return {fine, dd_cmul_pow(fine, dd_root_block(n))};
+    }
     }
 }
 
@@ -329,6 +343,56 @@ private:
 
 ADM_ALWAYS_INLINE void dd_twiddle(const dd_const& w, gdd& yr, gdd& yi) {
     dd_cmul({dd_batch(w.rh), dd_batch(w.rl)}, {dd_batch(w.ih), dd_batch(w.il)}, yr, yi);
+}
+
+// (ar + i ai) (br + i bi) as a dd_const. The lo parts carry the product residual but are
+// not renormalized: the pair is good to a few 2^-105 per multiply, and the reseed of a fill
+// bounds how far the lo parts grow. The units of the transform read the pair as ch + cl.
+inline dd_const dd_const_cmul(const dd_const& a, const dd_const& b) {
+    const double pr = a.rh * b.rh, qr = a.ih * b.ih;
+    const double pi = a.rh * b.ih, qi = a.ih * b.rh;
+    const ct_dd_plain re = dd_plain_two_sum(pr, -qr), im = dd_plain_two_sum(pi, qi);
+    const double rl = re.lo + (std::fma(a.rh, b.rh, -pr) - std::fma(a.ih, b.ih, -qr)) +
+                      (a.rh * b.rl + a.rl * b.rh) - (a.ih * b.il + a.il * b.ih);
+    const double il = im.lo + (std::fma(a.rh, b.ih, -pi) + std::fma(a.ih, b.rh, -qi)) +
+                      (a.rh * b.il + a.rl * b.ih) + (a.ih * b.rl + a.il * b.rh);
+    return {re.hi, rl, im.hi, il};
+}
+
+// The reseed stride of the power fills: the recurrence restarts from the root table every
+// kDdReSeed entries, so a fill chains at most kDdReSeed multiplies onto exact table values.
+inline constexpr std::size_t kDdReSeed = 16;
+
+// Writes put(l, j, w^(base(l) + j * stride(l))) for l < lanes and j < m: one complex
+// multiply per entry along a rotation recurrence, restarted from the root table at every
+// kDdReSeed entry. The lanes run interleaved so the independent multiplies of one step
+// overlap. The root table is the exact value, so one fill drifts at most kDdReSeed
+// recurrence steps from it.
+template<typename Base, typename Stride, typename Put>
+inline void dd_fill_powers(std::size_t lanes, std::size_t m, const dd_roots& w,
+                           const Base& base, const Stride& stride, const Put& put) {
+    dd_const acc[kDdW], step[kDdW];
+    for (std::size_t l = 0; l < lanes; ++l) {
+        step[l] = w(stride(l));
+        acc[l] = w(base(l));
+    }
+    for (std::size_t j = 0; j < m; ++j) {
+        if (j % kDdReSeed == 0)
+            for (std::size_t l = 0; l < lanes; ++l) acc[l] = w(base(l) + j * stride(l));
+        for (std::size_t l = 0; l < lanes; ++l) {
+            put(l, j, acc[l]);
+            if (j + 1 < m) acc[l] = dd_const_cmul(acc[l], step[l]);
+        }
+    }
+}
+
+// One column of the power fill.
+template<typename Put>
+inline void dd_fill_powers(std::size_t m, std::size_t base, std::size_t stride, const dd_roots& w,
+                           const Put& put) {
+    dd_fill_powers(
+        1, m, w, [base](std::size_t) { return base; }, [stride](std::size_t) { return stride; },
+        [&put](std::size_t, std::size_t j, dd_const c) { put(j, c); });
 }
 
 // The grid of one transform: hi + lo = v * 2^s. emax is the largest biased x87 exponent of the
@@ -557,7 +621,8 @@ public:
             const std::size_t p = factor(m);
             if (p == 0) break;
             level_state ls{p, m, std::vector<dd_const>(m)};
-            for (std::size_t j = 0; j < m; ++j) ls.tw[j] = w(j * (n_ / m) * step);
+            dd_fill_powers(m, 0, (n_ / m) * step, w,
+                           [&ls](std::size_t j, dd_const c) { ls.tw[j] = c; });
             levels_.push_back(std::move(ls));
             m /= p;
         }
@@ -566,8 +631,9 @@ public:
             blue_ = std::make_unique<blue_state>(leaf_);
         } else if (leaf_ > 1) {
             dft_tab_.resize(leaf_);
-            for (std::size_t j = 0; j < leaf_; ++j)
-                dft_tab_[j] = dd_conj(w(j * (n_ / leaf_) * step));
+            dd_fill_powers(leaf_, 0, (n_ / leaf_) * step, w, [this](std::size_t j, dd_const c) {
+                dft_tab_[j] = dd_conj(c);
+            });
         }
         build_perm();
     }
@@ -576,17 +642,41 @@ public:
     [[nodiscard]] std::size_t pos(std::size_t k) const { return pos_of_[k]; }
     [[nodiscard]] std::size_t work_doubles() const { return blue_ ? 2 * blue_->pad * kDdElem : 0; }
 
-    // Vector operations of one panel run, the split cost of the four-step driver.
-    [[nodiscard]] static double cost(std::size_t n) {
-        double c = 0;
+    // Vector operations of one panel run, the split cost of the four-step driver, in units
+    // of 1 / 16 operation. The radix weights are 16 * log2(p), so the model ranks the split
+    // candidates on integers and runs no floating point.
+    static constexpr std::size_t radix_log2_w(std::size_t p) {
+        switch (p) {
+        case 2: return 16;
+        case 3: return 25;
+        case 4: return 32;
+        case 5: return 37;
+        case 7: return 45;
+        case 8: return 48;
+        default: return 0;
+        }
+    }
+
+    // 16 * log2(v) for a 7-smooth v, from the same radix weights.
+    static constexpr std::size_t log2_w(std::size_t v) {
+        std::size_t w = 0;
+        for (const std::size_t p : {8u, 4u, 2u, 3u, 5u, 7u})
+            while (v % p == 0) {
+                v /= p;
+                w += radix_log2_w(p);
+            }
+        return w;
+    }
+
+    [[nodiscard]] static std::size_t cost(std::size_t n) {
+        std::size_t c = 0;
         std::size_t m = n;
-        for (std::size_t p; m > 1 && (p = factor(m)) != 0; m /= p)
-            c += double(n) * std::log2(double(p));
+        for (std::size_t p; m > 1 && (p = factor(m)) != 0; m /= p) c += n * radix_log2_w(p);
         if (m > kDirectMax) {
-            const double pad = double(blue_pad(m));
-            c += double(n / m) * (2 * pad * std::log2(pad) + 6 * pad);
+            const std::size_t pad = blue_pad(m);
+            c += (n / m) * (2 * pad * log2_w(pad) + 96 * pad);
         } else if (m > 1) {
-            c += double(n) * double(m) / 2;
+            c += n * m * 8;
         }
         return c;
     }
@@ -794,7 +884,7 @@ class dd_four_step {
 public:
     struct split_t {
         std::size_t n1;
-        double cost;
+        std::size_t cost;
     };
 
     // blocked: n1 and n2 are multiples of kDdW, so the lanes of every element are one aligned
@@ -802,23 +892,30 @@ public:
     dd_four_step(std::size_t n, bool blocked)
         : dd_four_step(n, split(n, blocked).n1, dd_roots(n)) {}
 
-    // One root table of n serves the twist table and both line engines.
-    dd_four_step(std::size_t n, std::size_t n1, const dd_roots& root)
+    // One root table of n serves the twist table and both line engines. mul maps the
+    // exponents of an engine of length n onto a parent table of n * mul roots: the engine
+    // of length n / mul of a real plan reads w_n^e as w_(n * mul)^(e * mul).
+    dd_four_step(std::size_t n, std::size_t n1, const dd_roots& root, std::size_t mul = 1)
         : n_(n), n1_(n1), n2_(n / n1_), nb1_((n1_ + kDdW - 1) / kDdW),
-          nb2_((n2_ + kDdW - 1) / kDdW), a_(n1_, root, n2_), b_(n2_, root, n1_) {
+          nb2_((n2_ + kDdW - 1) / kDdW), a_(n1_, root, n2_ * mul), b_(n2_, root, n1_ * mul) {
         tw_ = make_aligned_buffer<double>(nb2_ * n1_ * kDdElem);
-        for (std::size_t jb = 0; jb < nb2_; ++jb)
-            for (std::size_t k1 = 0; k1 < n1_; ++k1) {
-                double* t = tw_.get() + (jb * n1_ + k1) * kDdElem;
-                for (std::size_t l = 0; l < kDdW; ++l) {
+        for (std::size_t jb = 0; jb < nb2_; ++jb) {
+            double* const t0 = tw_.get() + jb * n1_ * kDdElem;
+            // A lane past n2_ pads the batch with the identity twiddle.
+            dd_fill_powers(
+                kDdW, n1_, root, [](std::size_t) { return std::size_t{0}; },
+                [jb, mul, this](std::size_t l) {
                     const std::size_t j2 = jb * kDdW + l;
-                    const dd_const w = root(j2 < n2_ ? k1 * j2 : 0);
-                    t[l] = w.rh;
-                    t[kDdW + l] = w.rl;
-                    t[2 * kDdW + l] = w.ih;
-                    t[3 * kDdW + l] = w.il;
-                }
-            }
+                    return (j2 < n2_ ? j2 : 0) * mul;
+                },
+                [t0](std::size_t l, std::size_t k1, dd_const w) {
+                    double* const t = t0 + l;
+                    t[k1 * kDdElem] = w.rh;
+                    t[k1 * kDdElem + kDdW] = w.rl;
+                    t[k1 * kDdElem + 2 * kDdW] = w.ih;
+                    t[k1 * kDdElem + 3 * kDdW] = w.il;
+                });
+        }
     }
 
     // Panel lines above this length leave L2: 4096 * kDdElem doubles is 1 MiB at kDdW = 8.
@@ -833,8 +930,8 @@ public:
                 const std::size_t n2 = n / n1;
                 if (blocked && (n1 % kDdW != 0 || n2 % kDdW != 0)) continue;
                 const bool over = std::max(n1, n2) > kLineCap;
-                const double c = double((n2 + kDdW - 1) / kDdW) * dd_lines<T>::cost(n1) +
-                                 double((n1 + kDdW - 1) / kDdW) * dd_lines<T>::cost(n2);
+                const std::size_t c = ((n2 + kDdW - 1) / kDdW) * dd_lines<T>::cost(n1) +
+                                      ((n1 + kDdW - 1) / kDdW) * dd_lines<T>::cost(n2);
                 if (best.n1 == 0 ? true
                     : over != best_over ? !over
                     : c != best.cost    ? c < best.cost
@@ -987,6 +1084,13 @@ public:
     // the dd engine.
     dd_c2c(std::size_t n, dd_engine_tag) : n_(n), pad_(0) { build_dd(); }
 
+    // The dd engine of length n over a parent root table of n * mul roots: w_n^e is
+    // w_(n * mul)^(e * mul). The parent table serves the twist and the line engines. A
+    // Bluestein build still folds its own chirp roots.
+    dd_c2c(std::size_t n, const dd_roots& parent, std::size_t mul) : n_(n), pad_(0) {
+        build_dd(&parent, mul);
+    }
+
     [[nodiscard]] std::size_t size() const { return n_; }
 
     template<bool forward>
@@ -1075,15 +1179,14 @@ public:
     // The Bluestein length: the smallest blocked 7-smooth pad >= 2n - 1, or 0 when the direct
     // four-step costs less.
     static std::size_t blue_pad(std::size_t n) {
-        // The model below never prices Bluestein under the direct four-step at a 7-smooth n
-        // (every one up to 2^24 checked), so those skip its two split searches, about a fifth
-        // of a small plan build.
+        // A 7-smooth n runs the direct four-step and skips the two split searches of the
+        // model below.
         if (n < 2 || seven_smooth(n)) return 0;
         constexpr std::size_t blk = kDdW * kDdW;
         std::size_t pad = (2 * n - 1 + blk - 1) / blk * blk;
         while (!seven_smooth(pad / blk)) pad += blk;
-        const double blue = 2 * dd_four_step<T>::split(pad, true).cost +
-                            kBlueOps * double(2 * n + pad) / double(kDdW);
+        const std::size_t blue = 2 * dd_four_step<T>::split(pad, true).cost +
+                                 kBlueOps * (2 * n + pad) * 16 / kDdW;
         return blue < dd_four_step<T>::split(n, false).cost ? pad : 0;
     }
 
@@ -1096,7 +1199,7 @@ private:
 
     // Vector operations of the chirp and spectrum products per element, against the units of
     // dd_lines::cost.
-    static constexpr double kBlueOps = 2;
+    static constexpr std::size_t kBlueOps = 2;
 
     // chirp_j = w_2n^(j^2) for j < n, and bmul = FFT(b) / pad for b the conjugate chirp wrapped
     // around pad. FFT(b) runs on the grid sb that holds |b| <= 1 grown by pad. |FFT(b)| <= 2n - 1
@@ -1152,10 +1255,16 @@ private:
         }
     }
 
-    void build_dd() {
+    void build_dd(const dd_roots* parent = nullptr, std::size_t mul = 1) {
         pad_ = blue_pad(n_);
-        fs_.emplace(pad_ != 0 ? pad_ : n_, pad_ != 0);
-        if (pad_ != 0) build_blue();
+        if (pad_ != 0) {
+            fs_.emplace(pad_, true);
+            build_blue();
+        } else if (parent != nullptr) {
+            fs_.emplace(n_, dd_four_step<T>::split(n_, false).n1, *parent, mul);
+        } else {
+            fs_.emplace(n_, false);
+        }
     }
 
     // Engaged exactly when x87_ is null; every caller runs after the x87_ test.
@@ -1193,19 +1302,26 @@ public:
             x87_ = std::make_unique<scalar_r2c_1d<T>>(n_);
             return;
         }
-        eng_.emplace(m_, dd_engine_tag{});
-        if (n_ % 2 != 0) return;
+        if (n_ % 2 != 0) {
+            eng_.emplace(m_, dd_engine_tag{});
+            return;
+        }
+        // One root table of n serves the post-twiddle and the inner engine of length n / 2,
+        // which reads w_m^e as w_n^(2 e).
+        const dd_roots w(n_);
+        eng_.emplace(m_, w, 2);
         const std::size_t nb = m_ / kDdW + 1;
         tw_ = make_aligned_buffer<double>(nb * kDdElem);
-        const dd_roots w(n_);
-        for (std::size_t k = 0; k < nb * kDdW; ++k) {
-            const dd_const c = w(k);
-            double* t = tw_.get() + k / kDdW * kDdElem + k % kDdW;
-            t[0] = c.rh;
-            t[kDdW] = c.rl;
-            t[2 * kDdW] = c.ih;
-            t[3 * kDdW] = c.il;
-        }
+        double* const t0 = tw_.get();
+        dd_fill_powers(
+            kDdW, nb, w, [](std::size_t l) { return l; },
+            [](std::size_t) { return kDdW; }, [t0](std::size_t l, std::size_t q, dd_const c) {
+                double* const t = t0 + l;
+                t[q * kDdElem] = c.rh;
+                t[q * kDdElem + kDdW] = c.rl;
+                t[q * kDdElem + 2 * kDdW] = c.ih;
+                t[q * kDdElem + 3 * kDdW] = c.il;
+            });
     }
 
     [[nodiscard]] std::size_t real_size() const { return n_; }

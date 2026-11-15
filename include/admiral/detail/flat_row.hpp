@@ -235,7 +235,7 @@ ADM_ALWAYS_INLINE void flat_row_apply(const T* ADM_RESTRICT srcp, T* ADM_RESTRIC
             // (t0 = [qa.c0|qc.c0|qb.c0|qd.c0]), so sourcing in G-stride order lands the
             // rev2-folded lifted cell: T_l lane c = sub-dft G*rev2(c) + rev_G(g). The store
             // slot G*l + g is then the natural output order. rev_G is the identity for G <= 2.
-            constexpr std::size_t r = G == 4 ? fr_rev2(g) : std::size_t{g};
+            constexpr std::size_t r = G == 4 ? fr_rev2(g) : static_cast<std::size_t>(g);
             const V qa = d[r], qb = d[G + r], qc = d[2 * G + r], qd = d[3 * G + r];
             const V A =
                 xsimd::shuffle(qa, qb, xsimd::make_batch_constant<index, fr_merge_lo<W>, arch>());

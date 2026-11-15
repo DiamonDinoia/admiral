@@ -476,7 +476,7 @@ ADM_NOINLINE void granule_line(const std::complex<double>* in, std::complex<doub
             g[k] = xsimd::fma(t, sgn, xsimd::swizzle(t, half));
         });
         poet::static_for<0, M / 2>([&](auto p) ADM_LAMBDA_ALWAYS_INLINE {
-            constexpr std::size_t k = 2 * std::size_t{p};
+            constexpr std::size_t k = 2 * static_cast<std::size_t>(p);
             xsimd::shuffle(g[k], g[k + 1], xsimd::make_batch_constant<U, granule_lo_pair, A>())
                 .store_unaligned(dst + 2 * k);
             xsimd::shuffle(g[k], g[k + 1], xsimd::make_batch_constant<U, granule_hi_pair, A>())

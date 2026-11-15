@@ -453,13 +453,15 @@ template<unsigned N, std::size_t K, bool Fwd, typename V>
     }
 }
 
-// All loads come before the first store, so out may alias in.
-template<unsigned N, bool Forward>
+// All loads come before the first store, so out may alias in. The batch types are template
+// parameters so that a target without 4 f64 lanes does not read them in a discarded branch.
+template<unsigned N, bool Forward, typename V4 = xsimd::make_sized_batch_t<double, 4>,
+         typename V2 = xsimd::make_sized_batch_t<double, 2>>
 ADM_NOINLINE void granule_line(const std::complex<double>* in, std::complex<double>* out) {
     const double* src = reinterpret_cast<const double*>(in);
     double* dst = reinterpret_cast<double*>(out);
     if constexpr (kGranuleSplit<N>) {
-        using V = xsimd::make_sized_batch_t<double, 4>;
+        using V = V4;
         using A = typename V::arch_type;
         using U = xsimd::as_unsigned_integer_t<double>;
         constexpr std::size_t M = N / 2;
@@ -488,7 +490,7 @@ ADM_NOINLINE void granule_line(const std::complex<double>* in, std::complex<doub
             xsimd::swizzle(g[M - 1], half).store(dst + 2 * (N - 1), lo, xsimd::unaligned_mode{});
         }
     } else {
-        using V = xsimd::make_sized_batch_t<double, 2>;
+        using V = V2;
         V g[N];
         poet::static_for<0, N>([&](auto j) ADM_LAMBDA_ALWAYS_INLINE {
             g[j] = V::load_unaligned(src + 2 * j);

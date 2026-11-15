@@ -343,8 +343,10 @@ struct dd_grid {
         int q = 0;
         const long double m = std::frexp(f, &q);
         const double mh = static_cast<double>(m);
-        const ct_dd t =
-            ct_dd(mh, static_cast<double>(m - static_cast<long double>(mh))) / ct_dd(div);
+        const ct_dd head(mh, static_cast<double>(m - static_cast<long double>(mh)));
+        // The out-of-line dd division costs more than a small transform; div is 1 on every
+        // forward call.
+        const ct_dd t = div == 1 ? head : head / ct_dd(div);
         fh = t.hi;
         fl = t.lo;
         out_bias = 16383 - 1023 + q - so;

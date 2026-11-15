@@ -670,9 +670,17 @@ public:
                     std::size_t nthreads = 1,
                     admiral::effort eff = admiral::effort::estimate, bool pin = false,
                     portable_trig::turns_memo* memo = nullptr);
-    void execute(std::complex<T>* data, const exec_options<T>& opts = {}) const;
+    // Inline, so that a caller reaches the fast1d codelet with no call between.
+    void execute(std::complex<T>* data, const exec_options<T>& opts = {}) const {
+        if (m.fast1d && opts.debug == 0) run_fast1d(data, data, opts.fct);
+        else execute_routes(data, opts);
+    }
+    // The codelets load the whole line before the first store, so fast1d runs in place too.
     void execute(const std::complex<T>* src, std::complex<T>* dst,
-                 const exec_options<T>& opts = {}) const;
+                 const exec_options<T>& opts = {}) const {
+        if (m.fast1d && opts.debug == 0) run_fast1d(src, dst, opts.fct);
+        else execute_routes(src, dst, opts);
+    }
 
     [[nodiscard]] std::size_t size() const noexcept { return m.total; }
     [[nodiscard]] bool uses_fast2d() const noexcept { return m.fast2d; }
@@ -885,12 +893,6 @@ nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forwa
 }
 
 template<typename T>
-void nd_runtime_plan<T>::execute(std::complex<T>* data, const exec_options<T>& opts) const {
-    if (m.fast1d && opts.debug == 0) run_fast1d(data, data, opts.fct);
-    else execute_routes(data, opts);
-}
-
-template<typename T>
 void nd_runtime_plan<T>::execute_routes(std::complex<T>* data, const exec_options<T>& opts) const {
     if (m.fast2d && opts.debug == 0) { execute_fast2d(data, opts.fct); return; }
     if constexpr (kGranuleFmaddsub)
@@ -935,14 +937,6 @@ void nd_runtime_plan<T>::execute_nd(std::complex<T>* data, const exec_options<T>
         inner *= m.shape[d];
     }
     if (sp.custom && sp.scale_axis == ndim) scale_inplace(data, m.total, sp.fct);
-}
-
-// The codelets load the whole line before the first store, so fast1d runs in place too.
-template<typename T>
-void nd_runtime_plan<T>::execute(const std::complex<T>* src, std::complex<T>* dst,
-                                 const exec_options<T>& opts) const {
-    if (m.fast1d && opts.debug == 0) run_fast1d(src, dst, opts.fct);
-    else execute_routes(src, dst, opts);
 }
 
 template<typename T>

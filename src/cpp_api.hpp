@@ -27,6 +27,8 @@
 #include "admiral/detail/scalar_fft.hpp"
 #include "admiral/detail/thread_pool.hpp"
 
+#include "admiral/detail/macros.hpp"
+
 namespace admiral {
 
 namespace detail {
@@ -58,18 +60,24 @@ class lazy_slot {
 public:
     template<typename F>
     const T& get(F&& build) const {
-        if (!ready.load(std::memory_order_acquire)) {
-            std::lock_guard<std::mutex> lock(mtx);
-            if (!ready.load(std::memory_order_relaxed)) {
-                st.emplace(build());
-                ready.store(true, std::memory_order_release);
-            }
+        if (!ready.load(std::memory_order_acquire)) ADM_UNLIKELY return build_once(build);
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): ready is set only after emplace.
+        return *st;
+    }
+
+private:
+    // Out of line, so that the hot path of get() keeps no mutex frame.
+    template<typename F>
+    ADM_NOINLINE ADM_COLD const T& build_once(F& build) const {
+        std::lock_guard<std::mutex> lock(mtx);
+        if (!ready.load(std::memory_order_relaxed)) {
+            st.emplace(build());
+            ready.store(true, std::memory_order_release);
         }
         if (!st) throw internal_error("lazy state not built");
         return *st;
     }
 
-private:
     mutable std::optional<T> st;
     mutable std::atomic<bool> ready{false};
     mutable std::mutex mtx;
@@ -1100,3 +1108,5 @@ std::size_t plan_r2r<T>::size() const noexcept {
 #endif  // ADM_DISPATCH
 
 }
+
+#include "admiral/detail/undef_macros.hpp"

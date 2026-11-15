@@ -23,6 +23,7 @@
 #include <memory>
 #include <optional>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <poet/poet.hpp>
@@ -304,87 +305,90 @@ inline constexpr dd_anchor_pair dd_anchor_v = dd_anchor_ct<N>();
     }
 }
 
-// Compile-time root table for a catalog length: w_N^e = exp(-2 pi i e / N) for every e < N.
-// Each entry is one sincos_turns_eval<ct_dd> fold, split to dd_const; per-entry folds carry
-// no recurrence drift, so a table is exact to dd precision.
+// Compile-time root tables for the catalog lengths in ct_catalog_t. Entry e of the table for N
+// is w_N^e = exp(-2 pi i e / N), one sincos_turns_eval<ct_dd> fold split to dd_const, so the
+// table carries no recurrence drift. A table is built from chunks of kCtChunk entries; each
+// chunk is its own constant evaluation, which bounds the evaluation work of one initializer.
+inline constexpr std::size_t kCtChunk = 8;
+
 template<std::size_t N>
 struct ct_root_table {
     dd_const t[N];
 };
 
-// Build a compile-time root table for length N.
-template<std::size_t N>
-[[nodiscard]] constexpr ct_root_table<N> ct_roots_build() {
-    ct_root_table<N> r{};
-    for (std::size_t e = 0; e < N; ++e) {
-        const ct_sincos_v<ct_dd> w = sincos_turns_eval<ct_dd>(true, e, N);
-        r.t[e] = {w.c.hi, w.c.lo, w.s.hi, w.s.lo};
+template<std::size_t N, std::size_t C>
+struct ct_root_chunk {
+    dd_const t[kCtChunk];
+};
+
+template<std::size_t N, std::size_t C>
+[[nodiscard]] constexpr ct_root_chunk<N, C> ct_chunk_build() {
+    ct_root_chunk<N, C> r{};
+    for (std::size_t k = 0; k < kCtChunk && C * kCtChunk + k < N; ++k) {
+        const ct_sincos_v<ct_dd> w = sincos_turns_eval<ct_dd>(true, C * kCtChunk + k, N);
+        r.t[k] = {w.c.hi, w.c.lo, w.s.hi, w.s.lo};
     }
     return r;
 }
 
-// Compile-time root tables for catalog lengths: 9, 18, 30, 32, 50, 60, 64, 100, 128, 256.
-// 18, 60, 64, 100, 256 are the requested c2c and r2c sizes; 9, 30, 32, 50, 128 are the
-// inner halves r2c needs.
+template<std::size_t N, std::size_t C>
+inline constexpr ct_root_chunk<N, C> ct_chunk_v = ct_chunk_build<N, C>();
+
+template<std::size_t N, std::size_t... C>
+[[nodiscard]] constexpr ct_root_table<N> ct_roots_join(std::index_sequence<C...>) {
+    ct_root_table<N> r{};
+    ((void)[&r] {
+        for (std::size_t k = 0; k < kCtChunk && C * kCtChunk + k < N; ++k)
+            r.t[C * kCtChunk + k] = ct_chunk_v<N, C>.t[k];
+    }(), ...);
+    return r;
+}
+
 template<std::size_t N>
-inline constexpr ct_root_table<N> ct_roots_v = ct_roots_build<N>();
+inline constexpr ct_root_table<N> ct_roots_v =
+    ct_roots_join<N>(std::make_index_sequence<(N + kCtChunk - 1) / kCtChunk>{});
+
+// The catalog: the one list of lengths that carry a compile-time table. The c2c and r2c sizes
+// 18, 60, 64, 100 and 256 need themselves and the halves 9, 30, 32, 50 and 128 of the r2c.
+template<std::size_t... Ns>
+struct ct_sizes {};
+using ct_catalog_t = ct_sizes<9, 18, 30, 32, 50, 60, 64, 100, 128, 256>;
+
+// The table of length n, or nullptr when n is not in the catalog.
+template<std::size_t... Ns>
+[[nodiscard]] const dd_const* ct_table_find(std::size_t n, ct_sizes<Ns...>) {
+    const dd_const* p = nullptr;
+    ((p = n == Ns ? ct_roots_v<Ns>.t : p), ...);
+    return p;
+}
 
 class dd_roots {
 public:
-    explicit dd_roots(std::size_t n) : n_(n) {
-        // Use compile-time tables for catalog sizes; fall back to run-time build otherwise.
-        switch (n) {
-        case 9:
-        case 18:
-        case 30:
-        case 32:
-        case 50:
-        case 60:
-        case 64:
-        case 100:
-        case 128:
-        case 256:
-            b_ = dd_root_block(n_);
-            return;
-        default:
-            b_ = dd_root_block(n_);
-            const std::size_t nc = (n_ + b_ - 1) / b_;
-            coarse_.resize(nc);
-            fine_.resize(b_);
-            const ct_sincos_v<ct_dd_plain> one{ct_dd_plain(0), ct_dd_plain(1)};
-            coarse_[0] = fine_[0] = one;
-            if (b_ > 1) {
-                const dd_anchor_pair a = dd_anchor(n_);
-                fine_[1] = a.fine;
-                for (std::size_t e = 2; e < b_; ++e) fine_[e] = cmul(fine_[e - 1], fine_[1]);
-                if (nc > 1) {
-                    coarse_[1] = a.coarse;
-                    for (std::size_t e = 2; e < nc; ++e) coarse_[e] = cmul(coarse_[e - 1], coarse_[1]);
-                }
+    explicit dd_roots(std::size_t n) : n_(n), ct_(ct_table_find(n, ct_catalog_t{})) {
+        b_ = dd_root_block(n_);
+        if (ct_ != nullptr) return;
+        const std::size_t nc = (n_ + b_ - 1) / b_;
+        coarse_.resize(nc);
+        fine_.resize(b_);
+        const ct_sincos_v<ct_dd_plain> one{ct_dd_plain(0), ct_dd_plain(1)};
+        coarse_[0] = fine_[0] = one;
+        if (b_ > 1) {
+            const dd_anchor_pair a = dd_anchor(n_);
+            fine_[1] = a.fine;
+            for (std::size_t e = 2; e < b_; ++e) fine_[e] = cmul(fine_[e - 1], fine_[1]);
+            if (nc > 1) {
+                coarse_[1] = a.coarse;
+                for (std::size_t e = 2; e < nc; ++e) coarse_[e] = cmul(coarse_[e - 1], coarse_[1]);
             }
-            return;
         }
     }
 
     [[nodiscard]] dd_const operator()(std::size_t e) const {
         e %= n_;
-        // Catalog lengths use compile-time lookup.
-        switch (n_) {
-        case 9:   return ct_roots_v<9>.t[e];
-        case 18:  return ct_roots_v<18>.t[e];
-        case 30:  return ct_roots_v<30>.t[e];
-        case 32:  return ct_roots_v<32>.t[e];
-        case 50:  return ct_roots_v<50>.t[e];
-        case 60:  return ct_roots_v<60>.t[e];
-        case 64:  return ct_roots_v<64>.t[e];
-        case 100: return ct_roots_v<100>.t[e];
-        case 128: return ct_roots_v<128>.t[e];
-        case 256: return ct_roots_v<256>.t[e];
-        default:
-            const ct_sincos_v<ct_dd_plain>& a = coarse_[e / b_];
-            const ct_sincos_v<ct_dd_plain>& b = fine_[e % b_];
-            return dd_split(cmul(a, b));
-        }
+        if (ct_ != nullptr) return ct_[e];
+        const ct_sincos_v<ct_dd_plain>& a = coarse_[e / b_];
+        const ct_sincos_v<ct_dd_plain>& b = fine_[e % b_];
+        return dd_split(cmul(a, b));
     }
 
 private:
@@ -394,6 +398,7 @@ private:
         return {a.s * b.c + a.c * b.s, a.c * b.c - a.s * b.s};
     }
     std::size_t n_, b_ = 1;
+    const dd_const* ct_ = nullptr;
     std::vector<ct_sincos_v<ct_dd_plain>> coarse_, fine_;
 };
 

@@ -14,6 +14,7 @@
 // re/im planes, and it is deliberate: the granule dialect IS the new-contract family.
 
 #include <array>
+#include <complex>
 #include <cstddef>
 #include <type_traits>
 
@@ -406,6 +407,27 @@ ADM_ALWAYS_INLINE void granule_dft(V (&g)[N]) {
     } else {
         granule_dif<T, N, V, Fwd>(g, g);
     }
+}
+
+// One f64 line of N, one complex per 2-lane register. The good_thomas route runs it at the
+// sizes where it beats good_thomas_execute. All loads come before the first store, so out may
+// alias in.
+template<unsigned N>
+inline constexpr bool kGranuleLine =
+    kGranuleFmaddsub && !std::is_void_v<xsimd::make_sized_batch_t<double, 2>> &&
+    (N == 10u || N == 12u || N == 15u || N == 20u || N == 24u || N == 40u);
+
+template<unsigned N, bool Forward>
+ADM_NOINLINE void granule_line(const std::complex<double>* in, std::complex<double>* out) {
+    using V = xsimd::make_sized_batch_t<double, 2>;
+    V g[N];
+    poet::static_for<0, N>([&](auto j) ADM_LAMBDA_ALWAYS_INLINE {
+        g[j] = V::load_unaligned(reinterpret_cast<const double*>(in + j));
+    });
+    granule_dft<N, V, Forward>(g);
+    poet::static_for<0, N>([&](auto j) ADM_LAMBDA_ALWAYS_INLINE {
+        g[j].store_unaligned(reinterpret_cast<double*>(out + j));
+    });
 }
 
 // ----------------------------------------------------------------------

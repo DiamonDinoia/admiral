@@ -409,25 +409,95 @@ ADM_ALWAYS_INLINE void granule_dft(V (&g)[N]) {
     }
 }
 
-// One f64 line of N, one complex per 2-lane register. The good_thomas route runs it at the
-// sizes where it beats good_thomas_execute. All loads come before the first store, so out may
-// alias in.
+// One f64 line of N. With 4 f64 lanes and an even N, register j holds x[2j] in its low half and
+// x[2j+1] in its high half: granule_dft runs the two DFTs of N/2 side by side, and one radix-2
+// step joins them. Otherwise one complex goes in each 2-lane register. The catalog codelet and
+// the good_thomas route run it at the f64 lengths where it beats them.
+template<unsigned N>
+inline constexpr bool kGranuleSplit =
+    N % 2u == 0u && !detail::has_single_bit(N) && N >= 6u && N <= 60u &&
+    !is_rader_prime(N / 2u) && !std::is_void_v<xsimd::make_sized_batch_t<double, 4>>;
+
 template<unsigned N>
 inline constexpr bool kGranuleLine =
     kGranuleFmaddsub && !std::is_void_v<xsimd::make_sized_batch_t<double, 2>> &&
-    (N == 10u || N == 12u || N == 15u || N == 20u || N == 24u || N == 40u);
+    (kGranuleSplit<N> || N == 15u);
 
+struct granule_half_swap {  // [lo | hi] -> [hi | lo]
+    static constexpr std::size_t get(std::size_t i, std::size_t n) { return (i + n / 2) % n; }
+};
+struct granule_lo_pair {  // [a.lo | b.lo]
+    static constexpr std::size_t get(std::size_t i, std::size_t n) {
+        return i < n / 2 ? i : n + i - n / 2;
+    }
+};
+struct granule_hi_pair {  // [a.hi | b.hi]
+    static constexpr std::size_t get(std::size_t i, std::size_t n) {
+        return i < n / 2 ? i + n / 2 : n + i;
+    }
+};
+
+// w_N^K on the high half of a split-line register. The low half passes through.
+template<unsigned N, std::size_t K, bool Fwd, typename V>
+[[nodiscard]] ADM_ALWAYS_INLINE V granule_split_twiddle(V u) {
+    if constexpr (K == 0) {
+        return u;
+    } else {
+        static constexpr auto pool = [] {
+            constexpr auto w = ct_sincos_turns<ct_real_t<double>>(Fwd, K, N);
+            const double c = static_cast<double>(w.c), sn = static_cast<double>(w.s);
+            return std::array<std::array<double, 4>, 2>{{{1.0, 1.0, c, c}, {0.0, 0.0, -sn, sn}}};
+        }();
+        return xsimd::fma(V::load_unaligned(pool[0].data()), u,
+                          xsimd::mul(V::load_unaligned(pool[1].data()), granule_swp(u)));
+    }
+}
+
+// All loads come before the first store, so out may alias in.
 template<unsigned N, bool Forward>
 ADM_NOINLINE void granule_line(const std::complex<double>* in, std::complex<double>* out) {
-    using V = xsimd::make_sized_batch_t<double, 2>;
-    V g[N];
-    poet::static_for<0, N>([&](auto j) ADM_LAMBDA_ALWAYS_INLINE {
-        g[j] = V::load_unaligned(reinterpret_cast<const double*>(in + j));
-    });
-    granule_dft<N, V, Forward>(g);
-    poet::static_for<0, N>([&](auto j) ADM_LAMBDA_ALWAYS_INLINE {
-        g[j].store_unaligned(reinterpret_cast<double*>(out + j));
-    });
+    const double* src = reinterpret_cast<const double*>(in);
+    double* dst = reinterpret_cast<double*>(out);
+    if constexpr (kGranuleSplit<N>) {
+        using V = xsimd::make_sized_batch_t<double, 4>;
+        using A = typename V::arch_type;
+        using U = xsimd::as_unsigned_integer_t<double>;
+        constexpr std::size_t M = N / 2;
+        constexpr auto half = xsimd::make_batch_constant<U, granule_half_swap, A>();
+        V g[M];
+        poet::static_for<0, M>([&](auto j) ADM_LAMBDA_ALWAYS_INLINE {
+            g[j] = V::load_unaligned(src + 4 * j);
+        });
+        granule_dft<M, V, Forward>(g);
+        // Low half E + w*O, high half E - w*O.
+        const V sgn(1.0, 1.0, -1.0, -1.0);
+        poet::static_for<0, M>([&](auto k) ADM_LAMBDA_ALWAYS_INLINE {
+            const V t = granule_split_twiddle<N, k, Forward>(g[k]);
+            g[k] = xsimd::fma(t, sgn, xsimd::swizzle(t, half));
+        });
+        poet::static_for<0, M / 2>([&](auto p) ADM_LAMBDA_ALWAYS_INLINE {
+            constexpr std::size_t k = 2 * std::size_t{p};
+            xsimd::shuffle(g[k], g[k + 1], xsimd::make_batch_constant<U, granule_lo_pair, A>())
+                .store_unaligned(dst + 2 * k);
+            xsimd::shuffle(g[k], g[k + 1], xsimd::make_batch_constant<U, granule_hi_pair, A>())
+                .store_unaligned(dst + 2 * (k + M));
+        });
+        if constexpr (M % 2 == 1) {
+            constexpr auto lo = xsimd::make_batch_bool_constant<double, lane_lt<2>, A>();
+            g[M - 1].store(dst + 2 * (M - 1), lo, xsimd::unaligned_mode{});
+            xsimd::swizzle(g[M - 1], half).store(dst + 2 * (N - 1), lo, xsimd::unaligned_mode{});
+        }
+    } else {
+        using V = xsimd::make_sized_batch_t<double, 2>;
+        V g[N];
+        poet::static_for<0, N>([&](auto j) ADM_LAMBDA_ALWAYS_INLINE {
+            g[j] = V::load_unaligned(src + 2 * j);
+        });
+        granule_dft<N, V, Forward>(g);
+        poet::static_for<0, N>([&](auto j) ADM_LAMBDA_ALWAYS_INLINE {
+            g[j].store_unaligned(dst + 2 * j);
+        });
+    }
 }
 
 // ----------------------------------------------------------------------

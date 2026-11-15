@@ -31,8 +31,46 @@ struct aos_sink {
     }
 };
 
+// A whole line of N in flat row registers: flat_tiny at 4 and 8, flat_row from 16 to 32. One
+// line has no lane transposes to save, so flat_tiny takes every shape its output maps cover,
+// f32 included, not only the batched whitelist of kFlatTiny.
+template<unsigned N, typename V>
+[[nodiscard]] ADM_CONSTEVAL bool ft_line_shape() {
+    constexpr std::size_t W = V::size, C = W / 2, K = 2u * N / W;
+    return (N == 4u || N == 8u) && 2u * N == K * W &&
+           (K == 1u || C == 1u || (K <= 4u && C <= 4u));
+}
+template<unsigned N, typename V>
+inline constexpr bool kFlatLine =
+    (XSIMD_TARGET_X86 != 0 && ft_line_shape<N, V>() &&
+     2u * N / V::size + 4u <= usable_vector_regs(poet::vector_register_count())) ||
+    kFlatRow<N, V>;
+template<unsigned N>
+inline constexpr bool kFlatLine<N, void> = false;
+
+// The widest batch, native width down to 2, that kFlatLine admits for N; void when none does.
+template<unsigned N, typename T, std::size_t W = xsimd::batch<T>::size, bool = (W >= 2)>
+struct flat_line {
+    using type = std::conditional_t<kFlatLine<N, xsimd::make_sized_batch_t<T, W>>,
+                                    xsimd::make_sized_batch_t<T, W>,
+                                    typename flat_line<N, T, W / 2>::type>;
+};
+template<unsigned N, typename T, std::size_t W>
+struct flat_line<N, T, W, false> {
+    using type = void;
+};
+
 template<unsigned N, typename T, bool Forward>
 void codelet_apply(const std::complex<T>* in, std::complex<T>* out) {
+    // One line in registers skips the split-plane copies of the kernel below.
+    using VF = typename flat_line<N, T>::type;
+    if constexpr (!std::is_void_v<VF>) {
+        const T* src = reinterpret_cast<const T*>(in);
+        T* dst = reinterpret_cast<T*>(out);
+        if constexpr (N < 16) flat_tiny_apply<N, T, VF, Forward>(src, dst, VF(T(1)));
+        else                  flat_row_apply<N, T, VF, Forward>(src, dst, VF(T(1)));
+        return;
+    }
     alignas(xsimd::batch<T>::arch_type::alignment()) T buf[4 * N];
     T* xre = buf;
     T* xim = buf + N;

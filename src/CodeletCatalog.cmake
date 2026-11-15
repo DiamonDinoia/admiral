@@ -30,6 +30,7 @@ string(REPLACE ";" ", " ADM_CODELET_RANGE_CSV "${ADM_CODELET_RANGE_SIZES}")
 set(ADM_CODELET_SEQUENCE "std::integer_sequence<std::size_t, ${ADM_CODELET_RANGE_CSV}>")
 
 set(ADM_CODELET_EXTRA_DISPATCH "")
+set(ADM_CODELET_EXTRA_FN "")
 set(ADM_CODELET_EXTRA_DISPATCH_MANY "")
 set(ADM_CODELET_EXTRA_DISPATCH_MANY_OOP "")
 set(ADM_CODELET_EXTRA_DISPATCH_COL "")
@@ -40,6 +41,8 @@ foreach(CODELET_N IN LISTS ADM_CODELET_EXTRA_SIZES)
             "        codelet_apply<${CODELET_N}, T, Forward>(in, out);\n"
             "        return;\n"
             "    }\n")
+        string(APPEND ADM_CODELET_EXTRA_FN
+            "    if (N == ${CODELET_N}) return &codelet_apply<${CODELET_N}, T, Forward>;\n")
         string(APPEND ADM_CODELET_EXTRA_DISPATCH_MANY
             "    if (N == ${CODELET_N}) {\n"
             "        codelet_apply_many<${CODELET_N}, T, Forward>(data, nlines, stride, fct);\n"

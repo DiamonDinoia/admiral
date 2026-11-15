@@ -44,6 +44,25 @@ void codelet_dispatch(const std::complex<T>* in, std::complex<T>* out, std::size
                    in, out);
 }
 
+template<typename T, bool Forward>
+struct codelet_fn_pick {
+    template<std::size_t N>
+    codelet_fn_t<T> operator()() const { return &codelet_apply<N, T, Forward>; }
+};
+
+// A miss returns null: poet::dispatch default-constructs the result.
+template<typename T, bool Forward>
+codelet_fn_t<T> codelet_fn(std::size_t N) {
+@ADM_CODELET_EXTRA_FN@
+    return poet::dispatch(codelet_fn_pick<T, Forward>{},
+                          poet::dispatch_param<codelet_catalog_seq>{N});
+}
+
+template codelet_fn_t<float>  codelet_fn<float,  true >(std::size_t);
+template codelet_fn_t<float>  codelet_fn<float,  false>(std::size_t);
+template codelet_fn_t<double> codelet_fn<double, true >(std::size_t);
+template codelet_fn_t<double> codelet_fn<double, false>(std::size_t);
+
 // Lanes-as-lines twin. Same dense-jump-table + extras-if-chain shape.
 template<typename T, bool Forward>
 struct codelet_apply_many_invoke {

@@ -657,7 +657,8 @@ class nd_runtime_plan {
         bool fuse_planes = false;
         bool fast2d = false;
         bool fast3d = false;
-        bool fast1d = false;
+        // Rank 1, serial, codelet route: the codelet itself, else null.
+        codelet_fn_t<T> fast1d = nullptr;
         // The default-fct scale: make_scale_plan reads only plan-invariant members.
         scale_plan def_sp{false, T(1), 0};
         T def_fct = T(1);
@@ -718,6 +719,17 @@ private:
         else               fast3d_n<8>(src, dst, f);
     }
 
+    // execute() keeps only the fast1d call inline, so that path pays no frame setup of the
+    // other routes.
+    ADM_NOINLINE void execute_routes(std::complex<T>* data, const exec_options<T>& opts) const;
+    ADM_NOINLINE void execute_routes(const std::complex<T>* src, std::complex<T>* dst,
+                                     const exec_options<T>& opts) const;
+    ADM_ALWAYS_INLINE void run_fast1d(const std::complex<T>* src, std::complex<T>* dst,
+                                      std::optional<T> fct) const {
+        m.fast1d(src, dst);
+        const T f = fct.value_or(m.def_fct);
+        if (f != T(1)) scale_inplace(dst, m.total, f);
+    }
     ADM_NOINLINE void execute_nd(std::complex<T>* data, const exec_options<T>& opts) const;
     ADM_NOINLINE void execute_nd(const std::complex<T>* src, std::complex<T>* dst,
                                  const exec_options<T>& opts) const;
@@ -866,19 +878,20 @@ nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forwa
     // the traced chain.
     if (m.shape.size() == 1 && m.shape[0] > 1 && m.pool == nullptr) {
         const std::optional<plan_impl<T>>& p0 = m.axes[0].plan;
-        m.fast1d = p0 && p0->route() == plan_impl<T>::route_kind::codelet;
+        if (p0 && p0->route() == plan_impl<T>::route_kind::codelet)
+            m.fast1d = is_forward ? codelet_fn<T, true>(m.shape[0])
+                                  : codelet_fn<T, false>(m.shape[0]);
     }
 }
 
 template<typename T>
 void nd_runtime_plan<T>::execute(std::complex<T>* data, const exec_options<T>& opts) const {
-    if (m.fast1d && opts.debug == 0) {
-        const T f = opts.fct.value_or(m.def_fct);
-        if (m.is_forward) codelet_dispatch<T, true >(data, data, m.shape[0]);
-        else              codelet_dispatch<T, false>(data, data, m.shape[0]);
-        if (f != T(1)) scale_inplace(data, m.shape[0], f);
-        return;
-    }
+    if (m.fast1d && opts.debug == 0) run_fast1d(data, data, opts.fct);
+    else execute_routes(data, opts);
+}
+
+template<typename T>
+void nd_runtime_plan<T>::execute_routes(std::complex<T>* data, const exec_options<T>& opts) const {
     if (m.fast2d && opts.debug == 0) { execute_fast2d(data, opts.fct); return; }
     if constexpr (kGranuleFmaddsub)
         if (m.fast3d && opts.debug == 0) { execute_fast3d(data, data, opts.fct); return; }
@@ -924,17 +937,18 @@ void nd_runtime_plan<T>::execute_nd(std::complex<T>* data, const exec_options<T>
     if (sp.custom && sp.scale_axis == ndim) scale_inplace(data, m.total, sp.fct);
 }
 
+// The codelets load the whole line before the first store, so fast1d runs in place too.
 template<typename T>
 void nd_runtime_plan<T>::execute(const std::complex<T>* src, std::complex<T>* dst,
                                  const exec_options<T>& opts) const {
-    if (src == dst) { execute(dst, opts); return; }
-    if (m.fast1d && opts.debug == 0) {
-        const T f = opts.fct.value_or(m.def_fct);
-        if (m.is_forward) codelet_dispatch<T, true >(src, dst, m.shape[0]);
-        else              codelet_dispatch<T, false>(src, dst, m.shape[0]);
-        if (f != T(1)) scale_inplace(dst, m.shape[0], f);
-        return;
-    }
+    if (m.fast1d && opts.debug == 0) run_fast1d(src, dst, opts.fct);
+    else execute_routes(src, dst, opts);
+}
+
+template<typename T>
+void nd_runtime_plan<T>::execute_routes(const std::complex<T>* src, std::complex<T>* dst,
+                                        const exec_options<T>& opts) const {
+    if (src == dst) { execute_routes(dst, opts); return; }
     if constexpr (kGranuleFmaddsub)
         if (m.fast3d && opts.debug == 0) { execute_fast3d(src, dst, opts.fct); return; }
     if (m.shape.empty()) {

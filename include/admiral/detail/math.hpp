@@ -297,6 +297,18 @@ inline constexpr double kBluesteinCostPerPadLog = 1.53;
 template<typename T, bool Forward>
 void codelet_dispatch(const std::complex<T>* in, std::complex<T>* out, std::size_t N);
 
+template<typename T>
+using codelet_fn_t = void (*)(const std::complex<T>*, std::complex<T>*);
+
+// The compiled codelet of catalog size N, or null when N is not in the catalog.
+template<typename T, bool Forward>
+codelet_fn_t<T> codelet_fn(std::size_t N);
+
+extern template codelet_fn_t<float>  codelet_fn<float,  true >(std::size_t);
+extern template codelet_fn_t<float>  codelet_fn<float,  false>(std::size_t);
+extern template codelet_fn_t<double> codelet_fn<double, true >(std::size_t);
+extern template codelet_fn_t<double> codelet_fn<double, false>(std::size_t);
+
 extern template void codelet_dispatch<float,  true >(const std::complex<float>*,  std::complex<float>*,  std::size_t);
 extern template void codelet_dispatch<float,  false>(const std::complex<float>*,  std::complex<float>*,  std::size_t);
 extern template void codelet_dispatch<double, true >(const std::complex<double>*, std::complex<double>*, std::size_t);

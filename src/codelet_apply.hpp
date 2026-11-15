@@ -60,6 +60,10 @@ struct flat_line<N, T, W, false> {
     using type = void;
 };
 
+// The primes where one scalar straight-line DFT beats the kernel below in both precisions.
+template<unsigned N>
+inline constexpr bool kLineDft = N == 11 || N == 17 || N == 19 || N == 23;
+
 template<unsigned N, typename T, bool Forward>
 void codelet_apply(const std::complex<T>* in, std::complex<T>* out) {
     // One line in registers skips the split-plane copies of the kernel below.
@@ -69,6 +73,18 @@ void codelet_apply(const std::complex<T>* in, std::complex<T>* out) {
         T* dst = reinterpret_cast<T*>(out);
         if constexpr (N < 16) flat_tiny_apply<N, T, VF, Forward>(src, dst, VF(T(1)));
         else                  flat_row_apply<N, T, VF, Forward>(src, dst, VF(T(1)));
+        return;
+    } else if constexpr (kLineDft<N>) {
+        // The inverse is the forward DFT with re and im swapped on both sides. All loads come
+        // before the first store, so out may alias in.
+        T tr[N], ti[N];
+        poet::static_for<0, N>([&](auto J) {
+            tr[J] = Forward ? in[J].real() : in[J].imag();
+            ti[J] = Forward ? in[J].imag() : in[J].real();
+        });
+        dif_butterfly<T, N, T>(tr, ti, [&](auto K, T re, T im) {
+            out[K] = Forward ? std::complex<T>(re, im) : std::complex<T>(im, re);
+        });
         return;
     }
     alignas(xsimd::batch<T>::arch_type::alignment()) T buf[4 * N];

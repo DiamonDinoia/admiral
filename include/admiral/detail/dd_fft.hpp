@@ -1129,6 +1129,15 @@ inline constexpr std::size_t kX87MaxLen = 17;
 // Selects the dd engine at every length.
 struct dd_engine_tag {};
 
+// Rader is chosen when n-1 is a power of two: the two length-(n-1) transforms then run the
+// four-step with no mixed-radix waste, and n-1 is always below Bluestein's pad.
+[[nodiscard]] inline bool is_pow2(std::size_t v) {
+    return (v & (v - 1)) == 0;
+}
+
+template<typename T>
+class dd_rader;
+
 // 1-D long double c2c. The four-step runs n directly, or, when its cost model prices that higher,
 // runs Bluestein's chirp-z over a blocked four-step of length pad >= 2n - 1: a prime n gives
 // the direct four-step one lane of kDdW. The interface is scalar_c2c's.
@@ -1175,6 +1184,16 @@ public:
     template<bool forward>
     ADM_NOINLINE void execute_dd(std::complex<T>* x, T fct, std::size_t div,
                                  thread_pool* pool) const {
+        if (rader_) {
+            const unsigned emax = ld_max_exponent(x, n_);
+            if (emax == kLdExpInfNan) ADM_UNLIKELY {
+                const T nan = std::numeric_limits<T>::quiet_NaN();
+                std::fill_n(x, n_, std::complex<T>(nan, nan));
+                return;
+            }
+            rader_->template execute<forward>(x, fct / T(div), 0, pool);
+            return;
+        }
         const unsigned emax = ld_max_exponent(x, n_);
         if (emax == kLdExpInfNan) ADM_UNLIKELY {
             const T nan = std::numeric_limits<T>::quiet_NaN();
@@ -1317,6 +1336,10 @@ private:
     }
 
     void build_dd(const dd_roots* parent = nullptr, std::size_t mul = 1) {
+        if (parent == nullptr && ct_is_prime(n_) && is_pow2(n_ - 1)) {
+            rader_ = std::make_unique<dd_rader<T>>(n_);
+            return;
+        }
         pad_ = blue_pad(n_);
         if (pad_ != 0) {
             fs_.emplace(pad_, true);
@@ -1338,6 +1361,7 @@ private:
     std::optional<dd_four_step<T>> fs_;
     aligned_buffer<double> chirp_, bmul_;
     std::unique_ptr<scalar_c2c<T>> x87_;
+    std::unique_ptr<dd_rader<T>> rader_;
 };
 
 struct dd_rev_lane {
@@ -1551,6 +1575,8 @@ template<typename T>
 using ld_c2c_t = std::conditional_t<kDdLongDouble, dd_c2c<T>, scalar_c2c<T>>;
 template<typename T>
 using ld_r2c_t = std::conditional_t<kDdLongDouble, dd_r2c<T>, scalar_r2c_1d<T>>;
+
+#include "dd_rader.hpp"
 
 }
 }

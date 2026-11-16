@@ -357,15 +357,17 @@ ADM_ALWAYS_INLINE void scalar_staged_dif(const T (&tr)[N], const T (&ti)[N], Emi
 // precondition: the 2-way split needs N to factor into two integers of 2 or more, so a prime N
 // (17) cannot be split and stays monolithic. Cost test: take the split when the monolithic 2N
 // live set is at least four register files wide (2N >= 4*regs), so the 80-bit spill traffic
-// saved outweighs one full extra pass over the intermediate. float and double keep the
-// monolithic path unchanged (their small-N code is byte-identical to base).
+// saved outweighs one full extra pass over the intermediate. The split wins only when both
+// stages then fit the register file (2*max(N1,N2) <= regs): a stage that still spills pays the
+// extra pass and the spills at once. float and double keep the monolithic path unchanged (their
+// small-N code is byte-identical to base).
 template<typename T, std::size_t N>
 [[nodiscard]] constexpr bool use_scalar_staged() {
     constexpr std::size_t N2 = staged_dif_n2<N>();
-    constexpr bool splittable = N >= 4u && N2 >= 2u && N % N2 == 0u && N / N2 >= 2u;
     return std::is_same_v<T, long double> &&
-        splittable &&
-        2u * N >= 4u * scalar_dif_registers<T>();
+        N >= 4u && N2 >= 2u && N % N2 == 0u && N / N2 >= 2u &&
+        2u * N >= 4u * scalar_dif_registers<T>() &&
+        2u * (N / N2 > N2 ? N / N2 : N2) <= scalar_dif_registers<T>();
 }
 
 // Radices this large spill the monolithic butterfly's 2*IP live registers, so passes route

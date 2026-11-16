@@ -308,6 +308,68 @@ ADM_ALWAYS_INLINE void staged_dif_butterfly(Load&& load, Emit&& emit) {
     });
 }
 
+// Register budget for the small-N scalar butterfly. On x86-64, long double runs on the
+// 8-register x87 FPU stack, so a monolithic 2*N working set spills once 2*N > 8. float and
+// double keep the monolithic small path (their code is unchanged), so they get a budget that
+// keeps the staged split off for N <= 16.
+template<typename T>
+[[nodiscard]] constexpr std::size_t scalar_dif_registers() {
+    if constexpr (std::is_same_v<T, long double>) return 8u;
+    return 32u;
+}
+
+// Scalar staged DIF for the small path: the Gentleman-Sande outer split on scalar lanes, so
+// each stage keeps only N1 (stage A) or N2 (stage B) complex values live. For N <= 16 both
+// fit the 8 x87 registers, so the monolithic spill disappears. N = N1 * N2, N2 =
+// staged_dif_n2<N>(); input j = n + N2*m, output r + N1*k2, cross twiddle w_N^(r*n).
+template<typename T, std::size_t N, typename Emit>
+ADM_ALWAYS_INLINE void scalar_staged_dif(const T (&tr)[N], const T (&ti)[N], Emit&& emit) {
+    constexpr std::size_t N2 = staged_dif_n2<N>();
+    constexpr std::size_t N1 = N / N2;
+    static_assert(N1 * N2 == N && N1 >= 2u && N2 >= 2u, "scalar staged split must factor N");
+    T ar[N], ai[N];
+    poet::static_for<0, N2>([&](const auto n) ADM_LAMBDA_ALWAYS_INLINE {
+        T br[N1], bi[N1];
+        poet::static_for<0, N1>([&](const auto m) ADM_LAMBDA_ALWAYS_INLINE {
+            br[m] = tr[n + N2 * m];
+            bi[m] = ti[n + N2 * m];
+        });
+        sub_dft<T, N1, T>(br, bi, [&](const auto r, T yr, T yi) ADM_LAMBDA_ALWAYS_INLINE {
+            constexpr std::size_t e = IC<(r * n) % N>{};
+            const auto [fr, fi] = apply_stage_twiddle<T, N, e, T>(yr, yi);
+            ar[r * N2 + n] = fr;
+            ai[r * N2 + n] = fi;
+        });
+    });
+    poet::static_for<0, N1>([&](const auto r) ADM_LAMBDA_ALWAYS_INLINE {
+        T cr[N2], ci[N2];
+        poet::static_for<0, N2>([&](const auto n) ADM_LAMBDA_ALWAYS_INLINE {
+            cr[n] = ar[r * N2 + n];
+            ci[n] = ai[r * N2 + n];
+        });
+        sub_dft<T, N2, T>(cr, ci, [&](const auto k2, T yr, T yi) ADM_LAMBDA_ALWAYS_INLINE {
+            emit(IC<r + N1 * k2>{}, yr, yi);
+        });
+    });
+}
+
+// Route the small scalar butterfly through the staged split on cost, not on N. Structural
+// precondition: the 2-way split needs N to factor into two integers of 2 or more, so a prime N
+// (17) cannot be split and stays monolithic. Cost test: take the split when the monolithic 2N
+// live set is at least four register files wide (2N >= 4*regs), so the 80-bit spill traffic
+// saved outweighs one full extra pass over the intermediate. The split wins only when both
+// stages then fit the register file (2*max(N1,N2) <= regs): a stage that still spills pays the
+// extra pass and the spills at once. float and double keep the monolithic path unchanged (their
+// small-N code is byte-identical to base).
+template<typename T, std::size_t N>
+[[nodiscard]] constexpr bool use_scalar_staged() {
+    constexpr std::size_t N2 = staged_dif_n2<N>();
+    return std::is_same_v<T, long double> &&
+        N >= 4u && N2 >= 2u && N % N2 == 0u && N / N2 >= 2u &&
+        2u * N >= 4u * scalar_dif_registers<T>() &&
+        2u * (N / N2 > N2 ? N / N2 : N2) <= scalar_dif_registers<T>();
+}
+
 // Radices this large spill the monolithic butterfly's 2*IP live registers, so passes route
 // them through the staged split above instead.
 template<std::size_t IP>
@@ -341,9 +403,15 @@ void r2c_small(const T* in, std::complex<T>* out) {
         tr[J] = in[J];
         ti[J] = T(0);
     });
-    dif_butterfly<T, N, T>(tr, ti, [&](auto K, T re, T im) {
-        if constexpr (K <= N / 2) out[K] = std::complex<T>(re, im);
-    });
+    if constexpr (use_scalar_staged<T, N>()) {
+        scalar_staged_dif<T, N>(tr, ti, [&](auto K, T re, T im) {
+            if constexpr (K <= N / 2) out[K] = std::complex<T>(re, im);
+        });
+    } else {
+        dif_butterfly<T, N, T>(tr, ti, [&](auto K, T re, T im) {
+            if constexpr (K <= N / 2) out[K] = std::complex<T>(re, im);
+        });
+    }
 }
 
 // The unscaled c2r of one small N from its N / 2 + 1 bins, as one straight-line DFT. Bin N - k
@@ -371,9 +439,15 @@ void c2c_small(std::complex<T>* x) {
         tr[J] = Forward ? x[J].real() : x[J].imag();
         ti[J] = Forward ? x[J].imag() : x[J].real();
     });
-    dif_butterfly<T, N, T>(tr, ti, [&](auto K, T re, T im) {
-        x[K] = Forward ? std::complex<T>(re, im) : std::complex<T>(im, re);
-    });
+    if constexpr (use_scalar_staged<T, N>()) {
+        scalar_staged_dif<T, N>(tr, ti, [&](auto K, T re, T im) {
+            x[K] = Forward ? std::complex<T>(re, im) : std::complex<T>(im, re);
+        });
+    } else {
+        dif_butterfly<T, N, T>(tr, ti, [&](auto K, T re, T im) {
+            x[K] = Forward ? std::complex<T>(re, im) : std::complex<T>(im, re);
+        });
+    }
 }
 
 template<typename T>

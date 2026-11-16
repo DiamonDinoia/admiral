@@ -284,9 +284,14 @@ ADM_ALWAYS_INLINE void granule_radix_sym(const V (&x)[IP], V (&y)[IP]) {
     });
 }
 
-// Mirrors sub_dft: pow2 radices to granule_pow2, odd ones to granule_radix_sym.
+// Mirrors sub_dft: pow2 radices to granule_pow2, odd ones to granule_radix_sym,
+// even composites through the granule_dif chain so no radix the mirror does not
+// cover reaches a body.
 template<typename T, std::size_t IP, typename V, bool Fwd>
 ADM_ALWAYS_INLINE void granule_sub_dft(const V (&x)[IP], V (&y)[IP]);
+
+template<typename T, std::size_t IP, typename V, bool Fwd>
+ADM_ALWAYS_INLINE void granule_dif(const V (&x)[IP], V (&y)[IP]);
 
 // Mirrors pow2_dif_butterfly: evens untwiddled, odds stage-twiddled, interleaved emit.
 template<typename T, std::size_t IP, typename V, bool Fwd>
@@ -294,8 +299,10 @@ ADM_ALWAYS_INLINE void granule_pow2(const V (&x)[IP], V (&y)[IP]) {
     static_assert(IP >= 2 && detail::has_single_bit(IP),
                   "granule_pow2: IP must be a power of two >= 2");
     if constexpr (IP == 2) {
-        y[0] = xsimd::add(x[0], x[1]);
-        y[1] = xsimd::sub(x[0], x[1]);
+        const V s = xsimd::add(x[0], x[1]);
+        const V d = xsimd::sub(x[0], x[1]);
+        y[0] = s;
+        y[1] = d;
     } else {
         constexpr std::size_t H = IP / 2;
         V e[H], f[H], eo[H], fo[H];
@@ -316,35 +323,63 @@ template<typename T, std::size_t IP, typename V, bool Fwd>
 ADM_ALWAYS_INLINE void granule_sub_dft(const V (&x)[IP], V (&y)[IP]) {
     if constexpr (detail::has_single_bit(IP))
         granule_pow2<T, IP, V, Fwd>(x, y);
-    else
+    else if constexpr (IP % 2 == 1)
         granule_radix_sym<T, IP, V, Fwd>(x, y);
+    else
+        granule_dif<T, IP, V, Fwd>(x, y);
+}
+
+// The coprime split that minimises the widest factor: the widest factor sizes the
+// sub-DFT bodies and their live temporaries, so the balanced split is what the
+// register file can hold. Parametric in n: no table, no per-size entry.
+[[nodiscard]] constexpr std::pair<std::size_t, std::size_t> granule_balanced_split(
+    std::size_t n) noexcept {
+    std::pair<std::size_t, std::size_t> r{0, 0};
+    for (std::size_t a = 2; a * a <= n; ++a)
+        if (n % a == 0 && std::gcd(a, n / a) == 1) {
+            const std::size_t w = std::max(a, n / a);
+            if (r.first == 0 || w < std::max(r.first, r.second)) r = {n / a, a};
+        }
+    return r;
 }
 
 // Mirrors pfa_dif_butterfly: gather (n1*N2 + n2*N1) % IP, sub-DFTs of N1 then N2,
 // CRT placement through the shared crt_index. No inter-stage twiddles (coprime).
+// In place: each stage rewrites the transversal it has just consumed, so the N-slot
+// working set replaces a separate N1*N2 intermediate plane. Stage 1 stores column
+// bin k1 at slot ((k1*rot) % N1)*N2 + n2*N1 with N2*rot = 1 (mod N1), which puts
+// every k1 row exactly on its crt_index slots, so stage 2 only rewrites its own row.
+template<std::size_t N2, std::size_t N1>
+inline constexpr std::size_t granule_row_rot = [] {
+    for (std::size_t u = 1; u < N1; ++u)
+        if ((u * N2) % N1 == 1u) return u;
+    return std::size_t(0);
+}();
+
 template<typename T, std::size_t N1, std::size_t N2, typename V, bool Fwd>
 ADM_ALWAYS_INLINE void granule_pfa(const V (&x)[N1 * N2], V (&y)[N1 * N2]) {
     constexpr std::size_t IP = N1 * N2;
     static_assert(std::gcd(N1, N2) == 1, "PFA requires coprime factors");
-    V a[N1][N2];
+    constexpr std::size_t rot = granule_row_rot<N2, N1>;
+    static_assert(rot != 0, "PFA needs N2 invertible mod N1");
     poet::static_for<0, N2>([&](const auto n2) ADM_LAMBDA_ALWAYS_INLINE {
-        V b[N1], t[N1];
+        V b[N1];
         poet::static_for<0, N1>([&](const auto n1) ADM_LAMBDA_ALWAYS_INLINE {
             b[n1] = x[(n1 * N2 + n2 * N1) % IP];
         });
-        granule_sub_dft<T, N1, V, Fwd>(b, t);
+        granule_sub_dft<T, N1, V, Fwd>(b, b);
         poet::static_for<0, N1>([&](const auto k1) ADM_LAMBDA_ALWAYS_INLINE {
-            a[k1][n2] = t[k1];
+            y[((k1 * rot) % N1 * N2 + n2 * N1) % IP] = b[k1];
         });
     });
     poet::static_for<0, N1>([&](const auto k1) ADM_LAMBDA_ALWAYS_INLINE {
-        V b[N2], t[N2];
+        V b[N2];
         poet::static_for<0, N2>([&](const auto n2) ADM_LAMBDA_ALWAYS_INLINE {
-            b[n2] = a[k1][n2];
+            b[n2] = y[((k1 * rot) % N1 * N2 + n2 * N1) % IP];
         });
-        granule_sub_dft<T, N2, V, Fwd>(b, t);
+        granule_sub_dft<T, N2, V, Fwd>(b, b);
         poet::static_for<0, N2>([&](const auto k2) ADM_LAMBDA_ALWAYS_INLINE {
-            y[crt_index<N1, N2, k1, k2>] = t[k2];
+            y[crt_index<N1, N2, k1, k2>] = b[k2];
         });
     });
 }
@@ -381,7 +416,7 @@ ADM_ALWAYS_INLINE void granule_ct(const V (&x)[N1 * N2], V (&y)[N1 * N2]) {
 template<typename T, std::size_t IP, typename V, bool Fwd>
 ADM_ALWAYS_INLINE void granule_dif(const V (&x)[IP], V (&y)[IP]) {
     constexpr auto ct = odd_ct_split(IP);
-    constexpr auto pf = coprime_split(IP);
+    constexpr auto pf = granule_balanced_split(IP);
     if constexpr (ct.first != 0) {
         granule_ct<T, ct.first, ct.second, V, Fwd>(x, y);
     } else if constexpr (IP % 2 == 1 && IP >= 3) {
@@ -401,7 +436,7 @@ template<std::size_t N, typename V, bool Fwd>
 ADM_ALWAYS_INLINE void granule_dft(V (&g)[N]) {
     using T = typename V::value_type;
     static_assert(!is_rader_prime(N), "granule_dft: Rader has no granule form");
-    constexpr auto split = coprime_split(N);
+    constexpr auto split = granule_balanced_split(N);
     if constexpr (N % 2 == 1 && split.first != 0) {
         granule_pfa<T, split.first, split.second, V, Fwd>(g, g);
     } else {

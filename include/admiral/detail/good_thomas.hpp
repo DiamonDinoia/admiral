@@ -319,6 +319,18 @@ struct good_thomas_catalog_t {
             }
         }(), ...);
     }
+    // The kernel of n as a plain pointer, or null. Every kernel loads the whole line before
+    // the first store, so the pointer also runs in place.
+    template<typename T, bool Forward>
+    static auto fn(std::size_t n) noexcept -> void (*)(const std::complex<T>*, std::complex<T>*) {
+        void (*f)(const std::complex<T>*, std::complex<T>*) = nullptr;
+        ([&] {
+            if constexpr (Ds::template admits<T>) {
+                if (n == Ds::n) f = &Ds::template run<T, Forward>;
+            }
+        }(), ...);
+        return f;
+    }
 };
 
 using good_thomas_catalog = good_thomas_catalog_t<

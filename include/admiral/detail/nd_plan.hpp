@@ -657,7 +657,7 @@ class nd_runtime_plan {
         bool fuse_planes = false;
         bool fast2d = false;
         bool fast3d = false;
-        // Rank 1, serial, codelet route: the codelet itself, else null.
+        // Rank 1, serial, codelet or good_thomas route: the kernel itself, else null.
         codelet_fn_t<T> fast1d = nullptr;
         // The default-fct scale: make_scale_plan reads only plan-invariant members.
         scale_plan def_sp{false, T(1), 0};
@@ -882,13 +882,17 @@ nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forwa
     }
     m.def_sp = make_scale_plan(std::nullopt);
     m.def_fct = m.def_sp.fct;
-    // Rank 1, serial, codelet route: execute() calls the codelet directly. A debug call keeps
-    // the traced chain.
+    // Rank 1, serial, codelet or good_thomas route: execute() calls the kernel directly. A debug
+    // call keeps the traced chain.
     if (m.shape.size() == 1 && m.shape[0] > 1 && m.pool == nullptr) {
         const std::optional<plan_impl<T>>& p0 = m.axes[0].plan;
-        if (p0 && p0->route() == plan_impl<T>::route_kind::codelet)
+        using rk = typename plan_impl<T>::route_kind;
+        if (p0 && p0->route() == rk::codelet)
             m.fast1d = is_forward ? codelet_fn<T, true>(m.shape[0])
                                   : codelet_fn<T, false>(m.shape[0]);
+        else if (p0 && p0->route() == rk::good_thomas)
+            m.fast1d = is_forward ? good_thomas_catalog::fn<T, true>(m.shape[0])
+                                  : good_thomas_catalog::fn<T, false>(m.shape[0]);
     }
 }
 

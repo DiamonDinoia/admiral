@@ -13,6 +13,7 @@
 
 #include "dif_driver.hpp"
 #include "four_step_large.hpp"
+#include "base_cost_model.hpp"
 #include "math.hpp"
 #include "scratch.hpp"
 #include "twiddles.hpp"
@@ -33,6 +34,20 @@ template<typename T>
            four_step_large_fused_shape<T>(pad);
 }
 
+// Pick the Bluestein inner pad. The planner defaults to the first smooth pad
+// (bluestein_choose_pad). This also weighs the power-of-two pad and adopts it when the
+// planner's iterative-DIF cost ranks the power of two lower. Only sizes where a power of
+// two genuinely wins change pad; every other size keeps its default smooth pad.
+template<typename T>
+[[nodiscard]] std::size_t bluestein_pick_pad(std::size_t size) {
+    const std::size_t base = bluestein_choose_pad(size);
+    const std::size_t pow2 = bit_ceil(2 * size - 1);
+    if (pow2 == base) return base;
+    const double base_cost = base_model::score<base_model::iterative_dif, T>(base);
+    const double pow2_cost = base_model::score<base_model::iterative_dif, T>(pow2);
+    return pow2_cost < base_cost ? pow2 : base;
+}
+
 template<typename T>
 class bluestein_plan {
     struct M {
@@ -49,7 +64,7 @@ public:
     bluestein_plan(std::size_t size, bool is_forward)
         : m{size,
             is_forward,
-            bluestein_choose_pad(size),
+            bluestein_pick_pad<T>(size),
             {},
             {},
             {},

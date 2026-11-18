@@ -53,7 +53,10 @@ std::vector<lc_t> make_input(std::size_t N) {
 
 const std::size_t primes[] = {97, 193, 257};
 
-TEST_CASE("dd_rader: c2c forward matches reference DFT") {
+// Both cases compare against an exact long-double reference. Tagged [longdouble] so the
+// valgrind legs drop them: valgrind runs x87 long double at 53 bits, so the reference then
+// fails there with no memcheck error.
+TEST_CASE("dd_rader: c2c forward matches reference DFT", "[longdouble]") {
     for (const std::size_t N : primes) {
         CAPTURE(N);
         auto x = make_input(N);
@@ -65,7 +68,7 @@ TEST_CASE("dd_rader: c2c forward matches reference DFT") {
     }
 }
 
-TEST_CASE("dd_rader: c2c inverse matches reference DFT") {
+TEST_CASE("dd_rader: c2c inverse matches reference DFT", "[longdouble]") {
     for (const std::size_t N : primes) {
         CAPTURE(N);
         auto X = make_input(N);

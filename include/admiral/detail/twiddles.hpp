@@ -1025,16 +1025,27 @@ template<typename T>
         }
     }
 
+    // One reduced index per pass row group, computed once: the fill walks below and the
+    // sizing walk read the same ido values, and a divide per site would cost more than the
+    // rows at small sizes.
     std::size_t pass_rows[dif_factor_plan::max_passes]{};
+    std::size_t pass_ido[dif_factor_plan::max_passes]{};
     {
         std::size_t l1 = 1;
         for (std::size_t p = 0; p < np; ++p) {
             const std::size_t ip = planned[p];
+            pass_ido[p] = N / (l1 * ip);
             pass_rows[p] = (p == 0 && blocked_first) ? (ip - 1) * (bw + nb)
-                                                     : (ip - 1) * (N / (l1 * ip));
+                                                     : (ip - 1) * pass_ido[p];
             l1 *= ip;
         }
     }
+    // The tape's last step writes the output and reads only the scale and the row
+    // permutation (dif_pass_last ignores its twiddle pointers), and every fusion group
+    // stops one pass before the end, so a chain of two or more passes leaves the last
+    // pass's rows unread. A one-pass chain runs its rows through the first step, which
+    // reads them.
+    if (np >= 2) pass_rows[np - 1] = 0;
 
     std::uint32_t ip_mask = 0;
     if (fuse_packed && np >= 3) {
@@ -1074,7 +1085,7 @@ template<typename T>
             bytes += 2 * pass_rows[p] * sizeof(T) + 128;
             if (sched_st[p] == dif_fuse::f2head) {
                 const std::size_t ip1 = planned[p], ip2 = planned[p + 1u];
-                const std::size_t ido1 = N / (lf * ip1), ido2 = ido1 / ip2;
+                const std::size_t ido1 = pass_ido[p], ido2 = pass_ido[p + 1u];
                 bytes += ((ip1 - 1u) * 2u * ido1 + (ip2 - 1u) * 2u * ido2) * sizeof(T) + 64;
                 ++p;
                 pass_rows[p - 1] = 0;
@@ -1147,7 +1158,7 @@ template<typename T>
                                               memo);
                 }
             } else if (pass_rows[p] != 0) {
-                const std::size_t ido = N / (l1 * ip);
+                const std::size_t ido = pass_ido[p];
                 geom_rows_batched<T, true>(memo, l1, N, ip - 1, ido,
                                            s.passes[p].first.data(), s.passes[p].second.data(), ido);
             }
@@ -1156,7 +1167,7 @@ template<typename T>
         std::size_t lp = 1;
         for (std::size_t p = 0; p < np; ++p) {
             const std::size_t ip1 = planned[p];
-            const std::size_t ido_p = N / (lp * ip1);
+            const std::size_t ido_p = pass_ido[p];
             if (sched_st[p] == dif_fuse::f2head) {
                 // The pair's tables are never built: each packed chunk is a W-entry window of
                 // the row the plain passes would have held, written straight into the final

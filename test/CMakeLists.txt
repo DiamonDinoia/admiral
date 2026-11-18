@@ -34,6 +34,7 @@ set(ADM_TEST_SOURCES
     accuracy/test_analytical.cpp
     accuracy/test_long_double.cpp
     accuracy/test_dd_ct_catalog.cpp
+    accuracy/test_dd_rader.cpp
 )
 
 if(NOT ADM_ENABLE_THREADS)

@@ -1148,11 +1148,8 @@ template<typename T>
                 }
             } else if (pass_rows[p] != 0) {
                 const std::size_t ido = N / (l1 * ip);
-                for (std::size_t j = 1; j < ip; ++j) {
-                    geom_twiddle_row<T, true>(j * l1, N, ido,
-                                              s.passes[p].first.data() + (j - 1) * ido,
-                                              s.passes[p].second.data() + (j - 1) * ido, memo);
-                }
+                geom_rows_batched<T, true>(memo, l1, N, ip - 1, ido,
+                                           s.passes[p].first.data(), s.passes[p].second.data(), ido);
             }
             l1 *= ip;
         }

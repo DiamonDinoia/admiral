@@ -113,6 +113,88 @@ void geom_row_circle(std::size_t step, std::size_t den, std::size_t n, T* ADM_RE
 }
 #endif
 
+// w^(C - f) is an axis swap or a sign flip of w^f for one exact C per row. A row whose
+// index window closes on that complement folds one entry of each pair and derives the
+// mate from the folded entry at the same ulp. Closure needs the step to divide the den,
+// so the mate index is k0 - idx over one table period and the fill carries no divides.
+struct row_pair_map {
+    std::size_t k0 = 0, per = 0;
+    int kind = 0;
+};
+
+[[nodiscard]] ADM_ALWAYS_INLINE row_pair_map
+geom_row_pairs(std::size_t step_d, std::size_t den, std::size_t n, std::size_t i0) {
+    row_pair_map pm;
+    if (step_d == 0 || den % step_d != 0) return pm;
+    const std::size_t per = den / step_d;
+    if (i0 + n > per) return pm;
+    std::size_t C = 0;
+    if (den % 4 == 0 && (den / 4) % step_d == 0) { C = den / 4; pm.kind = 1; }
+    else if (den % 2 == 0 && (den / 2) % step_d == 0) { C = den / 2; pm.kind = 2; }
+    else { C = den; pm.kind = 3; }
+    pm.per = per;
+    pm.k0 = (C / step_d) % per;
+    const std::size_t lo = 2 * i0, hi = 2 * (i0 + n - 1);
+    const std::size_t last = i0 + n - 1;
+    for (const std::size_t s : {pm.k0, pm.k0 + per}) {
+        if (s < lo || s > hi) continue;
+        const std::size_t a = (s > last) ? (s - last) : i0;
+        const std::size_t b = (s < last + 1) ? (s - i0) : last;
+        if (b > a) return pm;
+    }
+    pm.kind = 0;
+    return pm;
+}
+
+template<bool Forward>
+[[nodiscard]] ADM_ALWAYS_INLINE std::pair<double, double>
+geom_pair_mate(int kind, double c, double s) {
+    if (kind == 1) {
+        if constexpr (Forward) return {-s, -c};
+        return {s, c};
+    }
+    if (kind == 2) return {-c, s};
+    return {c, -s};
+}
+
+// One row of table values. An entry at index 0 is exactly w^0 = (1, 0), so it needs no
+// circle state and a row of only such entries never builds a view.
+template<typename T, bool Forward, class Store>
+ADM_ALWAYS_INLINE void geom_row_small(portable_trig::turns_memo* memo, std::size_t step, std::size_t den,
+                                      std::size_t n, std::size_t i0, Store&& store) {
+    using two_row_view = portable_trig::turns_memo::two_row_view;
+    two_row_view v{};
+    row_pair_map pm;
+    bool have = false;
+    constexpr std::size_t W = xsimd::batch<T>::size;
+    const bool want_pairs = (n >= W + W / 2) && (n + n <= W + W);
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::size_t idx = i0 + i;
+        if (idx == 0) {
+            store(i, 1.0, 0.0);
+            continue;
+        }
+        if (!have) {
+            v = memo->row_view(step, den);
+            have = true;
+            if (want_pairs) pm = geom_row_pairs(v.step_d, v.den, n, i0);
+        }
+        const auto [c, s] = geom_table_entry<Forward>(memo, v, idx);
+        store(i, c, s);
+        if (pm.kind == 0) continue;
+        const std::size_t pidx = (idx <= pm.k0) ? (pm.k0 - idx) : (pm.k0 + pm.per - idx);
+        if (pidx == idx || pidx < idx || pidx >= i0 + n) continue;
+        const std::size_t pl = pidx - i0;
+        if (c == 0.0 || s == 0.0) {
+            const auto [c2, s2] = geom_table_entry<Forward>(memo, v, pidx);
+            store(pl, c2, s2);
+        } else {
+            const auto [c2, s2] = geom_pair_mate<Forward>(pm.kind, c, s);
+            store(pl, c2, s2);
+        }
+    }
+}
+
 // One row of w^(step*(i0+i)/den) from the row view: the window offset rides the anchor
 // leg only, like the wrapped rows. The fold runs in double and casts at store: the cast
 // before the vector product keeps float rows at the exact bits the scalar fill carried.
@@ -122,15 +204,14 @@ void geom_row_batched(portable_trig::turns_memo* memo, std::size_t step, std::si
                       std::size_t i0) {
     using B = xsimd::batch<T>;
     constexpr std::size_t W = B::size;
-    const auto v = memo->row_view(step, den);
     if (n < W) {
-        for (std::size_t i = 0; i < n; ++i) {
-            const auto [c, s] = geom_table_entry<Forward>(memo, v, i0 + i);
+        geom_row_small<T, Forward>(memo, step, den, n, i0, [&](std::size_t i, double c, double s) {
             re[i] = static_cast<T>(c);
             im[i] = static_cast<T>(s);
-        }
+        });
         return;
     }
+    const auto v = memo->row_view(step, den);
     alignas(B::arch_type::alignment()) T seed_re[W], seed_im[W];
     for (std::size_t l = 0; l < W; ++l) {
         const auto [c, s] = geom_table_entry<Forward>(memo, v, l);
@@ -161,14 +242,13 @@ void geom_row_batched_packed(portable_trig::turns_memo* memo, std::size_t step,
                              std::complex<T>* ADM_RESTRICT out) {
     using B = xsimd::batch<T>;
     constexpr std::size_t W = B::size;
-    const auto v = memo->row_view(step, den);
     if (n < W) {
-        for (std::size_t i = 0; i < n; ++i) {
-            const auto [cre, cim] = geom_table_entry<Forward>(memo, v, i);
-            out[i] = std::complex<T>(static_cast<T>(cre), static_cast<T>(cim));
-        }
+        geom_row_small<T, Forward>(memo, step, den, n, 0, [&](std::size_t i, double c, double s) {
+            out[i] = std::complex<T>(static_cast<T>(c), static_cast<T>(s));
+        });
         return;
     }
+    const auto v = memo->row_view(step, den);
     alignas(B::arch_type::alignment()) T seed_re[W], seed_im[W];
     for (std::size_t l = 0; l < W; ++l) {
         const auto [c, s] = geom_table_entry<Forward>(memo, v, l);
@@ -197,6 +277,24 @@ void geom_row_batched_packed(portable_trig::turns_memo* memo, std::size_t step,
     }
 }
 
+// One call per pass block; each row keeps the full wrapper routing (memo fold, baked
+// circle, or fallback) exactly as a per-row build would.
+template<typename T, bool Forward>
+void geom_twiddle_row(std::size_t step, std::size_t den, std::size_t n,
+                      T* ADM_RESTRICT re, T* ADM_RESTRICT im,
+                      portable_trig::turns_memo* memo = nullptr, std::size_t i0 = 0);
+
+template<typename T, bool Forward>
+void geom_rows_batched(portable_trig::turns_memo* memo, std::size_t l1, std::size_t den,
+                       std::size_t rows, std::size_t n,
+                       T* ADM_RESTRICT re, T* ADM_RESTRICT im, std::size_t stride) {
+    for (std::size_t j = 1; j <= rows; ++j) {
+        geom_twiddle_row<T, Forward>(j * l1, den, n,
+                                     re + (j - 1) * stride, im + (j - 1) * stride, memo);
+    }
+}
+
+
 // Power-of-two dens (up to kPow2CircleDen) read the baked circle per entry instead of a
 // per-plan memo build: keep the wrapped rows there. Guard mirrors sincos_turns' branch
 // window; smells like duplication, but the wrapper gates on ld_full_precision() too and
@@ -214,7 +312,7 @@ void geom_row_batched_packed(portable_trig::turns_memo* memo, std::size_t step,
 template<typename T, bool Forward>
 void geom_twiddle_row(std::size_t step, std::size_t den, std::size_t n,
                       T* ADM_RESTRICT re, T* ADM_RESTRICT im,
-                      portable_trig::turns_memo* memo = nullptr, std::size_t i0 = 0) {
+                      portable_trig::turns_memo* memo, std::size_t i0) {
     using B = xsimd::batch<T>;
     constexpr std::size_t W = B::size;
 

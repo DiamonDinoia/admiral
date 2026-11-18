@@ -231,7 +231,12 @@ for t in json.load(sys.stdin)["tests"]:
             ok=0
         fi
     fi
-    ((ok == 1)) || { echo "  FAILED: ctest WILL_FAIL metadata (see $log)"; failed+=("valgrind"); return; }
+    ((ok == 1)) || { echo "  FAILED: ctest WILL_FAIL metadata (see $log)"; failed+=(valgrind); return; }
+    # The ctest registrations are the contract for what runs. The glob below also walks
+    # binaries ctest does not register (an ARCH_GATE poison twin where its dialect is off),
+    # and running one of those breaks the ran/expected count at its source.
+    local -A ctest_bins=()
+    for t in $all_bins; do ctest_bins[$t]=1; done
     # A WILL_FAIL test's name is its binary's basename (add_test(NAME test_x COMMAND test_x)).
     local -A wffail=()
     local t ran=0
@@ -239,28 +244,37 @@ for t in json.load(sys.stdin)["tests"]:
     # test_alloc replaces global operator new/delete; valgrind redirects the same symbols
     # and the counter misreads (6f130b4). CI's valgrind job skips it the same way.
     local memcheck_skips=' test_long_double test_alloc '
-    # valgrind runs x87 long double at 53 bits, so two test_ulp cases that compare against an
-    # exact long-double reference fail there with no memcheck error: the c2r case (bound is 64
-    # long-double epsilons) and the factored-reference case (pure long-double arithmetic).
-    local -A memcheck_filter=([test_ulp]='~[longdouble]~"ULP: c2r*"~"ULP: the factored*"')
+    # valgrind runs x87 long double at 53 bits, so test cases that compare against an exact
+    # long-double reference fail there with no memcheck error: two test_ulp cases (the c2r
+    # case, bound 64 long-double epsilons, and the factored-reference case, pure long-double
+    # arithmetic) and test_dd_rader's cases, which carry [longdouble] for the same reason.
+    local -A memcheck_filter=([test_ulp]='~[longdouble]~"ULP: c2r*"~"ULP: the factored*"'
+                              [test_dd_rader]='~[longdouble]')
     for t in $wf_names; do wffail[$t]=1; done
     if ((${#wffail[@]} > 0)); then
         local -a wf_sorted
         mapfile -t wf_sorted < <(printf '%s\n' "${!wffail[@]}" | LC_ALL=C sort)
         echo "  WILL_FAIL excluded (ctest metadata): ${wf_sorted[*]}" | tee -a "$log"
     fi
+    local zero_ok=''
     for bin in "$dir"/test/test_*; do
         [[ -x $bin && ! -d $bin ]] || continue
         [[ $memcheck_skips == *" $(basename "$bin") "* ]] && continue
         [[ -n ${wffail[$(basename "$bin")]:-} ]] &&
             { echo "  skip (WILL_FAIL): $(basename "$bin")" | tee -a "$log"; continue; }
+        [[ -n ${ctest_bins[$(basename "$bin")]:-} ]] ||
+            { echo "  skip (not in ctest): $(basename "$bin")" | tee -a "$log"; continue; }
         echo "--- $(basename "$bin")" >>"$log"
         # This loop walks the binaries directly, so ctest's --timeout never reaches them.
         # Valgrind serialises threads and costs 50-100x, so a deadlocked binary never returns.
         # Slowest measured binary is test_threads at 642 s (ccmlin075, 22 binaries, 2026-09-12).
+        # test_dd_rader is [longdouble] end to end, so the filter leaves it no case and
+        # Catch2 exits 2 (the no-match code); allow that outcome for this binary.
+        zero_ok=''
+        [[ $(basename "$bin") == test_dd_rader ]] && zero_ok=--allow-running-no-tests
         timeout 1800 valgrind --error-exitcode=1 --errors-for-leak-kinds=definite \
             --leak-check=full \
-            "$bin" "${memcheck_filter[$(basename "$bin")]:-~[longdouble]}" >>"$log" 2>&1
+            "$bin" $zero_ok "${memcheck_filter[$(basename "$bin")]:-~[longdouble]}" >>"$log" 2>&1
         vrc=$?
         ((vrc == 124)) && echo "  TIMEOUT after 1800s: $(basename "$bin")" >>"$log"
         ((vrc == 0)) || { echo "  ERRORS: $(basename "$bin")$( ((vrc == 124)) && printf ' (timeout)')"; tail -n 40 "$log"; rc=1; }

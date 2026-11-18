@@ -34,6 +34,8 @@ public:
     // largest input.
     template<bool forward>
     void execute(std::complex<T>* x, T fct, std::size_t div, thread_pool* pool) const {
+        // The constructor engages inner_; the guard keeps the two accesses below checked.
+        if (!inner_.has_value()) return;
         const dd_grid g(ld_max_exponent(x, p_), p_, fct, 0, div);
         const std::size_t nb = (L_ + kDdW - 1) / kDdW;
         auto z_sc = make_aligned_buffer<double>(nb * kDdElem);

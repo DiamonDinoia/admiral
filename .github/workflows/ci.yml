@@ -296,7 +296,9 @@ jobs:
                       /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
       # The arm skips the WILL_FAIL binaries by ctest metadata and runs each other binary directly,
-      # so one timeout per binary replaces ctest's.
+      # so one timeout per binary replaces ctest's. It filters ~[longdouble]: valgrind runs x87
+      # long double at 53 bits, so an exact long-double reference fails there with no memcheck
+      # error (the test_ulp c2r and factored cases, and test_dd_rader's cases).
       - name: Memcheck
         run: scripts/validate.sh valgrind
         env: {CXX: g++-14, ADM_VALIDATE_JOBS: 2}

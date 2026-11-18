@@ -1191,7 +1191,7 @@ public:
                 std::fill_n(x, n_, std::complex<T>(nan, nan));
                 return;
             }
-            rader_->template execute<forward>(x, fct / T(div), 0, pool);
+            rader_->template execute<forward>(x, fct, div, pool);
             return;
         }
         const unsigned emax = ld_max_exponent(x, n_);

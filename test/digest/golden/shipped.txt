@@ -2,48 +2,48 @@
    1 f32 2xI                          5ab210afa75d700a
    2 f32 3xF                          7b87511cf6671dff
    3 f32 3xI                          b8bf5433918738e3
-   4 f32 4xF                          ec32e17e4defe095
-   5 f32 4xI                          9b34fc82a24c68f1
+   4 f32 4xF                          d288ef68d59f2442
+   5 f32 4xI                          86b661e82b7c5a42
    6 f32 5xF                          703bbd494b862579
    7 f32 5xI                          cafe8aaf29b3ea1d
    8 f32 6xF                          c4add588b95a0979
    9 f32 6xI                          93717b7b16bd30ac
   10 f32 7xF                          04f88f3aa8229a2c
   11 f32 7xI                          5abffb9fb5aeb5c2
-  12 f32 8xF                          c25d2648f7b2ab95
-  13 f32 8xI                          5898b88a7968886e
+  12 f32 8xF                          8812b5b8503c6124
+  13 f32 8xI                          06db63f7f7318e7a
   14 f32 9xF                          8ee5637ef00a6a2a
   15 f32 9xI                          22e37aabb6729ee2
-  16 f32 10xF                         2289cf02d5f9ae7e
-  17 f32 10xI                         f1e892f4b2fa38c5
-  18 f32 11xF                         11a07ba9a07883e9
-  19 f32 11xI                         3f46dfe37106a8e5
-  20 f32 12xF                         873c409e5e9a213f
-  21 f32 12xI                         8b967fc3608bd7b2
+  16 f32 10xF                         9390ae761baa98dc
+  17 f32 10xI                         850a2efe75639a6b
+  18 f32 11xF                         350e9890a2ae7106
+  19 f32 11xI                         07b0b5ac3ed17b9e
+  20 f32 12xF                         9036252040c2c9de
+  21 f32 12xI                         bf6d33b0475d6374
   22 f32 13xF                         4eff25546815191c
   23 f32 13xI                         b864ddba475b203e
   24 f32 14xF                         faffa155607045d2
   25 f32 14xI                         425e32797d738b83
   26 f32 15xF                         e91fbd01de6bdc4e
   27 f32 15xI                         5015db860842f845
-  28 f32 16xF                         4790d5926839401b
-  29 f32 16xI                         4b716f6698978259
-  30 f32 17xF                         5ab185e658c7b1f3
-  31 f32 17xI                         5aeb5a034222b3ac
+  28 f32 16xF                         6a97042364fd6a6d
+  29 f32 16xI                         bc11401579df2e4b
+  30 f32 17xF                         64e139608040450a
+  31 f32 17xI                         7f09c5d0d97f413d
   32 f32 18xF                         9d9008ef4624d0f1
   33 f32 18xI                         0ac710af3f4edbfb
-  34 f32 19xF                         9ccb25cfcd59ac87
-  35 f32 19xI                         ca4d1282e5673d31
+  34 f32 19xF                         5406b561a0ce9543
+  35 f32 19xI                         48c0893848b75bc9
   36 f32 20xF                         29d69119d60f2b04
   37 f32 20xI                         1418a4e177a5c3e9
   38 f32 21xF                         21129763f025fea9
   39 f32 21xI                         22d2aa8957255542
   40 f32 22xF                         aa952c5663e28add
   41 f32 22xI                         033703e5f0851e2a
-  42 f32 23xF                         55feb398d22dc5df
-  43 f32 23xI                         11f4c39afa4e9d59
-  44 f32 24xF                         f3f221c1852f82e3
-  45 f32 24xI                         ddc9d8ed6434829b
+  42 f32 23xF                         16967ef200f4ffca
+  43 f32 23xI                         44e52cb0d44a74b2
+  44 f32 24xF                         1dcace83f288ce9e
+  45 f32 24xI                         aeca3283ad8d8636
   46 f32 25xF                         a69e5376a41c0586
   47 f32 25xI                         f941dc97e079dd89
   48 f32 26xF                         2240176a1b290b2e
@@ -56,10 +56,10 @@
   55 f32 29xI                         433ca14df22382db
   56 f32 30xF                         6186756a39244817
   57 f32 30xI                         129d0756f3aa4c86
-  58 f32 31xF                         d22bff89322e51b3
-  59 f32 31xI                         c952db9f9d3fa1f4
-  60 f32 32xF                         86893e8d4119ed12
-  61 f32 32xI                         4d9d4264f7919040
+  58 f32 31xF                         4cc5d2b178a5a07a
+  59 f32 31xI                         7bddcee2380454e2
+  60 f32 32xF                         f9555d274c96ac2a
+  61 f32 32xI                         a5426785f5777f28
   62 f32 33xF                         c464ee571f1767d9
   63 f32 33xI                         67c99a503d8e598b
   64 f32 34xF                         8fe6a162af9c505d
@@ -80,8 +80,8 @@
   79 f32 41xI                         b917ff7facee412e
   80 f32 42xF                         60e9ef4b10d616d7
   81 f32 42xI                         4daa67b0f7e0f208
-  82 f32 43xF                         9ede24f31fd5db27
-  83 f32 43xI                         0f350bee052c0082
+  82 f32 43xF                         47cf4cc115c58f09
+  83 f32 43xI                         51da74912f14501b
   84 f32 44xF                         9e14a7f93666e8b3
   85 f32 44xI                         0b4d6e898c1d3d73
   86 f32 45xF                         b645776090e84f1b
@@ -105,8 +105,8 @@
  104 f32 54xF                         7f1b452a93865ae8
  105 f32 54xI                         eb791cbe42b00c55
  106 f32 55xF                         e540a085abb572b5
- 107 f32 55xI                         561041e133d09ae9
- 108 f32 56xF                         95cb3a72b94910bb
+ 107 f32 55xI                         3f885d47fd5f540b
+ 108 f32 56xF                         619160f17a44b90b
  109 f32 56xI                         2106a16c5b779b4a
  110 f32 57xF                         496b888deffea043
  111 f32 57xI                         c6c7bc6915bc2821
@@ -118,8 +118,8 @@
  117 f32 60xI                         911e4f60006b9d0f
  118 f32 61xF                         81d88e19ac7c3536
  119 f32 61xI                         3ef83f4d7dc31ef8
- 120 f32 62xF                         1e2fa11caea5317b
- 121 f32 62xI                         c6515bf7d238d4ae
+ 120 f32 62xF                         29dd344ca88b3343
+ 121 f32 62xI                         b17f4eae1afebb5f
  122 f32 63xF                         4876911e66386ce1
  123 f32 63xI                         02e69154d651757c
  124 f32 64xF                         b6d6c7babf8fdc15
@@ -138,12 +138,12 @@
  137 f32 70xI                         dad55e7276f4608e
  138 f32 71xF                         c4dc5c9125a62111
  139 f32 71xI                         f6c064fa991cbdb4
- 140 f32 72xF                         5a51a569070c459f
- 141 f32 72xI                         f0309f062f7be4d2
- 142 f32 73xF                         6e839441f8118b61
- 143 f32 73xI                         cdf195f1590a5375
- 144 f32 74xF                         f99cff12332c3605
- 145 f32 74xI                         002b2bfe9cc302a4
+ 140 f32 72xF                         f64dfab8b6500e06
+ 141 f32 72xI                         3333d2c1ac8d59d0
+ 142 f32 73xF                         459f69a4179c6b69
+ 143 f32 73xI                         0b2ba419e8f7b598
+ 144 f32 74xF                         ee0b94605010a3ee
+ 145 f32 74xI                         256ad9b82a928199
  146 f32 75xF                         86ee1a4466082488
  147 f32 75xI                         835045a68cb69417
  148 f32 76xF                         1eaab927a6f6b38c
@@ -154,38 +154,38 @@
  153 f32 78xI                         9443ab409875160c
  154 f32 79xF                         27e2a7ee714f444b
  155 f32 79xI                         0e2e88f58b258270
- 156 f32 80xF                         bab630351045455f
- 157 f32 80xI                         f18d55bb070935f4
+ 156 f32 80xF                         6084c573ed5eed6d
+ 157 f32 80xI                         55ac17c2f9f25ff2
  158 f32 81xF                         5ee0d7b9cc04f0f6
  159 f32 81xI                         f8bf1f5188cf62ad
- 160 f32 82xF                         13247ad159e5f9f7
- 161 f32 82xI                         2df92b1ab53b5205
- 162 f32 83xF                         6f4ff4b22b64fa77
- 163 f32 83xI                         47588044270c088d
+ 160 f32 82xF                         6980c2054bd3a359
+ 161 f32 82xI                         007705ea1097ad61
+ 162 f32 83xF                         c17acea2c71657eb
+ 163 f32 83xI                         439d3501d0a9a8bc
  164 f32 84xF                         6934aa6f601f723f
  165 f32 84xI                         033e8bcfba3d0a88
  166 f32 85xF                         4d71730c5fd92daf
  167 f32 85xI                         71b283bb430a5af0
- 168 f32 86xF                         b51b1e0e94ffa770
- 169 f32 86xI                         8d31d4869dcf1798
- 170 f32 87xF                         de1af6f12b541546
- 171 f32 87xI                         0968cd1f5715736b
- 172 f32 88xF                         de4be66e62bbdb28
- 173 f32 88xI                         9ce46cb22f9f03ac
- 174 f32 89xF                         b0e01ff0daf16d3b
- 175 f32 89xI                         fb0482d36453a9f0
+ 168 f32 86xF                         daeb33a55532c1ab
+ 169 f32 86xI                         9eb935d3c4208ece
+ 170 f32 87xF                         3dc2041ecd3dca69
+ 171 f32 87xI                         fb3eb2cdae9004b4
+ 172 f32 88xF                         1d1f262f3e1e9c17
+ 173 f32 88xI                         2d004e02baf16e83
+ 174 f32 89xF                         5577eb8edbfaf8f7
+ 175 f32 89xI                         fa427f99d46bd53a
  176 f32 90xF                         b44cc0e18663b63a
  177 f32 90xI                         d124bd504057cce6
- 178 f32 91xF                         95e072e55a03c3b6
- 179 f32 91xI                         a2fe919182a021ae
+ 178 f32 91xF                         0b3e5afae0e8e6ee
+ 179 f32 91xI                         74cdafe6ea98db83
  180 f32 92xF                         57855ccae6fa921f
  181 f32 92xI                         ef0063b5a05239ad
- 182 f32 93xF                         45dfa001826be59e
- 183 f32 93xI                         7f4a1ef5b0dfc291
- 184 f32 94xF                         3e69541eba39e492
- 185 f32 94xI                         3380495648d3a689
- 186 f32 95xF                         9c0630bcfbdeb1ea
- 187 f32 95xI                         787f5f5d393a81c0
+ 182 f32 93xF                         ccd1494ca2addd8c
+ 183 f32 93xI                         6f29c5d23958504f
+ 184 f32 94xF                         4fa7ce84ac3a8dd7
+ 185 f32 94xI                         174978febffd4820
+ 186 f32 95xF                         8154ca02c270650b
+ 187 f32 95xI                         42af828f28154f3a
  188 f32 96xF                         db8309cd66c07c0b
  189 f32 96xI                         4c722b11447bdd46
  190 f32 97xF                         882d5b3991a17da2
@@ -200,48 +200,48 @@
  199 f32 101xI                        8c0fe0cefd7a5a76
  200 f32 102xF                        ba47a1c187e84f93
  201 f32 102xI                        fec2bedb424721be
- 202 f32 103xF                        07fb44952de8dcb4
- 203 f32 103xI                        32b81a6198b70858
+ 202 f32 103xF                        5ba99dd9283105fb
+ 203 f32 103xI                        e16ba2bbe4125a05
  204 f32 104xF                        c9ddb4ad4072e046
  205 f32 104xI                        aeb51c0d92e55a33
  206 f32 105xF                        a43a67ed23626f39
  207 f32 105xI                        30c08aece9883b9e
- 208 f32 106xF                        e0360fbd4e047d88
- 209 f32 106xI                        15965380b2118cc6
- 210 f32 107xF                        188db0c8c352dfe0
- 211 f32 107xI                        98c7354cf77cafd9
+ 208 f32 106xF                        12e30bc113eeed58
+ 209 f32 106xI                        ac836cff20185af7
+ 210 f32 107xF                        aba0076bae40148a
+ 211 f32 107xI                        86dbdd03254f556d
  212 f32 108xF                        1f61eea8a5e63050
  213 f32 108xI                        687286c10b7bd11c
  214 f32 109xF                        1d35ff0986c0de1c
  215 f32 109xI                        a4b6079122a1c628
  216 f32 110xF                        9b03f34fe669aab0
  217 f32 110xI                        467652e6400e4113
- 218 f32 111xF                        ccb58387d6fd8ca8
- 219 f32 111xI                        b3b898da949b9004
+ 218 f32 111xF                        533c8fcb7904c91b
+ 219 f32 111xI                        e9c8d73f785c0d7d
  220 f32 112xF                        bc7483e7ee17d485
  221 f32 112xI                        76ca7184ca882b55
  222 f32 113xF                        d231e4ee518462ba
  223 f32 113xI                        509d46e688a178dd
  224 f32 114xF                        93ecb53a8e788fdd
  225 f32 114xI                        945cc0d66f9000d2
- 226 f32 115xF                        5deda1aab7d760f3
- 227 f32 115xI                        f9b4a139197de67d
+ 226 f32 115xF                        4ffd49fde24d996f
+ 227 f32 115xI                        8fe070744845a7af
  228 f32 116xF                        ad6741876afab5d6
  229 f32 116xI                        0fafc805da36a879
  230 f32 117xF                        a9e0189554dcae9d
  231 f32 117xI                        42f5d78b74b555fc
- 232 f32 118xF                        5ed20a0fdf22aabc
- 233 f32 118xI                        7e3df0a95f666a28
- 234 f32 119xF                        8f428424e03e2865
- 235 f32 119xI                        6a5da0d8b4c632bc
- 236 f32 120xF                        338b851a240dd15c
- 237 f32 120xI                        3c9150e4634684e2
+ 232 f32 118xF                        6b46c9f1095acc28
+ 233 f32 118xI                        8870441cd84d505e
+ 234 f32 119xF                        1db6feeafaba22f8
+ 235 f32 119xI                        4aa165c2dc24868a
+ 236 f32 120xF                        fceffe896a4dd226
+ 237 f32 120xI                        b85b4b698d99f8bf
  238 f32 121xF                        1863983d7edd19b8
  239 f32 121xI                        738edfa0a988958c
- 240 f32 122xF                        a3a85b490764dfcf
- 241 f32 122xI                        e251284a5464693c
- 242 f32 123xF                        ba3cb51b2a05f7ba
- 243 f32 123xI                        ba7fb4382108577a
+ 240 f32 122xF                        47de667b8668e3ec
+ 241 f32 122xI                        5eeca1fca91bbb04
+ 242 f32 123xF                        a122d86dd7c78223
+ 243 f32 123xI                        6560ca3df1bb9b38
  244 f32 124xF                        e9ee24ad39418777
  245 f32 124xI                        78fa54a9e3e416c4
  246 f32 125xF                        bdc97c34164f83cf
@@ -268,12 +268,12 @@
  267 f32 135xI                        f9adec49b62e47f6
  268 f32 136xF                        8a1996d964b74dab
  269 f32 136xI                        082ac4f040711d76
- 270 f32 137xF                        480dfae8cae881fa
- 271 f32 137xI                        4c73ac7afcbab624
+ 270 f32 137xF                        b623c3195898b8f8
+ 271 f32 137xI                        c8332f52b6fe569a
  272 f32 138xF                        b259eb0e9296be9c
  273 f32 138xI                        8753082ce6c755f5
- 274 f32 139xF                        063a90852d5034f0
- 275 f32 139xI                        eb46c57b78169212
+ 274 f32 139xF                        1545eca47db70a18
+ 275 f32 139xI                        4d4b3150ad551043
  276 f32 140xF                        f4f2f36b00867635
  277 f32 140xI                        1dd83918fb7b2919
  278 f32 141xF                        67c8227a72879b5c
@@ -282,12 +282,12 @@
  281 f32 142xI                        868387f8ae93b83e
  282 f32 143xF                        c49ea78be338be39
  283 f32 143xI                        c79bbe8e3f83903e
- 284 f32 144xF                        c858a31d30cfb0e7
- 285 f32 144xI                        6d1f2d23871a81c0
- 286 f32 145xF                        50269a02c2e4fdbc
- 287 f32 145xI                        ff1d2343b4466421
- 288 f32 146xF                        08c418c0667514da
- 289 f32 146xI                        1477c1a0ec34727b
+ 284 f32 144xF                        ec8194148b0ad140
+ 285 f32 144xI                        b9d9ffe5ea1e6a50
+ 286 f32 145xF                        72d552a330822fee
+ 287 f32 145xI                        3120380a1068045b
+ 288 f32 146xF                        6a19594900667ce8
+ 289 f32 146xI                        dc7cd69548acf88b
  290 f32 147xF                        2de696d2a56fde5b
  291 f32 147xI                        3401c61f90f28cb2
  292 f32 148xF                        efdc38840df31b84
@@ -304,19 +304,19 @@
  303 f32 153xI                        674b560e2b31ace2
  304 f32 154xF                        d815cbbacdef7fd4
  305 f32 154xI                        b6379435625da37d
- 306 f32 155xF                        800cab941e222927
- 307 f32 155xI                        6cc06aa76eb83f5c
+ 306 f32 155xF                        82d7cd074f1200f6
+ 307 f32 155xI                        2c579ed3429bd762
  308 f32 156xF                        fed8eba5fc51bc15
  309 f32 156xI                        ebb432636c5679d9
- 310 f32 157xF                        2471ea2cf4ab24ac
- 311 f32 157xI                        645541e211e84fd9
- 312 f32 158xF                        a923a3d88c9700a4
- 313 f32 158xI                        11738e5455aaf249
+ 310 f32 157xF                        5e2fbbe9d6d18c4c
+ 311 f32 157xI                        d9618cac1d794803
+ 312 f32 158xF                        169fad15809f1729
+ 313 f32 158xI                        3bc3ed0b1eb054f2
  314 f32 159xF                        6f72becfeecf4537
  315 f32 159xI                        aa4f0be5f65cd834
  316 f32 160xF                        25447f89745440e6
  317 f32 160xI                        ce8609e2cc1ab6c0
- 318 f32 161xF                        3dcda30bbaf85835
+ 318 f32 161xF                        9b49b5ebdd5f3fac
  319 f32 161xI                        33384e7ca13bac2e
  320 f32 162xF                        5984682807faaae3
  321 f32 162xI                        1085b17400794765
@@ -326,64 +326,64 @@
  325 f32 164xI                        b41736e73e3a09bd
  326 f32 165xF                        d3a8bfb118965241
  327 f32 165xI                        d1a8b91802bcead8
- 328 f32 166xF                        10f99dcbe155ca67
- 329 f32 166xI                        16f48e338423da34
- 330 f32 167xF                        a19b727068767330
- 331 f32 167xI                        c47e35d93d8ed0c0
+ 328 f32 166xF                        5d6e343310c7891f
+ 329 f32 166xI                        a85dab7348d114f6
+ 330 f32 167xF                        78b313dd63e3bd73
+ 331 f32 167xI                        9bbf69056a76ca9e
  332 f32 168xF                        6cd593ae54582489
  333 f32 168xI                        bb01cba5a35bf28b
- 334 f32 169xF                        dd708aaa234a6292
- 335 f32 169xI                        8e763656d3a0d39f
+ 334 f32 169xF                        1ba6034d123e121f
+ 335 f32 169xI                        c868f9af958f6486
  336 f32 170xF                        7787b2a5e9ddb33d
  337 f32 170xI                        d67738ec0776cfd1
  338 f32 171xF                        6ed1a5f783106469
  339 f32 171xI                        cd6f27a89b3354ae
  340 f32 172xF                        4070a60c8b443915
  341 f32 172xI                        73e17d770b9ef2dc
- 342 f32 173xF                        87e863b42ef96885
- 343 f32 173xI                        fa4a8123a5e62906
+ 342 f32 173xF                        ab316d78a3576c63
+ 343 f32 173xI                        75b61b78c3feff9a
  344 f32 174xF                        3fcff9073b6ce528
  345 f32 174xI                        f9a20457283569a8
  346 f32 175xF                        de58de8014ae02ba
  347 f32 175xI                        02b063af13dd8a9b
  348 f32 176xF                        187e24e989b2885b
  349 f32 176xI                        114076113231179b
- 350 f32 177xF                        47856342f11573a7
- 351 f32 177xI                        6fd48a071a8c1139
- 352 f32 178xF                        9c47c6e69a026eb1
- 353 f32 178xI                        1cc7a99e9687c27a
- 354 f32 179xF                        64aa74fa127e9979
- 355 f32 179xI                        c7a6227cb43687b7
+ 350 f32 177xF                        8225aacb69e769ad
+ 351 f32 177xI                        9da9be5730833079
+ 352 f32 178xF                        dfce6fef1d31664b
+ 353 f32 178xI                        8227d385a8149abb
+ 354 f32 179xF                        f400e39baa9ebc37
+ 355 f32 179xI                        3b90486b2aa2009b
  356 f32 180xF                        f40fb1765c2aef2f
  357 f32 180xI                        bbf44a093545ab7f
  358 f32 181xF                        6bc4b6f98e21c9ac
  359 f32 181xI                        594f1e54fbaa53b1
  360 f32 182xF                        2317f3229752e060
  361 f32 182xI                        85abae147afaf3fa
- 362 f32 183xF                        0428d3af69989179
- 363 f32 183xI                        ccb1b1111a17db5a
+ 362 f32 183xF                        5b5de77071ec6076
+ 363 f32 183xI                        39a19755c5a78a56
  364 f32 184xF                        7184de33f6fc89d5
  365 f32 184xI                        4c3db875abaaac52
- 366 f32 185xF                        afa7edece1958953
- 367 f32 185xI                        c3cd567a95a7ad8a
+ 366 f32 185xF                        e18d88a6deaef227
+ 367 f32 185xI                        3943deb54d02877a
  368 f32 186xF                        38a254ecc78d62be
  369 f32 186xI                        eb54c1fc7638c0cc
- 370 f32 187xF                        ac423bd2b9be01c9
- 371 f32 187xI                        e6ac869f26c0c54d
- 372 f32 188xF                        884dda86783ebd61
- 373 f32 188xI                        ef5d9440159efa23
+ 370 f32 187xF                        025ffbb840e822f7
+ 371 f32 187xI                        ae4dbf918868376c
+ 372 f32 188xF                        e34698440efddb89
+ 373 f32 188xI                        36a2e90061a82283
  374 f32 189xF                        6dde0333e0fa1b17
  375 f32 189xI                        b52cefd5b82575b3
  376 f32 190xF                        279ad91b64413d38
  377 f32 190xI                        08c9a67fee5f9e35
  378 f32 191xF                        fd4bd22c1ee2ae19
- 379 f32 191xI                        a12da2595e837a38
+ 379 f32 191xI                        83737958e7b88e44
  380 f32 192xF                        cc56545148083c67
  381 f32 192xI                        817b1aa02d944222
  382 f32 193xF                        3d2359625acea6e0
  383 f32 193xI                        797577d2b1921bd8
- 384 f32 194xF                        d325c4b73917e74b
- 385 f32 194xI                        af4da6d06c4acc6e
+ 384 f32 194xF                        49bbcdb7e21d6683
+ 385 f32 194xI                        0f2ccedf2f99d01e
  386 f32 195xF                        2e5193660a837178
  387 f32 195xI                        05064c3c5a2d6d67
  388 f32 196xF                        c6fef20c34058e87
@@ -394,86 +394,86 @@
  393 f32 198xI                        768f441f8ab7f6a9
  394 f32 199xF                        3fbf1763a8a3f806
  395 f32 199xI                        3f727dd93c884dd9
- 396 f32 200xF                        c2912a6e88506183
- 397 f32 200xI                        1fa4201e390ecc01
- 398 f32 201xF                        7eaf4ec879709421
- 399 f32 201xI                        1956a4c11dfd6849
- 400 f32 202xF                        e2e4abdf4607ae21
- 401 f32 202xI                        92fdc743bcc3261e
- 402 f32 203xF                        a5a6cc54a66656be
- 403 f32 203xI                        4ea7a425aa0d8d43
+ 396 f32 200xF                        f87f6d2d598d8564
+ 397 f32 200xI                        3859d054651c7180
+ 398 f32 201xF                        b0e42b8fea0a648f
+ 399 f32 201xI                        7af9f0b21a620b2c
+ 400 f32 202xF                        507c0158641229b9
+ 401 f32 202xI                        cf00040f40f738e6
+ 402 f32 203xF                        3396a597d09b213d
+ 403 f32 203xI                        ede380e9a8c90f18
  404 f32 204xF                        dbd34ff4d1fb6944
  405 f32 204xI                        927ccee3ae21ad22
- 406 f32 205xF                        7d78ee63f81e88e8
- 407 f32 205xI                        62a3842c9aece61d
- 408 f32 206xF                        ecfb31de5884f516
- 409 f32 206xI                        bfe842ac82b83903
+ 406 f32 205xF                        003b749b6602285f
+ 407 f32 205xI                        8a4e48128e8d1838
+ 408 f32 206xF                        232e887b6d8808bf
+ 409 f32 206xI                        76e8d311d234b47f
  410 f32 207xF                        10600e9074007db3
  411 f32 207xI                        b022eb5f1cd4d3ce
- 412 f32 208xF                        58349ad78add9345
- 413 f32 208xI                        45c6d1f6b740fb4d
- 414 f32 209xF                        7425b6b9cf1faa9b
- 415 f32 209xI                        755c73a8f635f893
+ 412 f32 208xF                        a5658c32a6df6c7b
+ 413 f32 208xI                        7c69be155362a50d
+ 414 f32 209xF                        5ed80cab6d982d04
+ 415 f32 209xI                        e2a3a2d01d22aa6e
  416 f32 210xF                        a7fea359a098eb5e
  417 f32 210xI                        746cd5216830451a
  418 f32 211xF                        b0207a1f2160486d
  419 f32 211xI                        75e70044594a79e2
- 420 f32 212xF                        85144215baf3b429
- 421 f32 212xI                        ae220fa59af3308c
- 422 f32 213xF                        43d33ea48a83a690
- 423 f32 213xI                        498bf329985b478b
- 424 f32 214xF                        1a07265614284be7
- 425 f32 214xI                        21856690a0c56fe8
- 426 f32 215xF                        eedf25d4cdbf138d
- 427 f32 215xI                        7de0d65a49453171
- 428 f32 216xF                        c793265c12206f28
- 429 f32 216xI                        1c62b7c33bf3921e
- 430 f32 217xF                        b29755a094dd09e8
- 431 f32 217xI                        90e3482440dbbaa0
- 432 f32 218xF                        89f5c020856499c7
- 433 f32 218xI                        5d69871b1e8fc1a4
- 434 f32 219xF                        1dd03b8f45c59777
- 435 f32 219xI                        b7651fa552980391
+ 420 f32 212xF                        23c6007d38798598
+ 421 f32 212xI                        338c27c6069caf5f
+ 422 f32 213xF                        d48c0e5b91cc65be
+ 423 f32 213xI                        2cb0c6669d808445
+ 424 f32 214xF                        2a9e7fe91cc1a881
+ 425 f32 214xI                        c028383fb92e2fe8
+ 426 f32 215xF                        5af772c6025c0d7b
+ 427 f32 215xI                        ac8e9d172d5582a2
+ 428 f32 216xF                        88793f071359d1f1
+ 429 f32 216xI                        546c9ee8b22d3045
+ 430 f32 217xF                        6530afd0e12b8c67
+ 431 f32 217xI                        4f9590a91de8435b
+ 432 f32 218xF                        4cec505aeb2c9fd6
+ 433 f32 218xI                        9823904b5e2d5f37
+ 434 f32 219xF                        f6edbdac38ae4b60
+ 435 f32 219xI                        1f2ec7ae6b40ed8b
  436 f32 220xF                        a6c7db97f7e1285c
  437 f32 220xI                        5482d537bc68a9fa
- 438 f32 221xF                        f7fa14cbdbbe810c
- 439 f32 221xI                        b2d6dd5ffa092929
+ 438 f32 221xF                        337a124be670bd6e
+ 439 f32 221xI                        30ad26e6bc9ffa36
  440 f32 222xF                        e38c1554ccd4ac55
  441 f32 222xI                        a3affe76547d7c01
- 442 f32 223xF                        9f137451a7a266af
- 443 f32 223xI                        713ef2040b5dd718
+ 442 f32 223xF                        b3ccf0d48ccf39ef
+ 443 f32 223xI                        95b39bdfc31c0e25
  444 f32 224xF                        26ca56c7379095b6
  445 f32 224xI                        866357f693db5525
  446 f32 225xF                        33c86bccd9d01caa
  447 f32 225xI                        97d2ac24634ff61e
- 448 f32 226xF                        461db8054a1857e0
- 449 f32 226xI                        c18b704b57d0dac1
- 450 f32 227xF                        6d2b8347d9b082d7
- 451 f32 227xI                        f0d6bc987f0e7c21
- 452 f32 228xF                        73ec6c282fa3476a
+ 448 f32 226xF                        7f5e1540d359f68c
+ 449 f32 226xI                        7d711f17014a2363
+ 450 f32 227xF                        54b9f8d2db5042c9
+ 451 f32 227xI                        9364802f8c96ba26
+ 452 f32 228xF                        51f47c534a4d0a59
  453 f32 228xI                        97e86339e40bcc5b
- 454 f32 229xF                        e89589b4ec92707a
- 455 f32 229xI                        d484319b957e7d50
+ 454 f32 229xF                        2c8494c4234b578f
+ 455 f32 229xI                        de907ff414eccbc4
  456 f32 230xF                        a2c8c3ddc84d0e4b
  457 f32 230xI                        95314386f50230e1
  458 f32 231xF                        8589a30bf86dece5
  459 f32 231xI                        69a69b6a63b1a3eb
  460 f32 232xF                        b004a316148dfae1
  461 f32 232xI                        a6cc8bafaf0cf225
- 462 f32 233xF                        e36acf45617edf84
- 463 f32 233xI                        30c3b6f7ff25e755
+ 462 f32 233xF                        66af5b08d57329ee
+ 463 f32 233xI                        e4d15ff644c32489
  464 f32 234xF                        ec92e06e56a44ac1
  465 f32 234xI                        b866f3ef0241e7c9
- 466 f32 235xF                        97289ffabd649601
- 467 f32 235xI                        b9ff9bd53536ef93
- 468 f32 236xF                        5a5d0699b2ade409
- 469 f32 236xI                        b47d3c2fcee45fe7
- 470 f32 237xF                        4679d1058960f8d8
- 471 f32 237xI                        b22d53afe7b6079f
+ 466 f32 235xF                        c410ada07c5225d6
+ 467 f32 235xI                        a0c8f2665b5d194d
+ 468 f32 236xF                        cdbb41b2265610d5
+ 469 f32 236xI                        b57d0be40aea21c3
+ 470 f32 237xF                        a57124cd50c4a2c3
+ 471 f32 237xI                        99444d82aa8e70e5
  472 f32 238xF                        0ff3f2b4eb874c1b
  473 f32 238xI                        cb9e29c524abe2c4
- 474 f32 239xF                        05186417fa94e533
- 475 f32 239xI                        b5683a6ff0c97352
+ 474 f32 239xF                        aca28f0c30945055
+ 475 f32 239xI                        1ff67757b7c66fc5
  476 f32 240xF                        cf16905e4707adcf
  477 f32 240xI                        dcbcd24ae529c036
  478 f32 241xF                        bf9ed223a8dbb048
@@ -482,18 +482,18 @@
  481 f32 242xI                        d57e7d94c6527699
  482 f32 243xF                        412bb28174fe4268
  483 f32 243xI                        ac02e5587df06a93
- 484 f32 244xF                        57d1ea994edbda8a
- 485 f32 244xI                        421c2bbc8d23cf7a
+ 484 f32 244xF                        4712916711ce2db1
+ 485 f32 244xI                        f9eb5cd8c219e811
  486 f32 245xF                        4037c756ffc21376
  487 f32 245xI                        6640b8723587ce64
  488 f32 246xF                        d49054704cea05e3
  489 f32 246xI                        33ba276ef8223a0d
- 490 f32 247xF                        e9ad81cd68fff395
- 491 f32 247xI                        3dd5a722bd3cb7b5
+ 490 f32 247xF                        2cf51080855e8d50
+ 491 f32 247xI                        c54c2b8c36b9e12a
  492 f32 248xF                        36364a79035530bc
  493 f32 248xI                        24641bf70e62ca75
- 494 f32 249xF                        2a02fa68d2806505
- 495 f32 249xI                        556139728de0f315
+ 494 f32 249xF                        0b3258f82e67a0b9
+ 495 f32 249xI                        745746a8e0db8206
  496 f32 250xF                        ed151ec72a9367e8
  497 f32 250xI                        bf1af7432cdcac67
  498 f32 251xF                        241a1885ed890743
@@ -522,8 +522,8 @@
  521 f32 262xI                        9eba027dd5d3480d
  522 f32 263xF                        8866819082177a51
  523 f32 263xI                        5d06978f4b09310c
- 524 f32 264xF                        b42b6acb78d4107a
- 525 f32 264xI                        09e55cfdb085fbe8
+ 524 f32 264xF                        deb31e406baa3a83
+ 525 f32 264xI                        6f150a692d7bfbb6
  526 f32 265xF                        71162636e26556ac
  527 f32 265xI                        0f83afc7b7b84230
  528 f32 266xF                        13ec1a525ad9b0ed
@@ -538,8 +538,8 @@
  537 f32 270xI                        27839d37b21fd7a4
  538 f32 271xF                        e760ba7e678deb0d
  539 f32 271xI                        c0cf497e5ffdb96b
- 540 f32 272xF                        80d2dac91916e4d2
- 541 f32 272xI                        99361aa7ee31c295
+ 540 f32 272xF                        d6f3f60ddabf6f93
+ 541 f32 272xI                        75e6e2b0c653bda5
  542 f32 273xF                        f62482149b7a2f3c
  543 f32 273xI                        6d145e990f2fa027
  544 f32 274xF                        0db74e2df4177eae
@@ -554,10 +554,10 @@
  553 f32 278xI                        0a5823313e403eb6
  554 f32 279xF                        34fa61c7d0a2f96c
  555 f32 279xI                        2c2fef00aed124a8
- 556 f32 280xF                        b02d5c9383534505
- 557 f32 280xI                        465bec4258eec219
- 558 f32 281xF                        4eee0609c4cdac74
- 559 f32 281xI                        b98f5280fd625c2d
+ 556 f32 280xF                        edbee6b632af1d39
+ 557 f32 280xI                        5ea001374ddace7b
+ 558 f32 281xF                        2ad2fa5683e74902
+ 559 f32 281xI                        e66525af26fc6ce1
  560 f32 282xF                        7a4e904536d3b3e6
  561 f32 282xI                        18744b53baf900d5
  562 f32 283xF                        4d5257de92ec07f1
@@ -569,7 +569,7 @@
  568 f32 286xF                        f45b213fe237cab8
  569 f32 286xI                        7a1d3b2ce5b7b770
  570 f32 287xF                        12ac9f9541eb9feb
- 571 f32 287xI                        7de2fbbe47b6ebd0
+ 571 f32 287xI                        483ebe31a6466cdb
  572 f32 288xF                        51856703407ff3da
  573 f32 288xI                        9146702251e3922e
  574 f32 289xF                        632ff3f9e672cc52
@@ -584,16 +584,16 @@
  583 f32 293xI                        84d3bedc8061cd89
  584 f32 294xF                        520c4a70f101b6b0
  585 f32 294xI                        2a6563e78ced4c54
- 586 f32 295xF                        8909da5c4e8abd3a
- 587 f32 295xI                        73531ff0d5df4e8c
+ 586 f32 295xF                        42829da4b9ce5ecb
+ 587 f32 295xI                        b502d6cf9b2ee849
  588 f32 296xF                        538893bfbd950ee5
  589 f32 296xI                        aa4f525333292f47
  590 f32 297xF                        b2370a83c63ae49c
  591 f32 297xI                        6d9f8960376258b9
- 592 f32 298xF                        7817c2d6057c5ca9
- 593 f32 298xI                        b9847d2d566e610d
- 594 f32 299xF                        f7f85889bf4d8a73
- 595 f32 299xI                        53125772c32e9ecc
+ 592 f32 298xF                        ed88f64579ab5bc6
+ 593 f32 298xI                        38bd8e54a564f579
+ 594 f32 299xF                        0bcb7e67155ca147
+ 595 f32 299xI                        2b35cf42a06020ec
  596 f32 300xF                        71f490d97546a051
  597 f32 300xI                        eb46cc081d431b1d
  598 f32 301xF                        ca91af5e8b00c2d5
@@ -622,24 +622,24 @@
  621 f32 312xI                        adcdd9c76cdf4f88
  622 f32 313xF                        6333bbffe617db2c
  623 f32 313xI                        a203e8debafa0897
- 624 f32 314xF                        c0d2eed398f52dc0
- 625 f32 314xI                        5dd318d811428165
+ 624 f32 314xF                        8d58b6e6a9fcc9a1
+ 625 f32 314xI                        4d0f2bdddb8467fd
  626 f32 315xF                        55fdf19f3bbd06e4
  627 f32 315xI                        4e75086bbe9095bc
  628 f32 316xF                        b224852aa43e3588
- 629 f32 316xI                        a3bcc58b08534aae
+ 629 f32 316xI                        76ebd5f32de1beac
  630 f32 317xF                        8bb1367af4cdb718
- 631 f32 317xI                        232115e2c3010157
+ 631 f32 317xI                        ec62fded6654e883
  632 f32 318xF                        a9bde2c77d54271e
- 633 f32 318xI                        bf7a5af3c844ce8b
+ 633 f32 318xI                        fa284760a40973f9
  634 f32 319xF                        8ad653eeddeaa9b0
- 635 f32 319xI                        1d0f2308f923ce29
+ 635 f32 319xI                        40223365faf34f5f
  636 f32 320xF                        1baa0639ec37e684
  637 f32 320xI                        caf818fbd2c61f2d
  638 f32 16x16xF                      a6a2e54d4bca9b42
  639 f32 16x16xI                      c58f32192dda173d
- 640 f32 32x32xF                      01a31d5f098aa697
- 641 f32 32x32xI                      66fb644089b1d999
+ 640 f32 32x32xF                      433c843596371424
+ 641 f32 32x32xI                      54aa621a57ff4c8a
  642 f32 20x20xF                      45907c4372ae4d76
  643 f32 20x20xI                      0f2dd1a8a547ed5b
  644 f32 60x60xF                      c8392639ad54c1dc
@@ -672,676 +672,676 @@
  671 f32 str81_1_2I                   d3eac3991688ea40
  672 f64 2xF                          1657703e5b78b9da
  673 f64 2xI                          a5a687c40d2e491a
- 674 f64 3xF                          5a8f93d4fb5b91e9
- 675 f64 3xI                          4260c4a1da564c09
+ 674 f64 3xF                          7c0c1f0e3297aa37
+ 675 f64 3xI                          d9ed1115ecabb772
  676 f64 4xF                          20006a6b58287985
  677 f64 4xI                          987b6e8c400e21c1
- 678 f64 5xF                          276e5dd0aacde7c5
- 679 f64 5xI                          46289c529b948278
- 680 f64 6xF                          576a204ae8707ffb
- 681 f64 6xI                          ccef6458996e838a
- 682 f64 7xF                          45d796e29c6a5d87
- 683 f64 7xI                          298ea126ee88d662
- 684 f64 8xF                          f5a14f9b91748633
- 685 f64 8xI                          83a50413997f7780
- 686 f64 9xF                          6a46348031fb9e68
- 687 f64 9xI                          42beb71dc6b836b0
- 688 f64 10xF                         8102185461b81756
- 689 f64 10xI                         f44825cc1c9a30eb
- 690 f64 11xF                         718b659a24f6e077
- 691 f64 11xI                         88277feccbb1e9c0
- 692 f64 12xF                         35fde9b204ca3334
- 693 f64 12xI                         61691c2175893871
- 694 f64 13xF                         0f3aa1ba47d6366a
- 695 f64 13xI                         aec570771c846300
- 696 f64 14xF                         bd5e6bc43be270e4
- 697 f64 14xI                         29032bb522f90cbd
- 698 f64 15xF                         a3aab19221cb678e
- 699 f64 15xI                         4de9034eeee7ed81
- 700 f64 16xF                         a1b094c9359a6345
- 701 f64 16xI                         9076484b5036503f
- 702 f64 17xF                         7b1d911d301f72eb
- 703 f64 17xI                         3545a5799ebc1620
- 704 f64 18xF                         2286309960b2ce2d
- 705 f64 18xI                         bb334afb1c4b10ac
- 706 f64 19xF                         5a3a12aa72131edf
- 707 f64 19xI                         83ec43fb456abb9e
- 708 f64 20xF                         7980e00bd35d228c
- 709 f64 20xI                         c8c8ddd1edf80241
- 710 f64 21xF                         4829e3d40afee1af
- 711 f64 21xI                         f540548f16b1f2a9
- 712 f64 22xF                         40d4a48d7f9e50bb
- 713 f64 22xI                         c1ebbdfd85ad28a0
- 714 f64 23xF                         0d61aa7f57dd146a
- 715 f64 23xI                         72fa637e90aef0b6
- 716 f64 24xF                         839b16fe50623669
- 717 f64 24xI                         4ecb002e0d4b6756
- 718 f64 25xF                         6f2b59544ec4aaf0
- 719 f64 25xI                         0aedd416ad789c3b
- 720 f64 26xF                         aeddc5b6170512a5
- 721 f64 26xI                         82e48a7258eaa057
- 722 f64 27xF                         05acb641e31e66b3
- 723 f64 27xI                         2e1ad197e08a813e
- 724 f64 28xF                         d5cea8e8ea02b48b
- 725 f64 28xI                         f15ca405d516edfb
- 726 f64 29xF                         583a21384df0e3a1
- 727 f64 29xI                         b2b4653c877bda6b
- 728 f64 30xF                         cf9c006013027734
- 729 f64 30xI                         deeeb3867b4b1e7a
- 730 f64 31xF                         b9a6dcb07054c07f
- 731 f64 31xI                         c62a6f7b53b551fa
- 732 f64 32xF                         fb5a085b24979849
- 733 f64 32xI                         910196765c9b7bf8
- 734 f64 33xF                         8ceaeea4ebb02b0e
- 735 f64 33xI                         19591079f95a9de1
- 736 f64 34xF                         84874384c31b08b7
- 737 f64 34xI                         32d6f80349a61167
- 738 f64 35xF                         9e5ce1b8a64037ee
- 739 f64 35xI                         df9e79fe7f91a92f
- 740 f64 36xF                         133b01499569416c
- 741 f64 36xI                         5b623a4cb229d4bb
- 742 f64 37xF                         6f67a66caad01928
- 743 f64 37xI                         237739837bfafac6
- 744 f64 38xF                         57846a9452643f8c
- 745 f64 38xI                         2b1e00b39e61e7db
- 746 f64 39xF                         298a4a27cfdef13f
- 747 f64 39xI                         8faa3855cf03931e
- 748 f64 40xF                         c4de306f586780cf
- 749 f64 40xI                         efd5838695fa26e9
- 750 f64 41xF                         be9789941c1ae44f
- 751 f64 41xI                         39bec90ead1d11e6
- 752 f64 42xF                         fe32540b166cf8ef
- 753 f64 42xI                         63f555a4a83db45d
- 754 f64 43xF                         368a6b3a30e9a33a
- 755 f64 43xI                         602de4175d4b79d7
- 756 f64 44xF                         cdfb51dcb138a4d5
- 757 f64 44xI                         605471d77b4a0f11
- 758 f64 45xF                         b90d9d0816ae42ba
- 759 f64 45xI                         4cf8e96d46c9df8c
- 760 f64 46xF                         e1a473fc25db2cf8
- 761 f64 46xI                         2b2d67bbc8d8b914
- 762 f64 47xF                         977eee6d64ffebae
- 763 f64 47xI                         71f8dcee3a77ae26
- 764 f64 48xF                         95058c53631ba5cd
- 765 f64 48xI                         a904804ccad41117
- 766 f64 49xF                         295da4c6c4271fe4
- 767 f64 49xI                         78e64001d30c0721
- 768 f64 50xF                         220bc484cc7f7663
- 769 f64 50xI                         b12f2a0d861c9112
- 770 f64 51xF                         3cd68f14e3c1a5af
- 771 f64 51xI                         be0ac8e5c2122a95
- 772 f64 52xF                         de0098f9391802cd
- 773 f64 52xI                         26b7eb80712f7575
- 774 f64 53xF                         2e4abdd47b30502b
- 775 f64 53xI                         b196253e01c0f858
- 776 f64 54xF                         cd0cdd2af1bf3ba5
- 777 f64 54xI                         b78ea2b155c00a24
- 778 f64 55xF                         7a918f6eed371c27
- 779 f64 55xI                         359e600e4a710162
- 780 f64 56xF                         ec6bdc7afe9d580d
- 781 f64 56xI                         949c8e140118b4f4
- 782 f64 57xF                         2548fa80094992f8
- 783 f64 57xI                         18a07a8c434e500b
- 784 f64 58xF                         b014119e5d85d939
- 785 f64 58xI                         2c657cdb97a10e99
- 786 f64 59xF                         3ffac3a9c5b64861
- 787 f64 59xI                         0b1450514689f840
- 788 f64 60xF                         a17a1feaa4ef892c
- 789 f64 60xI                         68829f587070fcfc
- 790 f64 61xF                         1b43d67d757cfea6
- 791 f64 61xI                         d37c10353ab6c5dd
- 792 f64 62xF                         919b17b49b5a6947
- 793 f64 62xI                         eb960503f196145c
- 794 f64 63xF                         90d3b14d590e7713
- 795 f64 63xI                         46aa3b8d736b9e82
- 796 f64 64xF                         24835dfa5b026042
- 797 f64 64xI                         c7422b4a2c4b4798
- 798 f64 65xF                         e38a8d5e0a1cbe60
- 799 f64 65xI                         aecb727059a63c11
- 800 f64 66xF                         7aaf17b427823d7f
- 801 f64 66xI                         115e19fcd3f85107
- 802 f64 67xF                         229b8f1a161db1d2
- 803 f64 67xI                         d15d36f2d4c7e279
- 804 f64 68xF                         e89cdeeb7f1417fe
- 805 f64 68xI                         46dc1750446ccd36
- 806 f64 69xF                         73bb22e741444ade
- 807 f64 69xI                         78b933cfeb1451ad
- 808 f64 70xF                         cb5126ba76a3ef2c
- 809 f64 70xI                         1da97ac7fc7bca2e
- 810 f64 71xF                         b4333d2848336979
- 811 f64 71xI                         4f478fa3721f32b9
- 812 f64 72xF                         be904204e60e1a7a
- 813 f64 72xI                         b83b177240003dec
- 814 f64 73xF                         93d68adc75da0b2c
- 815 f64 73xI                         b1ff20dcd3b4effe
- 816 f64 74xF                         138dea16bc12fc5b
- 817 f64 74xI                         b22635ea41233dfd
- 818 f64 75xF                         4982b218e8866f1b
- 819 f64 75xI                         b8ee229cf3cde3cf
- 820 f64 76xF                         ba9f374ebba5e8d2
- 821 f64 76xI                         f1726e0f0c8e5e44
- 822 f64 77xF                         1d36430523d454e3
- 823 f64 77xI                         4adff2339cb1ba4d
- 824 f64 78xF                         902f2da0c8f7da49
- 825 f64 78xI                         2018024884d31459
- 826 f64 79xF                         c964e2cac43ded17
- 827 f64 79xI                         fed4e962691f72a3
- 828 f64 80xF                         5d1924fc128c9680
- 829 f64 80xI                         aeebb7f03ab94773
- 830 f64 81xF                         a47ebc55d0295034
- 831 f64 81xI                         f87162e7f28ef469
- 832 f64 82xF                         5f6b631e053c5e51
- 833 f64 82xI                         81cda5597255ca75
- 834 f64 83xF                         06c3cc4bf599b05b
- 835 f64 83xI                         f281cf656c6aa800
- 836 f64 84xF                         5e33ce5b7c42f115
- 837 f64 84xI                         7f6a738afe923f3d
- 838 f64 85xF                         74d98bbc4adad73f
- 839 f64 85xI                         f1ae9770cf21a51d
- 840 f64 86xF                         bd7f88d0b9bded6b
- 841 f64 86xI                         769bf71a94872a36
- 842 f64 87xF                         9ac88e7ddb36c95b
- 843 f64 87xI                         23eb39b94ad6aa91
- 844 f64 88xF                         7176c0a59182550f
- 845 f64 88xI                         a278ccb19636e0fc
- 846 f64 89xF                         5d246c69b908ca43
- 847 f64 89xI                         dec80284a390ecd6
- 848 f64 90xF                         f8d8c8c081c7f48d
- 849 f64 90xI                         96206352e8a2e996
- 850 f64 91xF                         fc342df1bf518ce9
- 851 f64 91xI                         9cc4a8a32c1b77a1
- 852 f64 92xF                         96b6df6c7a526314
- 853 f64 92xI                         ae914b598e37739f
- 854 f64 93xF                         4ef90931ed204e89
- 855 f64 93xI                         fe439f283ea7114d
- 856 f64 94xF                         020b68bff874b5b0
- 857 f64 94xI                         1c65097a2f8efd5c
- 858 f64 95xF                         9a845c8da54980b1
- 859 f64 95xI                         1b46b41c3f1926ac
- 860 f64 96xF                         15d513e51566e07b
- 861 f64 96xI                         e7d74ad2de0141c6
- 862 f64 97xF                         1f3b3a84678d8c93
- 863 f64 97xI                         dfe642d20b687b0d
- 864 f64 98xF                         429c5e6b672b8271
- 865 f64 98xI                         68bca97da7bdffa1
- 866 f64 99xF                         cb90c673f83594ac
- 867 f64 99xI                         64f5dc8b24d8306a
- 868 f64 100xF                        d31a2c9b2be80e1a
- 869 f64 100xI                        9f83e89998b135c8
- 870 f64 101xF                        516b3242fa410e3b
- 871 f64 101xI                        32661d1ac62162fe
- 872 f64 102xF                        0ad6dc64a209809d
- 873 f64 102xI                        fa1202216496f2c8
- 874 f64 103xF                        74221c8ed90c2cf1
- 875 f64 103xI                        cde9359e39b1c26e
- 876 f64 104xF                        c8ec3a456f171dd2
- 877 f64 104xI                        e58a033394d266c1
- 878 f64 105xF                        ebd527dff7a72ae2
- 879 f64 105xI                        2468659af2262e92
- 880 f64 106xF                        34f8d2da40b90a8b
- 881 f64 106xI                        4f97fe988e3f92ce
- 882 f64 107xF                        7cebe00644489ef7
- 883 f64 107xI                        33828c2514a88f99
- 884 f64 108xF                        e53c22c1ba98d0a3
- 885 f64 108xI                        e5aa5759a014c8bf
- 886 f64 109xF                        a058e067c155ae7e
- 887 f64 109xI                        440758a0113204c6
- 888 f64 110xF                        558d9ad52b5663a3
- 889 f64 110xI                        dc8bca60f767e812
- 890 f64 111xF                        0864d39c1f5d863e
- 891 f64 111xI                        d95ab4a7911cd6e6
- 892 f64 112xF                        2425c4ab58d85a00
- 893 f64 112xI                        0592f8793e1b7b0f
- 894 f64 113xF                        2ed2157e2a4868eb
- 895 f64 113xI                        fb16a70bf5714b50
- 896 f64 114xF                        9b5975fe6ae3ced9
- 897 f64 114xI                        2eb96e709375dd34
- 898 f64 115xF                        5b07bcda4759a9cb
- 899 f64 115xI                        96d934f7cd687b53
- 900 f64 116xF                        f56037a30f3effeb
- 901 f64 116xI                        6646cb3ecc8c48f0
- 902 f64 117xF                        6273b0f88e14e4d0
- 903 f64 117xI                        d5a3d396eec6432f
- 904 f64 118xF                        53442bf01b9f617a
- 905 f64 118xI                        77871099e1250c10
- 906 f64 119xF                        303759156f33e12c
- 907 f64 119xI                        84a3dde8e175b048
- 908 f64 120xF                        eb6e1df0e48fbe39
- 909 f64 120xI                        2eeeb2f1f9b1983b
- 910 f64 121xF                        145bedce114ff7bd
- 911 f64 121xI                        f100c8d0da96ac46
- 912 f64 122xF                        1b4e22b7cf5f7be3
- 913 f64 122xI                        c7d5cccc9ed32a67
- 914 f64 123xF                        c47170a61c705c96
- 915 f64 123xI                        0ae736be6e6661e7
- 916 f64 124xF                        e5e71ca75cded3a2
- 917 f64 124xI                        ee17f40f17fcd1fb
- 918 f64 125xF                        eb48566c7aa33b9b
- 919 f64 125xI                        44c7fb0efc3d9093
- 920 f64 126xF                        2cf04fe901dcd7da
- 921 f64 126xI                        b3fe7d7c888e7692
- 922 f64 127xF                        e41d90c26ed83d0d
- 923 f64 127xI                        c16953d94bfe7adf
- 924 f64 128xF                        0c64b06c4de9528c
- 925 f64 128xI                        db1aff4cf798f3ed
- 926 f64 129xF                        650d7cc0aee569a6
- 927 f64 129xI                        56eae0690db0784b
- 928 f64 130xF                        e39c1f59da36441b
- 929 f64 130xI                        f9adcd219f690ae7
- 930 f64 131xF                        ebbb5f559996d01e
- 931 f64 131xI                        0deb03aa254fa384
- 932 f64 132xF                        7d07d1b8bc24b4d3
- 933 f64 132xI                        095b55bfbe63e597
- 934 f64 133xF                        e8a828108386ab34
- 935 f64 133xI                        3998d919c48b8f41
- 936 f64 134xF                        78dd6d27a6f7056a
- 937 f64 134xI                        21c91937ccdc3364
- 938 f64 135xF                        77193ee46f5727fe
- 939 f64 135xI                        d399a09cc2709c53
- 940 f64 136xF                        970854e460deb05a
- 941 f64 136xI                        e37093df341e6f14
- 942 f64 137xF                        658759f5ba0e2bb9
- 943 f64 137xI                        afae2f2002a0f101
- 944 f64 138xF                        41e85359f410a505
- 945 f64 138xI                        30643f804e889e0f
- 946 f64 139xF                        0963a0a3b5ef4053
- 947 f64 139xI                        d94f092cf442380a
- 948 f64 140xF                        b3576f14ed9094c9
- 949 f64 140xI                        4151db3de96851dc
- 950 f64 141xF                        c8bef7577746e618
- 951 f64 141xI                        ebf0387cb8f60877
- 952 f64 142xF                        bfbed0467dad7d78
- 953 f64 142xI                        6ee649a67b8a7cce
- 954 f64 143xF                        6833eceeebb3d522
- 955 f64 143xI                        01bde9a2bc296b15
- 956 f64 144xF                        48d3287ea8fb5fb3
- 957 f64 144xI                        1fd89877a70dab61
- 958 f64 145xF                        a5314ad2254420c8
- 959 f64 145xI                        580aa766616f3679
- 960 f64 146xF                        d2d4c3f8a45d969b
- 961 f64 146xI                        b657c111e0fd4f23
- 962 f64 147xF                        a1187a1362344ea8
- 963 f64 147xI                        6e74aef520381b11
- 964 f64 148xF                        fe01102669f07759
- 965 f64 148xI                        89d6e044fc78544b
- 966 f64 149xF                        b6a0d000e4e52c0a
- 967 f64 149xI                        639782bd4d8af0a3
- 968 f64 150xF                        bd1b930ba1c1ee42
- 969 f64 150xI                        45fd41417f9d564b
- 970 f64 151xF                        b0755b51c5403366
- 971 f64 151xI                        5b5876688c39c46f
- 972 f64 152xF                        fedbe53ccc705eed
- 973 f64 152xI                        b502e07d76be1ae3
- 974 f64 153xF                        17fdd0fcb9652631
- 975 f64 153xI                        9577a106e49c0593
- 976 f64 154xF                        704c53f0c3a68e94
- 977 f64 154xI                        58c09aab529f70ce
- 978 f64 155xF                        13e338df7f8bb8e9
- 979 f64 155xI                        0f62b5b26c6655ca
- 980 f64 156xF                        ec73436467038626
- 981 f64 156xI                        2d29405ee1ac8e89
- 982 f64 157xF                        77034dc51fe97150
- 983 f64 157xI                        6cc9d7c7a9318f90
- 984 f64 158xF                        a3a5a501b55784d3
- 985 f64 158xI                        1ce9905e6f663499
- 986 f64 159xF                        48305556be0ca406
- 987 f64 159xI                        32795942d9e66bcf
- 988 f64 160xF                        8cf41e3c8f558bea
- 989 f64 160xI                        f806a3e3ca0b3c13
- 990 f64 161xF                        6feb75ebf2100c55
- 991 f64 161xI                        9dfb2d0ac18c30ca
- 992 f64 162xF                        da8911013d73f839
- 993 f64 162xI                        a9c5a67cb5ca4b81
- 994 f64 163xF                        2943dcd7b9d5cb42
- 995 f64 163xI                        06c561addaf3238f
- 996 f64 164xF                        fa32696db80a1c9e
- 997 f64 164xI                        64afa2c4eb945ccf
- 998 f64 165xF                        39849cead64c84cd
- 999 f64 165xI                        1138acd809b5b15d
-1000 f64 166xF                        f63d8d9ca124f2ea
-1001 f64 166xI                        570427e91d1b7420
-1002 f64 167xF                        1738e5ce01d64212
-1003 f64 167xI                        1766c035205b2dcb
-1004 f64 168xF                        8e2b182705ef25af
-1005 f64 168xI                        27d120d48034d9a6
-1006 f64 169xF                        7f318523dda8fbaf
-1007 f64 169xI                        77ecc67b8a28d512
-1008 f64 170xF                        ac10a7cc91b79b49
-1009 f64 170xI                        cb1123c988462889
-1010 f64 171xF                        88c6ced030d708e6
-1011 f64 171xI                        6016a977010aff16
-1012 f64 172xF                        a694ac3b35a4f6e6
-1013 f64 172xI                        75181a75cb0cfc3d
-1014 f64 173xF                        d1c7d7c33685ca5f
-1015 f64 173xI                        08c38876dd320e47
-1016 f64 174xF                        03fa5d61ac1566dc
-1017 f64 174xI                        2a2576319eb5bf5a
-1018 f64 175xF                        a398c6e0d5b11bbe
-1019 f64 175xI                        80bc155aa3300cc4
-1020 f64 176xF                        66ed804029a55080
-1021 f64 176xI                        936c7f236a073376
-1022 f64 177xF                        5c3cf5c0a47a6f8b
-1023 f64 177xI                        1e89acc8cb9345e2
-1024 f64 178xF                        71e1625622a17987
-1025 f64 178xI                        385fd7080b54d983
-1026 f64 179xF                        0898e8c2853cad52
-1027 f64 179xI                        1109d913aa90137e
-1028 f64 180xF                        9ce8d2f7e2229cb6
-1029 f64 180xI                        e38291c6793c1b36
-1030 f64 181xF                        f0dee87b8c85fd19
-1031 f64 181xI                        2045ba71d730aa28
-1032 f64 182xF                        5373479b66b02e1d
-1033 f64 182xI                        655d4424cddb0e00
-1034 f64 183xF                        2b42181dae85223f
-1035 f64 183xI                        228e0430397e2edf
-1036 f64 184xF                        d6b8e6e2d415756a
-1037 f64 184xI                        9b22c424ba5fb499
-1038 f64 185xF                        302031054081b051
-1039 f64 185xI                        76514f1fdaa8881f
-1040 f64 186xF                        e59bbb850ea3c9d9
-1041 f64 186xI                        abbc31bc88c32e55
-1042 f64 187xF                        cbe16cc4c5c726ae
-1043 f64 187xI                        e2c95e17bc4ab9ad
-1044 f64 188xF                        6e5e6413afd14b6a
-1045 f64 188xI                        9fef8c15d9818698
-1046 f64 189xF                        c467fd813d49cd87
-1047 f64 189xI                        df5a29184b4b11a8
-1048 f64 190xF                        c94268be92f5a4d7
-1049 f64 190xI                        7ff064a9c1ee520a
-1050 f64 191xF                        5546c9290cf11c1d
-1051 f64 191xI                        85f6399e297e6a00
-1052 f64 192xF                        aa39734fd05db26c
-1053 f64 192xI                        2227e0e4829598cd
-1054 f64 193xF                        b43aa35788206f07
-1055 f64 193xI                        4325516f298570a7
-1056 f64 194xF                        4579ef6ddb1968c4
-1057 f64 194xI                        926f8e8929ff2a51
-1058 f64 195xF                        1533c5239afe6044
-1059 f64 195xI                        f827bc98f47ddd35
-1060 f64 196xF                        63fa82ef856a3438
-1061 f64 196xI                        5e686898f23e8bc4
-1062 f64 197xF                        a6a75e84787fe65e
-1063 f64 197xI                        7f7cfacfd737a93f
-1064 f64 198xF                        ec8bef0e40bbf533
-1065 f64 198xI                        2e17c647a2245082
-1066 f64 199xF                        d2e55f881e20d309
-1067 f64 199xI                        a8dc370a2b36ad29
-1068 f64 200xF                        929b117bf0030400
-1069 f64 200xI                        b538954067ff40be
-1070 f64 201xF                        30fe8d81cf015133
-1071 f64 201xI                        3e42ab25910e8a91
-1072 f64 202xF                        b2ac79b1a7a94d31
-1073 f64 202xI                        62eea9043d1583bb
-1074 f64 203xF                        858b6983b6ac10f5
-1075 f64 203xI                        0dc74ceb62dad1f1
-1076 f64 204xF                        a852a9868db5789a
-1077 f64 204xI                        a3a430bdfe71f460
-1078 f64 205xF                        60d4c80478c15505
-1079 f64 205xI                        096aa132e36e40bc
-1080 f64 206xF                        9cef730d28b92089
-1081 f64 206xI                        20daaf480dac6643
-1082 f64 207xF                        5fdb9a326e8db389
-1083 f64 207xI                        0a251182162e6005
-1084 f64 208xF                        b63870ccde79b20c
-1085 f64 208xI                        aa2a030f38655955
-1086 f64 209xF                        ce8c221d25261c1b
-1087 f64 209xI                        5efb0a4b7e3e0ebb
-1088 f64 210xF                        8a056411aac7658f
-1089 f64 210xI                        592e886c5f349272
-1090 f64 211xF                        57c191e0dc1a4119
-1091 f64 211xI                        ff09f666af1b8793
-1092 f64 212xF                        c75602c52a2c1c69
-1093 f64 212xI                        1022e9b619720d8c
-1094 f64 213xF                        5a26bca723fe2fde
-1095 f64 213xI                        441c32f46313bb02
-1096 f64 214xF                        8872da37b7e30833
-1097 f64 214xI                        6b628c4020e4e5fc
-1098 f64 215xF                        f3133302ac92f378
-1099 f64 215xI                        d1be715999af7e72
-1100 f64 216xF                        f3339afd1954487d
-1101 f64 216xI                        984d2582197d348b
-1102 f64 217xF                        30806f3efa1cb37a
-1103 f64 217xI                        5e574384f5005f42
-1104 f64 218xF                        677151e614b0007b
-1105 f64 218xI                        8d4d9635bbf2ac28
-1106 f64 219xF                        aaa8f36f9271edaa
-1107 f64 219xI                        aa604310db6fafe6
-1108 f64 220xF                        1a56c70bf216fb97
-1109 f64 220xI                        b61784b79aa92cb8
-1110 f64 221xF                        9554c20d1d8e5471
-1111 f64 221xI                        7b548f3e8d80c071
-1112 f64 222xF                        51af9ea23edb677f
-1113 f64 222xI                        7ee5deb068a3fbfe
-1114 f64 223xF                        d67179888ac60f43
-1115 f64 223xI                        bc54af47b373f71a
-1116 f64 224xF                        891a353504d16dd9
-1117 f64 224xI                        b15d781614fa9c78
-1118 f64 225xF                        13cf0ff747bb8b83
-1119 f64 225xI                        9612fc7d646d025f
-1120 f64 226xF                        842fd86ba4fc2c76
-1121 f64 226xI                        48ae78038063206e
-1122 f64 227xF                        ddb7bd06428a53e3
-1123 f64 227xI                        fb81c25716fad32c
-1124 f64 228xF                        effff1e59fe5fd98
-1125 f64 228xI                        d45b2adfb81b86d3
-1126 f64 229xF                        92d262de8c87a54e
-1127 f64 229xI                        6af4de8ad12f713a
-1128 f64 230xF                        0c93bae2944078cb
-1129 f64 230xI                        f3d50badd247b889
-1130 f64 231xF                        1e5da27410e19572
-1131 f64 231xI                        28174b5789e26a32
-1132 f64 232xF                        6b557ae6a07eed3e
-1133 f64 232xI                        e9bc13b7d5c56ec8
-1134 f64 233xF                        9333b0561fb4d8cb
-1135 f64 233xI                        9d11bc7383b5b438
-1136 f64 234xF                        70025ead9c4e5975
-1137 f64 234xI                        39f9fa97314b7051
-1138 f64 235xF                        a2830b963c052e58
-1139 f64 235xI                        80bbfa04587685e6
-1140 f64 236xF                        106ade77d4c89eea
-1141 f64 236xI                        59b6b4d55c7be125
-1142 f64 237xF                        0613a293de672406
-1143 f64 237xI                        c8914985619e21ef
-1144 f64 238xF                        2470066a29e23b1f
-1145 f64 238xI                        5ac24c9eab29ab1f
-1146 f64 239xF                        329d1f66741fd61e
-1147 f64 239xI                        0ef61f636d5791ce
-1148 f64 240xF                        102360587810233e
-1149 f64 240xI                        63100bfc9f4da87d
-1150 f64 241xF                        d66bf12155b2c7e2
-1151 f64 241xI                        f74a493444c1b69b
-1152 f64 242xF                        75afb62e6da13c29
-1153 f64 242xI                        b8cdd41bfc0faa6a
-1154 f64 243xF                        00c5dedd560ea9fc
-1155 f64 243xI                        9db56c0a32ed466b
-1156 f64 244xF                        0d92a8471d19c6d1
-1157 f64 244xI                        403002aa5965b37f
-1158 f64 245xF                        54256c4aeabe0114
-1159 f64 245xI                        1f3800ed88ab50af
-1160 f64 246xF                        2f93068f4206a19f
-1161 f64 246xI                        527075356d34e674
-1162 f64 247xF                        13bed54e7938b8be
-1163 f64 247xI                        23c3525c46a13f2d
-1164 f64 248xF                        f86552f7b2c9548b
-1165 f64 248xI                        6844f5ced29ebf7c
-1166 f64 249xF                        ffaaa54d2fbb3f61
-1167 f64 249xI                        1a9b9d3844b6b867
-1168 f64 250xF                        592e5031568cd5fc
-1169 f64 250xI                        a616d082606e8e2b
-1170 f64 251xF                        4d5d918cde1cb06a
-1171 f64 251xI                        65d89e731919034f
-1172 f64 252xF                        f44a695d273c02af
-1173 f64 252xI                        6720e9249c9932bb
-1174 f64 253xF                        dfe559ae182d3828
-1175 f64 253xI                        257e8c9108fa9389
-1176 f64 254xF                        d5cb2475c7852b5a
-1177 f64 254xI                        bacf527db40481f3
-1178 f64 255xF                        1b4708cbbbbd7be5
-1179 f64 255xI                        b38112c701e05f02
-1180 f64 256xF                        44082db98a0c8ccc
-1181 f64 256xI                        a848cb9d0b9105de
-1182 f64 257xF                        6702c56d24530785
-1183 f64 257xI                        4c06067e9122c8e2
-1184 f64 258xF                        09b6d1dc9f715230
-1185 f64 258xI                        3342f7ec2b9dfe47
-1186 f64 259xF                        3fedd10e4b14673f
-1187 f64 259xI                        465e010e802f1eef
-1188 f64 260xF                        76c190672df6dca5
-1189 f64 260xI                        57f43061550adda4
-1190 f64 261xF                        59936858231f19b1
-1191 f64 261xI                        4e53a56c930e107a
-1192 f64 262xF                        2faf6aa864c10531
-1193 f64 262xI                        b6a3f41019951d1e
-1194 f64 263xF                        32169d67806f0e96
-1195 f64 263xI                        3da1edf027631314
-1196 f64 264xF                        b2e244dd43da511f
-1197 f64 264xI                        f7c190aea681b257
-1198 f64 265xF                        08773a8f0107d805
-1199 f64 265xI                        9c6d84b82020ff46
-1200 f64 266xF                        89ab32a3ef086347
-1201 f64 266xI                        96790ef9cb271bff
-1202 f64 267xF                        c83a60eb2c8f1764
-1203 f64 267xI                        bc5053f0600a88a5
-1204 f64 268xF                        905aea8e7927089b
-1205 f64 268xI                        e6cec8878f6c39d8
-1206 f64 269xF                        9a4b8bf869cbf439
-1207 f64 269xI                        8a7c15f40d05831e
-1208 f64 270xF                        22c022b2fca799ac
-1209 f64 270xI                        0f04b5b790873d6c
-1210 f64 271xF                        59c8e13d8d2586b2
-1211 f64 271xI                        a901f05d69d1fea2
-1212 f64 272xF                        a64fbd6f093b2a29
-1213 f64 272xI                        a24eec7fd399b0ad
-1214 f64 273xF                        c76b1febc5f0c055
-1215 f64 273xI                        e529f0bf5a0e8378
-1216 f64 274xF                        48742e9afc33025e
-1217 f64 274xI                        0e20e7f504541a2b
-1218 f64 275xF                        2b99fd82a49e8349
-1219 f64 275xI                        be8183ef53a1824f
-1220 f64 276xF                        63b69fa5579e9568
-1221 f64 276xI                        b20864293cd7e10f
-1222 f64 277xF                        8a2d5d535d81a907
-1223 f64 277xI                        9082ca5f4e10ef2d
-1224 f64 278xF                        6404f2f778774dbe
-1225 f64 278xI                        26a5757ca6632588
-1226 f64 279xF                        2ab7c1384dd3ee59
-1227 f64 279xI                        aeffa1347b39af6d
-1228 f64 280xF                        125e3f7874459bb1
-1229 f64 280xI                        d83affb328bdbff4
-1230 f64 281xF                        2193b27f88d80ed7
-1231 f64 281xI                        e68719850db5020a
-1232 f64 282xF                        223409c93c7fc2f1
-1233 f64 282xI                        5064ea37b6fbc070
-1234 f64 283xF                        f15de44ce270836e
-1235 f64 283xI                        0863fba727ebcc23
-1236 f64 284xF                        c41f0ecc12412f2c
-1237 f64 284xI                        41b9220cc98bc332
-1238 f64 285xF                        a330151e849a24bf
-1239 f64 285xI                        df180ca908f31fcf
-1240 f64 286xF                        d8445564bdd61d75
-1241 f64 286xI                        8da2cdc957bfb629
-1242 f64 287xF                        5686a9235a91dcea
-1243 f64 287xI                        0bb9ddd9cc5f2764
-1244 f64 288xF                        57816d856838bf98
-1245 f64 288xI                        5481691c4984d1de
-1246 f64 289xF                        b8131c13fd0192db
-1247 f64 289xI                        69fa8796fccaa266
-1248 f64 290xF                        97dec5014ddc0d74
-1249 f64 290xI                        bcf8a2801c06e6b5
-1250 f64 291xF                        579a7591923aa689
-1251 f64 291xI                        fd9c021a021344be
-1252 f64 292xF                        4b9b50b3588962a0
-1253 f64 292xI                        82a554b8e9669976
-1254 f64 293xF                        3ab1b654a0059f92
-1255 f64 293xI                        f7a92b602d8aa00b
-1256 f64 294xF                        cdefcf533246ae0f
-1257 f64 294xI                        79ce82965ac82255
-1258 f64 295xF                        65fc27628900238c
-1259 f64 295xI                        65f56263f568300a
-1260 f64 296xF                        63593f31d633bd13
-1261 f64 296xI                        18379745fbcb4221
-1262 f64 297xF                        05ad31f0fb962a23
-1263 f64 297xI                        70451f03b168ec5e
-1264 f64 298xF                        6ad3387d62d81f07
-1265 f64 298xI                        c6fbd612ffbd0f9c
-1266 f64 299xF                        80077b5937f963ab
-1267 f64 299xI                        6b47e7775f29d15a
-1268 f64 300xF                        5c74c9271b88ea81
-1269 f64 300xI                        d7461af94a8038f9
-1270 f64 301xF                        5b7583dcee42c3f1
-1271 f64 301xI                        7f97aab7b45cf4c6
-1272 f64 302xF                        907edd641fee71c6
-1273 f64 302xI                        9020c6f97d058f42
-1274 f64 303xF                        1cd540aa691eff6c
-1275 f64 303xI                        ef1332b8dd94c4d4
-1276 f64 304xF                        7c1e05e2a3122512
-1277 f64 304xI                        156fcbdc07ed0ffe
-1278 f64 305xF                        c360e32cd2908185
-1279 f64 305xI                        85d5b048f8f138e0
-1280 f64 306xF                        4719e366248bd0b8
-1281 f64 306xI                        4b812af1e4f53ee4
-1282 f64 307xF                        4ac34fa6fd8f3c65
-1283 f64 307xI                        4f5b6be6206fdb80
-1284 f64 308xF                        3ea2bf891da685f3
-1285 f64 308xI                        1e5a6d57a511a48f
-1286 f64 309xF                        7c4d6e38145fd065
-1287 f64 309xI                        c6fe17af2157cf91
-1288 f64 310xF                        cf8d2d0400819ca8
-1289 f64 310xI                        dbed466056edb1b8
-1290 f64 311xF                        3b8f3e20b3ed153d
-1291 f64 311xI                        ea98781ab5548513
-1292 f64 312xF                        ca1adf75e7cdf112
-1293 f64 312xI                        133879525b483ce9
-1294 f64 313xF                        1d3958119a5489ab
-1295 f64 313xI                        4b549b5bbd12db60
-1296 f64 314xF                        5b9bb32acd3e1355
-1297 f64 314xI                        7c7437c82d5fe312
-1298 f64 315xF                        b5163516bbe45f4d
-1299 f64 315xI                        154695fea055e7c9
-1300 f64 316xF                        e81915ed25e9741b
-1301 f64 316xI                        4f7a1e7f4fc6deb1
-1302 f64 317xF                        cceb4e317c5aac9e
-1303 f64 317xI                        7963ae840b15ab69
-1304 f64 318xF                        07f5882586c0f6d0
-1305 f64 318xI                        194c4733ad826200
-1306 f64 319xF                        70f0df60cbfd881d
-1307 f64 319xI                        1172cbfe7bf8dc19
-1308 f64 320xF                        ad70cbaa675ea5f6
-1309 f64 320xI                        6f075cc2888c2c69
-1310 f64 16x16xF                      259713c7ca1d57bf
-1311 f64 16x16xI                      6285b1c07bff0c02
-1312 f64 32x32xF                      b62e7fa667a77d72
-1313 f64 32x32xI                      b94f29a4435e1d13
-1314 f64 20x20xF                      51e540a570e26b46
-1315 f64 20x20xI                      c28815a9443edb0c
-1316 f64 60x60xF                      05f38428917974c5
-1317 f64 60x60xI                      0eec9c4454ce1d0c
-1318 f64 81x81xF                      cbc65007676f231c
-1319 f64 81x81xI                      0592014799c332f1
-1320 f64 96x96xF                      c85e5c3e8c747639
-1321 f64 96x96xI                      e021f22157b90109
-1322 f64 64x64xF                      6898553852f77584
-1323 f64 64x64xI                      c7ebf309722caaab
-1324 f64 12x20xF                      dc0a1d26c9de82ed
-1325 f64 12x20xI                      940739d6f1166faf
-1326 f64 192x64xF                     a307cb745a2b2483
-1327 f64 192x64xI                     1e61a91974300881
+ 678 f64 5xF                          fd45dded61593b52
+ 679 f64 5xI                          b32bbbd8df0d7ae9
+ 680 f64 6xF                          155bbef24a6e5cef
+ 681 f64 6xI                          df49c7fff6e40333
+ 682 f64 7xF                          bf9d62d933b4c5df
+ 683 f64 7xI                          22ae261089ebce24
+ 684 f64 8xF                          9f38a80c293c7e34
+ 685 f64 8xI                          10ad7bdd3d04493d
+ 686 f64 9xF                          8bb41247eac55b22
+ 687 f64 9xI                          439a9be3c44106f9
+ 688 f64 10xF                         e47948617bf7785b
+ 689 f64 10xI                         cbbc8e83e3a13ade
+ 690 f64 11xF                         3b9895b399d4217d
+ 691 f64 11xI                         75f72554d75322ff
+ 692 f64 12xF                         4ba9d7f75697f442
+ 693 f64 12xI                         f9ce502c75fa8a7e
+ 694 f64 13xF                         d9f18abb50e0032c
+ 695 f64 13xI                         8e1b59a3a7dbcf80
+ 696 f64 14xF                         de299c4976eccfa2
+ 697 f64 14xI                         58641ab734e38157
+ 698 f64 15xF                         a2c72adcbad9cfaf
+ 699 f64 15xI                         f7f064d9f07ad54a
+ 700 f64 16xF                         259eb2c24ea5fe97
+ 701 f64 16xI                         2b93b5a7ccf17783
+ 702 f64 17xF                         cff940202681457e
+ 703 f64 17xI                         34e4916bbdbb63d3
+ 704 f64 18xF                         c1807dcef48d967f
+ 705 f64 18xI                         949bb5b9c2be2910
+ 706 f64 19xF                         b49bf6c0c5433d42
+ 707 f64 19xI                         742308702de3a5e3
+ 708 f64 20xF                         6631e1412663d99f
+ 709 f64 20xI                         6a09e30cab278f82
+ 710 f64 21xF                         ac4777a06c89a140
+ 711 f64 21xI                         acb75fa87d44894f
+ 712 f64 22xF                         0b552c44abfe3179
+ 713 f64 22xI                         7ced0598b31b902c
+ 714 f64 23xF                         c2bf22d5d0d3e1e7
+ 715 f64 23xI                         4fa117bcb3a60b04
+ 716 f64 24xF                         9d4dfcd4f2cfd501
+ 717 f64 24xI                         b6cece74e305a30d
+ 718 f64 25xF                         db85b865bcf9dfea
+ 719 f64 25xI                         709d6b2def6825ee
+ 720 f64 26xF                         23595b24c834a7a2
+ 721 f64 26xI                         e7bf688dcd0a7d9f
+ 722 f64 27xF                         ce22405ae9528680
+ 723 f64 27xI                         638f24c570c4864e
+ 724 f64 28xF                         cb37160cb93c0143
+ 725 f64 28xI                         fe11ff25cec35e6d
+ 726 f64 29xF                         fb56a7b2107bb9e6
+ 727 f64 29xI                         c9798c9c3df2b335
+ 728 f64 30xF                         8a0a6d11205420b8
+ 729 f64 30xI                         6aa3295283dc6af6
+ 730 f64 31xF                         a8da961f9c93fc93
+ 731 f64 31xI                         ca2add3ceb4125c5
+ 732 f64 32xF                         7bf26ee52a34e71c
+ 733 f64 32xI                         049841dd9422dee6
+ 734 f64 33xF                         62b30bd68159c3a7
+ 735 f64 33xI                         0637742ad8029e21
+ 736 f64 34xF                         0a9711d930769a2f
+ 737 f64 34xI                         374be68b1b72d1c1
+ 738 f64 35xF                         341078d083be8bee
+ 739 f64 35xI                         461c86a3e4c73474
+ 740 f64 36xF                         32468653ac08f1d7
+ 741 f64 36xI                         8375fc4cf323639f
+ 742 f64 37xF                         e065e7ec4f1785df
+ 743 f64 37xI                         104972de1c41e25c
+ 744 f64 38xF                         b5e13b4382ea6382
+ 745 f64 38xI                         9b34518947b821c7
+ 746 f64 39xF                         bd6b783c1b81003f
+ 747 f64 39xI                         65178b7f3cf27043
+ 748 f64 40xF                         693e2181e9c39b96
+ 749 f64 40xI                         6424c8ebc208a260
+ 750 f64 41xF                         7601cda5a1c23862
+ 751 f64 41xI                         145266cf91ddae3f
+ 752 f64 42xF                         a304d5c82bdc7a0a
+ 753 f64 42xI                         544483250ea831c1
+ 754 f64 43xF                         fa665d338f03d4ac
+ 755 f64 43xI                         97bf7e16f0af6233
+ 756 f64 44xF                         cf3c575aa24225ac
+ 757 f64 44xI                         ec284aeccc0d5be6
+ 758 f64 45xF                         3f484566a6b0eec8
+ 759 f64 45xI                         462c983095dd83c7
+ 760 f64 46xF                         7e0aa3cf47b197a4
+ 761 f64 46xI                         fef4a2b64f2c79c3
+ 762 f64 47xF                         ca70c33bc0f3111f
+ 763 f64 47xI                         21474f4890cd2532
+ 764 f64 48xF                         8495d354fa558a4d
+ 765 f64 48xI                         f160c82cab1bb4d9
+ 766 f64 49xF                         659acd907cd7c55b
+ 767 f64 49xI                         34f21ab035c1a31e
+ 768 f64 50xF                         eb1dc914ab343609
+ 769 f64 50xI                         9863db8214e0f8c0
+ 770 f64 51xF                         02f7880453308c6d
+ 771 f64 51xI                         3af238bbe005a8de
+ 772 f64 52xF                         a7695e34599336b8
+ 773 f64 52xI                         3c3f9e59f5cc48c6
+ 774 f64 53xF                         a37ce42a83f558d2
+ 775 f64 53xI                         7f9abf797a28febc
+ 776 f64 54xF                         bd57a5914f62ba3d
+ 777 f64 54xI                         10c478af67fd1e12
+ 778 f64 55xF                         0e565c1f54814f2a
+ 779 f64 55xI                         d165ec627a3f8e89
+ 780 f64 56xF                         9e3eaa8f11220730
+ 781 f64 56xI                         6ae9472ba20b71c3
+ 782 f64 57xF                         fb3136d6ea84325b
+ 783 f64 57xI                         25f99d765f9c0196
+ 784 f64 58xF                         12296a23564d06a4
+ 785 f64 58xI                         593076e78adfe9bb
+ 786 f64 59xF                         103f1da8e96912c2
+ 787 f64 59xI                         d2d4636bc52cde06
+ 788 f64 60xF                         d08d0fef5d5efa78
+ 789 f64 60xI                         4017e195c7f3cd2c
+ 790 f64 61xF                         375169be919fd957
+ 791 f64 61xI                         1bd6f509e189a61d
+ 792 f64 62xF                         7a7d191f793df9c1
+ 793 f64 62xI                         27c8073ce68dbf9d
+ 794 f64 63xF                         1ec80aba92c30bec
+ 795 f64 63xI                         201c47c8e8aebcc5
+ 796 f64 64xF                         67cc6c5c0965c3d4
+ 797 f64 64xI                         d3880ed75216277a
+ 798 f64 65xF                         398fa8d8ef2f84b2
+ 799 f64 65xI                         c612facc29298451
+ 800 f64 66xF                         76149972f644c8cd
+ 801 f64 66xI                         ccab9ed8a8cf503e
+ 802 f64 67xF                         90219128dd9f514d
+ 803 f64 67xI                         c721ef4358986ffa
+ 804 f64 68xF                         1e2c0a8b89ceadcf
+ 805 f64 68xI                         ee303204f6b93dd6
+ 806 f64 69xF                         f274c99cd73c514f
+ 807 f64 69xI                         946e13bcfd426554
+ 808 f64 70xF                         d06fe142ac064401
+ 809 f64 70xI                         e38a343dbae2d19d
+ 810 f64 71xF                         af3a44fd6fffa13c
+ 811 f64 71xI                         dc5ca03949b00fc8
+ 812 f64 72xF                         0bbab0db474b4129
+ 813 f64 72xI                         49b7686e70639ef3
+ 814 f64 73xF                         8f54afad7995ad41
+ 815 f64 73xI                         141b8d42cb293929
+ 816 f64 74xF                         3e37210d8bc43fab
+ 817 f64 74xI                         54deab18a6621d99
+ 818 f64 75xF                         80c53311d16ef783
+ 819 f64 75xI                         8de03273353cdf1a
+ 820 f64 76xF                         53de2f500cdc7704
+ 821 f64 76xI                         11d182222b6b2f4e
+ 822 f64 77xF                         b276243d2725ac94
+ 823 f64 77xI                         61f756fb66ce2b61
+ 824 f64 78xF                         28a67065b17242e5
+ 825 f64 78xI                         b52579042844fea3
+ 826 f64 79xF                         c569c900f9d61ce1
+ 827 f64 79xI                         ce1d480e29f29e39
+ 828 f64 80xF                         02bac596887f1bc4
+ 829 f64 80xI                         0b91da95c45f6860
+ 830 f64 81xF                         8b1f3500e040cf2a
+ 831 f64 81xI                         f3ebc7a9ac5c7a20
+ 832 f64 82xF                         d4b3617477a98097
+ 833 f64 82xI                         ff264d12aac240a9
+ 834 f64 83xF                         3d73d4aa9a2f996f
+ 835 f64 83xI                         7f5f85ced28fd572
+ 836 f64 84xF                         a9df62348ee342f8
+ 837 f64 84xI                         ce296e820fc74195
+ 838 f64 85xF                         1782a1e4921809fb
+ 839 f64 85xI                         30f0b21e2bb6a22d
+ 840 f64 86xF                         e60a3c9d94c86a48
+ 841 f64 86xI                         c1ebb69fc055c628
+ 842 f64 87xF                         b8fd89f529e864e2
+ 843 f64 87xI                         41e9fbe4c12cc08f
+ 844 f64 88xF                         16a1552600c1e3c6
+ 845 f64 88xI                         674fb799ed41f438
+ 846 f64 89xF                         6b462221ec5d4340
+ 847 f64 89xI                         fb54cc2a507217ea
+ 848 f64 90xF                         2bfcc834b4baaef0
+ 849 f64 90xI                         ffae8a01c8e1f9f8
+ 850 f64 91xF                         f1799f6fcdb1f705
+ 851 f64 91xI                         10fe6459de6364c7
+ 852 f64 92xF                         47a90d37e3d015a1
+ 853 f64 92xI                         370d2d717efb9e9d
+ 854 f64 93xF                         e86a0a330dad8715
+ 855 f64 93xI                         2ea013025cdc0648
+ 856 f64 94xF                         3d2420b1a1ac63de
+ 857 f64 94xI                         2de281d32f8fbb5f
+ 858 f64 95xF                         f24fad71f840d0f7
+ 859 f64 95xI                         01dfcc361cf9c45a
+ 860 f64 96xF                         ce098b1c1ba0c661
+ 861 f64 96xI                         08f7d9c8a4a97f29
+ 862 f64 97xF                         dac9af634e84e87f
+ 863 f64 97xI                         1bb08e9f411488af
+ 864 f64 98xF                         3f2f13d338abdc08
+ 865 f64 98xI                         d62ca3255252a1bc
+ 866 f64 99xF                         f88a5d605b771183
+ 867 f64 99xI                         acaf9da587e9caeb
+ 868 f64 100xF                        a3f9260ad2e53d66
+ 869 f64 100xI                        26c763bd49edb654
+ 870 f64 101xF                        25034bbc5b5a1494
+ 871 f64 101xI                        2b82f8a79b87cf26
+ 872 f64 102xF                        27738c0780f177e4
+ 873 f64 102xI                        a5bb440aad4d2ec9
+ 874 f64 103xF                        5e224b2303934aba
+ 875 f64 103xI                        ad13d59291ea1efb
+ 876 f64 104xF                        67823c57d4e3a36a
+ 877 f64 104xI                        a1309ea2c72a8a72
+ 878 f64 105xF                        c0db2def395b9d11
+ 879 f64 105xI                        dab6cf438119d129
+ 880 f64 106xF                        54c507e5cc92cf9d
+ 881 f64 106xI                        665243756a1593fa
+ 882 f64 107xF                        0949b9fb1a13311d
+ 883 f64 107xI                        99493e2b7a76f463
+ 884 f64 108xF                        714e75895c090eda
+ 885 f64 108xI                        f0d491d92d0bdce7
+ 886 f64 109xF                        a22bd481e0f3ba5f
+ 887 f64 109xI                        50230f6756f02a9e
+ 888 f64 110xF                        52342223a6438970
+ 889 f64 110xI                        cedad8fe184ccccb
+ 890 f64 111xF                        c208243e8bbcac25
+ 891 f64 111xI                        c8fdd2e03cc5c3b7
+ 892 f64 112xF                        e422e90f9acb7454
+ 893 f64 112xI                        c402ae9d22c9ae8b
+ 894 f64 113xF                        5278a7873217d3d9
+ 895 f64 113xI                        38e560ba6cfd4c8d
+ 896 f64 114xF                        99f4e5c4a6ff34e2
+ 897 f64 114xI                        3f76d7a3e61d930c
+ 898 f64 115xF                        9a197601ceb190c6
+ 899 f64 115xI                        c3d99e376d6f1ca5
+ 900 f64 116xF                        3b90f5ddd49de3ba
+ 901 f64 116xI                        ed3830c3e1940a92
+ 902 f64 117xF                        771e32c28b7413ab
+ 903 f64 117xI                        b357c47cfe370a5a
+ 904 f64 118xF                        cc6caa14bccba432
+ 905 f64 118xI                        ecdd2ce42603e621
+ 906 f64 119xF                        c5d8a1301a5a7ca9
+ 907 f64 119xI                        4e28a1d020cd6b07
+ 908 f64 120xF                        d4b54805ae8d6aba
+ 909 f64 120xI                        752b2fb28a62e07f
+ 910 f64 121xF                        c8a227a7a00578d5
+ 911 f64 121xI                        1d3a972d9ea32ce2
+ 912 f64 122xF                        661c912c7100ec7c
+ 913 f64 122xI                        c6d5d71d33018e2b
+ 914 f64 123xF                        00c2cedede7c00a8
+ 915 f64 123xI                        c56f8c264a78365e
+ 916 f64 124xF                        bf26f8a6a7626a4b
+ 917 f64 124xI                        b6304c84aa93cea3
+ 918 f64 125xF                        9dc66358f82fdad8
+ 919 f64 125xI                        482e12fce514cec5
+ 920 f64 126xF                        c12eab11ad225c01
+ 921 f64 126xI                        fd4526eae00304bb
+ 922 f64 127xF                        5c0b4059df2bb5ca
+ 923 f64 127xI                        287c72bc17e0a22d
+ 924 f64 128xF                        aed6f763aac48199
+ 925 f64 128xI                        3c41ba5d2227ed2c
+ 926 f64 129xF                        a1c7368de4f02187
+ 927 f64 129xI                        ca8eb217528a2a4d
+ 928 f64 130xF                        6dbe3f1b9441245a
+ 929 f64 130xI                        01c20ffd327dfab3
+ 930 f64 131xF                        f7680b9f56dcaa90
+ 931 f64 131xI                        ce59b19be72c7e8a
+ 932 f64 132xF                        19e52822b2fd9191
+ 933 f64 132xI                        d68f3937dd427da6
+ 934 f64 133xF                        5a931a389327b5c3
+ 935 f64 133xI                        9a9fc1b3a0441805
+ 936 f64 134xF                        d01512b8fe6e0cc2
+ 937 f64 134xI                        b1871c8be91e8bd5
+ 938 f64 135xF                        becd71eebf48532c
+ 939 f64 135xI                        2661cb7dbcf9d939
+ 940 f64 136xF                        9e2d7b5a63eccd07
+ 941 f64 136xI                        f65e5e6031a9edb4
+ 942 f64 137xF                        ee074ed76ca4de0d
+ 943 f64 137xI                        1f859d54d1150a39
+ 944 f64 138xF                        3bd122261cf33639
+ 945 f64 138xI                        049fc7cda39485f7
+ 946 f64 139xF                        954c681efb36d5d5
+ 947 f64 139xI                        b17ba22087ad379e
+ 948 f64 140xF                        349992fb5dd6011e
+ 949 f64 140xI                        cd50384ad440bd8d
+ 950 f64 141xF                        3feeb70f17c3184d
+ 951 f64 141xI                        1e7721e859cbd102
+ 952 f64 142xF                        2f17d9e8e603858f
+ 953 f64 142xI                        41f31a419365e2c7
+ 954 f64 143xF                        33f7cedd1bdcffa6
+ 955 f64 143xI                        1c3961c7f8563209
+ 956 f64 144xF                        e0ab5fe7286faeee
+ 957 f64 144xI                        ae8a7690c656f00f
+ 958 f64 145xF                        54956e429174ab01
+ 959 f64 145xI                        c7d64634970ec694
+ 960 f64 146xF                        14d216dbf9629231
+ 961 f64 146xI                        e26be5c98d12ef03
+ 962 f64 147xF                        ab3da1bc20e24c41
+ 963 f64 147xI                        77bbc350fc0b5992
+ 964 f64 148xF                        24eb8efb17723037
+ 965 f64 148xI                        42c4bd19d64e24a9
+ 966 f64 149xF                        7674b75ecfa2a630
+ 967 f64 149xI                        a328370e4871504b
+ 968 f64 150xF                        7f0457ba661cea83
+ 969 f64 150xI                        48546d179b55136b
+ 970 f64 151xF                        a098612d427aaf00
+ 971 f64 151xI                        d3f588d25c29943f
+ 972 f64 152xF                        596d9254baf67535
+ 973 f64 152xI                        746b5743675166ca
+ 974 f64 153xF                        8afae3cd40cc677a
+ 975 f64 153xI                        c1ccaa890b05671c
+ 976 f64 154xF                        169fe176e182b578
+ 977 f64 154xI                        a31de7de2dfc9233
+ 978 f64 155xF                        2c5e4d938aad4d7e
+ 979 f64 155xI                        4e15a5c07822b098
+ 980 f64 156xF                        265f04b313682371
+ 981 f64 156xI                        96ec0a326108d980
+ 982 f64 157xF                        86b51bc9f646ef7c
+ 983 f64 157xI                        eba3368e4b4d663f
+ 984 f64 158xF                        7c7107d7feea34d2
+ 985 f64 158xI                        74f5fefcf3806a1a
+ 986 f64 159xF                        838d2f500689f5af
+ 987 f64 159xI                        d9a3db8eda81937c
+ 988 f64 160xF                        4c95e892edb5f529
+ 989 f64 160xI                        7a1d5644618d4d66
+ 990 f64 161xF                        e5b2eedd0872b250
+ 991 f64 161xI                        8b4feb5d3d8ee33a
+ 992 f64 162xF                        d91b92e03b034341
+ 993 f64 162xI                        06a0d051a8b15475
+ 994 f64 163xF                        5fef306946045e9b
+ 995 f64 163xI                        020c6dac75db0124
+ 996 f64 164xF                        8baa2db4fbd03c95
+ 997 f64 164xI                        88f06aa169d00a7f
+ 998 f64 165xF                        75b9abdad8793ac7
+ 999 f64 165xI                        0ffe315096ed69f4
+1000 f64 166xF                        8e58c9f376d4826d
+1001 f64 166xI                        ffe059cf2817c611
+1002 f64 167xF                        c7cc37d354c4a732
+1003 f64 167xI                        be0912e5bcc7bb8d
+1004 f64 168xF                        c488635d2a1eb89d
+1005 f64 168xI                        e19c0649ad48c4ff
+1006 f64 169xF                        e2b45c1f18248806
+1007 f64 169xI                        87116c759adea947
+1008 f64 170xF                        c6207e631b863940
+1009 f64 170xI                        3c6c6cbd5f41df2b
+1010 f64 171xF                        cde00933e573dcaa
+1011 f64 171xI                        ffadf94cae15ef5c
+1012 f64 172xF                        d00a3411b47a7594
+1013 f64 172xI                        4cfb6514f7be3c1c
+1014 f64 173xF                        42e1c8dd623e939f
+1015 f64 173xI                        a377244c41bf0599
+1016 f64 174xF                        7c88a610896bfbdf
+1017 f64 174xI                        1e3f315c702ad113
+1018 f64 175xF                        a54106f448031512
+1019 f64 175xI                        8d8e71944f789dd9
+1020 f64 176xF                        525088e696a3f298
+1021 f64 176xI                        ff67784d6d2b765c
+1022 f64 177xF                        ff22f91cf3b7745c
+1023 f64 177xI                        980bcccdbd92de6f
+1024 f64 178xF                        29c9f7a6a5e9fd50
+1025 f64 178xI                        ed44ff5e79f968c1
+1026 f64 179xF                        e9fe44043a4b0d2b
+1027 f64 179xI                        6b66f0405383822c
+1028 f64 180xF                        01ff185e4e279c8d
+1029 f64 180xI                        416f41ffb1830a5e
+1030 f64 181xF                        da8cec5aae536732
+1031 f64 181xI                        cdab078d542e46a3
+1032 f64 182xF                        60088073ffd7de68
+1033 f64 182xI                        8a6eb5f5b0e7d9f2
+1034 f64 183xF                        af073f30ce705eb4
+1035 f64 183xI                        e8799962f0214eb5
+1036 f64 184xF                        30b2d589fea6e2d6
+1037 f64 184xI                        da3104bf99005869
+1038 f64 185xF                        fd707c93a78b00e5
+1039 f64 185xI                        5f2b12d5ad1c2a6d
+1040 f64 186xF                        1ed0bdae12f377f5
+1041 f64 186xI                        26879c4521833305
+1042 f64 187xF                        2794fc4c87a98bef
+1043 f64 187xI                        2aee87c00ea2a38a
+1044 f64 188xF                        fb9d37c605faecae
+1045 f64 188xI                        d40b94fe4985d0e1
+1046 f64 189xF                        6a3ad57fe5ccaaff
+1047 f64 189xI                        7f470bfc70002f6b
+1048 f64 190xF                        7cfc328dcd174fdf
+1049 f64 190xI                        ae159f43dc5bdf9a
+1050 f64 191xF                        a9e05fc389428dbc
+1051 f64 191xI                        b91868f36bf48107
+1052 f64 192xF                        7768ee4d487f3e20
+1053 f64 192xI                        2bd9587a2b471d03
+1054 f64 193xF                        d803437e81435955
+1055 f64 193xI                        b5794118a088e86d
+1056 f64 194xF                        b16c8ca6358d9e7a
+1057 f64 194xI                        cfa93ace13faea81
+1058 f64 195xF                        10e92bae8892bc1e
+1059 f64 195xI                        d66589d8c352df5d
+1060 f64 196xF                        807507f268b70ca5
+1061 f64 196xI                        e59f4d78323f7c25
+1062 f64 197xF                        cf2fcb4ba61dc61c
+1063 f64 197xI                        900b85ca6613b22a
+1064 f64 198xF                        719d2b28e32a8e8a
+1065 f64 198xI                        6984f2b98ca2cfad
+1066 f64 199xF                        c3fd8afe5df05c65
+1067 f64 199xI                        bd893cf8f5e785f0
+1068 f64 200xF                        b19bb8f522f4de7d
+1069 f64 200xI                        f3a22fab0e1b2294
+1070 f64 201xF                        884fde397ce24837
+1071 f64 201xI                        82fa650b36c6a823
+1072 f64 202xF                        d2349af9d454e5a2
+1073 f64 202xI                        1bb0e0d6c6f57bb7
+1074 f64 203xF                        6c1dd1bb162af6f8
+1075 f64 203xI                        eb040ada025feaa1
+1076 f64 204xF                        14128590d85d8036
+1077 f64 204xI                        f45a0cd446178169
+1078 f64 205xF                        5e182f79d6bb4b39
+1079 f64 205xI                        5319dfbe752643f9
+1080 f64 206xF                        31e14bd870b782fc
+1081 f64 206xI                        e130fbf52842d7a3
+1082 f64 207xF                        3dbbcff48ba5153d
+1083 f64 207xI                        9cf307de56687030
+1084 f64 208xF                        6260cd5046016de8
+1085 f64 208xI                        e9b5ebc81e7125a0
+1086 f64 209xF                        89c10a9272466f36
+1087 f64 209xI                        725cdbe02ec9d71f
+1088 f64 210xF                        23e0bcdadd042c4a
+1089 f64 210xI                        e071f7afb7fde1a5
+1090 f64 211xF                        a06310159e493557
+1091 f64 211xI                        85bde98cb90ea762
+1092 f64 212xF                        5f92cac7da207078
+1093 f64 212xI                        cdd25b430ff88470
+1094 f64 213xF                        b5cbe4787c3d0e20
+1095 f64 213xI                        88e5e94a98ce3092
+1096 f64 214xF                        573ccd6f70ffc585
+1097 f64 214xI                        9af50bd7bd05766e
+1098 f64 215xF                        6bae0776830e9b68
+1099 f64 215xI                        2638102599d58c62
+1100 f64 216xF                        592d3742cbed451c
+1101 f64 216xI                        beb91a7485eb8b3c
+1102 f64 217xF                        37af22f146b696bc
+1103 f64 217xI                        3175fdc042231ee9
+1104 f64 218xF                        62a3de55f8bdf47f
+1105 f64 218xI                        286827872190021b
+1106 f64 219xF                        da6a1d99442aaf22
+1107 f64 219xI                        bab5cf268ca374fc
+1108 f64 220xF                        db6b78008781729c
+1109 f64 220xI                        d860515c2b35af01
+1110 f64 221xF                        851948a1375cf6b5
+1111 f64 221xI                        0e861d1a6da6aae5
+1112 f64 222xF                        aadbe8520e2c02d0
+1113 f64 222xI                        671103c401f5a491
+1114 f64 223xF                        2f0a4b9242b4f783
+1115 f64 223xI                        64bd7e251bf9b0dd
+1116 f64 224xF                        d5d780cd02d5857f
+1117 f64 224xI                        a777241273565938
+1118 f64 225xF                        a329130c8b811ca4
+1119 f64 225xI                        633a0f34d29ef828
+1120 f64 226xF                        ebeb8cadf4503a4f
+1121 f64 226xI                        370e26db8d6e3582
+1122 f64 227xF                        0a8e0f9414b34f28
+1123 f64 227xI                        ae722110335e042c
+1124 f64 228xF                        4dab52792e763d8a
+1125 f64 228xI                        9bfc685b85898ade
+1126 f64 229xF                        a3d678f280af87f3
+1127 f64 229xI                        1a2caf07f07c22a5
+1128 f64 230xF                        722f1994c4a5350b
+1129 f64 230xI                        214ca9ba3270fb5f
+1130 f64 231xF                        4aea23cd06bfff93
+1131 f64 231xI                        accdcaf19bfd4e0a
+1132 f64 232xF                        d727aa683ce4436c
+1133 f64 232xI                        138a930a58f4d0af
+1134 f64 233xF                        65ff5ac12847c6c4
+1135 f64 233xI                        b2caaa6064db2667
+1136 f64 234xF                        1cf66d6ba35532e9
+1137 f64 234xI                        0a6b5f6c0bc493a2
+1138 f64 235xF                        efdf27c705c7a35b
+1139 f64 235xI                        c68d52f7c40ec26b
+1140 f64 236xF                        1eabc2c37b332afb
+1141 f64 236xI                        0cbfcc493d98b345
+1142 f64 237xF                        9f6af0978003e21b
+1143 f64 237xI                        ba68b5864ca96d1f
+1144 f64 238xF                        f20e391236b2d2bd
+1145 f64 238xI                        409a742590f356e4
+1146 f64 239xF                        62dffb30feed74a3
+1147 f64 239xI                        3fd4b339917938cc
+1148 f64 240xF                        9ce5ce70a88c2479
+1149 f64 240xI                        9656b0b7f59d2721
+1150 f64 241xF                        6093c78a68a36fb8
+1151 f64 241xI                        a96d563222d091d6
+1152 f64 242xF                        160edfc9057331cc
+1153 f64 242xI                        76994d02ad24f005
+1154 f64 243xF                        ffa6a7b6fc76bcb8
+1155 f64 243xI                        693db3cbf035357d
+1156 f64 244xF                        87b215a612e3ffd6
+1157 f64 244xI                        9201a4b4fb1d71cf
+1158 f64 245xF                        69b0f97576f437c5
+1159 f64 245xI                        c58fb5912dbb6d5b
+1160 f64 246xF                        c57f1f018b03ba47
+1161 f64 246xI                        a8f39923468fea4f
+1162 f64 247xF                        c980f89ff43d6665
+1163 f64 247xI                        24197c77e6818408
+1164 f64 248xF                        c72c969e02ad5e44
+1165 f64 248xI                        50acea59f9af9ffc
+1166 f64 249xF                        c42ebf46e3f9f6e9
+1167 f64 249xI                        1ef7fcd62b989484
+1168 f64 250xF                        b320441dd312ed4e
+1169 f64 250xI                        e3a921b54d2348a4
+1170 f64 251xF                        5b9de8a29215edf7
+1171 f64 251xI                        0e077167254c4133
+1172 f64 252xF                        251a6d33800aeb1d
+1173 f64 252xI                        8756aa82fe6ee296
+1174 f64 253xF                        d381a6899602fe59
+1175 f64 253xI                        b6c2f11e0f23160f
+1176 f64 254xF                        daef831f07f46c09
+1177 f64 254xI                        a08148b51ce58497
+1178 f64 255xF                        3e1de8570faaab28
+1179 f64 255xI                        51d63d7ddf38a791
+1180 f64 256xF                        f384282eb3cb9700
+1181 f64 256xI                        c7a09636d7417efc
+1182 f64 257xF                        dd8a5d67e366fef0
+1183 f64 257xI                        72252bec1348306b
+1184 f64 258xF                        75bb09b425cfa633
+1185 f64 258xI                        777b594e0a4a0ab9
+1186 f64 259xF                        7b1eef514cdd0a65
+1187 f64 259xI                        d4253eaeef999dd0
+1188 f64 260xF                        5e63c73672e3a57f
+1189 f64 260xI                        e1d7ae641feda173
+1190 f64 261xF                        1c31a3dae495d5e3
+1191 f64 261xI                        79b66124dd96c460
+1192 f64 262xF                        f5627575003923c0
+1193 f64 262xI                        919fc0aed7233c67
+1194 f64 263xF                        60ab8dfd057ac8e8
+1195 f64 263xI                        72ba848eb6c416c3
+1196 f64 264xF                        6d53f82fe288b85b
+1197 f64 264xI                        294d1d547cde4fdb
+1198 f64 265xF                        6d62f5d4316a3f12
+1199 f64 265xI                        3b11275c156647a9
+1200 f64 266xF                        39bc8be9c51d404e
+1201 f64 266xI                        f9ebfd3aaffc8774
+1202 f64 267xF                        81c8eab6bde24a5f
+1203 f64 267xI                        550094bd1521f50f
+1204 f64 268xF                        17be65d52122fb8a
+1205 f64 268xI                        c6026ba725c3afc7
+1206 f64 269xF                        b559e29ec3077d2e
+1207 f64 269xI                        9a72d304a66c7d28
+1208 f64 270xF                        790d00d071fcec42
+1209 f64 270xI                        a55f56de903ec9d4
+1210 f64 271xF                        3058e2ec13ab4252
+1211 f64 271xI                        0677ff1bc7ed5034
+1212 f64 272xF                        b2d742cc413a7d4f
+1213 f64 272xI                        6eb9860487df81a9
+1214 f64 273xF                        915914c789061a0d
+1215 f64 273xI                        543d746c8bede77d
+1216 f64 274xF                        c0858821a675ba9a
+1217 f64 274xI                        a3cd7f6204087025
+1218 f64 275xF                        35a3fc83d35fbf2a
+1219 f64 275xI                        08a75bac36b4b4e8
+1220 f64 276xF                        6c75542f67dd357c
+1221 f64 276xI                        f56f8ae7d73be4af
+1222 f64 277xF                        7df02fb0a2f157c0
+1223 f64 277xI                        b037907b02d2f819
+1224 f64 278xF                        1692f180da8229bf
+1225 f64 278xI                        4dcefa813505a5d4
+1226 f64 279xF                        5ab05532e9a5c622
+1227 f64 279xI                        2e1d5aa4772450fe
+1228 f64 280xF                        207543869c52c6ca
+1229 f64 280xI                        5c21e259270faf89
+1230 f64 281xF                        a5cad2023afd24af
+1231 f64 281xI                        662efcf1ab2505cc
+1232 f64 282xF                        7a34afb279244e1a
+1233 f64 282xI                        c6a83a1bb4b768b8
+1234 f64 283xF                        e783bcb5351b7d80
+1235 f64 283xI                        2199bf55e769b039
+1236 f64 284xF                        5dd51a0537f179fd
+1237 f64 284xI                        9a073018a6f3f0ea
+1238 f64 285xF                        93aa4e09dc152303
+1239 f64 285xI                        fb09770d393f93de
+1240 f64 286xF                        108ecfcf53f32794
+1241 f64 286xI                        9cd1723467300431
+1242 f64 287xF                        3b36ea1e1cb5125a
+1243 f64 287xI                        f0da3465f5e02880
+1244 f64 288xF                        e653a4a46f5c7fc2
+1245 f64 288xI                        15895ae8c26055e4
+1246 f64 289xF                        afa97bc1919090a5
+1247 f64 289xI                        e816808f4b60125b
+1248 f64 290xF                        6e7b7f42094c9440
+1249 f64 290xI                        b65b2ef727f6ef7d
+1250 f64 291xF                        35a00b66bf5295d9
+1251 f64 291xI                        b293413da9f38761
+1252 f64 292xF                        45a58ff3aebaf306
+1253 f64 292xI                        373e8235202a20b3
+1254 f64 293xF                        1d5bee524538c503
+1255 f64 293xI                        1619dd074777a090
+1256 f64 294xF                        a628bf5242ddd9ed
+1257 f64 294xI                        74bbfe87d400eaf0
+1258 f64 295xF                        f465a75356cb0b42
+1259 f64 295xI                        76904a78c31b4555
+1260 f64 296xF                        59752a698ae2a37a
+1261 f64 296xI                        cd806699dd6ff32d
+1262 f64 297xF                        fa134800b1628e2a
+1263 f64 297xI                        29ab4ccf63f047c4
+1264 f64 298xF                        a423e6d19b145f2f
+1265 f64 298xI                        29e29d07bd7a2090
+1266 f64 299xF                        c091629dce8af11a
+1267 f64 299xI                        b126d1e01923a9e8
+1268 f64 300xF                        7e1eb749f42b3f29
+1269 f64 300xI                        26649ce0d3a9e7a5
+1270 f64 301xF                        6e99929b2769f960
+1271 f64 301xI                        ca1de5f5c734f11d
+1272 f64 302xF                        6ff862f6f5092059
+1273 f64 302xI                        a65d3c70f1469c62
+1274 f64 303xF                        510ee1ee16810da8
+1275 f64 303xI                        d2566a4ea3926c62
+1276 f64 304xF                        5eda63e4d04c86b4
+1277 f64 304xI                        a543c023d427aacf
+1278 f64 305xF                        5e05c334b3e3330d
+1279 f64 305xI                        6f5e8c949399bcc0
+1280 f64 306xF                        3b9758991ee2708a
+1281 f64 306xI                        0ee4209af8427d88
+1282 f64 307xF                        ba0caeac6a1dbb7e
+1283 f64 307xI                        a6a090300e10d6f1
+1284 f64 308xF                        7c5b8938ac694840
+1285 f64 308xI                        98040eac76220d76
+1286 f64 309xF                        acb252428cbcedfc
+1287 f64 309xI                        d8464ea79cddc35e
+1288 f64 310xF                        cdfedea61e47c7e2
+1289 f64 310xI                        5b40086a8d872bc7
+1290 f64 311xF                        421218a9c8db4eee
+1291 f64 311xI                        3e92f80b4f6efee5
+1292 f64 312xF                        f5fa0c428d018a0d
+1293 f64 312xI                        131193816dca107c
+1294 f64 313xF                        35d2e811b9249d62
+1295 f64 313xI                        5007cc65f237c81e
+1296 f64 314xF                        4ec85e749ee5adde
+1297 f64 314xI                        3b9de410d1d51803
+1298 f64 315xF                        f065a6c2d2ff5878
+1299 f64 315xI                        7675cf095ce5dc6f
+1300 f64 316xF                        01737cf657f7e2da
+1301 f64 316xI                        9390b0d5ca60ee92
+1302 f64 317xF                        2eef4f6be7ba0e3c
+1303 f64 317xI                        69c23ee3c797fa8e
+1304 f64 318xF                        7bd9bc376abc86ca
+1305 f64 318xI                        7bcd38ead44db50e
+1306 f64 319xF                        b55b4fe80651706e
+1307 f64 319xI                        7e6bea3ee03ac11d
+1308 f64 320xF                        0b3befcfe511fbea
+1309 f64 320xI                        88150dd40cd9303a
+1310 f64 16x16xF                      692a0c47c63b339e
+1311 f64 16x16xI                      43b804cdaaeb4c38
+1312 f64 32x32xF                      ef43df8ffc066afe
+1313 f64 32x32xI                      806ea8ea8bb5395d
+1314 f64 20x20xF                      fd7b3bd6864a6223
+1315 f64 20x20xI                      496c8aae064294b7
+1316 f64 60x60xF                      d3c506754e466da1
+1317 f64 60x60xI                      0c659b674a551d13
+1318 f64 81x81xF                      46f00ee56c53bc7c
+1319 f64 81x81xI                      307597b30f04815d
+1320 f64 96x96xF                      02082826a01f66e0
+1321 f64 96x96xI                      5c64f3de992170b8
+1322 f64 64x64xF                      644b8de784d90420
+1323 f64 64x64xI                      69fa6b2ff05fec00
+1324 f64 12x20xF                      bff6b710e6c4bcbb
+1325 f64 12x20xI                      03d4ef55e41353c4
+1326 f64 192x64xF                     6e8aa9731acfb584
+1327 f64 192x64xI                     c507efe684017835
 1328 f64 8x8x8xF                      5b7c15e0e098ce09
 1329 f64 8x8x8xI                      5b3c0557842347c5
-1330 f64 16x16x16xF                   890efa2a800b38dd
-1331 f64 16x16x16xI                   6cc92b8e9b816516
-1332 f64 12x10x9xF                    dde529cec42a9c2c
-1333 f64 12x10x9xI                    ac9755bfba923260
-1334 f64 64x4x4xF                     df122af1db839157
-1335 f64 64x4x4xI                     110d9cc2f20e4f2f
-1336 f64 str64_1_1F                   56227216d299451f
-1337 f64 str64_1_1I                   03771edb631b659f
-1338 f64 str64_1_8192F                939f900fdcb12477
-1339 f64 str64_1_8192I                dfdadc014247e673
-1340 f64 str60_4_4F                   c9832abb703b2a37
-1341 f64 str60_4_4I                   509a7a42ae005053
-1342 f64 str81_1_2F                   a74cafe01d8d5234
-1343 f64 str81_1_2I                   777ff68ce2242807
+1330 f64 16x16x16xF                   6d0c3074c8136a38
+1331 f64 16x16x16xI                   b88127b23f36104f
+1332 f64 12x10x9xF                    6d41f8d46f22af0a
+1333 f64 12x10x9xI                    54a4073fbb0e0d95
+1334 f64 64x4x4xF                     ed23a56bb234dc56
+1335 f64 64x4x4xI                     d92b1355a5882177
+1336 f64 str64_1_1F                   8eb67b21e28377c9
+1337 f64 str64_1_1I                   d25a82fd998a1bf9
+1338 f64 str64_1_8192F                607f60cb30f073ed
+1339 f64 str64_1_8192I                32d6fd99a904b049
+1340 f64 str60_4_4F                   6197d33534f355e6
+1341 f64 str60_4_4I                   5158fbb153472a61
+1342 f64 str81_1_2F                   ade7d7328b6afab7
+1343 f64 str81_1_2I                   44eaf7a15cd8cf59
 1344 f32 4x4x4xF                      6fafe19dc27a0cdc
 1345 f32 4x4x4xI                      c5682980afeeb851
 1346 f64 4x4x4xF                      b8ad25873f97bb6a

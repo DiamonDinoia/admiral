@@ -298,8 +298,8 @@ struct good_thomas_desc {
     static constexpr bool admits = good_thomas_eligible<T, N1, N2, N3>();
     template<typename T, bool Forward>
     static void run(const std::complex<T>* in, std::complex<T>* out) noexcept {
-        if constexpr (std::is_same_v<T, double> && kGranuleLine<n>)
-            granule_line<n, Forward>(in, out);
+        if constexpr (kGranuleLine<n, T>)
+            granule_line<T, n, Forward>(in, out);
         else
             good_thomas_execute<T, N1, N2, N3, Forward>(in, out);
     }

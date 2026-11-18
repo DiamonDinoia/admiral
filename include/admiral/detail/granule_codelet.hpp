@@ -444,19 +444,37 @@ ADM_ALWAYS_INLINE void granule_dft(V (&g)[N]) {
     }
 }
 
-// One f64 line of N. With 4 f64 lanes and an even N, register j holds x[2j] in its low half and
-// x[2j+1] in its high half: granule_dft runs the two DFTs of N/2 side by side, and one radix-2
-// step joins them. Otherwise one complex goes in each 2-lane register. The catalog codelet and
-// the good_thomas route run it at the f64 lengths where it beats them.
-template<unsigned N>
-inline constexpr bool kGranuleSplit =
-    N % 2u == 0u && !detail::has_single_bit(N) && N >= 6u && N <= 60u &&
-    !is_rader_prime(N / 2u) && !std::is_void_v<xsimd::make_sized_batch_t<double, 4>>;
+// The line kernel's shape: M = N/G registers of G interleaved complex granules, the M-point
+// granule DFT runs the G sub-DFTs, and a G-way CT join across the granule axis places
+// X[t + s*M]. The join runs the 256-bit and 128-bit register rungs (one granule is one
+// complex, two lanes), so G is a rung width in granules and divisibility G | N picks the
+// widest arm that divides N; the G = 1 form is one complex per 2-lane register with no join.
+// M must keep the line and granule_dft's working registers inside the register file, and M
+// must have a mirrored structure: granule_dft has no Rader form (its static_assert at the
+// granule_dft entry) and no structure below 3 (granule_dif's "no mirrored structure" arm).
+template<typename T>
+inline constexpr std::size_t kGranuleWide = 32 / (2 * sizeof(T));
+template<typename T>
+inline constexpr std::size_t kGranuleNarrow = 16 / (2 * sizeof(T));
 
-template<unsigned N>
-inline constexpr bool kGranuleLine =
-    kGranuleFmaddsub && !std::is_void_v<xsimd::make_sized_batch_t<double, 2>> &&
-    (kGranuleSplit<N> || N == 15u);
+template<unsigned N, typename T, std::size_t G>
+inline constexpr bool kGranuleArm =
+    G >= 1u && N % G == 0u && N / G >= 3u && !is_rader_prime(N / G) &&
+    N / G + 2 <= poet::vector_register_count() &&
+    !std::is_void_v<xsimd::make_sized_batch_t<T, 2 * G>>;
+
+// Granules per register: the widest rung arm first, else one complex per register.
+template<unsigned N, typename T>
+inline constexpr std::size_t kGranuleCount =
+    kGranuleArm<N, T, kGranuleWide<T>> ? kGranuleWide<T>
+    : (kGranuleArm<N, T, kGranuleNarrow<T>> ? kGranuleNarrow<T>
+       : (kGranuleArm<N, T, 1> ? 1 : 0));
+
+template<unsigned N, typename T = double>
+inline constexpr bool kGranuleSplit = kGranuleCount<N, T> >= 2;
+
+template<unsigned N, typename T = double>
+inline constexpr bool kGranuleLine = kGranuleFmaddsub && kGranuleCount<N, T> >= 1;
 
 struct granule_half_swap {  // [lo | hi] -> [hi | lo]
     static constexpr std::size_t get(std::size_t i, std::size_t n) { return (i + n / 2) % n; }
@@ -472,45 +490,134 @@ struct granule_hi_pair {  // [a.hi | b.hi]
     }
 };
 
-// w_N^K on the high half of a split-line register. The low half passes through.
-template<unsigned N, std::size_t K, bool Fwd, typename V>
-[[nodiscard]] ADM_ALWAYS_INLINE V granule_split_twiddle(V u) {
+// Per-granule complex multipliers w_N^(K*q), q = 0..G-1, pooled as {c, c} and {-s, +s} lanes
+// for the fma(c, u, mul(pool, swp(u))) form. Constant pools of the instantiation: no plan
+// ever carries one.
+template<typename T, std::size_t N, std::size_t K, bool Fwd, std::size_t W>
+struct granule_pow_pool {
+    static constexpr auto c = [] {
+        std::array<T, W> r{};
+        for (std::size_t q = 0; q < W / 2; ++q) {
+            const auto w = ct_sincos_turns<ct_real_t<T>>(Fwd, (K * q) % N, N);
+            r[2 * q] = r[2 * q + 1] = static_cast<T>(w.c);
+        }
+        return r;
+    }();
+    static constexpr auto s = [] {
+        std::array<T, W> r{};
+        for (std::size_t q = 0; q < W / 2; ++q) {
+            const auto w = ct_sincos_turns<ct_real_t<T>>(Fwd, (K * q) % N, N);
+            r[2 * q] = static_cast<T>(-w.s);
+            r[2 * q + 1] = static_cast<T>(w.s);
+        }
+        return r;
+    }();
+};
+
+// w_N^(K*q) on granule q of one register. The low granule passes through at K == 0.
+template<typename T, std::size_t N, std::size_t K, bool Fwd, typename V>
+[[nodiscard]] ADM_ALWAYS_INLINE V granule_pow_twiddle(V u) {
     if constexpr (K == 0) {
         return u;
     } else {
-        static constexpr auto pool = [] {
-            constexpr auto w = ct_sincos_turns<ct_real_t<double>>(Fwd, K, N);
-            const double c = static_cast<double>(w.c), sn = static_cast<double>(w.s);
-            return std::array<std::array<double, 4>, 2>{{{1.0, 1.0, c, c}, {0.0, 0.0, -sn, sn}}};
-        }();
-        return xsimd::fma(V::load_unaligned(pool[0].data()), u,
-                          xsimd::mul(V::load_unaligned(pool[1].data()), granule_swp(u)));
+        using P = granule_pow_pool<T, N, K, Fwd, V::size>;
+        return xsimd::fma(V::load_unaligned(P::c.data()), u,
+                          xsimd::mul(V::load_unaligned(P::s.data()), granule_swp(u)));
     }
 }
 
-// All loads come before the first store, so out may alias in. The batch types are template
-// parameters so that a target without 4 f64 lanes does not read them in a discarded branch.
-template<unsigned N, bool Forward, typename V4 = xsimd::make_sized_batch_t<double, 4>,
-         typename V2 = xsimd::make_sized_batch_t<double, 2>>
-ADM_NOINLINE void granule_line(const std::complex<double>* in, std::complex<double>* out) {
-    const double* src = reinterpret_cast<const double*>(in);
-    double* dst = reinterpret_cast<double*>(out);
-    if constexpr (kGranuleSplit<N>) {
-        using V = V4;
+struct granule_quad_half {  // swap granule pairs: q ^= 2
+    static constexpr std::size_t get(std::size_t i, std::size_t) { return i ^ 4; }
+};
+struct granule_quad_pair {  // adjacent granule swap: q ^= 1
+    static constexpr std::size_t get(std::size_t i, std::size_t) { return i ^ 2; }
+};
+struct granule_g0 {  // granule 0 of both source registers into lanes 0..3
+    static constexpr std::size_t get(std::size_t i, std::size_t n) {
+        return i < 2 ? i : (i < 4 ? n + (i - 2) : 0);
+    }
+};
+
+// Radix-4 CT join across the granule axis: register t holds (F_0..F_3)[t] of the four
+// interleaved M-point sub-DFTs, and X[t + s*M] = sum_q w_4^(s*q) * w_N^(q*t) * F_q[t] lands
+// in granule 0 of o_s. The other granules of o_s are join arithmetic the store does not read.
+template<typename T, std::size_t N, std::size_t K, bool Fwd, typename V>
+ADM_ALWAYS_INLINE void granule_join4(const V& g, V& o0, V& o1, V& o2, V& o3) {
+    using A = typename V::arch_type;
+    using U = xsimd::as_unsigned_integer_t<T>;
+    const V u = granule_pow_twiddle<T, N, K, Fwd, V>(g);
+    const V h = xsimd::swizzle(u, xsimd::make_batch_constant<U, granule_quad_half, A>());
+    const V a = xsimd::add(u, h);
+    const V b = xsimd::sub(u, h);
+    const V p = xsimd::swizzle(a, xsimd::make_batch_constant<U, granule_quad_pair, A>());
+    o0 = xsimd::add(a, p);
+    o2 = xsimd::sub(a, p);
+    const V pb = xsimd::swizzle(b, xsimd::make_batch_constant<U, granule_quad_pair, A>());
+    const V rd = granule_stage_twiddle<T, N, N / 4, V, Fwd>(pb);
+    o1 = xsimd::add(b, rd);
+    o3 = xsimd::sub(b, rd);
+}
+
+// One line of N: G interleaved complex granules per register over M = N/G registers, the G
+// sub-DFTs of M inside granule_dft, then the G-way CT join (radix-4 or radix-2) or a straight
+// store at G == 1. All loads come before the first store, so out may alias in.
+template<typename T, unsigned N, bool Forward>
+ADM_NOINLINE void granule_line(const std::complex<T>* in, std::complex<T>* out) {
+    constexpr std::size_t G = kGranuleCount<N, T>;
+    static_assert(G != 0, "granule_line: no granule shape for this N");
+    const T* src = reinterpret_cast<const T*>(in);
+    T* dst = reinterpret_cast<T*>(out);
+    if constexpr (G == 4) {
+        using V = xsimd::make_sized_batch_t<T, 2 * G>;
         using A = typename V::arch_type;
-        using U = xsimd::as_unsigned_integer_t<double>;
-        constexpr std::size_t M = N / 2;
-        constexpr auto half = xsimd::make_batch_constant<U, granule_half_swap, A>();
+        using U = xsimd::as_unsigned_integer_t<T>;
+        constexpr std::size_t M = N / 4;
         V g[M];
-        poet::static_for<0, M>([&](auto j) ADM_LAMBDA_ALWAYS_INLINE {
-            g[j] = V::load_unaligned(src + 4 * j);
+        poet::static_for<0, M>([&](auto t_) ADM_LAMBDA_ALWAYS_INLINE {
+            g[t_] = V::load_unaligned(src + V::size * std::size_t(t_));
         });
         granule_dft<M, V, Forward>(g);
-        // Low half E + w*O, high half E - w*O.
-        const V sgn(1.0, 1.0, -1.0, -1.0);
-        poet::static_for<0, M>([&](auto k) ADM_LAMBDA_ALWAYS_INLINE {
-            const V t = granule_split_twiddle<N, k, Forward>(g[k]);
-            g[k] = xsimd::fma(t, sgn, xsimd::swizzle(t, half));
+        auto s_store = [&](const V& a, const V& b, std::size_t base) {
+            const V e = xsimd::shuffle(a, b, xsimd::make_batch_constant<U, granule_g0, A>());
+            e.store(dst + base, xsimd::make_batch_bool_constant<T, lane_lt<4>, A>(),
+                    xsimd::unaligned_mode{});
+        };
+        poet::static_for<0, M / 2>([&](auto p_) ADM_LAMBDA_ALWAYS_INLINE {
+            constexpr std::size_t t = std::size_t(p_) * 2;
+            V a0, a1, a2, a3, b0, b1, b2, b3;
+            granule_join4<T, N, t, Forward>(g[t], a0, a1, a2, a3);
+            granule_join4<T, N, t + 1, Forward>(g[t + 1], b0, b1, b2, b3);
+            s_store(a0, b0, 2 * t);
+            s_store(a1, b1, 2 * (t + N / 4));
+            s_store(a2, b2, 2 * (t + N / 2));
+            s_store(a3, b3, 2 * (t + 3 * (N / 4)));
+        });
+        if constexpr (M % 2 == 1) {
+            constexpr auto lo = xsimd::make_batch_bool_constant<T, lane_lt<2>, A>();
+            V a0, a1, a2, a3;
+            granule_join4<T, N, M - 1, Forward>(g[M - 1], a0, a1, a2, a3);
+            a0.store(dst + 2 * (M - 1), lo, xsimd::unaligned_mode{});
+            a1.store(dst + 2 * (M - 1 + N / 4), lo, xsimd::unaligned_mode{});
+            a2.store(dst + 2 * (M - 1 + N / 2), lo, xsimd::unaligned_mode{});
+            a3.store(dst + 2 * (M - 1 + 3 * (N / 4)), lo, xsimd::unaligned_mode{});
+        }
+    } else if constexpr (G == 2) {
+        using V = xsimd::make_sized_batch_t<T, 2 * G>;
+        using A = typename V::arch_type;
+        using U = xsimd::as_unsigned_integer_t<T>;
+        constexpr std::size_t M = N / 2;
+        V g[M];
+        poet::static_for<0, M>([&](auto j) ADM_LAMBDA_ALWAYS_INLINE {
+            g[j] = V::load_unaligned(src + V::size * std::size_t(j));
+        });
+        granule_dft<M, V, Forward>(g);
+        // Low half E + w*O, high half E - w*O over the two granule sub-DFTs.
+        const V sgn(T(1), T(1), T(-1), T(-1));
+        poet::static_for<0, M>([&](auto k_) ADM_LAMBDA_ALWAYS_INLINE {
+            constexpr std::size_t k = std::size_t(k_);
+            const V u = granule_pow_twiddle<T, N, k, Forward>(g[k]);
+            g[k] = xsimd::fma(u, sgn,
+                              xsimd::swizzle(u, xsimd::make_batch_constant<U, granule_half_swap, A>()));
         });
         poet::static_for<0, M / 2>([&](auto p) ADM_LAMBDA_ALWAYS_INLINE {
             constexpr std::size_t k = 2 * static_cast<std::size_t>(p);
@@ -520,21 +627,28 @@ ADM_NOINLINE void granule_line(const std::complex<double>* in, std::complex<doub
                 .store_unaligned(dst + 2 * (k + M));
         });
         if constexpr (M % 2 == 1) {
-            constexpr auto lo = xsimd::make_batch_bool_constant<double, lane_lt<2>, A>();
+            constexpr auto lo = xsimd::make_batch_bool_constant<T, lane_lt<2>, A>();
             g[M - 1].store(dst + 2 * (M - 1), lo, xsimd::unaligned_mode{});
-            xsimd::swizzle(g[M - 1], half).store(dst + 2 * (N - 1), lo, xsimd::unaligned_mode{});
+            xsimd::swizzle(g[M - 1], xsimd::make_batch_constant<U, granule_half_swap, A>())
+                .store(dst + 2 * (N - 1), lo, xsimd::unaligned_mode{});
         }
     } else {
-        using V = V2;
+        using V = xsimd::make_sized_batch_t<T, 2 * G>;
         V g[N];
         poet::static_for<0, N>([&](auto j) ADM_LAMBDA_ALWAYS_INLINE {
-            g[j] = V::load_unaligned(src + 2 * j);
+            g[j] = V::load_unaligned(src + V::size * std::size_t(j));
         });
         granule_dft<N, V, Forward>(g);
         poet::static_for<0, N>([&](auto j) ADM_LAMBDA_ALWAYS_INLINE {
-            g[j].store_unaligned(dst + 2 * j);
+            g[j].store_unaligned(dst + V::size * std::size_t(j));
         });
     }
+}
+
+// The codelet route spells the double line as granule_line<N, Forward> behind its own gate.
+template<unsigned N, bool Forward>
+ADM_NOINLINE void granule_line(const std::complex<double>* in, std::complex<double>* out) {
+    granule_line<double, N, Forward>(in, out);
 }
 
 // ----------------------------------------------------------------------

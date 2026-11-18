@@ -209,12 +209,16 @@ inline constexpr std::size_t kChainRadices[11] = {2, 3, 4, 5, 7, 8, 11, 9, 15, 1
     std::array<std::size_t, 64> dv{};
     std::array<std::size_t, 32> hi{};
     std::size_t nd = 0, nh = 0;
+    // Bounded walk: dv holds 64 divisors, which is 32 pairs plus a square root. When n
+    // has more divisors, the walk stops and gives the no-chain sentinel 0.0 back.
     for (std::size_t d = 1; d * d <= n; ++d) {
         if (n % d) continue;
+        if (nd == dv.size() || (d != n / d && nh == hi.size())) return 0.0;
         dv[nd++] = d;
         if (d != n / d) hi[nh++] = n / d;
     }
     while (nh > 0 && nd < dv.size()) dv[nd++] = hi[--nh];
+    if (nh > 0) return 0.0;
     std::array<double, 64> work{};
     for (std::size_t i = 1; i < nd; ++i) work[i] = -1.0;
     for (std::size_t j = 0; j < nd; ++j) {

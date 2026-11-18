@@ -17,6 +17,7 @@
 #include <complex>
 #include <cstddef>
 #include <type_traits>
+#include <utility>
 
 #include <poet/poet.hpp>
 #include "simd.hpp"
@@ -496,25 +497,28 @@ struct granule_hi_pair {  // [a.hi | b.hi]
 // Per-granule complex multipliers w_N^(K*q), q = 0..G-1, pooled as {c, c} and {-s, +s} lanes
 // for the fma(c, u, mul(pool, swp(u))) form. Constant pools of the instantiation: no plan
 // ever carries one.
+// Every ct_sincos_turns argument is a template parameter: clang 18 rejects a consteval
+// call whose argument reads a loop variable ("read of non-const variable 'q'").
+template<typename T, std::size_t N, std::size_t K, bool Fwd, std::size_t W, std::size_t... q>
+constexpr std::array<T, W> granule_pow_c(std::index_sequence<q...>) {
+    std::array<T, W> r{};
+    ((r[2 * q] = r[2 * q + 1] =
+          static_cast<T>(ct_sincos_turns<ct_real_t<T>>(Fwd, (K * q) % N, N).c)), ...);
+    return r;
+}
+
+template<typename T, std::size_t N, std::size_t K, bool Fwd, std::size_t W, std::size_t... q>
+constexpr std::array<T, W> granule_pow_s(std::index_sequence<q...>) {
+    std::array<T, W> r{};
+    ((r[2 * q + 1] = static_cast<T>(ct_sincos_turns<ct_real_t<T>>(Fwd, (K * q) % N, N).s),
+      r[2 * q] = static_cast<T>(-r[2 * q + 1])), ...);
+    return r;
+}
+
 template<typename T, std::size_t N, std::size_t K, bool Fwd, std::size_t W>
 struct granule_pow_pool {
-    static constexpr auto c = [] {
-        std::array<T, W> r{};
-        for (std::size_t q = 0; q < W / 2; ++q) {
-            const auto w = ct_sincos_turns<ct_real_t<T>>(Fwd, (K * q) % N, N);
-            r[2 * q] = r[2 * q + 1] = static_cast<T>(w.c);
-        }
-        return r;
-    }();
-    static constexpr auto s = [] {
-        std::array<T, W> r{};
-        for (std::size_t q = 0; q < W / 2; ++q) {
-            const auto w = ct_sincos_turns<ct_real_t<T>>(Fwd, (K * q) % N, N);
-            r[2 * q] = static_cast<T>(-w.s);
-            r[2 * q + 1] = static_cast<T>(w.s);
-        }
-        return r;
-    }();
+    static constexpr auto c = granule_pow_c<T, N, K, Fwd, W>(std::make_index_sequence<W / 2>{});
+    static constexpr auto s = granule_pow_s<T, N, K, Fwd, W>(std::make_index_sequence<W / 2>{});
 };
 
 // w_N^(K*q) on granule q of one register. The low granule passes through at K == 0.

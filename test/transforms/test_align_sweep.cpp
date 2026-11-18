@@ -108,7 +108,7 @@ template<typename T, typename Exec>
 
 template<typename T>
 [[nodiscard]] int sweep_type() {
-    const admiral::options opts{.nthreads = 0, .eff = admiral::effort::estimate};
+    const admiral::options opts{0, admiral::effort::estimate};
     const char* tname = sizeof(T) == sizeof(double) ? "f64" : "f32";
     int bad = 0;
     for (std::size_t n = 16; n <= 65536; n *= 2) {

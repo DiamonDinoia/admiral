@@ -108,7 +108,7 @@ void run_grid_inplace(const void* tmpl, std::size_t bytes, Exec&& exec) {
 
 TEMPLATE_TEST_CASE("c2c output bits do not depend on buffer alignment", "[align][det]", double,
                    float) {
-    const admiral::options opts{.nthreads = 0, .eff = admiral::effort::estimate};
+    const admiral::options opts{0, admiral::effort::estimate};
     for (std::size_t n = 16; n <= 65536; n *= 2) {
         const auto in = c2c_input<TestType>(n);
         const admiral::strides_plan<TestType> plan(n, 1, 1, 0, 1, 0, opts);
@@ -123,7 +123,7 @@ TEMPLATE_TEST_CASE("c2c output bits do not depend on buffer alignment", "[align]
 
 TEMPLATE_TEST_CASE("c2c in-place output bits do not depend on buffer alignment", "[align][det]",
                    double, float) {
-    const admiral::options opts{.nthreads = 0, .eff = admiral::effort::estimate};
+    const admiral::options opts{0, admiral::effort::estimate};
     for (std::size_t n = 16; n <= 65536; n *= 2) {
         const auto in = c2c_input<TestType>(n);
         const admiral::strides_plan<TestType> plan(n, 1, 1, 0, 1, 0, opts);
@@ -138,7 +138,7 @@ TEMPLATE_TEST_CASE("c2c in-place output bits do not depend on buffer alignment",
 
 TEMPLATE_TEST_CASE("r2c output bits do not depend on buffer alignment", "[align][det]", double,
                    float) {
-    const admiral::options opts{.nthreads = 0, .eff = admiral::effort::estimate};
+    const admiral::options opts{0, admiral::effort::estimate};
     for (std::size_t n = 16; n <= 65536; n *= 2) {
         const auto in = real_input<TestType>(n);
         const admiral::plan_r2c<TestType> plan(n, opts);

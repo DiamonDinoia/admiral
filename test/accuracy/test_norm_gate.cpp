@@ -51,7 +51,7 @@ double rel_err(const std::complex<double>* got, const std::vector<dd>& rre,
 }  // namespace
 
 TEST_CASE("one-shot plan transforms stay at machine precision in norm", "[norm_gate][accuracy]") {
-    const admiral::options opts{.nthreads = 0, .eff = admiral::effort::estimate};
+    const admiral::options opts{0, admiral::effort::estimate};
     const double eps = std::numeric_limits<double>::epsilon();
     for (const std::size_t n : {200u, 360u, 500u, 600u, 768u, 1000u, 1200u, 1536u, 2000u, 3000u, 4800u,
                                 6000u}) {

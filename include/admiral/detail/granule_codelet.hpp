@@ -338,7 +338,10 @@ ADM_ALWAYS_INLINE void granule_sub_dft(const V (&x)[IP], V (&y)[IP]) {
     for (std::size_t a = 2; a * a <= n; ++a)
         if (n % a == 0 && std::gcd(a, n / a) == 1) {
             const std::size_t w = std::max(a, n / a);
-            if (r.first == 0 || w < std::max(r.first, r.second)) r = {n / a, a};
+            if (r.first == 0 || w < std::max(r.first, r.second)) {
+                r.first = n / a;
+                r.second = a;
+            }
         }
     return r;
 }

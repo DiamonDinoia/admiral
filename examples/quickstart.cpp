@@ -19,7 +19,7 @@ int main() {
     // [doc:quickstart-end]
 
     admiral::plan<double> p2d({64, 64});
-    admiral::plan<double> p8(1 << 20, {.nthreads = 8});
+    admiral::plan<double> p8(1 << 20, {8});
 
     admiral::forward<double>(x, x);
     admiral::inverse<double>(x, x);

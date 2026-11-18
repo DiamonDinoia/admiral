@@ -96,51 +96,14 @@ void codelet_apply(const std::complex<T>* in, std::complex<T>* out) {
     T* yre = buf + 2 * N;
     T* yim = buf + 3 * N;
 
-    constexpr std::size_t W = xsimd::batch<T>::size;
-
-    if constexpr (N < 64) {
-        const T* s = reinterpret_cast<const T*>(in);
-        for (std::size_t i = 0; i < N; ++i) {
-            xre[i] = s[2 * i];
-            if constexpr (Forward) xim[i] =  s[2 * i + 1];
-            else                   xim[i] = -s[2 * i + 1];
-        }
-        kernel<N, T, true>::apply_sink(xre, xim, 1, yre, yim, aos_sink<T, Forward>{out});
-        return;
+    // The kernel's leaves gather strided scalars out of these planes. A wide store that
+    // splits a leaf load stalls the call, so the pairs land one at a time and the inverse
+    // negation folds into the same pass.
+    const T* s = reinterpret_cast<const T*>(in);
+    for (std::size_t i = 0; i < N; ++i) {
+        xre[i] = s[2 * i];
+        xim[i] = Forward ? s[2 * i + 1] : -s[2 * i + 1];
     }
-
-    const T* src = reinterpret_cast<const T*>(in);
-    std::size_t i = 0;
-    for (; i + W <= N; i += W) {
-        xsimd::batch<T> re, im;
-        aos_deinterleave(src + 2 * i, re, im);
-        re.store_unaligned(xre + i);
-        im.store_unaligned(xim + i);
-    }
-    poet::static_for<1, detail::bit_width(W)>([&](auto S) {
-        constexpr std::size_t Wt = W >> S;
-        using Vt = xsimd::make_sized_batch_t<T, Wt>;
-        if constexpr (Wt >= 2 && !std::is_void_v<Vt>) {
-            if (i + Wt <= N) {
-                Vt re, im;
-                aos_deinterleave<T, Vt>(src + 2 * i, re, im);
-                re.store_unaligned(xre + i);
-                im.store_unaligned(xim + i);
-                i += Wt;
-            }
-        }
-    });
-    // Every arm above advances i only while i + w <= N, so i <= N holds here; gcc 13 at
-    // x86-64-v2 loses that under -Waggressive-loop-optimizations and reads a wrap into the
-    // scalar tail (false positive; the install job is -Werror). Counting the bounded copy out
-    // from N - i keeps the analysis.
-    const std::size_t tail = N - i;
-    for (std::size_t j = 0; j < tail; ++j) {
-        xre[i + j] = in[i + j].real();
-        xim[i + j] = in[i + j].imag();
-    }
-
-    if constexpr (!Forward) for (std::size_t k = 0; k < N; ++k) xim[k] = -xim[k];
     kernel<N, T, true>::apply_sink(xre, xim, 1, yre, yim, aos_sink<T, Forward>{out});
 }
 

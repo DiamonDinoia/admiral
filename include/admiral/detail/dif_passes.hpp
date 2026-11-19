@@ -971,8 +971,15 @@ constexpr auto dif_tail_seq_shift(std::index_sequence<Is...>) -> std::index_sequ
 template<std::size_t W>
 using dif_last_tail_seq = decltype(dif_tail_seq_shift(std::make_index_sequence<W - 1>{}));
 
-// Lane-axis stage twiddle w_IP^(R*lane). The last pass loads one row with the lanes along the
-// contiguous j axis, so stage A of its outer split runs the radix over the VECTOR index and its
+template<typename T, std::size_t IP>
+struct dif_last_batch {
+    static constexpr std::size_t Wn = xsimd::batch<T>::size;
+    static constexpr std::size_t Wfit = detail::bit_ceil(IP);
+    using sized_t = xsimd::make_sized_batch_t<T, std::min(Wfit, Wn)>;
+    using type = std::conditional_t<std::is_void_v<sized_t>, xsimd::batch<T>, sized_t>;
+};
+
+// Lane-axis stage twiddle w_IP^(R*lane) for the W4 row_split form.
 // stage twiddle varies per lane. apply_stage_twiddle cannot serve that.
 template<typename T, std::size_t IP, std::size_t R, std::size_t W, bool Imag>
 [[nodiscard]] ADM_CONSTEVAL std::array<T, W> lane_stage_twiddle() {
@@ -1011,13 +1018,68 @@ template<typename T, std::size_t IP, std::size_t R, typename V>
     }
 }
 
-template<typename T, std::size_t IP>
-struct dif_last_batch {
-    static constexpr std::size_t Wn = xsimd::batch<T>::size;
-    static constexpr std::size_t Wfit = detail::bit_ceil(IP);
-    using sized_t = xsimd::make_sized_batch_t<T, std::min(Wfit, Wn)>;
-    using type = std::conditional_t<std::is_void_v<sized_t>, xsimd::batch<T>, sized_t>;
-};
+// In-place Gentleman-Sande recursion: each butterfly writes its output pair into the input
+// slots it frees and the halves recurse through pointers, so the live set is the 2 x N run
+// plus one working pair. pow2_dif_butterfly instead holds its inputs through both half
+// groups (about 4 x N live), which spills at N >= 8.
+template<typename T, std::size_t N, typename V, typename Emit>
+ADM_ALWAYS_INLINE void dif_last_sub_dft_run(V* xr, V* xi, Emit&& emit) {
+    if constexpr (N == 2) {
+        const V ur = xr[0] + xr[1];
+        const V ui = xi[0] + xi[1];
+        const V vr = xr[0] - xr[1];
+        const V vi = xi[0] - xi[1];
+        emit(IC<0>{}, ur, ui);
+        emit(IC<1>{}, vr, vi);
+    } else {
+        static_assert(detail::has_single_bit(N), "dif_last_sub_dft_run: N must be a power of two");
+        constexpr std::size_t H = N / 2;
+        poet::static_for<0, H>([&](const auto n) {
+            const V ur = xr[n] + xr[n + H];
+            const V ui = xi[n] + xi[n + H];
+            const auto [vr, vi] =
+                apply_stage_twiddle<T, N, std::size_t(n)>(xr[n] - xr[n + H], xi[n] - xi[n + H]);
+            xr[n] = ur;
+            xi[n] = ui;
+            xr[n + H] = vr;
+            xi[n + H] = vi;
+        });
+        dif_last_sub_dft_run<T, H>(xr, xi, [&](const auto k, V yr, V yi) {
+            emit(IC<2 * k>{}, yr, yi);
+        });
+        dif_last_sub_dft_run<T, H>(xr + H, xi + H, [&](const auto k, V yr, V yi) {
+            emit(IC<2 * k + 1>{}, yr, yi);
+        });
+    }
+}
+
+template<typename T, std::size_t N, typename V, typename Emit>
+ADM_ALWAYS_INLINE void dif_last_sub_dft(V (&xr)[N], V (&xi)[N], Emit&& emit) {
+    if constexpr (detail::has_single_bit(N)) {
+        dif_last_sub_dft_run<T, N>(xr, xi, std::forward<Emit>(emit));
+    } else {
+        radix_sym_dft<T, N>(xr, xi, std::forward<Emit>(emit));
+    }
+}
+
+// Factor pick for the staged terminal radix: balanced N1 x N2 with N2 the smaller factor,
+// chosen so each stage's live set (about 3 x N plus the emit pair) fits the register file.
+template<std::size_t IP>
+[[nodiscard]] ADM_CONSTEVAL std::pair<std::size_t, std::size_t> dif_last_split() {
+    constexpr std::size_t vrc = poet::vector_register_count();
+    std::size_t n1b = 0;
+    std::size_t n2b = 0;
+    for (std::size_t n2 = 2; n2 * n2 <= IP; ++n2) {
+        if (IP % n2 != 0) continue;
+        const std::size_t n1 = IP / n2;
+        if (3u * n1 + 6u > vrc) continue;
+        if (n1b == 0 || n1 < n1b) {
+            n1b = n1;
+            n2b = n2;
+        }
+    }
+    return {n1b, n2b};
+}
 
 template<typename T, bool Forward, std::size_t IP, std::size_t Rows, bool Chiplet = false>
 ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
@@ -1032,10 +1094,13 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
         return rowperm ? std::size_t(rowperm[i]) : i;
     };
     {
+        // W4 row_split: the cheapest form when a pow2 IP splits over W and its tile stage
+        // (2 x W batches plus one work pair) fits the register file. Kept verbatim.
         constexpr bool row_split_path =
             detail::has_single_bit(IP) && IP >= 2 * W && dif_butterfly_wants_reload<IP> &&
             poet::vector_register_count() >= 32 && Rows == W;
-        if constexpr (row_split_path) {
+        constexpr bool row_split_spills = 2 * W + 8 > poet::vector_register_count();
+        if constexpr (row_split_path && !row_split_spills) {
             constexpr std::size_t G = IP / W;
             alignas(batch_t::arch_type::alignment()) T stg_re[G * W * W];
             alignas(batch_t::arch_type::alignment()) T stg_im[G * W * W];
@@ -1078,6 +1143,14 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
             });
             return;
         }
+        // Staged Gentleman-Sande split of the terminal radix: stage A runs
+        // dif_last_sub_dft<N1> per strided column group and writes the twiddle grid,
+        // stage B runs dif_last_sub_dft<N2> per grid row and emits each output pair the
+        // moment it is final, so no out_re/out_im arrays are live. The fill is the shared
+        // load_tile below (contiguous loads plus transpose): a gather fill halves the
+        // stack ops but the vgather cost is higher than the stack ops it removes (the C3
+        // screen showed 1.2 to 1.5 regressions that scale with the gather count).
+        constexpr auto split = dif_last_split<IP>();
         batch_t btr[IP], bti[IP];
         if constexpr (IP >= W) {
             auto load_tile = [&](const auto off) ADM_LAMBDA_ALWAYS_INLINE {
@@ -1124,6 +1197,48 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
             xsimd::transpose(rr, rr + W);
             xsimd::transpose(ri, ri + W);
             for (std::size_t j = 0; j < IP; ++j) { btr[j] = rr[j]; bti[j] = ri[j]; }
+        }
+        if constexpr (!Chiplet && split.first != 0) {
+            constexpr std::size_t N1 = split.first;
+            constexpr std::size_t N2 = split.second;
+            alignas(batch_t::arch_type::alignment()) T ar[IP * W];
+            alignas(batch_t::arch_type::alignment()) T ai[IP * W];
+            const batch_t sv(scale_val);
+            const auto emit = [&](const auto k, batch_t sr, batch_t si) ADM_LAMBDA_ALWAYS_INLINE {
+                const auto [xr, xi] = plane_vals<Forward>(sr * sv, si * sv);
+                T* dst = reinterpret_cast<T*>(data + b + l1 * std::size_t(k));
+                if constexpr (Rows == W) {
+                    aos_interleave<T>(dst, xr, xi);
+                } else {
+                    aos_interleave_prefix<Rows>(dst, xr, xi);
+                }
+            };
+            poet::static_for<0, N2>([&](const auto n) {
+                batch_t br[N1], bi[N1];
+                poet::static_for<0, N1>([&](const auto m) {
+                    constexpr std::size_t j = IC<n + N2 * m>{};
+                    br[m] = btr[j];
+                    bi[m] = bti[j];
+                });
+                dif_last_sub_dft<T, N1, batch_t>(br, bi, [&](const auto r, batch_t yr, batch_t yi) {
+                    constexpr std::size_t e = IC<(r * n) % IP>{};
+                    const auto [fr, fi] = apply_stage_twiddle<T, IP, e, batch_t>(yr, yi);
+                    fr.store_aligned(ar + (r * N2 + n) * W);
+                    fi.store_aligned(ai + (r * N2 + n) * W);
+                });
+            });
+            poet::static_for<0, N1>([&](const auto r) {
+                constexpr std::size_t off = std::size_t(r) * N2 * W;
+                batch_t cr[N2], ci[N2];
+                poet::static_for<0, N2>([&](const auto n) {
+                    cr[n] = batch_t::load_aligned(ar + off + n * W);
+                    ci[n] = batch_t::load_aligned(ai + off + n * W);
+                });
+                dif_last_sub_dft<T, N2, batch_t>(cr, ci, [&](const auto k2, batch_t yr, batch_t yi) {
+                    emit(IC<r + N1 * k2>{}, yr, yi);
+                });
+            });
+            return;
         }
         batch_t out_re[IP], out_im[IP];
         if constexpr (Chiplet) {

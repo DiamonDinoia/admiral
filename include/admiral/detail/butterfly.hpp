@@ -182,11 +182,79 @@ template<typename T, std::size_t IP, std::size_t N, typename V>
     }
 }
 
+// Split-radix Gentleman-Sande DIF (Duhamel and Hollmann 1984; Sorensen, Heideman and Burrus
+// 1986): one step forms the even sums and the two odd quarter combinations, so the odd arms
+// share their pre-twiddle adds and the leaf runs N log2 N - 3N + 4 real multiplies against the
+// radix-2 form's 2N log2 N. Parametric in IP (power of two) through poet::static_for; each
+// level keeps one branch live at a time, so the peak live set is 2*IP + O(1) vectors instead
+// of the monolithic recursion's 4*IP. Input j = n, n + Q, n + H, n + Q + H; output k = 2*Kc,
+// 4*M + 1, 4*M + 3; cross twiddles w_IP^n and w_IP^(3n).
+template<typename T, std::size_t IP, typename V, typename Emit>
+ADM_ALWAYS_INLINE void sr_dif_butterfly(const V (&xr)[IP], const V (&xi)[IP], Emit&& emit) {
+    static_assert(IP >= 4 && detail::has_single_bit(IP),
+                  "sr_dif_butterfly: IP must be a power of two >= 4");
+    constexpr std::size_t H = IP / 2;
+    constexpr std::size_t Q = IP / 4;
+    {
+        V er[H], ei[H];
+        poet::static_for<0, H>([&](const auto n) {
+            er[n] = xr[n] + xr[n + H];
+            ei[n] = xi[n] + xi[n + H];
+        });
+        if constexpr (H == 2) {
+            emit(IC<0>{}, er[0] + er[1], ei[0] + ei[1]);
+            emit(IC<2>{}, er[0] - er[1], ei[0] - ei[1]);
+        } else {
+            sr_dif_butterfly<T, H, V>(er, ei, [&](auto Kc, V yr, V yi) {
+                emit(IC<2 * Kc>{}, yr, yi);
+            });
+        }
+    }
+    {
+        V ur[Q], ui[Q], vr[Q], vi[Q];
+        poet::static_for<0, Q>([&](const auto n) {
+            constexpr std::size_t e3 = IC<3 * n>{};
+            const V pr = xr[n] - xr[n + H];
+            const V pi = xi[n] - xi[n + H];
+            const V qr = xr[n + Q] - xr[n + Q + H];
+            const V qi = xi[n + Q] - xi[n + Q + H];
+            const auto [tr, ti] = apply_stage_twiddle<T, IP, n, V>(pr + qi, pi - qr);
+            const auto [sr2, si2] = apply_stage_twiddle<T, IP, e3, V>(pr - qi, pi + qr);
+            ur[n] = tr;
+            ui[n] = ti;
+            vr[n] = sr2;
+            vi[n] = si2;
+        });
+        if constexpr (Q == 1) {
+            emit(IC<1>{}, ur[0], ui[0]);
+            emit(IC<3>{}, vr[0], vi[0]);
+        } else if constexpr (Q == 2) {
+            emit(IC<1>{}, ur[0] + ur[1], ui[0] + ui[1]);
+            emit(IC<5>{}, ur[0] - ur[1], ui[0] - ui[1]);
+            emit(IC<3>{}, vr[0] + vr[1], vi[0] + vi[1]);
+            emit(IC<7>{}, vr[0] - vr[1], vi[0] - vi[1]);
+        } else {
+            sr_dif_butterfly<T, Q, V>(ur, ui, [&](auto M, V yr, V yi) {
+                emit(IC<4 * M + 1>{}, yr, yi);
+            });
+            sr_dif_butterfly<T, Q, V>(vr, vi, [&](auto M, V yr, V yi) {
+                emit(IC<4 * M + 3>{}, yr, yi);
+            });
+        }
+    }
+}
+
 template<typename T, std::size_t IP, typename V, typename Emit>
 ADM_ALWAYS_INLINE void pow2_dif_butterfly(const V (&xr)[IP],
                                           const V (&xi)[IP],
                                           Emit&& emit) {
     static_assert(IP >= 2 && detail::has_single_bit(IP), "pow2_dif_butterfly: IP must be a power of two >= 2");
+    // The split-radix form wins at IP >= 16 (paired leaf benchmark); smaller radices keep the
+    // radix-2 recursion, whose free twiddles already match split-radix there.
+    if constexpr (IP >= 16) {
+        sr_dif_butterfly<T, IP, V>(xr, xi, std::forward<Emit>(emit));
+        return;
+    }
     if constexpr (IP == 2) {
         emit(IC<0>{}, xr[0] + xr[1], xi[0] + xi[1]);
         emit(IC<1>{}, xr[0] - xr[1], xi[0] - xi[1]);

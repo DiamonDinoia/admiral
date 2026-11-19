@@ -42,7 +42,7 @@ ADM_ALWAYS_INLINE void radix_sym_dft(const V (&xr)[IP],
         });
         emit(IC<0>{}, sr, si);
     }
-    poet::static_for<1, H + 1>([&](const auto k) {
+    const auto radix_sym_row = [&](const auto k) {
         V PR = xr[0], PI = xi[0], QR = V(T(0)), QI = V(T(0));
         poet::static_for<1, H + 1>([&](const auto m) {
             constexpr auto w =
@@ -54,7 +54,42 @@ ADM_ALWAYS_INLINE void radix_sym_dft(const V (&xr)[IP],
         });
         emit(IC<k>{}, PR + QR, PI - QI);
         emit(IC<IP - k>{}, PR - QR, PI + QI);
-    });
+    };
+    using P4 = xsimd::make_sized_batch_t<T, 4>;
+    if constexpr (std::is_same_v<V, T> && !std::is_void_v<P4>) {
+        // Single-transform call: pack two k rows, [re, im, re, im], in one vector.
+        // The pair sum/diff of the conjugate rows comes from one packed add and
+        // one packed sub of the shared P and Q accumulators.
+        poet::static_for<0, H / 2>([&](const auto p) {
+            constexpr auto k1 = p * 2 + 1;
+            constexpr auto k2 = p * 2 + 2;
+            P4 vp(xr[0], xi[0], xr[0], xi[0]), vq(T(0));
+            poet::static_for<1, H + 1>([&](const auto m) {
+                constexpr auto w1 =
+                    ct_sincos_turns<ct_real_t<T>>(false, IC<(m * k1) % IP>{}, IP);
+                constexpr auto w2 =
+                    ct_sincos_turns<ct_real_t<T>>(false, IC<(m * k2) % IP>{}, IP);
+                const P4 av(ar[m], ai[m], ar[m], ai[m]);
+                const P4 dv(di[m], dr[m], di[m], dr[m]);
+                const P4 cv(T(w1.c), T(w1.c), T(w2.c), T(w2.c));
+                const P4 sv(T(w1.s), -T(w1.s), T(w2.s), -T(w2.s));
+                vp = piece_fma(cv, av, vp);
+                vq = piece_fma(sv, dv, vq);
+            });
+            T po[4], mo[4];
+            (vp + vq).store_unaligned(po);
+            (vp - vq).store_unaligned(mo);
+            emit(IC<k1>{}, po[0], po[1]);
+            emit(IC<IP - k1>{}, mo[0], mo[1]);
+            emit(IC<k2>{}, po[2], po[3]);
+            emit(IC<IP - k2>{}, mo[2], mo[3]);
+        });
+        if constexpr (H % 2 == 1) {
+            poet::static_for<H, H + 1>([&](const auto k) { radix_sym_row(k); });
+        }
+    } else {
+        poet::static_for<1, H + 1>([&](const auto k) { radix_sym_row(k); });
+    }
 }
 
 template<std::size_t N1, std::size_t N2, std::size_t K1, std::size_t K2>

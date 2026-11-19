@@ -163,7 +163,9 @@ jobs:
         include:
           - {os: windows-2022, toolchain: msvc}
           - {os: windows-2025, toolchain: msvc}
-          - {os: windows-2025, toolchain: llvm-20}
+          # The MSVC STL of the image refuses an older clang with STL1000.
+          # Move llvm-22 up when the image moves the STL.
+          - {os: windows-2025, toolchain: llvm-22}
     name: ${{ matrix.toolchain }} ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     env:

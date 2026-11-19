@@ -76,13 +76,29 @@ struct cache_bytes { std::size_t l2, l3, l3_cores, l3_phys_cores, l1d; };
                                d.l3_phys_cores += is_first_thread_of_core(cpu) ? 1u : 0u;
                            });
 #elif defined(__APPLE__)
-        const auto rd = [](const char* key, std::size_t fb) {
+        // A dedicated key falling back to the aggregate `hw.cachesize` (descending from L1)
+        // is the x86-Darwin probe; on Apple silicon neither `hw.l3cachesize` nor the
+        // aggregate's L3 slot reports the SLC, so `l3` reads 0 and `e2_len_cap_of` takes its
+        // conservative cap rather than the 45 MiB x86 default.
+        const auto rd = [](const char* key, int idx, std::size_t fb) {
             std::uint64_t v = 0; std::size_t n = sizeof(v);
-            return ::sysctlbyname(key, &v, &n, nullptr, 0) == 0 && v ? std::size_t(v) : fb;
+            if (::sysctlbyname(key, &v, &n, nullptr, 0) == 0 && v) return std::size_t(v);
+            std::uint64_t cs[8] = {}; n = sizeof(cs);
+            return (::sysctlbyname("hw.cachesize", cs, &n, nullptr, 0) == 0 &&
+                    idx >= 0 && idx < 8 && cs[idx]) ? std::size_t(cs[idx]) : fb;
         };
-        d.l2  = rd("hw.l2cachesize",  d.l2);
-        d.l3  = rd("hw.l3cachesize",  d.l3);
-        d.l1d = rd("hw.l1dcachesize", d.l1d);
+        d.l2  = rd("hw.l2cachesize",  2, d.l2);
+        d.l3  = rd("hw.l3cachesize",  3, 0);  // no SLC off-die count: absent means 0
+        d.l1d = rd("hw.l1dcachesize", 1, d.l1d);
+#if defined(__aarch64__)
+        // Darwin has no logical/physical topology split, so `l3_cores` stays 0 and the
+        // physical count alone answers both questions.
+        const auto rdsize = [](const char* key) {
+            std::uint64_t v = 0; std::size_t n = sizeof(v);
+            return (::sysctlbyname(key, &v, &n, nullptr, 0) == 0) ? std::size_t(v) : std::size_t{0};
+        };
+        d.l3_phys_cores = rdsize("hw.physicalcpu");
+#endif
 #endif
         return d;
     }();

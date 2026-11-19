@@ -144,9 +144,14 @@ TEMPLATE_TEST_CASE("column codelet route admission and narrow width",
     // an SMT-off host both sides are the same expression and it proves nothing. The synthetic
     // cases above are the regression test, this one catches a mis-probed count on an SMT host.
     const cache_bytes& cc = admiral::detail::cpu_cache();
+#if defined(__linux__)
+    // Linux probes both counts off the same sysfs node, so a nonzero value for one implies the
+    // other. Darwin arm64 reports no logical/physical split: l3_cores stays 0 while
+    // l3_phys_cores reads hw.physicalcpu, so neither ordering below applies there.
     CHECK(cc.l3_phys_cores <= cc.l3_cores);
     CHECK((cc.l3_cores == 0) == (cc.l3_phys_cores == 0));
-    if (cc.l3_phys_cores != cc.l3_cores) {
+#endif
+    if (cc.l3_phys_cores != cc.l3_cores && cc.l3 != 0) {
         INFO("SMT host: l3_cores " << cc.l3_cores << " l3_phys_cores " << cc.l3_phys_cores);
         CHECK(e2_len_cap() == e2_len_cap_by_l3(cc.l3 / cc.l3_phys_cores));
     }

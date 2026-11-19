@@ -86,7 +86,10 @@ template<typename T>
     constexpr std::size_t A = xsimd::batch<T>::arch_type::alignment();
     const auto base = reinterpret_cast<std::uintptr_t>(out);
     if (base % A != 0 || (n2 * 2 * sizeof(T)) % A != 0) return false;
-    return bytes >= kFourStepStreamL3Mult * cpu_cache().l3;
+    // An unprobed l3 means no SLC to overflow, so the stream-store payback never materializes
+    // and the conservative answer is to keep cached stores (Darwin arm64 reads 0 there).
+    const std::size_t l3 = cpu_cache().l3;
+    return l3 != 0 && bytes >= kFourStepStreamL3Mult * l3;
 }
 
 template<typename T>
@@ -468,8 +471,15 @@ inline constexpr std::size_t kLargeRouteThreadCapBytes = 1482910;  // [1, 2] MiB
 // crossover once per process and precision. The two constants below are the ladder's
 // starting prior AND the whole answer when the probe throws: the pre-probe shipped
 // values, so a host on which the probe cannot run keeps the answer it always had.
+#if defined(__aarch64__) && defined(__APPLE__)
+// Measured on Apple M2 Pro (arm64): f64 sustained crossover first at 16 MiB
+// (1M elems), f32 first at 8 MiB (1M elems).
+inline constexpr std::size_t kLargeRouteSerialF64Bytes = std::size_t{16} << 20;
+inline constexpr std::size_t kLargeRouteSerialF32Bytes = std::size_t{8} << 20;
+#else
 inline constexpr std::size_t kLargeRouteSerialF64Bytes = std::size_t{12} << 20;
 inline constexpr std::size_t kLargeRouteSerialF32Bytes = (std::size_t{16} << 20) - 1;
+#endif
 
 // Ladders. Every measured class bracket is covered by two adjacent rungs, and pow2 gives
 // both forced plans for free (large split and fused serial shape). f64 {4, 8, 16} MiB

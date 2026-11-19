@@ -392,22 +392,105 @@ using c2r_small_fn = void (*)(const std::complex<T>*, T*);
 template<typename T>
 using c2c_small_fn = void (*)(std::complex<T>*);
 
-// The whole r2c of one small N as one straight-line DFT of the real row. The imaginary inputs
-// are zero and the bins above N / 2 are not stored, so the compiler drops their arithmetic.
-// All loads come before the first store, so `out` may alias `in`. The zero folding needs the
-// fast-math flags of the library build; without them the result is the same, only slower.
-template<std::size_t N, typename T>
-void r2c_small(const T* in, std::complex<T>* out) {
-    T tr[N], ti[N];
-    poet::static_for<0, N>([&](auto J) {
-        tr[J] = in[J];
-        ti[J] = T(0);
+// Pairs-first real-input leaf helpers for `r2c_small`. One radix-2 DIF split per level: the sums
+// and the differences of the input pairs (j, j + N / 2) come first, the even bins recurse on the
+// sums, and the odd bins fold the differences with one shared product per output pair.
+
+// Horner fold of sum over p of c[p] * x^p at x = w_R^K, in real and imaginary parts. The first
+// step adds to a zero real part, so a quarter-turn root skips that add by form.
+template<std::size_t R, std::size_t K, std::size_t M, typename T>
+ADM_ALWAYS_INLINE void r2c_small_fold(const T (&c)[M], T& re, T& im) {
+    re = c[M - 1];
+    im = T(0);
+    poet::static_for<0, M - 1>([&](auto P) {
+        auto [tr, ti] = apply_stage_twiddle<T, R, K % R, T>(re, im);
+        constexpr root_form form = ct_root<K % R, R, true>();
+        constexpr bool quarter = form == root_form::neg_i || form == root_form::pos_i;
+        if constexpr (P == 0 && quarter) {
+            re = c[M - 2 - P];
+        } else {
+            re = tr + c[M - 2 - P];
+        }
+        im = ti;
     });
-    if constexpr (use_scalar_staged<T, N>()) {
-        scalar_staged_dif<T, N>(tr, ti, [&](auto K, T re, T im) {
-            if constexpr (K <= N / 2) out[K] = std::complex<T>(re, im);
+}
+
+// The odd bins k of one real transform of length 2H from its pair differences d[j] =
+// in[j] - in[j + H]: G(k) = sum over j < H of d[j] * w_{2H}^{j k}, odd k <= H. The output pair
+// (k, H - k) shares the folds E and F of the even and odd input positions and the one product
+// O = w_{2H}^k * F: G(k) = E + O, G(H - k) = conj(E - O).
+template<std::size_t H, typename T, std::size_t Stride>
+ADM_ALWAYS_INLINE void r2c_small_odd(const T* d, std::complex<T>* out) {
+    if constexpr (H == 2) {
+        out[Stride] = std::complex<T>(d[0], -d[1]);
+    } else {
+        constexpr std::size_t NE = (H + 1) / 2;
+        constexpr std::size_t NO = H / 2;
+        T ea[NE], fa[NO];
+        poet::static_for<0, NE>([&](auto I) { ea[I] = d[2 * I]; });
+        poet::static_for<0, NO>([&](auto I) { fa[I] = d[2 * I + 1]; });
+        poet::static_for<1, H + 1>([&](auto Kc) {
+            if constexpr (Kc % 2 == 1) {
+                constexpr std::size_t K = Kc;
+                T er, ei, fr, fi;
+                r2c_small_fold<H, K, NE, T>(ea, er, ei);
+                r2c_small_fold<H, K, NO, T>(fa, fr, fi);
+                auto [or_, oi] = apply_stage_twiddle<T, 2 * H, K, T>(fr, fi);
+                if constexpr (H % 2 == 0 && K < H - K) {
+                    out[K * Stride] = std::complex<T>(er + or_, ei + oi);
+                    out[(H - K) * Stride] = std::complex<T>(er - or_, oi - ei);
+                } else if constexpr (H % 2 == 1 || K == H - K) {
+                    out[K * Stride] = std::complex<T>(er + or_, ei + oi);
+                }
+            }
+        });
+    }
+}
+
+// One real transform of length N with bin k written at out[k * Stride]. Pairs-first: the sums
+// and the differences of (j, j + N / 2), the even bins recurse on the sums at twice the stride,
+// the odd bins fold the differences.
+template<std::size_t N, typename T, std::size_t Stride>
+ADM_ALWAYS_INLINE void r2c_small_strided(const T* in, std::complex<T>* out) {
+    static_assert(N >= 2, "r2c_small_strided: N must be at least 2");
+    constexpr std::size_t H = N / 2;
+    if constexpr (N % 2 == 1) {
+        T tr[N], ti[N];
+        poet::static_for<0, N>([&](auto J) {
+            tr[J] = in[J];
+            ti[J] = T(0);
+        });
+        dif_butterfly<T, N, T>(tr, ti, [&](auto K, T re, T im) {
+            if constexpr (K <= N / 2) out[K * Stride] = std::complex<T>(re, im);
         });
     } else {
+        T s[H], d[H];
+        poet::static_for<0, H>([&](auto J) {
+            s[J] = in[J] + in[J + H];
+            d[J] = in[J] - in[J + H];
+        });
+        if constexpr (H == 1) {
+            out[0] = std::complex<T>(s[0], T(0));
+            out[Stride] = std::complex<T>(d[0], T(0));
+        } else {
+            r2c_small_odd<H, T, Stride>(d, out);
+            r2c_small_strided<H, T, 2 * Stride>(s, out);
+        }
+    }
+}
+
+// The whole r2c of one small N as one straight-line DFT of the real row. The bins above N / 2
+// are not stored. All loads come before the first store, so `out` may alias `in`.
+template<std::size_t N, typename T>
+void r2c_small(const T* in, std::complex<T>* out) {
+    if constexpr (N % 2 == 0) {
+        r2c_small_strided<N, T, 1>(in, out);
+    } else {
+        T tr[N], ti[N];
+        poet::static_for<0, N>([&](auto J) {
+            tr[J] = in[J];
+            ti[J] = T(0);
+        });
         dif_butterfly<T, N, T>(tr, ti, [&](auto K, T re, T im) {
             if constexpr (K <= N / 2) out[K] = std::complex<T>(re, im);
         });

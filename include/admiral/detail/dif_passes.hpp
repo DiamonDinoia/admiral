@@ -1094,13 +1094,12 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
         return rowperm ? std::size_t(rowperm[i]) : i;
     };
     {
-        // W4 row_split: the cheapest form when a pow2 IP splits over W and its tile stage
-        // (2 x W batches plus one work pair) fits the register file. Kept verbatim.
+        // W4 row_split: kept verbatim wherever the W4 route took it, spill included. The
+        // staged split below never replaces it: there it measures parity or worse.
         constexpr bool row_split_path =
             detail::has_single_bit(IP) && IP >= 2 * W && dif_butterfly_wants_reload<IP> &&
             poet::vector_register_count() >= 32 && Rows == W;
-        constexpr bool row_split_spills = 2 * W + 8 > poet::vector_register_count();
-        if constexpr (row_split_path && !row_split_spills) {
+        if constexpr (row_split_path) {
             constexpr std::size_t G = IP / W;
             alignas(batch_t::arch_type::alignment()) T stg_re[G * W * W];
             alignas(batch_t::arch_type::alignment()) T stg_im[G * W * W];
@@ -1148,8 +1147,8 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
         // stage B runs dif_last_sub_dft<N2> per grid row and emits each output pair the
         // moment it is final, so no out_re/out_im arrays are live. The fill is the shared
         // load_tile below (contiguous loads plus transpose): a gather fill halves the
-        // stack ops but the vgather cost is higher than the stack ops it removes (the C3
-        // screen showed 1.2 to 1.5 regressions that scale with the gather count).
+        // stack ops but the vgather cost is higher than the stack ops it removes. Only a
+        // square split (N1 == N2) takes this path; every other pair keeps the W4 form.
         constexpr auto split = dif_last_split<IP>();
         batch_t btr[IP], bti[IP];
         if constexpr (IP >= W) {
@@ -1198,7 +1197,7 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
             xsimd::transpose(ri, ri + W);
             for (std::size_t j = 0; j < IP; ++j) { btr[j] = rr[j]; bti[j] = ri[j]; }
         }
-        if constexpr (!Chiplet && split.first != 0) {
+        if constexpr (!Chiplet && split.first != 0 && split.first == split.second) {
             constexpr std::size_t N1 = split.first;
             constexpr std::size_t N2 = split.second;
             alignas(batch_t::arch_type::alignment()) T ar[IP * W];

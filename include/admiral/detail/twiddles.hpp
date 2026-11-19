@@ -1078,7 +1078,6 @@ template<typename T>
     // Phase 2: one block, every buffer carved from it.
     {
         std::size_t bytes = 64;  // one alignment slack unit per carve, counted generously
-        std::size_t lf = 1;
         bytes += np * (sizeof(dif_pass_tables<T>) + sizeof(std::size_t) + sizeof(dif_fuse) +
                        sizeof(dif_buf<T>));
         for (std::size_t p = 0; p < np; ++p) {
@@ -1090,10 +1089,8 @@ template<typename T>
                 ++p;
                 pass_rows[p - 1] = 0;
                 pass_rows[p] = 0;
-                lf *= ip1 * ip2;
                 continue;
             }
-            lf *= planned[p];
         }
         bytes += rowperm_n * sizeof(std::uint32_t) + 64;
         bytes += 2u * ((want_fwd_tape ? 1u : 0u) + (want_inv_tape ? 1u : 0u)) * steps *

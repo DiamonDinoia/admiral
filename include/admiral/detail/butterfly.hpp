@@ -437,6 +437,7 @@ template<std::size_t R, std::size_t K, std::size_t M, typename T>
 ADM_ALWAYS_INLINE void r2c_small_fold(const T (&c)[M], T& re, T& im) {
     re = c[M - 1];
     im = T(0);
+    if constexpr (M > 1) {
     poet::static_for<0, M - 1>([&](auto P) {
         auto [tr, ti] = apply_stage_twiddle<T, R, K % R, T>(re, im);
         constexpr root_form form = ct_root<K % R, R, true>();
@@ -448,6 +449,7 @@ ADM_ALWAYS_INLINE void r2c_small_fold(const T (&c)[M], T& re, T& im) {
         }
         im = ti;
     });
+    }
 }
 
 // The odd bins k of one real transform of length 2H from its pair differences d[j] =
@@ -557,11 +559,13 @@ template<std::size_t R, std::size_t K, std::size_t M, typename T>
 ADM_ALWAYS_INLINE void c2c_small_fold(const T (&cr)[M], const T (&ci)[M], T& re, T& im) {
     re = cr[M - 1];
     im = ci[M - 1];
+    if constexpr (M > 1) {
     poet::static_for<0, M - 1>([&](auto P) {
         auto [tr, ti] = apply_stage_twiddle<T, R, K % R, T>(re, im);
         re = tr + cr[M - 2 - P];
         im = ti + ci[M - 2 - P];
     });
+    }
 }
 
 // The odd bins k of one complex transform of length 2H from the pair differences d[j] =

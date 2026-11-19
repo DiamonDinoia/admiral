@@ -430,23 +430,137 @@ void c2r_small(const std::complex<T>* in, T* out) {
     dif_butterfly<T, N, T>(tr, ti, [&](auto K, T, T im) { out[K] = im; });
 }
 
+// Pairs-first complex leaf helpers for `c2c_small`. One radix-2 DIF split per level: the sums
+// and the differences of the input pairs (j, j + N / 2) come first, the even bins recurse on the
+// sums, and the odd bins fold the differences with one shared product per output pair.
+
+// Horner fold of sum over p of c[p] * x^p at x = w_R^K, in real and imaginary parts.
+template<std::size_t R, std::size_t K, std::size_t M, typename T>
+ADM_ALWAYS_INLINE void c2c_small_fold(const T (&cr)[M], const T (&ci)[M], T& re, T& im) {
+    re = cr[M - 1];
+    im = ci[M - 1];
+    poet::static_for<0, M - 1>([&](auto P) {
+        auto [tr, ti] = apply_stage_twiddle<T, R, K % R, T>(re, im);
+        re = tr + cr[M - 2 - P];
+        im = ti + ci[M - 2 - P];
+    });
+}
+
+// The odd bins k of one complex transform of length 2H from the pair differences d[j] =
+// x[j] - x[j + H]: X(k) = E + w_{2H}^k * F with the folds E and F of the even and odd input
+// positions at w_H^k. The pair (k, k + H) shares E, F and one product O = w_{2H}^k * F:
+// X(k) = E + O and X(k + H) = E - O. When H is odd no two odd bins pair and each bin alone
+// takes its own folds and product.
+template<std::size_t H, typename T, std::size_t Stride, typename Emit>
+ADM_ALWAYS_INLINE void c2c_small_odd(const T* dr, const T* di, Emit&& emit) {
+    static_assert(H >= 2, "c2c_small_odd: H must be at least 2");
+    constexpr std::size_t NE = (H + 1) / 2;
+    constexpr std::size_t NO = H / 2;
+    T er[NE], ei[NE], fr[NO], fi[NO];
+    poet::static_for<0, NE>([&](auto I) {
+        er[I] = dr[2 * I];
+        ei[I] = di[2 * I];
+    });
+    poet::static_for<0, NO>([&](auto I) {
+        fr[I] = dr[2 * I + 1];
+        fi[I] = di[2 * I + 1];
+    });
+    poet::static_for<1, 2 * H>([&](auto Kc) {
+        if constexpr (Kc % 2 == 1 && (H % 2 == 1 || Kc < H)) {
+            constexpr std::size_t K = Kc;
+            T ar, ai, br, bi;
+            c2c_small_fold<H, K, NE, T>(er, ei, ar, ai);
+            c2c_small_fold<H, K, NO, T>(fr, fi, br, bi);
+            auto [orr, oii] = apply_stage_twiddle<T, 2 * H, K, T>(br, bi);
+            emit(IC<K * Stride>{}, ar + orr, ai + oii);
+            if constexpr (H % 2 == 0) {
+                emit(IC<(K + H) * Stride>{}, ar - orr, ai - oii);
+            }
+        }
+    });
+}
+
+// One complex transform of length N in place, bin k written at x[k * Stride]. Pairs-first: the
+// sums and the differences of (j, j + N / 2), the even bins recurse on the sums at twice the
+// stride, the odd bins fold the differences. Odd N has no pair split and keeps the
+// `dif_butterfly` body, where the radix stays `radix_sym_dft`. Swap loads the planes of `x`
+// exchanged, for the inverse direction at the top call; the recursion passes it false.
+template<std::size_t N, typename T, std::size_t Stride, bool Swap, typename Emit>
+ADM_ALWAYS_INLINE void c2c_small_strided(std::complex<T>* x, Emit&& emit) {
+    static_assert(N >= 2, "c2c_small_strided: N must be at least 2");
+    if constexpr (N % 2 == 1) {
+        T tr[N], ti[N];
+        poet::static_for<0, N>([&](auto J) {
+            tr[J] = Swap ? x[J].imag() : x[J].real();
+            ti[J] = Swap ? x[J].real() : x[J].imag();
+        });
+        dif_butterfly<T, N, T>(tr, ti, [&](auto K, T re, T im) {
+            emit(IC<K * Stride>{}, re, im);
+        });
+    } else {
+        constexpr std::size_t H = N / 2;
+        T sr[H], si[H], dr[H], di[H];
+        poet::static_for<0, H>([&](auto J) {
+            const T ar = Swap ? x[J].imag() : x[J].real();
+            const T br = Swap ? x[J + H].imag() : x[J + H].real();
+            const T ai = Swap ? x[J].real() : x[J].imag();
+            const T bi = Swap ? x[J + H].real() : x[J + H].imag();
+            sr[J] = ar + br;
+            si[J] = ai + bi;
+            dr[J] = ar - br;
+            di[J] = ai - bi;
+        });
+        if constexpr (H == 1) {
+            emit(IC<0>{}, sr[0], si[0]);
+            emit(IC<Stride>{}, dr[0], di[0]);
+        } else {
+            c2c_small_odd<H, T, Stride>(dr, di, emit);
+            std::complex<T> s[H];
+            poet::static_for<0, H>([&](auto J) { s[J] = std::complex<T>(sr[J], si[J]); });
+            c2c_small_strided<H, T, 2 * Stride, false>(s, emit);
+        }
+    }
+}
+
+// Route cost for the pairs-first leaf, in the style of use_scalar_staged: the odd-bin folds run
+// M = ceil(H / 2) Horner steps at H = N / 2, and the unrolled group keeps the coefficient pairs,
+// the two fold accumulators and the shared product live together, a 2 * M + 4 wide window. The
+// monolithic body keeps its 2 * N live set. Take the pairs form when its window fits the
+// register file while the monolithic live set spills, and when the odd bins pair up (H even);
+// every other N keeps the current body. Calibrated against the count.py census of the N 2 to 16
+// bodies.
+template<std::size_t N, typename T>
+[[nodiscard]] constexpr bool use_c2c_pairs() {
+    constexpr std::size_t regs = scalar_dif_registers<T>();
+    if constexpr (N % 2 != 0 || (N / 2) % 2 != 0 || N < 4u) return false;
+    constexpr std::size_t M = (N / 2 + 1) / 2;
+    return 2u * M + 4u <= regs && 2u * N > regs;
+}
+
 // One c2c of a small N in place, as one straight-line DFT. The inverse swaps the real and
 // imaginary parts on input and output. All loads come before the first store.
 template<std::size_t N, typename T, bool Forward>
 void c2c_small(std::complex<T>* x) {
-    T tr[N], ti[N];
-    poet::static_for<0, N>([&](auto J) {
-        tr[J] = Forward ? x[J].real() : x[J].imag();
-        ti[J] = Forward ? x[J].imag() : x[J].real();
-    });
-    if constexpr (use_scalar_staged<T, N>()) {
-        scalar_staged_dif<T, N>(tr, ti, [&](auto K, T re, T im) {
+    if constexpr (use_c2c_pairs<N, T>()) {
+        auto emit = [&](auto K, T re, T im) {
             x[K] = Forward ? std::complex<T>(re, im) : std::complex<T>(im, re);
-        });
+        };
+        c2c_small_strided<N, T, 1, !Forward>(x, emit);
     } else {
-        dif_butterfly<T, N, T>(tr, ti, [&](auto K, T re, T im) {
-            x[K] = Forward ? std::complex<T>(re, im) : std::complex<T>(im, re);
+        T tr[N], ti[N];
+        poet::static_for<0, N>([&](auto J) {
+            tr[J] = Forward ? x[J].real() : x[J].imag();
+            ti[J] = Forward ? x[J].imag() : x[J].real();
         });
+        if constexpr (use_scalar_staged<T, N>()) {
+            scalar_staged_dif<T, N>(tr, ti, [&](auto K, T re, T im) {
+                x[K] = Forward ? std::complex<T>(re, im) : std::complex<T>(im, re);
+            });
+        } else {
+            dif_butterfly<T, N, T>(tr, ti, [&](auto K, T re, T im) {
+                x[K] = Forward ? std::complex<T>(re, im) : std::complex<T>(im, re);
+            });
+        }
     }
 }
 

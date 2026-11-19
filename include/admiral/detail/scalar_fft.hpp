@@ -330,6 +330,11 @@ public:
         }
         line_cap_ = 1;
         for (std::size_t d = 0; d < active_; ++d) line_cap_ = std::max(line_cap_, shape_[d]);
+        // One dense line of a codelet length runs the codelet straight on the user buffer.
+        if (active_ == 1 && stride_[0] == 1 && total_ == shape_[0]) {
+            leaf_fwd_ = pick_small<c2c_small_pick<T, true>>(shape_[0]);
+            leaf_inv_ = pick_small<c2c_small_pick<T, false>>(shape_[0]);
+        }
     }
 
     [[nodiscard]] std::size_t size() const { return total_; }
@@ -339,6 +344,12 @@ public:
         if (active_ == 0) {
             if (fct != T(1))
                 for (std::size_t i = 0; i < total_; ++i) data[i] *= fct;
+            return;
+        }
+        if (const c2c_small_fn<T> small = Forward ? leaf_fwd_ : leaf_inv_) {
+            small(data);
+            if (fct != T(1))
+                for (std::size_t k = 0; k < total_; ++k) data[k] *= fct;
             return;
         }
         for (std::size_t d = 0; d < active_; ++d) {
@@ -377,6 +388,7 @@ private:
     std::vector<std::size_t> axis_engine_;
     std::size_t line_cap_;
     std::size_t total_, active_;
+    c2c_small_fn<T> leaf_fwd_ = nullptr, leaf_inv_ = nullptr;
 };
 
 template<typename T, typename Eng = scalar_c2c<T>>
@@ -543,6 +555,8 @@ private:
           rows_(outer_extent_product(shape)),
           inner_(n_, nthreads),
           outer_(half_spectrum_shape(shape, nh_), shape.size() - 1, nthreads),
+          fwd_leaf_(pick_small<r2c_small_pick<T>>(n_)),
+          inv_leaf_(pick_small<c2r_small_pick<T>>(n_)),
           pool_(nthreads > 1 ? std::make_unique<thread_pool>(nthreads, pin) : nullptr) {}
 
 public:
@@ -551,23 +565,53 @@ public:
     [[nodiscard]] std::size_t cplx_size() const noexcept { return rows_ * nh_; }
 
     void forward(const T* in, std::complex<T>* out, std::optional<T> fct) const {
+        const T s = fct.value_or(T(1));
+        if (rows_ == 1) {
+            // One row runs the 1-D transform straight on the user buffers, and every outer
+            // axis is length 1, so the outer run is the scale alone.
+            if (fwd_leaf_) fwd_leaf_(in, out);
+            else inner_.forward(in, out, 0);
+            if (s != T(1))
+                for (std::size_t k = 0; k < nh_; ++k) out[k] *= s;
+            return;
+        }
         admiral::detail::parallel_for(
             pool_.get(), rows_, real_size(),
             [&](std::size_t begin, std::size_t end, std::size_t tid) {
-                for (std::size_t r = begin; r < end; ++r)
-                    inner_.forward(in + r * n_, out + r * nh_, tid);
+                for (std::size_t r = begin; r < end; ++r) {
+                    if (fwd_leaf_) fwd_leaf_(in + r * n_, out + r * nh_);
+                    else inner_.forward(in + r * n_, out + r * nh_, tid);
+                }
             });
-        outer_.template execute<true>(out, fct.value_or(T(1)), pool_.get());
+        outer_.template execute<true>(out, s, pool_.get());
     }
 
     void inverse(std::complex<T>* spec, T* out, std::optional<T> fct) const {
-        outer_.template execute<false>(spec, inv_extent<T>(rows_), pool_.get());
-        const T s = fct ? *fct * static_cast<T>(real_size()) : T(1);
+        if (rows_ != 1) outer_.template execute<false>(spec, inv_extent<T>(rows_), pool_.get());
+        const T v = fct.value_or(T(1));
+        const T s = fct ? v * static_cast<T>(real_size()) : T(1);
+        const T inv_n = s / static_cast<T>(n_);
+        if (rows_ == 1) {
+            if (inv_leaf_) {
+                inv_leaf_(spec, out);
+                for (std::size_t i = 0; i < n_; ++i) out[i] *= inv_n;
+            } else {
+                inner_.inverse(spec, out, s, 0);
+            }
+            return;
+        }
         admiral::detail::parallel_for(
             pool_.get(), rows_, real_size(),
             [&](std::size_t begin, std::size_t end, std::size_t tid) {
-                for (std::size_t r = begin; r < end; ++r)
-                    inner_.inverse(spec + r * nh_, out + r * n_, s, tid);
+                for (std::size_t r = begin; r < end; ++r) {
+                    T* o = out + r * n_;
+                    if (inv_leaf_) {
+                        inv_leaf_(spec + r * nh_, o);
+                        for (std::size_t i = 0; i < n_; ++i) o[i] *= inv_n;
+                    } else {
+                        inner_.inverse(spec + r * nh_, o, s, tid);
+                    }
+                }
             });
     }
 
@@ -592,6 +636,8 @@ private:
     std::size_t n_, nh_, rows_;
     R2c inner_;
     scalar_nd_c2c<T, Eng> outer_;
+    r2c_small_fn<T> fwd_leaf_ = nullptr;
+    c2r_small_fn<T> inv_leaf_ = nullptr;
     std::unique_ptr<thread_pool> pool_;
 };
 

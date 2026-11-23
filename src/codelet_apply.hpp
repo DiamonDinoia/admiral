@@ -74,8 +74,8 @@ void codelet_apply(const std::complex<T>* in, std::complex<T>* out) {
         if constexpr (N < 16) flat_tiny_apply<N, T, VF, Forward>(src, dst, VF(T(1)));
         else                  flat_row_apply<N, T, VF, Forward>(src, dst, VF(T(1)));
         return;
-    } else if constexpr (std::is_same_v<T, double> && kGranuleLine<N>) {
-        granule_line<N, Forward>(in, out);
+    } else if constexpr (kGranuleLine<N, T>) {
+        granule_line<T, N, Forward>(in, out);
         return;
     } else if constexpr (kLineDft<N>) {
         // The inverse is the forward DFT with re and im swapped on both sides. All loads come

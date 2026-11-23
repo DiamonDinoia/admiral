@@ -146,13 +146,33 @@ public:
 
     void execute(const std::complex<T>* in, std::complex<T>* out) const {
         const std::complex<T> x0 = in[0];
-        std::complex<T> sum = x0;
 
         soa_scratch<T, 1> scratch(2 * m.L);
         auto* const a = reinterpret_cast<std::complex<T>*>(scratch.buf(0));
-        for (std::size_t q = 0; q < m.L; ++q) {
-            a[q] = in[m.gpow[q]];
-            sum += a[q];
+        // One gathered value stays in a register: the sum never reloads a stored pair.
+        // 4 = unroll depth: an upper bound of the FP add latency in cycles (tier-dependent,
+        // not queried), so no add waits on its own chain. A deeper unroll than the latency
+        // only costs registers; the tail loop keeps every m.L correct.
+        std::complex<T> s0 = x0, s1{}, s2{}, s3{};
+        std::size_t q = 0;
+        for (; q + 4 <= m.L; q += 4) {
+            const std::complex<T> v0 = in[m.gpow[q]];
+            const std::complex<T> v1 = in[m.gpow[q + 1]];
+            const std::complex<T> v2 = in[m.gpow[q + 2]];
+            const std::complex<T> v3 = in[m.gpow[q + 3]];
+            a[q] = v0;
+            a[q + 1] = v1;
+            a[q + 2] = v2;
+            a[q + 3] = v3;
+            s0 += v0;
+            s1 += v1;
+            s2 += v2;
+            s3 += v3;
+        }
+        for (; q < m.L; ++q) {
+            const std::complex<T> v = in[m.gpow[q]];
+            a[q] = v;
+            s0 += v;
         }
 
         run_inner<true>(a);
@@ -160,8 +180,17 @@ public:
             a[k] *= m.bhat[k];
         run_inner<false>(a);
 
-        out[0] = sum;
-        for (std::size_t mm = 0; mm < m.L; ++mm)
+        out[0] = (s0 + s1) + (s2 + s3);
+        // 4 = the same unroll depth: four ginvpow walks and four add-store pairs in flight,
+        // so the index load that feeds each store address overlaps the other three.
+        std::size_t mm = 0;
+        for (; mm + 4 <= m.L; mm += 4) {
+            out[m.ginvpow[mm]] = x0 + a[mm];
+            out[m.ginvpow[mm + 1]] = x0 + a[mm + 1];
+            out[m.ginvpow[mm + 2]] = x0 + a[mm + 2];
+            out[m.ginvpow[mm + 3]] = x0 + a[mm + 3];
+        }
+        for (; mm < m.L; ++mm)
             out[m.ginvpow[mm]] = x0 + a[mm];
     }
 

@@ -16,6 +16,7 @@
 #include "butterfly.hpp"
 #include "cache.hpp"
 #include "codelet.hpp"
+#include "granule_codelet.hpp"
 #include "simd_swizzle.hpp"
 #include "macros.hpp"
 
@@ -1091,6 +1092,12 @@ template<std::size_t IP>
     return {n1b, n2b};
 }
 
+// Packed-complex Rows-aware tail leaf: one register per tile column carries the Rows live
+// rows as AoS re/im pairs (2 * Rows lanes), so the fill shuffles no zero row, the staged
+// grid stays in registers, and the packed lanes are exactly the Rows complex values the
+// emit stores at data + b + l1 * k. Rows is a plan fact (it is l1). The leaf takes the odd
+// square terminal splits, where the symmetric DFT keeps the radix_sym_dft value form at
+// 2 fma per (m, k) pair; the SoA plane form pays 4.
 template<typename T, bool Forward, std::size_t IP, std::size_t Rows, bool Chiplet = false>
 ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
                                            const T* ccim,
@@ -1151,6 +1158,77 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
                     });
             });
             return;
+        }
+        // Packed-complex leaf for the live rows: Rows < W carries at most one W-row tile
+        // with Rows live lanes, so the planar form shuffles W - Rows zero rows and holds
+        // 2 x IP vectors against the register file. The pair form holds one register per
+        // column and the grid round trip fits registers. Rows is a plan fact (it is l1).
+        {
+            constexpr auto psplit = dif_last_split<IP>();
+            using pk_t = xsimd::make_sized_batch_t<T, 2 * Rows>;
+            constexpr bool pk_path =
+                !std::is_void_v<pk_t> && Rows < W && !Chiplet && psplit.first != 0 &&
+                psplit.first == psplit.second && !detail::has_single_bit(psplit.first);
+            if constexpr (pk_path) {
+                constexpr std::size_t N = psplit.first;
+                constexpr std::size_t P = pk_t::size;
+                pk_t bt[IP];
+                poet::static_for<0, (IP + P - 1) / P>([&](const auto ch) {
+                    constexpr std::size_t c0 = std::size_t(ch) * P;
+                    constexpr std::size_t rem = IP - c0;
+                    pk_t src[2 * Rows];
+                    poet::static_for<0, Rows>([&](const auto rr) {
+                        const std::size_t ro = IP * row(b + std::size_t(rr));
+                        if constexpr (c0 + P <= IP) {
+                            src[2 * std::size_t(rr)] = pk_t::load_unaligned(ccre + ro + c0);
+                            src[2 * std::size_t(rr) + 1] = pk_t::load_unaligned(ccim + ro + c0);
+                        } else {
+                            using arch = typename pk_t::arch_type;
+                            const auto m = xsimd::make_batch_bool_constant<T, lane_lt<rem>, arch>();
+                            src[2 * std::size_t(rr)] =
+                                pk_t::load(ccre + ro + c0, m, xsimd::unaligned_mode{});
+                            src[2 * std::size_t(rr) + 1] =
+                                pk_t::load(ccim + ro + c0, m, xsimd::unaligned_mode{});
+                        }
+                    });
+                    xsimd::transpose(src, src + P);
+                    poet::static_for<0, P>([&](const auto jj) {
+                        if constexpr (c0 + std::size_t(jj) < IP) bt[c0 + std::size_t(jj)] = src[jj];
+                    });
+                });
+                alignas(pk_t::arch_type::alignment()) T grid[IP * P];
+                const pk_t sv(scale_val);
+                // Stage A: one symmetric sub-DFT per strided column group, then the stage
+                // twiddle into the grid; stage B runs the transposed groups and emits each
+                // output the moment it is final. Same indices as the planar staged form.
+                poet::static_for<0, N>([&](const auto n) {
+                    pk_t x[N];
+                    poet::static_for<0, N>([&](const auto m) {
+                        x[std::size_t(m)] = bt[std::size_t(n) + N * std::size_t(m)];
+                    });
+                    granule_radix_sym<T, N, pk_t, true>(x, x);
+                    poet::static_for<0, N>([&](const auto k) {
+                        constexpr std::size_t e = (std::size_t(k) * std::size_t(n)) % IP;
+                        granule_stage_twiddle<T, IP, e, pk_t, true>(x[std::size_t(k)])
+                            .store_aligned(grid + (std::size_t(k) * N + std::size_t(n)) * P);
+                    });
+                });
+                poet::static_for<0, N>([&](const auto r) {
+                    pk_t x[N];
+                    poet::static_for<0, N>([&](const auto n) {
+                        x[std::size_t(n)] =
+                            pk_t::load_aligned(grid + (std::size_t(r) * N + std::size_t(n)) * P);
+                    });
+                    granule_radix_sym<T, N, pk_t, true>(x, x);
+                    poet::static_for<0, N>([&](const auto k2) {
+                        pk_t o = x[std::size_t(k2)] * sv;
+                        if constexpr (!Forward) o = granule_swp(o);
+                        o.store_unaligned(reinterpret_cast<T*>(
+                            data + b + l1 * (std::size_t(r) + N * std::size_t(k2))));
+                    });
+                });
+                return;
+            }
         }
         // Staged Gentleman-Sande split of the terminal radix: stage A runs
         // dif_last_sub_dft<N1> per strided column group and writes the twiddle grid,

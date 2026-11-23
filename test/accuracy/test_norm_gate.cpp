@@ -13,8 +13,10 @@
 #include <complex>
 #include <limits>
 #include <random>
+#include <string>
 #include <vector>
 
+#include "catch2/catch_template_test_macros.hpp"
 #include "catch2/catch_test_macros.hpp"
 
 #include <admiral/admiral.hpp>
@@ -105,6 +107,94 @@ TEST_CASE("one-shot plan transforms stay at machine precision in norm", "[norm_g
             const double e = rel_err(out.data(), rre, rim);
             INFO("c2c inverse n=" << n << " seed=" << seed << " rel_err " << e);
             REQUIRE(e <= 4.0 * eps * std::log2(static_cast<double>(n)));
+        }
+    }
+}
+
+// The real recombine halves its sum and difference terms before the twiddle products. An
+// order that scales after them overflows when a bin is above half the type maximum, while
+// the exact output is finite. The r2c spectrum peak is 0.55 of the maximum. The reference
+// runs on the input scaled down by an exact power of two, so ct_dd does not overflow.
+TEMPLATE_TEST_CASE("real transforms stay finite and accurate with a bin near the type maximum",
+                   "[norm_gate][accuracy][overflow]", float, double) {
+    using T = TestType;
+    const admiral::options opts{1, admiral::effort::estimate};
+    const double eps = static_cast<double>(std::numeric_limits<T>::epsilon());
+    const T top = std::numeric_limits<T>::max();
+    const int shift = std::numeric_limits<T>::max_exponent - 100;
+    const double peak = 0.55 * static_cast<double>(top);
+    const double pi = std::acos(-1.0);
+    for (const std::size_t n : {128u, 256u, 1024u}) {
+        const std::size_t m = n / 2 + 1;
+        const double dn = static_cast<double>(n);
+        const double tol = 4.0 * eps * std::log2(dn);
+        std::mt19937 rng(4321u);
+        std::normal_distribution<double> nd(0.0, 1.0);
+        SECTION("r2c n=" + std::to_string(n)) {
+            // r2c: a tone at bin 1 of amplitude peak, plus noise 1e-2 of it.
+            const std::vector<std::complex<double>> w = root_table(n, true);
+            std::vector<T> x(n);
+            for (std::size_t j = 0; j < n; ++j)
+                x[j] = static_cast<T>(peak * (2.0 / dn) *
+                                     (std::cos(2.0 * pi * static_cast<double>(j) / dn) + 1e-2 * nd(rng)));
+            std::vector<dd> rre(m), rim(m);
+            for (std::size_t k = 0; k < m; ++k)
+                for (std::size_t j = 0; j < n; ++j) {
+                    const std::complex<double> wj = w[(j * k) % n];
+                    const dd xj{std::ldexp(static_cast<double>(x[j]), -shift)};
+                    rre[k] += xj * dd{wj.real()};
+                    rim[k] += xj * dd{wj.imag()};
+                }
+            std::vector<std::complex<T>> out(m);
+            admiral::plan_r2c<T> p(n, opts);
+            p.forward(x.data(), out.data());
+            std::vector<std::complex<double>> got(m);
+            bool finite = true;
+            for (std::size_t k = 0; k < m; ++k) {
+                finite = finite && std::isfinite(out[k].real()) && std::isfinite(out[k].imag());
+                got[k] = {std::ldexp(static_cast<double>(out[k].real()), -shift),
+                          std::ldexp(static_cast<double>(out[k].imag()), -shift)};
+            }
+            REQUIRE(finite);
+            const double e = rel_err(got.data(), rre, rim);
+            INFO("rel_err " << e);
+            REQUIRE(e <= tol);
+        }
+        SECTION("c2r n=" + std::to_string(n)) {
+            // c2r: bin 1 has modulus 0.85 of the maximum at phase -pi / 4, where the unscaled
+            // recombine term re - im reaches 1.2 of the maximum. The noise is 1e-3 of it.
+            const double cpeak = 0.85 * static_cast<double>(top);
+            const std::vector<std::complex<double>> w = root_table(n, false);
+            std::vector<std::complex<T>> spec(m);
+            for (std::size_t k = 0; k < m; ++k)
+                spec[k] = {static_cast<T>(1e-3 * cpeak * nd(rng)),
+                           (k == 0 || k == n / 2) ? T(0) : static_cast<T>(1e-3 * cpeak * nd(rng))};
+            spec[1] = {static_cast<T>(cpeak * std::cos(-0.25 * pi)), static_cast<T>(cpeak * std::sin(-0.25 * pi))};
+            std::vector<dd> rre(n), rim(n);
+            for (std::size_t j = 0; j < n; ++j) {
+                dd acc{0.0};
+                for (std::size_t k = 0; k < m; ++k) {
+                    const std::complex<double> wj = w[(j * k) % n];
+                    const dd sr{std::ldexp(static_cast<double>(spec[k].real()), -shift)};
+                    const dd si{std::ldexp(static_cast<double>(spec[k].imag()), -shift)};
+                    const dd term = sr * dd{wj.real()} - si * dd{wj.imag()};
+                    acc += (k == 0 || k == n / 2) ? term : term + term;
+                }
+                rre[j] = acc / dd{static_cast<double>(n)};
+            }
+            std::vector<T> out(n);
+            admiral::plan_r2c<T> p(n, opts);
+            p.inverse(spec.data(), out.data());
+            std::vector<std::complex<double>> got(n);
+            bool finite = true;
+            for (std::size_t j = 0; j < n; ++j) {
+                finite = finite && std::isfinite(out[j]);
+                got[j] = {std::ldexp(static_cast<double>(out[j]), -shift), 0.0};
+            }
+            REQUIRE(finite);
+            const double e = rel_err(got.data(), rre, rim);
+            INFO("rel_err " << e);
+            REQUIRE(e <= tol);
         }
     }
 }

@@ -52,40 +52,30 @@ inline std::complex<T> c2r_even_bin(const std::complex<T>* X, std::complex<T> tw
     return c2r_even_bin(X[k], X[M - k], tw);
 }
 
-// The xsimd form of the bins above: lane i of a, b and tw holds bin k + i, its mirror and its
-// twiddle.
-template <typename C>
-inline C r2c_even_bins(const C& a, const C& b, const C& tw) {
-    using R = typename C::real_batch;
-    const R h(typename R::value_type(0.5));
-    const R zer = (a.real() + b.real()) * h, zei = (a.imag() - b.imag()) * h;
-    const R zor = (a.imag() + b.imag()) * h, zoi = (b.real() - a.real()) * h;
-    return C(xsimd::fma(tw.real(), zor, zer) - tw.imag() * zoi,
-             xsimd::fma(tw.imag(), zor, xsimd::fma(tw.real(), zoi, zei)));
-}
-
-template <typename C>
-inline C c2r_even_bins(const C& a, const C& b, const C& tw) {
-    using R = typename C::real_batch;
-    const R h(typename R::value_type(0.5));
-    const R zer = (a.real() + b.real()) * h, zei = (a.imag() - b.imag()) * h;
-    const R vor = (a.real() - b.real()) * h, voi = (a.imag() + b.imag()) * h;
-    const R zor = xsimd::fma(tw.imag(), voi, tw.real() * vor);
-    const R zoi = xsimd::fnma(tw.imag(), vor, tw.real() * voi);
-    return C(zer - zoi, zei + zor);
-}
-
-struct lane_reverse {
-    static constexpr std::size_t get(std::size_t i, std::size_t n) { return n - 1 - i; }
+// Two-source gather masks for even_recombine_simd over the raw interleaved halves. Word
+// 2 * j of a raw half is the real part of bin j, word 2 * j + 1 its imaginary part. Mask
+// values 0 .. n - 1 take the first register, n .. 2 * n - 1 the second. Lane i of the mirror
+// half holds bin lo + L - 1 - i = M - k - i, the pair of lane i's bin k + i, so one indexed
+// permute per component fuses the deinterleave with the lane reverse: 2 lane shuffles in
+// place of the 4 of a deinterleave plus a lane reverse.
+template <std::size_t Imag>
+struct mirror_pair {
+    static constexpr std::size_t get(std::size_t i, std::size_t n) {
+        const std::size_t w = 2 * (n - 1 - i) + Imag;
+        return w < n ? w + n : w - n;
+    }
 };
 
-template <typename C>
-inline C reverse_lanes(const C& c) {
-    using R = typename C::real_batch;
-    using index = xsimd::as_unsigned_integer_t<typename R::value_type>;
-    constexpr auto rev = xsimd::make_batch_constant<index, lane_reverse, typename R::arch_type>();
-    return C(xsimd::swizzle(c.real(), rev), xsimd::swizzle(c.imag(), rev));
-}
+// Store masks for the two raw halves of out + lo. Word 2 * i of the store is the real part of
+// bin lo + i, the mirror bin of pair L - 1 - i. One indexed permute per store half fuses the
+// lane reverse with the store interleave: 2 lane shuffles in place of 4.
+template <std::size_t Half>
+struct mirror_store {
+    static constexpr std::size_t get(std::size_t i, std::size_t n) {
+        const std::size_t w = Half * n + i, e = w / 2;
+        return (w & 1) == 0 ? 2 * n - 1 - e : n - 1 - e;
+    }
+};
 
 template <typename T>
 inline constexpr bool kRecombineSimd = std::is_same_v<T, float> || std::is_same_v<T, double>;
@@ -100,21 +90,46 @@ inline std::size_t even_recombine_simd(const std::complex<T>* in, const std::com
     using R = xsimd::make_sized_batch_t<T, L>;
     if constexpr (L >= 2 && !std::is_void_v<R>) {
         using C = xsimd::batch<std::complex<T>, typename R::arch_type>;
+        using index = xsimd::as_unsigned_integer_t<typename R::value_type>;
         const std::size_t kend = (M - 1) / 2 + 1;
         for (; k + L <= kend; k += L) {
             const std::size_t lo = M - k - L + 1;
-            const C a = C::load_unaligned(in + k), b = C::load_unaligned(in + lo);
-            // Lane i of the upper step is bin lo + i. In reversed lane order its inputs are br, a
-            // and the mirror of ta, so the upper step needs no reversed twiddle load.
-            const C ta = C::load_unaligned(tw + k), tm(-ta.real(), ta.imag());
-            const C br = reverse_lanes(b);
+            const C a = C::load_unaligned(in + k);
+            // The mirror half loads raw: two indexed permutes fuse its deinterleave with the
+            // lane reverse. Lane i pairs bin k + i with bin M - k - i.
+            const T* blp = reinterpret_cast<const T*>(in + lo);
+            const R bl = R::load_unaligned(blp), bh = R::load_unaligned(blp + L);
+            const C br(
+                xsimd::shuffle(bh, bl, xsimd::make_batch_constant<index, mirror_pair<0>, typename R::arch_type>()),
+                xsimd::shuffle(bh, bl, xsimd::make_batch_constant<index, mirror_pair<1>, typename R::arch_type>()));
+            const C ta = C::load_unaligned(tw + k);
+            // The 0.5 goes on the sum and difference terms before the twiddle FMAs, as in
+            // r2c_even_bin. A bin near the type maximum then does not overflow in the FMAs.
+            const R h(typename R::value_type(0.5)), two(typename R::value_type(2));
+            const R sre = (a.real() + br.real()) * h, si = (a.imag() + br.imag()) * h;
+            const R sd = (a.imag() - br.imag()) * h, d = (br.real() - a.real()) * h;
+            const R tr = ta.real(), ti = ta.imag();
+            R xkr, xki;
             if constexpr (Forward) {
-                r2c_even_bins(a, br, ta).store_unaligned(out + k);
-                reverse_lanes(r2c_even_bins(br, a, tm)).store_unaligned(out + lo);
+                xkr = xsimd::fnma(ti, d, xsimd::fma(tr, si, sre));
+                xki = xsimd::fma(ti, si, xsimd::fma(tr, d, sd));
             } else {
-                c2r_even_bins(a, br, ta).store_unaligned(out + k);
-                reverse_lanes(c2r_even_bins(br, a, tm)).store_unaligned(out + lo);
+                xkr = xsimd::fnma(ti, d, xsimd::fnma(tr, si, sre));
+                xki = xsimd::fma(ti, si, xsimd::fnma(tr, d, sd));
             }
+            C(xkr, xki).store_unaligned(out + k);
+            // The mirror bin of pair (k + i, M - k - i) is (2 sre - xkr, xki - 2 sd) in both
+            // directions: the scalar bin on the swapped inputs and the mirrored twiddle
+            // tw[M - k] = -conj(tw[k]). The conjugate of the partner is a different value.
+            // The product 2 sre is the exact sum a + b, so it is finite when the sum is. This
+            // holds with and without FMA.
+            // Two indexed permutes fuse the lane reverse with the store interleave.
+            const R mre = xsimd::fms(two, sre, xkr), mim = xsimd::fnma(two, sd, xki);
+            T* bop = reinterpret_cast<T*>(out + lo);
+            xsimd::shuffle(mim, mre, xsimd::make_batch_constant<index, mirror_store<0>, typename R::arch_type>())
+                .store_unaligned(bop);
+            xsimd::shuffle(mim, mre, xsimd::make_batch_constant<index, mirror_store<1>, typename R::arch_type>())
+                .store_unaligned(bop + L);
         }
         if constexpr (L / 2 >= 4) return even_recombine_simd<Forward, T, L / 2>(in, tw, out, M, k);
         else return k;

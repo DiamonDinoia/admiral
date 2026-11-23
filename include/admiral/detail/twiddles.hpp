@@ -938,6 +938,8 @@ struct dif_step {
 template<typename T>
 struct dif_tape_pair {
     dif_buf<dif_step<T>> blk, flat;
+    // dif_out_aliasable_plan for this tape; false until dif_build_tape completes it.
+    bool out_aliasable = false;
 };
 
 template<typename T>

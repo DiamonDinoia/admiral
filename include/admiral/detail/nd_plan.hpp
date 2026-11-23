@@ -659,6 +659,8 @@ class nd_runtime_plan {
         bool fast3d = false;
         // Rank 1, serial, codelet or good_thomas route: the kernel itself, else null.
         codelet_fn_t<T> fast1d = nullptr;
+        // The per-call entry decision (fast1d bound and no debug trace wanted), fixed at build.
+        bool fast_run = false;
         // The default-fct scale: make_scale_plan reads only plan-invariant members.
         scale_plan def_sp{false, T(1), 0};
         T def_fct = T(1);
@@ -669,16 +671,16 @@ public:
     nd_runtime_plan(span<const std::size_t> shape, bool is_forward,
                     std::size_t nthreads = 1,
                     admiral::effort eff = admiral::effort::estimate, bool pin = false,
-                    portable_trig::turns_memo* memo = nullptr);
+                    portable_trig::turns_memo* memo = nullptr, unsigned debug = 0);
     // Inline, so that a caller reaches the fast1d codelet with no call between.
     void execute(std::complex<T>* data, const exec_options<T>& opts = {}) const {
-        if (m.fast1d && opts.debug == 0) run_fast1d(data, data, opts.fct);
+        if (m.fast_run) run_fast1d(data, data, opts.fct);
         else execute_routes(data, opts);
     }
     // The codelets load the whole line before the first store, so fast1d runs in place too.
     void execute(const std::complex<T>* src, std::complex<T>* dst,
                  const exec_options<T>& opts = {}) const {
-        if (m.fast1d && opts.debug == 0) run_fast1d(src, dst, opts.fct);
+        if (m.fast_run) run_fast1d(src, dst, opts.fct);
         else execute_routes(src, dst, opts);
     }
 
@@ -774,7 +776,7 @@ private:
 template<typename T>
 nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forward,
                                     std::size_t nthreads, admiral::effort eff, bool pin,
-                                    portable_trig::turns_memo* memo) {
+                                    portable_trig::turns_memo* memo, unsigned debug) {
     m.shape.assign(shape.begin(), shape.end());
     m.is_forward = is_forward;
     const auto total = extent_product(m.shape);
@@ -882,8 +884,9 @@ nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forwa
     }
     m.def_sp = make_scale_plan(std::nullopt);
     m.def_fct = m.def_sp.fct;
-    // Rank 1, serial, codelet or good_thomas route: execute() calls the kernel directly. A debug
-    // call keeps the traced chain.
+    // Rank 1, serial, codelet or good_thomas route: execute() calls the kernel directly. A
+    // debug call keeps the traced chain. The fast-path decision is plan-invariant (the
+    // plan's own debug option and the resolved kernel), so it binds here, not per call.
     if (m.shape.size() == 1 && m.shape[0] > 1 && m.pool == nullptr) {
         const std::optional<plan_impl<T>>& p0 = m.axes[0].plan;
         using rk = typename plan_impl<T>::route_kind;
@@ -894,6 +897,7 @@ nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forwa
             m.fast1d = is_forward ? good_thomas_catalog::fn<T, true>(m.shape[0])
                                   : good_thomas_catalog::fn<T, false>(m.shape[0]);
     }
+    m.fast_run = m.fast1d != nullptr && debug == 0;
 }
 
 template<typename T>

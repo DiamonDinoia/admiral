@@ -105,6 +105,13 @@ private:
         std::unique_ptr<thread_pool> pool;
         // A function of (is_forward, size), both fixed for the plan's life.
         T def_fct = default_transform_fct<T>(is_forward, size);
+        // Per-call dispatch bound at build: the route and the direction never change after
+        // construction, so the variant visit, the direction branch and the runtime codelet
+        // jump table move to plan time (codelet_fn is the same idiom as nd's fast1d).
+        codelet_fn_t<T> codelet = nullptr;
+        void (*run)(const plan_impl&, const std::complex<T>*, std::complex<T>*, T) = nullptr;
+        void (*run_many)(const plan_impl&, std::complex<T>*, std::size_t, std::size_t,
+                         T) = nullptr;
     } m;
 
     [[nodiscard]] static std::unique_ptr<thread_pool> make_route_pool(std::size_t nthreads,
@@ -191,6 +198,7 @@ private:
                              portable_trig::turns_memo* memo = nullptr) {
         switch (m.route) {
         case route_kind::codelet:
+            m.codelet = is_forward ? codelet_fn<T, true>(size) : codelet_fn<T, false>(size);
             break;
         case route_kind::good_thomas:
             m.st.template emplace<good_thomas_state>();
@@ -220,6 +228,15 @@ private:
             m.st.template emplace<bluestein_plan<T>>(size, is_forward);
             break;
         }
+        // One plan-time visit per build replaces the per-call visit and direction branch.
+        m.run = std::visit([&](const auto& st) -> decltype(m.run) {
+            using S = std::decay_t<decltype(st)>;
+            return is_forward ? &run_route<S, true> : &run_route<S, false>;
+        }, m.st);
+        m.run_many = std::visit([&](const auto& st) -> decltype(m.run_many) {
+            using S = std::decay_t<decltype(st)>;
+            return is_forward ? &run_route_many<S, true> : &run_route_many<S, false>;
+        }, m.st);
     }
 
 public:
@@ -263,30 +280,27 @@ private:
         }
     }
 
-    template<bool Forward>
-    void execute_many_impl(std::complex<T>* data, std::size_t n, std::size_t stride, T fct) const {
-        std::visit(
-            [&](const auto& st) {
-                for (std::size_t r = 0; r < n; ++r) {
-                    std::complex<T>* p = data + r * stride;
-                    if constexpr (std::is_same_v<std::decay_t<decltype(st)>,
-                                                 four_step_large_plan<T>>)
-                        execute_route<Forward>(st, p, p, fct, m.pool.get());
-                    else
-                        execute_route<Forward>(st, p, p, fct);
-                }
-            },
-            m.st);
+    // Plan-time-bound route entries (the variant alternative and the direction are template
+    // parameters, so each bound pointer is one direct dispatch with no per-call visit).
+    template<typename S, bool Forward>
+    static void run_route(const plan_impl& p, const std::complex<T>* in, std::complex<T>* out,
+                          T fct) {
+        if constexpr (std::is_same_v<S, four_step_large_plan<T>>)
+            p.execute_route<Forward>(std::get<S>(p.m.st), in, out, fct, p.m.pool.get());
+        else
+            p.execute_route<Forward>(std::get<S>(p.m.st), in, out, fct);
     }
 
-    template<bool Forward>
-    void execute_impl(const std::complex<T>* src, std::complex<T>* dst, T fct) const {
-        std::visit([&](const auto& st) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(st)>, four_step_large_plan<T>>)
-                execute_route<Forward>(st, src, dst, fct, m.pool.get());
+    template<typename S, bool Forward>
+    static void run_route_many(const plan_impl& p, std::complex<T>* data, std::size_t n,
+                               std::size_t stride, T fct) {
+        for (std::size_t r = 0; r < n; ++r) {
+            std::complex<T>* q = data + r * stride;
+            if constexpr (std::is_same_v<S, four_step_large_plan<T>>)
+                p.execute_route<Forward>(std::get<S>(p.m.st), q, q, fct, p.m.pool.get());
             else
-                execute_route<Forward>(st, src, dst, fct);
-        }, m.st);
+                p.execute_route<Forward>(std::get<S>(p.m.st), q, q, fct);
+        }
     }
 
 public:
@@ -479,14 +493,14 @@ private:
     template<bool Forward>
     void execute_route(const codelet_state&, const std::complex<T>* in,
                        std::complex<T>* out, T fct) const {
-        codelet_dispatch<T, Forward>(in, out, m.size);
+        m.codelet(in, out);
         apply_scale(out, fct);
     }
 
     template<bool Forward>
     void execute_route(const dif_state& st, const std::complex<T>* in,
                        std::complex<T>* out, T fct) const {
-        dif_execute_in_place<T>(Forward, in, out, m.size, st.tw, fct);
+        dif_execute_in_place<T, Forward>(in, out, m.size, st.tw, fct);
     }
 
     template<bool Forward>
@@ -883,15 +897,14 @@ ADM_HOT void plan_impl<T>::execute(const std::complex<T>* src, std::complex<T>* 
     if (opts.debug >= dbg_route) ADM_UNLIKELY
         trace(opts.debug, src == dst ? "in-place" : "oop", fct);
     if (m.size == 1) ADM_UNLIKELY { *dst = *src * fct; return; }
-    // The arithmetic of execute_route(codelet) plus apply_scale, without the variant visit.
+    // The arithmetic of execute_route(codelet) plus apply_scale, with the dispatch already
+    // bound at build (m.codelet).
     if (m.route == route_kind::codelet) {
-        if (m.is_forward) codelet_dispatch<T, true >(src, dst, m.size);
-        else              codelet_dispatch<T, false>(src, dst, m.size);
+        m.codelet(src, dst);
         apply_scale(dst, fct);
         return;
     }
-    if (m.is_forward) execute_impl<true>(src, dst, fct);
-    else              execute_impl<false>(src, dst, fct);
+    m.run(*this, src, dst, fct);
 }
 
 template<typename T>
@@ -908,8 +921,7 @@ void plan_impl<T>::execute_many(std::complex<T>* data, std::size_t n, std::size_
         else              codelet_dispatch_many<T, false>(data, n, stride, m.size, fct);
         return;
     }
-    if (m.is_forward) execute_many_impl<true>(data, n, stride, fct);
-    else              execute_many_impl<false>(data, n, stride, fct);
+    m.run_many(*this, data, n, stride, fct);
 }
 
 extern template class plan_impl<float>;

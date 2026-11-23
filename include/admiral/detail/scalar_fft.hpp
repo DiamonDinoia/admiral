@@ -18,6 +18,7 @@
 #include "butterfly.hpp"
 #include "ct_math.hpp"
 #include "cxx_compat.hpp"
+#include "macros.hpp"
 #include "math.hpp"
 #include "real_recombine.hpp"
 #include "scratch.hpp"
@@ -96,7 +97,7 @@ public:
     void execute(std::complex<T>* x, T fct, std::size_t tid,
                  thread_pool* pool = nullptr) const {
         if (const c2c_small_fn<T> small = forward ? small_fwd_ : small_inv_) {
-            small(x);
+            small(x, x);
             if (fct != T(1))
                 for (std::size_t k = 0; k < n_; ++k) x[k] *= fct;
             return;
@@ -347,7 +348,7 @@ public:
             return;
         }
         if (const c2c_small_fn<T> small = Forward ? leaf_fwd_ : leaf_inv_) {
-            small(data);
+            small(data, data);
             if (fct != T(1))
                 for (std::size_t k = 0; k < total_; ++k) data[k] *= fct;
             return;
@@ -380,6 +381,20 @@ public:
                     }
                 });
         }
+    }
+
+    // Out-of-place form: the codelet reads src and writes dst, so no copy runs on that path.
+    template<bool Forward>
+    void execute(const std::complex<T>* src, std::complex<T>* dst, T fct = T(1),
+                 thread_pool* pool = nullptr) const {
+        if (const c2c_small_fn<T> small = Forward ? leaf_fwd_ : leaf_inv_) {
+            small(src, dst);
+            if (fct != T(1))
+                for (std::size_t k = 0; k < total_; ++k) dst[k] *= fct;
+            return;
+        }
+        if (src != dst) std::copy_n(src, total_, dst);
+        execute<Forward>(dst, fct, pool);
     }
 
 private:
@@ -508,8 +523,9 @@ public:
     }
     void run(bool is_forward, const std::complex<T>* src, std::complex<T>* dst,
              const T* fct) const {
-        if (src != dst) std::copy_n(src, plan.size(), dst);
-        run(is_forward, dst, fct);
+        const T s = fct ? *fct : default_transform_fct<T>(is_forward, plan.size());
+        if (is_forward) plan.template execute<true>(src, dst, s, pool_.get());
+        else plan.template execute<false>(src, dst, s, pool_.get());
     }
 
 private:
@@ -557,7 +573,12 @@ private:
           outer_(half_spectrum_shape(shape, nh_), shape.size() - 1, nthreads),
           fwd_leaf_(pick_small<r2c_small_pick<T>>(n_)),
           inv_leaf_(pick_small<c2r_small_pick<T>>(n_)),
-          pool_(nthreads > 1 ? std::make_unique<thread_pool>(nthreads, pin) : nullptr) {}
+          pool_(nthreads > 1 ? std::make_unique<thread_pool>(nthreads, pin) : nullptr) {
+        // The per-call entry decision (the row shape and the codelet pick are fixed for the
+        // plan's life), bound at build, not per call (nd_runtime_plan's fast_run idiom).
+        fast_fwd_ = rows_ == 1 && fwd_leaf_ != nullptr;
+        fast_inv_ = rows_ == 1 && inv_leaf_ != nullptr;
+    }
 
 public:
 
@@ -566,11 +587,36 @@ public:
 
     void forward(const T* in, std::complex<T>* out, std::optional<T> fct) const {
         const T s = fct.value_or(T(1));
+        // The fast entry runs the codelet straight on the user buffers; every other shape
+        // takes the out-of-line general body.
+        if (fast_fwd_) {
+            fwd_leaf_(in, out);
+            if (s != T(1))
+                for (std::size_t k = 0; k < nh_; ++k) out[k] *= s;
+            return;
+        }
+        forward_general(in, out, s);
+    }
+
+    void inverse(std::complex<T>* spec, T* out, std::optional<T> fct) const {
+        const T v = fct.value_or(T(1));
+        const T s = fct ? v * static_cast<T>(real_size()) : T(1);
+        const T inv_n = s / static_cast<T>(n_);
+        if (fast_inv_) {
+            inv_leaf_(spec, out);
+            for (std::size_t i = 0; i < n_; ++i) out[i] *= inv_n;
+            return;
+        }
+        inverse_general(spec, out, s, inv_n);
+    }
+
+private:
+    // The shapes the fast flags exclude: a size without a codelet, or more than one row.
+    // ADM_NOINLINE keeps the multi-row parallel_for frame off the fast call: inlined, the
+    // body costs a 0xb8 stack frame and 6 register saves a call (the OLD disassembly).
+    ADM_NOINLINE void forward_general(const T* in, std::complex<T>* out, T s) const {
         if (rows_ == 1) {
-            // One row runs the 1-D transform straight on the user buffers, and every outer
-            // axis is length 1, so the outer run is the scale alone.
-            if (fwd_leaf_) fwd_leaf_(in, out);
-            else inner_.forward(in, out, 0);
+            inner_.forward(in, out, 0);
             if (s != T(1))
                 for (std::size_t k = 0; k < nh_; ++k) out[k] *= s;
             return;
@@ -586,18 +632,10 @@ public:
         outer_.template execute<true>(out, s, pool_.get());
     }
 
-    void inverse(std::complex<T>* spec, T* out, std::optional<T> fct) const {
+    ADM_NOINLINE void inverse_general(std::complex<T>* spec, T* out, T s, T inv_n) const {
         if (rows_ != 1) outer_.template execute<false>(spec, inv_extent<T>(rows_), pool_.get());
-        const T v = fct.value_or(T(1));
-        const T s = fct ? v * static_cast<T>(real_size()) : T(1);
-        const T inv_n = s / static_cast<T>(n_);
         if (rows_ == 1) {
-            if (inv_leaf_) {
-                inv_leaf_(spec, out);
-                for (std::size_t i = 0; i < n_; ++i) out[i] *= inv_n;
-            } else {
-                inner_.inverse(spec, out, s, 0);
-            }
+            inner_.inverse(spec, out, s, 0);
             return;
         }
         admiral::detail::parallel_for(
@@ -615,7 +653,6 @@ public:
             });
     }
 
-private:
     static std::size_t last_extent(span<const std::size_t> shape) {
         if (shape.empty() || !extent_product(shape)) ADM_UNLIKELY
             throw size_error("Plan size must be greater than 0");
@@ -639,7 +676,11 @@ private:
     r2c_small_fn<T> fwd_leaf_ = nullptr;
     c2r_small_fn<T> inv_leaf_ = nullptr;
     std::unique_ptr<thread_pool> pool_;
+    // The bound fast-entry answers; see the constructor.
+    bool fast_fwd_ = false, fast_inv_ = false;
 };
 
 }
 }
+
+#include "undef_macros.hpp"

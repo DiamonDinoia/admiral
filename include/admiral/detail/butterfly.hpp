@@ -3,6 +3,7 @@
 // Cooley-Tukey decimation in frequency: Gentleman and Sande, AFIPS Fall Joint Comp. Conf. 1966.
 // Odd radices use Singleton's sum/difference DFT, IEEE Trans. Audio Electroacoust. 17 (1969) 93.
 
+#include <algorithm>
 #include <complex>
 #include <cstddef>
 #include <type_traits>
@@ -493,7 +494,7 @@ using r2c_small_fn = void (*)(const T*, std::complex<T>*);
 template<typename T>
 using c2r_small_fn = void (*)(const std::complex<T>*, T*);
 template<typename T>
-using c2c_small_fn = void (*)(std::complex<T>*);
+using c2c_small_fn = void (*)(const std::complex<T>*, std::complex<T>*);
 
 // Pairs-first real-input leaf helpers for `r2c_small`. One radix-2 DIF split per level: the sums
 // and the differences of the input pairs (j, j + N / 2) come first, the even bins recurse on the
@@ -676,7 +677,7 @@ ADM_ALWAYS_INLINE void c2c_small_odd(const T* dr, const T* di, Emit&& emit) {
 // `dif_butterfly` body, where the radix stays `radix_sym_dft`. Swap loads the planes of `x`
 // exchanged, for the inverse direction at the top call; the recursion passes it false.
 template<std::size_t N, typename T, std::size_t Stride, bool Swap, typename Emit>
-ADM_ALWAYS_INLINE void c2c_small_strided(std::complex<T>* x, Emit&& emit) {
+ADM_ALWAYS_INLINE void c2c_small_strided(const std::complex<T>* x, Emit&& emit) {
     static_assert(N >= 2, "c2c_small_strided: N must be at least 2");
     if constexpr (N % 2 == 1) {
         T tr[N], ti[N];
@@ -727,28 +728,32 @@ template<std::size_t N, typename T>
     return 2u * M + 4u <= regs && 2u * N > regs;
 }
 
-// One c2c of a small N in place, as one straight-line DFT. The inverse swaps the real and
-// imaginary parts on input and output. All loads come before the first store.
+// One c2c of a small N as one straight-line DFT, reading src and writing dst. The inverse swaps
+// the real and imaginary parts on input and output. All loads of src come before the first store
+// to dst, so dst may alias src.
 template<std::size_t N, typename T, bool Forward>
-void c2c_small(std::complex<T>* x) {
+void c2c_small(const std::complex<T>* src, std::complex<T>* dst) {
     if constexpr (use_c2c_pairs<N, T>()) {
         auto emit = [&](auto K, T re, T im) {
-            x[K] = Forward ? std::complex<T>(re, im) : std::complex<T>(im, re);
+            dst[K] = Forward ? std::complex<T>(re, im) : std::complex<T>(im, re);
         };
-        c2c_small_strided<N, T, 1, !Forward>(x, emit);
+        c2c_small_strided<N, T, 1, !Forward>(src, emit);
     } else {
+        if (src != dst) {
+            std::copy_n(src, N, dst);
+        }
         T tr[N], ti[N];
         poet::static_for<0, N>([&](auto J) {
-            tr[J] = Forward ? x[J].real() : x[J].imag();
-            ti[J] = Forward ? x[J].imag() : x[J].real();
+            tr[J] = Forward ? dst[J].real() : dst[J].imag();
+            ti[J] = Forward ? dst[J].imag() : dst[J].real();
         });
         if constexpr (use_scalar_staged<T, N>()) {
             scalar_staged_dif<T, N>(tr, ti, [&](auto K, T re, T im) {
-                x[K] = Forward ? std::complex<T>(re, im) : std::complex<T>(im, re);
+                dst[K] = Forward ? std::complex<T>(re, im) : std::complex<T>(im, re);
             });
         } else {
             dif_butterfly<T, N, T>(tr, ti, [&](auto K, T re, T im) {
-                x[K] = Forward ? std::complex<T>(re, im) : std::complex<T>(im, re);
+                dst[K] = Forward ? std::complex<T>(re, im) : std::complex<T>(im, re);
             });
         }
     }

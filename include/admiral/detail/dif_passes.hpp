@@ -241,6 +241,10 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
         const std::size_t obase   = InPlace ? idz * IP * b : idz * b;
         const std::size_t kstride = InPlace ? idz : idz * l1;
         constexpr bool kSplitCols = InPlace && dif_butterfly_wants_reload<IP>;
+        // The half sweep below runs the whole vector range for this case, so the monolithic
+        // do_batch leaf is never called: keep it out of the instantiation and the leaf state
+        // of the sweeps has no sibling body to share the register file with.
+        constexpr bool kHalfSweep = dif_butterfly_wants_reload<IP> && !InPlace;
         const auto ocol = [](std::size_t k) {
             if constexpr (kSplitCols) return (k & 1u) * (IP / 2u) + k / 2u;
             else                      return k;
@@ -259,11 +263,13 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                         si.store_unaligned(chim + off);
                     }
                 };
+                // The leaf loads its columns by poet schedule, so the fill keeps static
+                // slots and the butterfly state stays in registers through the leaf.
                 batch tr[IP], ti_arr[IP];
-                for (std::size_t j = 0; j < IP; ++j) {
+                poet::static_for<0, IP>([&](const auto j) ADM_LAMBDA_ALWAYS_INLINE {
                     tr[j] = batch::load_unaligned(ccre + (aa * esi + idi * (j + IP * b)));
                     ti_arr[j] = batch::load_unaligned(ccim + (aa * esi + idi * (j + IP * b)));
-                }
+                });
                 dif_butterfly<T, IP>(tr, ti_arr, emit_tw);
             };
             auto do_half = [&](std::size_t aa, auto ODD) ADM_LAMBDA_ALWAYS_INLINE {
@@ -302,7 +308,7 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                 });
             };
             std::size_t a = amain;
-            if constexpr (dif_butterfly_wants_reload<IP> && !InPlace) {
+            if constexpr (kHalfSweep) {
                 auto sweep = [&](auto ODD) {
                     std::size_t ah = 0;
                     for (; ah + 2 * W <= ido; ah += 2 * W) {
@@ -375,7 +381,9 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                     });
                 }
             }
-            for (; a + W <= ido; a += W) do_batch(a);
+            if constexpr (!kHalfSweep) {
+                for (; a + W <= ido; a += W) do_batch(a);
+            }
             if constexpr (InPlace) {
                 if (a < ido) {
                     const std::size_t rem = ido - a;
@@ -411,7 +419,9 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                     }
                 }
             } else {
-                if (ido >= W && (ido - a) * 2 >= W) { do_batch(ido - W); a = ido; }
+                if constexpr (!kHalfSweep) {
+                    if (ido >= W && (ido - a) * 2 >= W) { do_batch(ido - W); a = ido; }
+                }
                 for (; a < ido; ++a) {
                     T tr_s[IP], ti_s[IP];
                     for (std::size_t j = 0; j < IP; ++j) {

@@ -99,7 +99,8 @@ struct plan_state_impl final : plan_state<T> {
     // build fills are the same values the eager one filled, so outputs stay bit-identical.
     const nd_runtime_plan<T>& lazy_dir(bool is_forward) const {
         return (is_forward ? fwd : inv).get(
-            [&] { return nd_runtime_plan<T>(shape, is_forward, nthreads, eff, pin_threads); });
+            [&] { return nd_runtime_plan<T>(shape, is_forward, nthreads, eff, pin_threads,
+                                            nullptr, debug); });
     }
 
     plan_state_impl(span<const std::size_t> shape_, const admiral::options& opts)
@@ -304,7 +305,7 @@ struct real_state_impl final : real_state<T> {
     unsigned debug;
 
     real_state_impl(span<const std::size_t> shape, const admiral::options& opts)
-        : plan{shape, opts.nthreads, opts.eff, opts.pin_threads}, debug(opts.debug) {}
+        : plan{shape, opts.nthreads, opts.eff, opts.pin_threads, opts.debug}, debug(opts.debug) {}
 
     void forward(const T* in, std::complex<T>* out, std::optional<T> fct) const override {
         plan.forward(in, out, {fct, debug});
@@ -364,7 +365,8 @@ struct plan_state {
     // build fills are the same values the eager one filled, so outputs stay bit-identical.
     const nd_runtime_plan<T>& lazy_dir(bool is_forward) const {
         return (is_forward ? fwd : inv).get(
-            [&] { return nd_runtime_plan<T>(shape, is_forward, nthreads, eff, pin_threads); });
+            [&] { return nd_runtime_plan<T>(shape, is_forward, nthreads, eff, pin_threads,
+                                            nullptr, debug); });
     }
 
     plan_state(span<const std::size_t> shape_, const admiral::options& opts)
@@ -557,7 +559,7 @@ struct real_state {
     unsigned debug;
 
     real_state(span<const std::size_t> shape, const admiral::options& opts)
-        : plan{shape, opts.nthreads, opts.eff, opts.pin_threads}, debug(opts.debug) {}
+        : plan{shape, opts.nthreads, opts.eff, opts.pin_threads, opts.debug}, debug(opts.debug) {}
 
     void forward(const T* in, std::complex<T>* out, std::optional<T> fct) const {
         plan.forward(in, out, {fct, debug});
@@ -625,7 +627,7 @@ void one_shot_nd(std::complex<T>* data, span<const std::size_t> shape, bool is_f
 #endif
     } else {
         detail::nd_runtime_plan<T>(shape, is_forward, opts.nthreads, effort::estimate,
-                                   opts.pin_threads)
+                                   opts.pin_threads, nullptr, opts.debug)
             .execute(data, {fct, opts.debug});
     }
 }
@@ -638,7 +640,8 @@ void one_shot_r2c(const T* in, std::complex<T>* out, span<const std::size_t> sha
     if constexpr (std::is_same_v<T, long double>) {
         detail::real_state_impl<T>(shape, opts).forward(in, out, fct);
     } else {
-        detail::nd_real_plan<T>(shape, opts.nthreads, effort::estimate, opts.pin_threads)
+        detail::nd_real_plan<T>(shape, opts.nthreads, effort::estimate, opts.pin_threads,
+                                opts.debug)
             .forward(in, out, {fct, opts.debug});
     }
 }
@@ -649,7 +652,8 @@ void one_shot_c2r(std::complex<T>* spec, T* out, span<const std::size_t> shape,
     if constexpr (std::is_same_v<T, long double>) {
         detail::real_state_impl<T>(shape, opts).inverse(spec, out, fct);
     } else {
-        detail::nd_real_plan<T>(shape, opts.nthreads, effort::estimate, opts.pin_threads)
+        detail::nd_real_plan<T>(shape, opts.nthreads, effort::estimate, opts.pin_threads,
+                                opts.debug)
             .inverse(spec, out, {fct, opts.debug});
     }
 }
@@ -862,7 +866,8 @@ forward(const T* in, std::complex<T>* out, span<const std::size_t> shape,
     if constexpr (std::is_same_v<T, long double>) {
         detail::real_state<T>(shape, opts).forward(in, out, fct);
     } else {
-        detail::nd_real_plan<T>(shape, opts.nthreads, effort::estimate, opts.pin_threads)
+        detail::nd_real_plan<T>(shape, opts.nthreads, effort::estimate, opts.pin_threads,
+                                opts.debug)
             .forward(in, out, {fct, opts.debug});
     }
 }
@@ -879,7 +884,8 @@ inverse(std::complex<T>* spec, T* out, span<const std::size_t> shape,
     if constexpr (std::is_same_v<T, long double>) {
         detail::real_state<T>(shape, opts).inverse(spec, out, fct);
     } else {
-        detail::nd_real_plan<T>(shape, opts.nthreads, effort::estimate, opts.pin_threads)
+        detail::nd_real_plan<T>(shape, opts.nthreads, effort::estimate, opts.pin_threads,
+                                opts.debug)
             .inverse(spec, out, {fct, opts.debug});
     }
 }

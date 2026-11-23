@@ -476,7 +476,8 @@ template<typename T>
 class nd_real_plan {
 public:
     explicit nd_real_plan(span<const std::size_t> shape, std::size_t nthreads = 1,
-                          admiral::effort eff = admiral::effort::estimate, bool pin = false);
+                          admiral::effort eff = admiral::effort::estimate, bool pin = false,
+                          unsigned debug = 0);
 
     [[nodiscard]] std::size_t cplx_size() const noexcept { return m.total_c; }
     [[nodiscard]] std::size_t real_size() const noexcept { return m.rows * m.inner_len; }
@@ -522,6 +523,9 @@ private:
         std::vector<nd_axis_state<T>> fwd_axes, inv_axes;
         std::unique_ptr<thread_pool> pool;
         bool fast1d = false;  // rank 1 and no pool
+        // The per-call entry decision (fast1d and no debug trace wanted), fixed at build.
+        bool fast_run = false;
+        unsigned debug = 0;
     } m;
 
     ADM_NOINLINE ADM_COLD void trace(unsigned level, const char* how,
@@ -540,7 +544,7 @@ private:
 
 template<typename T>
 nd_real_plan<T>::nd_real_plan(span<const std::size_t> shape, std::size_t nthreads,
-                              admiral::effort eff, bool pin) {
+                              admiral::effort eff, bool pin, unsigned debug) {
     m.shape.assign(shape.begin(), shape.end());
     const std::size_t n = m.shape.size();
     if (n == 0 || !extent_product(m.shape)) ADM_UNLIKELY
@@ -586,15 +590,17 @@ nd_real_plan<T>::nd_real_plan(span<const std::size_t> shape, std::size_t nthread
     }
     if (nthreads > 1) m.pool = std::make_unique<thread_pool>(nthreads, pin);
     m.fast1d = n == 1 && !m.pool;
+    m.debug = debug;
+    m.fast_run = m.fast1d && debug == 0;
 }
 
 template<typename T>
 void nd_real_plan<T>::forward(const T* in, std::complex<T>* out, const exec_options<T>& opts) const {
-    if (opts.debug >= dbg_route) ADM_UNLIKELY trace(opts.debug, "fwd", m.fwd_axes);
-    if (m.fast1d) {
+    if (m.fast_run) {
         // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
         m.rp->r2c_row(in, out);
     } else {
+        if (m.debug >= dbg_route) ADM_UNLIKELY trace(m.debug, "fwd", m.fwd_axes);
         forward_rows(in, out);
     }
     if (opts.fct && *opts.fct != T(1))
@@ -603,11 +609,11 @@ void nd_real_plan<T>::forward(const T* in, std::complex<T>* out, const exec_opti
 
 template<typename T>
 void nd_real_plan<T>::inverse(std::complex<T>* spec, T* out, const exec_options<T>& opts) const {
-    if (opts.debug >= dbg_route) ADM_UNLIKELY trace(opts.debug, "inv", m.inv_axes);
-    if (m.fast1d) {
+    if (m.fast_run) {
         // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
         m.rp->c2r_row(spec, out);
     } else {
+        if (m.debug >= dbg_route) ADM_UNLIKELY trace(m.debug, "inv", m.inv_axes);
         inverse_rows(spec, out);
     }
     if (opts.fct) {

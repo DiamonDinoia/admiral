@@ -254,6 +254,25 @@ dif_tape_last_step(const dif_twiddle_set<T>& dtw, std::size_t l1, bool ping) {
     return st;
 }
 
+// The plan-invariant half of the out-aliasable answer (tape shape, the cache probe and the
+// N arithmetic): one value per tape, computed at build. The per-call test leaves only the
+// caller's output alignment.
+template<typename T>
+[[nodiscard]] bool dif_out_aliasable_plan(bool forward, std::size_t N,
+                                         const dif_twiddle_set<T>& tw) {
+    const auto& tv = tw.tape[forward ? 0 : 1].blk;
+    if (tv.size() < 2 || tv.front().dst != 0 || tv.back().src != 0) return false;
+    if (4 * N * sizeof(T) > cpu_cache().l2) return false;
+    return N * sizeof(T) % span_align<T> == 0;
+}
+
+template<typename T>
+[[nodiscard]] bool dif_out_aliasable(bool forward, const std::complex<T>* out, std::size_t N,
+                                     const dif_twiddle_set<T>& tw) {
+    return dif_out_aliasable_plan<T>(forward, N, tw) &&
+           reinterpret_cast<std::uintptr_t>(out) % span_align<T> == 0;
+}
+
 template<typename T, bool Forward>
 void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
     const std::size_t n_passes = dtw.radices.size();
@@ -381,6 +400,7 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
     const dif_step<T> last = dif_tape_last_step<T, Forward>(dtw, l1, ping);
     tp.blk[k] = last;
     tp.flat[k] = last;
+    tp.out_aliasable = dif_out_aliasable_plan<T>(Forward, N, dtw);
 }
 
 template<typename T, bool Forward>
@@ -433,29 +453,32 @@ void dif_dispatch(bool forward, const std::complex<T>* in, std::complex<T>* out,
                                            soa_stride);
 }
 
-template<typename T>
-[[nodiscard]] bool dif_out_aliasable(bool forward, const std::complex<T>* out, std::size_t N,
-                                     const dif_twiddle_set<T>& tw) {
-    const auto& tv = tw.tape[forward ? 0 : 1].blk;
-    if (tv.size() < 2 || tv.front().dst != 0 || tv.back().src != 0) return false;
-    if (4 * N * sizeof(T) > cpu_cache().l2) return false;
-    return N * sizeof(T) % span_align<T> == 0 &&
-           reinterpret_cast<std::uintptr_t>(out) % span_align<T> == 0;
+// The direction is fixed for a plan's life (Forward is a template argument at the plan's
+// call site), and the aliasable answer's plan-invariant half is computed at tape build.
+// The per-call test reads one flag plus the caller's output alignment.
+template<typename T, bool Forward>
+void dif_execute_in_place(const std::complex<T>* in, std::complex<T>* out,
+                          std::size_t N, const dif_twiddle_set<T>& tw, T scale = T(1)) {
+    const dif_tape_pair<T>& tp = tw.tape[Forward ? 0 : 1];
+    if (tp.out_aliasable && reinterpret_cast<std::uintptr_t>(out) % span_align<T> == 0) {
+        soa_scratch<T, 2> sc(N);
+        T* const o = reinterpret_cast<T*>(out);
+        iterative_dif_execute_ws<T, Forward>(in, out, N, sc.buf(0), sc.buf(1), o, o + N, tw,
+                                             scale, sc.stride());
+        return;
+    }
+    soa_scratch<T, 4> sc(N);
+    iterative_dif_execute_ws<T, Forward>(in, out, N, sc.buf(0), sc.buf(1), sc.buf(2),
+                                         sc.buf(3), tw, scale, sc.stride());
 }
 
 template<typename T>
 void dif_execute_in_place(bool forward, const std::complex<T>* in, std::complex<T>* out,
                           std::size_t N, const dif_twiddle_set<T>& tw, T scale = T(1)) {
-    if (dif_out_aliasable<T>(forward, out, N, tw)) {
-        soa_scratch<T, 2> sc(N);
-        T* const o = reinterpret_cast<T*>(out);
-        dif_dispatch<T>(forward, in, out, N, sc.buf(0), sc.buf(1), o, o + N, tw, scale,
-                        sc.stride());
-        return;
-    }
-    soa_scratch<T, 4> sc(N);
-    dif_dispatch<T>(forward, in, out, N, sc.buf(0), sc.buf(1), sc.buf(2), sc.buf(3), tw, scale,
-                    sc.stride());
+    if (forward)
+        dif_execute_in_place<T, true>(in, out, N, tw, scale);
+    else
+        dif_execute_in_place<T, false>(in, out, N, tw, scale);
 }
 
 }

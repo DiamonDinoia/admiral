@@ -86,6 +86,34 @@ struct fr_merge_hi {
     }
 };
 
+// C == 4 lift relabel: 128-bit-block factors of the gather net. The pair interleave
+// takes complex slot 2*(p/2) of source p&1; the block select takes a register half.
+// 2 lanes per complex slot; W/4 complex slots per register half.
+struct fr_pair_lo {
+    static constexpr std::size_t get(std::size_t i, std::size_t W) {
+        const std::size_t p = i / 2;
+        return (p & 1u) * W + 4u * (p / 2) + (i % 2);
+    }
+};
+struct fr_pair_hi {
+    static constexpr std::size_t get(std::size_t i, std::size_t W) {
+        const std::size_t p = i / 2;
+        return (p & 1u) * W + 4u * (p / 2) + 2u + (i % 2);
+    }
+};
+struct fr_blk_lo {
+    static constexpr std::size_t get(std::size_t i, std::size_t W) {
+        const std::size_t p = i / 2;
+        return (p < W / 4u ? std::size_t{0} : W) + 2u * (p % (W / 4u)) + (i % 2);
+    }
+};
+struct fr_blk_hi {
+    static constexpr std::size_t get(std::size_t i, std::size_t W) {
+        const std::size_t p = i / 2;
+        return (p < W / 4u ? std::size_t{0} : W) + 2u * (p % (W / 4u) + W / 4u) + (i % 2);
+    }
+};
+
 // Per-lane twiddle numerators for flat_tw_row: the complex lane c of a W-wide register
 // gets the factor w_Den^get(c, C) with C = W/2 complex lanes.
 template<std::size_t I>
@@ -168,7 +196,16 @@ ADM_ALWAYS_INLINE void fr_stages(V* d) {
     constexpr std::size_t W = V::size;
     constexpr std::size_t C = W / 2;
     constexpr std::size_t K = 2 * N / W;
-    if constexpr (M >= 2 * C) {
+    // The fold removes one vmul and one vadd or vsub for each folded pair. It adds one
+    // dependent two-source permute on the pair chain. On SKX, ICL and EMR, a 512-bit vmulpd,
+    // vaddpd or vfmadd uses p0 or p5, and a 512-bit vpermt2pd uses p5 only. The fold removes
+    // two uops from p0 and p5 and adds one on p5, so it is faster. A 256-bit FP op uses p0
+    // or p1, but vpermt2pd uses p5. The fold then removes no p5 uop and adds one, so it is
+    // slower. Port data: uops.info through `isa llm query`. Zen 4 does a 512-bit op as two
+    // 256-bit parts (add, FMA and permute at one each cycle). The data does not give the
+    // gate there. sizeof(V) is the batch width.
+    constexpr bool Fold = sizeof(V) >= 64u;
+    if constexpr (Fold && M >= 2 * C) {
         // Folded stage pair. Stage M writes raw sums and diffs; the stage-M/2 butterfly
         // absorbs both diff twiddles. Sum-sum pairs keep the plain form. Diff-diff pairs
         // carry the grid ratio w_{2M}^{M/2} = -i on the second input, so the two outputs
@@ -231,6 +268,10 @@ ADM_ALWAYS_INLINE void fr_stages(V* d) {
             d[a + S] = fr_cmul(x - y, V::load_unaligned(tu.data()),
                                V::load_unaligned(tv.data()));
         });
+        if constexpr (!Fold) {
+            // Plain form: one stage per call, the original recursion.
+            fr_stages<N, M / 2, Forward, T, V>(d);
+        }
     }
 }
 
@@ -301,27 +342,55 @@ ADM_ALWAYS_INLINE void flat_row_apply(const T* ADM_RESTRICT srcp, T* ADM_RESTRIC
         static_assert(C == 4 && (K == 4 || K == 8 || K == 16), "lift shape derived for C == 4");
         constexpr std::size_t G = K / 4;
         poet::static_for<0, G>([&](auto g) {
-            // The two-level lo/hi merge net permutes lanes by [0,2,1,3] on its own
+            // The relabel net lands the lifted cell
             // (t0 = [qa.c0|qc.c0|qb.c0|qd.c0]), so sourcing in G-stride order lands the
             // rev2-folded lifted cell: T_l lane c = sub-dft G*rev2(c) + rev_G(g). The store
             // slot G*l + g is then the natural output order. rev_G is the identity for G <= 2.
             constexpr std::size_t r = G == 4 ? fr_rev2(g) : static_cast<std::size_t>(g);
             const V qa = d[r], qb = d[G + r], qc = d[2 * G + r], qd = d[3 * G + r];
-            const V A =
-                xsimd::shuffle(qa, qb, xsimd::make_batch_constant<index, fr_merge_lo<W>, arch>());
-            const V B =
-                xsimd::shuffle(qc, qd, xsimd::make_batch_constant<index, fr_merge_lo<W>, arch>());
-            const V Ap =
-                xsimd::shuffle(qa, qb, xsimd::make_batch_constant<index, fr_merge_hi<W>, arch>());
-            const V Bp =
-                xsimd::shuffle(qc, qd, xsimd::make_batch_constant<index, fr_merge_hi<W>, arch>());
+            // Merge-net form gate: the complex slots per 128-bit shuffle block, a count
+            // of the lane count (W / 2 slots) and the vector width (sizeof(V) / 16 blocks).
+            // The relabel pays only at two slots per block. There the pair interleave is an
+            // intra-block interleave and each factor is one immediate shuffle: no operand
+            // copy and no index-vector load. At one slot per block both factors are pure
+            // 128-bit block selects and the same gather lowers to destructive permutes with
+            // index-vector loads and operand copies, so the two-level merge net is the
+            // cheaper form there. Both forms land the same t[j] for any lane width and any
+            // element size; only the shuffle form of the fixed permutation differs.
+            constexpr bool IntraBlock = (W / 2u) / (sizeof(V) / 16u) == 2u;
             V t[4];
-            t[0] = xsimd::shuffle(A, B, xsimd::make_batch_constant<index, fr_merge_lo<W>, arch>());
-            t[1] = xsimd::shuffle(A, B, xsimd::make_batch_constant<index, fr_merge_hi<W>, arch>());
-            t[2] =
-                xsimd::shuffle(Ap, Bp, xsimd::make_batch_constant<index, fr_merge_lo<W>, arch>());
-            t[3] =
-                xsimd::shuffle(Ap, Bp, xsimd::make_batch_constant<index, fr_merge_hi<W>, arch>());
+            if constexpr (IntraBlock) {
+                // Relabel: t[j] = [qa.c_j|qc.c_j|qb.c_j|qd.c_j] as one pair interleave
+                // (fr_pair_lo/hi) plus one block select (fr_blk_lo/hi) per t[j].
+                const V ua =
+                    xsimd::shuffle(qa, qc, xsimd::make_batch_constant<index, fr_pair_lo, arch>());
+                const V ub =
+                    xsimd::shuffle(qa, qc, xsimd::make_batch_constant<index, fr_pair_hi, arch>());
+                const V va =
+                    xsimd::shuffle(qb, qd, xsimd::make_batch_constant<index, fr_pair_lo, arch>());
+                const V vb =
+                    xsimd::shuffle(qb, qd, xsimd::make_batch_constant<index, fr_pair_hi, arch>());
+                t[0] = xsimd::shuffle(ua, va, xsimd::make_batch_constant<index, fr_blk_lo, arch>());
+                t[1] = xsimd::shuffle(ub, vb, xsimd::make_batch_constant<index, fr_blk_lo, arch>());
+                t[2] = xsimd::shuffle(ua, va, xsimd::make_batch_constant<index, fr_blk_hi, arch>());
+                t[3] = xsimd::shuffle(ub, vb, xsimd::make_batch_constant<index, fr_blk_hi, arch>());
+            } else {
+                // The two-level lo/hi merge net permutes lanes by [0,2,1,3] per level.
+                const V A =
+                    xsimd::shuffle(qa, qb, xsimd::make_batch_constant<index, fr_merge_lo<W>, arch>());
+                const V Bm =
+                    xsimd::shuffle(qc, qd, xsimd::make_batch_constant<index, fr_merge_lo<W>, arch>());
+                const V Ap =
+                    xsimd::shuffle(qa, qb, xsimd::make_batch_constant<index, fr_merge_hi<W>, arch>());
+                const V Bp =
+                    xsimd::shuffle(qc, qd, xsimd::make_batch_constant<index, fr_merge_hi<W>, arch>());
+                t[0] = xsimd::shuffle(A, Bm, xsimd::make_batch_constant<index, fr_merge_lo<W>, arch>());
+                t[1] = xsimd::shuffle(A, Bm, xsimd::make_batch_constant<index, fr_merge_hi<W>, arch>());
+                t[2] =
+                    xsimd::shuffle(Ap, Bp, xsimd::make_batch_constant<index, fr_merge_lo<W>, arch>());
+                t[3] =
+                    xsimd::shuffle(Ap, Bp, xsimd::make_batch_constant<index, fr_merge_hi<W>, arch>());
+            }
             fr_dif_regs<4, Forward, T, V>(t);
             poet::static_for<0, 4>([&](auto l) {
                 (t[fr_rev2(l)] * f).store_unaligned(dstp + (G * l + g) * W);

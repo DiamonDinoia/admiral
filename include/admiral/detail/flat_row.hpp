@@ -128,6 +128,30 @@ template<std::size_t Num, std::size_t Den, bool Conj, typename T, std::size_t W>
     return flat_tw_row<Den, Conj, T, W, tw_num_const<Num>>(swapped);
 }
 
+// Composed twiddle of a folded stage pair: the stage-M diff factor w_{2M}^{I*C+c} times the
+// stage-M/2 diff factor w_M^{I*C+c} is w_{2M}^{3(I*C+c)}; one table per fold.
+template<std::size_t I>
+struct tw_num_pair {
+    static constexpr std::size_t get(std::size_t c, std::size_t C) { return 3 * (I * C + c); }
+};
+template<unsigned M, std::size_t I, bool Conj, typename T, std::size_t W>
+[[nodiscard]] ADM_CONSTEVAL std::array<T, W> fr_tw_pair(bool swapped) {
+    return flat_tw_row<2 * M, Conj, T, W, tw_num_pair<I>>(swapped);
+}
+
+// The stage-pair grid ratio is w_{2M}^{M/2} = -i forward and +i inverse; both are one swap
+// of q times this sign row. The row is the rotation constant of the fold, an algorithm fact
+// of the grid and of the direction.
+template<bool Conj, typename T, std::size_t W>
+[[nodiscard]] ADM_CONSTEVAL std::array<T, W> fr_isgn() {
+    std::array<T, W> a{};
+    for (std::size_t i = 0; i < W; ++i) {
+        const bool neg = Conj ? ((i & 1u) != 0u) : ((i & 1u) == 0u);
+        a[i] = neg ? T(-1) : T(1);
+    }
+    return a;
+}
+
 // out = d * u + swap_reim(d) * v, the AoS complex product against the table pair.
 template<typename V>
 [[nodiscard]] ADM_ALWAYS_INLINE V fr_cmul(V d, V u, V v) {
@@ -144,7 +168,54 @@ ADM_ALWAYS_INLINE void fr_stages(V* d) {
     constexpr std::size_t W = V::size;
     constexpr std::size_t C = W / 2;
     constexpr std::size_t K = 2 * N / W;
-    if constexpr (M >= C) {
+    if constexpr (M >= 2 * C) {
+        // Folded stage pair. Stage M writes raw sums and diffs; the stage-M/2 butterfly
+        // absorbs both diff twiddles. Sum-sum pairs keep the plain form. Diff-diff pairs
+        // carry the grid ratio w_{2M}^{M/2} = -i on the second input, so the two outputs
+        // are one cmul each against the composed tables (one vmulpd and one vadd/vsub
+        // fold away per pair). Same values as the unfolded form; one rounding order.
+        constexpr std::size_t S = M / C;
+        constexpr std::size_t S2 = S / 2;
+        poet::static_for<0, K / 2>([&](auto P) {
+            constexpr std::size_t t = P;
+            constexpr std::size_t G = t / S;
+            constexpr std::size_t I = t % S;
+            constexpr std::size_t a = G * 2 * S + I;
+            const V x = d[a], y = d[a + S];
+            d[a] = x + y;
+            d[a + S] = x - y;
+        });
+        poet::static_for<0, K / 2>([&](auto P) {
+            constexpr std::size_t t = P;
+            constexpr std::size_t G = t / S2;
+            constexpr std::size_t I = t % S2;
+            constexpr std::size_t a = G * 2 * S2 + I;
+            const V p = d[a], q = d[a + S2];
+            if constexpr (G % 2 == 0) {
+                constexpr auto tu = fr_tw<M / 2, I, Forward, T, W>(false);
+                constexpr auto tv = fr_tw<M / 2, I, Forward, T, W>(true);
+                d[a] = p + q;
+                d[a + S2] = fr_cmul(p - q, V::load_unaligned(tu.data()),
+                                    V::load_unaligned(tv.data()));
+            } else {
+                using index = xsimd::as_unsigned_integer_t<T>;
+                using arch = typename V::arch_type;
+                constexpr auto tu = fr_tw<M, I, Forward, T, W>(false);
+                constexpr auto tv = fr_tw<M, I, Forward, T, W>(true);
+                constexpr auto cu = fr_tw_pair<M, I, Forward, T, W>(false);
+                constexpr auto cv = fr_tw_pair<M, I, Forward, T, W>(true);
+                constexpr auto sg = fr_isgn<Forward, T, W>();
+                const V rq =
+                    xsimd::swizzle(q, xsimd::make_batch_constant<index, fr_swap_pair, arch>());
+                const V sgn = V::load_unaligned(sg.data());
+                d[a] = fr_cmul(piece_fma(rq, sgn, p), V::load_unaligned(tu.data()),
+                               V::load_unaligned(tv.data()));
+                d[a + S2] = fr_cmul(piece_fnma(rq, sgn, p), V::load_unaligned(cu.data()),
+                                    V::load_unaligned(cv.data()));
+            }
+        });
+        fr_stages<N, M / 4, Forward, T, V>(d);
+    } else if constexpr (M >= C) {
         constexpr std::size_t S = M / C;
         // One static_for level only: MSVC's constant evaluator cannot read an
         // integral_constant through two nested closure floors (C2131).
@@ -160,7 +231,6 @@ ADM_ALWAYS_INLINE void fr_stages(V* d) {
             d[a + S] = fr_cmul(x - y, V::load_unaligned(tu.data()),
                                V::load_unaligned(tv.data()));
         });
-        fr_stages<N, M / 2, Forward, T, V>(d);
     }
 }
 

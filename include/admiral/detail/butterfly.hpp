@@ -422,6 +422,16 @@ template<typename T>
     return 32u;
 }
 
+// Unit gate for the odd-half leaves: the fold window 2 * M + 4 (M = ceil(H / 2) coefficients
+// plus the accumulators and the step temporaries, the window of use_c2c_pairs) against the
+// register file. At or over the file each odd K group runs as one register-resident unit and
+// the sums half runs before the odd half. The register count is a hardware fact.
+template<std::size_t H, typename T>
+[[nodiscard]] constexpr bool use_small_units() {
+    constexpr std::size_t M = (H + 1) / 2;
+    return 2u * M + 4u >= scalar_dif_registers<T>();
+}
+
 // Scalar staged DIF for the small path: the Gentleman-Sande outer split on scalar lanes, so
 // each stage keeps only N1 (stage A) or N2 (stage B) complex values live. For N <= 16 both
 // fit the 8 x87 registers, so the monolithic spill disappears. N = N1 * N2, N2 =
@@ -521,6 +531,7 @@ ADM_ALWAYS_INLINE void r2c_small_fold(const T (&c)[M], T& re, T& im) {
     }
 }
 
+
 // The odd bins k of one real transform of length 2H from its pair differences d[j] =
 // in[j] - in[j + H]: G(k) = sum over j < H of d[j] * w_{2H}^{j k}, odd k <= H. The output pair
 // (k, H - k) shares the folds E and F of the even and odd input positions and the one product
@@ -529,6 +540,30 @@ template<std::size_t H, typename T, std::size_t Stride>
 ADM_ALWAYS_INLINE void r2c_small_odd(const T* d, std::complex<T>* out) {
     if constexpr (H == 2) {
         out[Stride] = std::complex<T>(d[0], -d[1]);
+    } else if constexpr (use_small_units<H, T>()) {
+        // One register-resident unit per odd K group: E fold, F fold, the shared product and the
+        // emits, with no value of a unit live into the next unit. The x87 stack is empty at each
+        // unit end, so the chain of one call spans one bin pair.
+        constexpr std::size_t NE = (H + 1) / 2;
+        constexpr std::size_t NO = H / 2;
+        T ea[NE], fa[NO];
+        poet::static_for<0, NE>([&](auto I) { ea[I] = d[2 * I]; });
+        poet::static_for<0, NO>([&](auto I) { fa[I] = d[2 * I + 1]; });
+        poet::static_for<1, H + 1>([&](auto Kc) {
+            if constexpr (Kc % 2 == 1) {
+                constexpr std::size_t K = Kc;
+                T er, ei, fr, fi;
+                r2c_small_fold<H, K, NE, T>(ea, er, ei);
+                r2c_small_fold<H, K, NO, T>(fa, fr, fi);
+                auto [or_, oi] = apply_stage_twiddle<T, 2 * H, K, T>(fr, fi);
+                if constexpr (H % 2 == 0 && K < H - K) {
+                    out[K * Stride] = std::complex<T>(er + or_, ei + oi);
+                    out[(H - K) * Stride] = std::complex<T>(er - or_, oi - ei);
+                } else if constexpr (H % 2 == 1 || K == H - K) {
+                    out[K * Stride] = std::complex<T>(er + or_, ei + oi);
+                }
+            }
+        });
     } else {
         constexpr std::size_t NE = (H + 1) / 2;
         constexpr std::size_t NO = H / 2;
@@ -578,6 +613,11 @@ ADM_ALWAYS_INLINE void r2c_small_strided(const T* in, std::complex<T>* out) {
         if constexpr (H == 1) {
             out[0] = std::complex<T>(s[0], T(0));
             out[Stride] = std::complex<T>(d[0], T(0));
+        } else if constexpr (use_small_units<H, T>()) {
+            // The sums half runs before the odd half, so no sum value is live across the odd
+            // units. All input loads ran in the pair loop above, so `out` may alias `in`.
+            r2c_small_strided<H, T, 2 * Stride>(s, out);
+            r2c_small_odd<H, T, Stride>(d, out);
         } else {
             r2c_small_odd<H, T, Stride>(d, out);
             r2c_small_strided<H, T, 2 * Stride>(s, out);
@@ -637,6 +677,24 @@ ADM_ALWAYS_INLINE void c2c_small_fold(const T (&cr)[M], const T (&ci)[M], T& re,
     }
 }
 
+// Unit form of the fold: the same recurrence with the coefficients streamed at their use
+// through walking pointers, so no index arithmetic sits on the chain and the two accumulators
+// in their fixed order (re, then im) are the only values live across a step.
+template<std::size_t R, std::size_t K, std::size_t M, typename T>
+ADM_ALWAYS_INLINE void c2c_small_fold_unit(const T* cr, const T* ci, T& re, T& im) {
+    const T* rp = cr + M;
+    const T* ip = ci + M;
+    re = *--rp;
+    im = *--ip;
+    if constexpr (M > 1) {
+    poet::static_for<0, M - 1>([&](auto) {
+        auto [tr, ti] = apply_stage_twiddle<T, R, K % R, T>(re, im);
+        re = tr + *--rp;
+        im = ti + *--ip;
+    });
+    }
+}
+
 // The odd bins k of one complex transform of length 2H from the pair differences d[j] =
 // x[j] - x[j + H]: X(k) = E + w_{2H}^k * F with the folds E and F of the even and odd input
 // positions at w_H^k. The pair (k, k + H) shares E, F and one product O = w_{2H}^k * F:
@@ -647,6 +705,33 @@ ADM_ALWAYS_INLINE void c2c_small_odd(const T* dr, const T* di, Emit&& emit) {
     static_assert(H >= 2, "c2c_small_odd: H must be at least 2");
     constexpr std::size_t NE = (H + 1) / 2;
     constexpr std::size_t NO = H / 2;
+    if constexpr (use_small_units<H, T>()) {
+        // One register-resident unit per odd K group: E fold, F fold, the shared product and the
+        // emits, with no value of a unit live into the next unit. The x87 stack is empty at each
+        // unit end, so the chain of one call spans one bin pair.
+        T er[NE], ei[NE], fr[NO], fi[NO];
+        poet::static_for<0, NE>([&](auto I) {
+            er[I] = dr[2 * I];
+            ei[I] = di[2 * I];
+        });
+        poet::static_for<0, NO>([&](auto I) {
+            fr[I] = dr[2 * I + 1];
+            fi[I] = di[2 * I + 1];
+        });
+        poet::static_for<1, 2 * H>([&](auto Kc) {
+            if constexpr (Kc % 2 == 1 && (H % 2 == 1 || Kc < H)) {
+                constexpr std::size_t K = Kc;
+                T ar, ai, br, bi;
+                c2c_small_fold_unit<H, K, NE, T>(er, ei, ar, ai);
+                c2c_small_fold_unit<H, K, NO, T>(fr, fi, br, bi);
+                auto [orr, oii] = apply_stage_twiddle<T, 2 * H, K, T>(br, bi);
+                emit(IC<K * Stride>{}, ar + orr, ai + oii);
+                if constexpr (H % 2 == 0) {
+                    emit(IC<(K + H) * Stride>{}, ar - orr, ai - oii);
+                }
+            }
+        });
+    } else {
     T er[NE], ei[NE], fr[NO], fi[NO];
     poet::static_for<0, NE>([&](auto I) {
         er[I] = dr[2 * I];
@@ -669,6 +754,7 @@ ADM_ALWAYS_INLINE void c2c_small_odd(const T* dr, const T* di, Emit&& emit) {
             }
         }
     });
+    }
 }
 
 // One complex transform of length N in place, bin k written at x[k * Stride]. Pairs-first: the
@@ -704,6 +790,13 @@ ADM_ALWAYS_INLINE void c2c_small_strided(const std::complex<T>* x, Emit&& emit) 
         if constexpr (H == 1) {
             emit(IC<0>{}, sr[0], si[0]);
             emit(IC<Stride>{}, dr[0], di[0]);
+        } else if constexpr (use_small_units<H, T>()) {
+            // The sums half runs before the odd half, so no sum value is live across the odd
+            // units. All input loads ran in the pair loop above, so the emit may alias `x`.
+            std::complex<T> s[H];
+            poet::static_for<0, H>([&](auto J) { s[J] = std::complex<T>(sr[J], si[J]); });
+            c2c_small_strided<H, T, 2 * Stride, false>(s, emit);
+            c2c_small_odd<H, T, Stride>(dr, di, emit);
         } else {
             c2c_small_odd<H, T, Stride>(dr, di, emit);
             std::complex<T> s[H];

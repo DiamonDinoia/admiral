@@ -672,16 +672,26 @@ public:
                     std::size_t nthreads = 1,
                     admiral::effort eff = admiral::effort::estimate, bool pin = false,
                     portable_trig::turns_memo* memo = nullptr, unsigned debug = 0);
-    // Inline, so that a caller reaches the fast1d codelet with no call between.
-    void execute(std::complex<T>* data, const exec_options<T>& opts = {}) const {
-        if (m.fast_run) run_fast1d(data, data, opts.fct);
-        else execute_routes(data, opts);
+    // Inline, so that a caller reaches the fast1d codelet with no call between. The fct
+    // pointer passes to the kernel thunk unchanged: no optional or exec_options temporary
+    // is materialised on the fast path.
+    void execute(std::complex<T>* data, const T* fct = nullptr, unsigned debug = 0) const {
+        if (m.fast_run) run_fast1d(data, data, fct);
+        else execute_routes(data, {fct ? std::optional<T>(*fct) : std::optional<T>(), debug});
     }
     // The codelets load the whole line before the first store, so fast1d runs in place too.
     void execute(const std::complex<T>* src, std::complex<T>* dst,
-                 const exec_options<T>& opts = {}) const {
-        if (m.fast_run) run_fast1d(src, dst, opts.fct);
-        else execute_routes(src, dst, opts);
+                 const T* fct = nullptr, unsigned debug = 0) const {
+        if (m.fast_run) run_fast1d(src, dst, fct);
+        else execute_routes(src, dst, {fct ? std::optional<T>(*fct) : std::optional<T>(), debug});
+    }
+    // exec_options forms: the custom-scale callers (one-shot nd, tests).
+    void execute(std::complex<T>* data, const exec_options<T>& opts) const {
+        execute(data, opts.fct ? &*opts.fct : nullptr, opts.debug);
+    }
+    void execute(const std::complex<T>* src, std::complex<T>* dst,
+                 const exec_options<T>& opts) const {
+        execute(src, dst, opts.fct ? &*opts.fct : nullptr, opts.debug);
     }
 
     [[nodiscard]] std::size_t size() const noexcept { return m.total; }
@@ -734,10 +744,12 @@ private:
     ADM_NOINLINE void execute_routes(std::complex<T>* data, const exec_options<T>& opts) const;
     ADM_NOINLINE void execute_routes(const std::complex<T>* src, std::complex<T>* dst,
                                      const exec_options<T>& opts) const;
+    // The scale resolves after the kernel call: no factor value is spilled around it and a
+    // null fct reads nothing at all (the pointer survives the call in a register).
     ADM_ALWAYS_INLINE void run_fast1d(const std::complex<T>* src, std::complex<T>* dst,
-                                      std::optional<T> fct) const {
+                                      const T* fct) const {
         m.fast1d(src, dst);
-        const T f = fct.value_or(m.def_fct);
+        const T f = fct ? *fct : m.def_fct;
         if (f != T(1)) scale_inplace(dst, m.total, f);
     }
     ADM_NOINLINE void execute_nd(std::complex<T>* data, const exec_options<T>& opts) const;
@@ -910,7 +922,7 @@ void nd_runtime_plan<T>::execute_routes(std::complex<T>* data, const exec_option
         const nd_axis_state<T>& ax0 = m.axes[0];
         if (ax0.plan) {
             const scale_plan sp = opts.fct ? make_scale_plan(opts.fct) : m.def_sp;
-            ax0.plan->execute(span<std::complex<T>>(data, m.total),
+            ax0.plan->execute(data, data,
                               {sp.custom ? std::optional<T>(sp.fct) : std::nullopt, opts.debug});
             return;
         }

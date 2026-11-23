@@ -58,6 +58,13 @@ inline std::size_t split_batch_threads(std::size_t requested, std::size_t total,
 template<typename T>
 class lazy_slot {
 public:
+    // The built state with no builder materialised. The hot path of lazy_dir() calls this:
+    // the builder's capture frame costs stores on every call and only the first call needs it.
+    [[nodiscard]] const T* try_get() const {
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): ready is set only after emplace.
+        return ready.load(std::memory_order_acquire) ? &*st : nullptr;
+    }
+
     template<typename F>
     const T& get(F&& build) const {
         if (!ready.load(std::memory_order_acquire)) ADM_UNLIKELY return build_once(build);
@@ -98,9 +105,14 @@ struct plan_state_impl final : plan_state<T> {
     // direction, so an eager twin was half the small-N plan cost. The tables the deferred
     // build fills are the same values the eager one filled, so outputs stay bit-identical.
     const nd_runtime_plan<T>& lazy_dir(bool is_forward) const {
-        return (is_forward ? fwd : inv).get(
-            [&] { return nd_runtime_plan<T>(shape, is_forward, nthreads, eff, pin_threads,
-                                            nullptr, debug); });
+        const lazy_slot<nd_runtime_plan<T>>& sl = is_forward ? fwd : inv;
+        // The hot path takes the built half with no builder materialised: the builder's
+        // capture frame costs stores on every call and only the first call needs it.
+        if (const nd_runtime_plan<T>* p = sl.try_get()) return *p;
+        return sl.get([&] {
+            return nd_runtime_plan<T>(shape, is_forward, nthreads, eff, pin_threads,
+                                      nullptr, debug);
+        });
     }
 
     plan_state_impl(span<const std::size_t> shape_, const admiral::options& opts)
@@ -116,11 +128,11 @@ struct plan_state_impl final : plan_state<T> {
 
     [[nodiscard]] std::size_t size() const noexcept override { return total; }
     void run(bool is_forward, std::complex<T>* data, const T* fct) const override {
-        lazy_dir(is_forward).execute(data, {as_optional(fct), debug});
+        lazy_dir(is_forward).execute(data, fct, debug);
     }
     void run(bool is_forward, const std::complex<T>* src, std::complex<T>* dst,
              const T* fct) const override {
-        lazy_dir(is_forward).execute(src, dst, {as_optional(fct), debug});
+        lazy_dir(is_forward).execute(src, dst, fct, debug);
     }
 
 private:
@@ -193,7 +205,9 @@ struct strides_state_impl final : strides_state<T> {
     // per plan). ponytail: effort::measure could elect differing routes per direction; then
     // the pool stays at the forward width, a resize, not an error.
     const nd_axis_state<T>& lazy_dir(bool is_forward) const {
-        return (is_forward ? fwd : inv).get([&] {
+        const lazy_slot<nd_axis_state<T>>& sl = is_forward ? fwd : inv;
+        if (const nd_axis_state<T>* p = sl.try_get()) return *p;
+        return sl.get([&] {
             return make_nd_axis_state<T>(len, in_stride, is_forward, false, axis_threads, eff,
                                          pin_threads, nullptr, in_stride != 1);
         });
@@ -364,9 +378,14 @@ struct plan_state {
     // direction, so an eager twin was half the small-N plan cost. The tables the deferred
     // build fills are the same values the eager one filled, so outputs stay bit-identical.
     const nd_runtime_plan<T>& lazy_dir(bool is_forward) const {
-        return (is_forward ? fwd : inv).get(
-            [&] { return nd_runtime_plan<T>(shape, is_forward, nthreads, eff, pin_threads,
-                                            nullptr, debug); });
+        const lazy_slot<nd_runtime_plan<T>>& sl = is_forward ? fwd : inv;
+        // The hot path takes the built half with no builder materialised: the builder's
+        // capture frame costs stores on every call and only the first call needs it.
+        if (const nd_runtime_plan<T>* p = sl.try_get()) return *p;
+        return sl.get([&] {
+            return nd_runtime_plan<T>(shape, is_forward, nthreads, eff, pin_threads,
+                                      nullptr, debug);
+        });
     }
 
     plan_state(span<const std::size_t> shape_, const admiral::options& opts)
@@ -382,11 +401,11 @@ struct plan_state {
 
     [[nodiscard]] std::size_t size() const noexcept { return total; }
     void run(bool is_forward, std::complex<T>* data, const T* fct) const {
-        lazy_dir(is_forward).execute(data, {as_optional(fct), debug});
+        lazy_dir(is_forward).execute(data, fct, debug);
     }
     void run(bool is_forward, const std::complex<T>* src, std::complex<T>* dst,
              const T* fct) const {
-        lazy_dir(is_forward).execute(src, dst, {as_optional(fct), debug});
+        lazy_dir(is_forward).execute(src, dst, fct, debug);
     }
 
 private:
@@ -449,7 +468,9 @@ struct strides_state {
     // per plan). ponytail: effort::measure could elect differing routes per direction; then
     // the pool stays at the forward width, a resize, not an error.
     const nd_axis_state<T>& lazy_dir(bool is_forward) const {
-        return (is_forward ? fwd : inv).get([&] {
+        const lazy_slot<nd_axis_state<T>>& sl = is_forward ? fwd : inv;
+        if (const nd_axis_state<T>* p = sl.try_get()) return *p;
+        return sl.get([&] {
             return make_nd_axis_state<T>(len, in_stride, is_forward, false, axis_threads, eff,
                                          pin_threads, nullptr, in_stride != 1);
         });

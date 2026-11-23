@@ -586,27 +586,38 @@ public:
     [[nodiscard]] std::size_t cplx_size() const noexcept { return rows_ * nh_; }
 
     void forward(const T* in, std::complex<T>* out, std::optional<T> fct) const {
-        const T s = fct.value_or(T(1));
+        // The value reads through a nullable pointer after the codelet call: the engaged
+        // flag is a byte load next to nothing, and the value load happens only when set.
+        // Reading the unengaged optional's value slot loads stack garbage; an 80-bit load
+        // of it costs an x87 assist per call.
+        const T* fp = fct ? &*fct : nullptr;
         // The fast entry runs the codelet straight on the user buffers; every other shape
         // takes the out-of-line general body.
         if (fast_fwd_) {
             fwd_leaf_(in, out);
-            if (s != T(1))
-                for (std::size_t k = 0; k < nh_; ++k) out[k] *= s;
+            if (fp) {
+                const T s = *fp;
+                if (s != T(1))
+                    for (std::size_t k = 0; k < nh_; ++k) out[k] *= s;
+            }
             return;
         }
-        forward_general(in, out, s);
+        forward_general(in, out, fct.value_or(T(1)));
     }
 
     void inverse(std::complex<T>* spec, T* out, std::optional<T> fct) const {
-        const T v = fct.value_or(T(1));
-        const T s = fct ? v * static_cast<T>(real_size()) : T(1);
-        const T inv_n = s / static_cast<T>(n_);
+        const T* fp = fct ? &*fct : nullptr;
         if (fast_inv_) {
             inv_leaf_(spec, out);
+            T s = T(1);
+            if (fp) s = *fp * static_cast<T>(real_size());
+            const T inv_n = s / static_cast<T>(n_);
             for (std::size_t i = 0; i < n_; ++i) out[i] *= inv_n;
             return;
         }
+        const T v = fct.value_or(T(1));
+        const T s = fct ? v * static_cast<T>(real_size()) : T(1);
+        const T inv_n = s / static_cast<T>(n_);
         inverse_general(spec, out, s, inv_n);
     }
 

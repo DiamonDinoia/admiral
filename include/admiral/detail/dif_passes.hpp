@@ -777,6 +777,19 @@ void dif_pass_fused3(const T* ccre, const T* ccim,
     }
 }
 
+// `pow2_dif_butterfly` (butterfly.hpp:249) keeps the inputs live through the two half groups.
+// The live set is 4 x IP plus the twiddle pair and the emit pair.
+// The Gentleman-Sande recursion `dif_last_sub_dft` keeps 2 x IP plus one pair.
+// `dif_pass_first_gs` uses the recursion when the radix IP is a power of two.
+// The count 4 x IP + 4 is more than `poet::vector_register_count()`, the tier count.
+template<std::size_t IP>
+[[nodiscard]] ADM_CONSTEVAL bool dif_pass_first_gs() {
+    return detail::has_single_bit(IP) && 4u * IP + 4u > poet::vector_register_count();
+}
+
+template<typename T, std::size_t N, typename V, typename Emit>
+ADM_ALWAYS_INLINE void dif_last_sub_dft(V (&xr)[N], V (&xi)[N], Emit&& emit);
+
 template<typename T, bool Forward, std::size_t IP, bool Split = false, std::size_t L1 = 0>
 void dif_pass_first_impl(const std::complex<T>* data,
                     T* chre, T* chim,
@@ -819,7 +832,10 @@ void dif_pass_first_impl(const std::complex<T>* data,
                     auto [dr, di] = plane_refs<Forward>(btr[j], bti[j]);
                     aos_deinterleave<T>(src + 2u * (aa + roff[j]), dr, di);
                 });
-                dif_butterfly<T, IP>(btr, bti, emit_tw);
+                if constexpr (dif_pass_first_gs<IP>())
+                    dif_last_sub_dft<T, IP>(btr, bti, emit_tw);
+                else
+                    dif_butterfly<T, IP>(btr, bti, emit_tw);
             }
         };
         std::size_t a = 0;
@@ -908,7 +924,10 @@ void dif_pass_first_impl(const std::complex<T>* data,
                     auto [dr, di] = plane_refs<Forward>(btr[j], bti[j]);
                     aos_deinterleave<T>(src, dr, di);
                 }
-                dif_butterfly<T, IP>(btr, bti, emit_tw);
+                if constexpr (dif_pass_first_gs<IP>())
+                    dif_last_sub_dft<T, IP>(btr, bti, emit_tw);
+                else
+                    dif_butterfly<T, IP>(btr, bti, emit_tw);
             }
         };
         std::size_t a = 0;

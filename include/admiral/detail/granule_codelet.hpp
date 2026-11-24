@@ -590,11 +590,6 @@ struct granule_quad_half {  // swap granule pairs: q ^= 2
 struct granule_quad_pair {  // adjacent granule swap: q ^= 1
     static constexpr std::size_t get(std::size_t i, std::size_t) { return i ^ 2; }
 };
-struct granule_g0 {  // granule 0 of both source registers into lanes 0..3
-    static constexpr std::size_t get(std::size_t i, std::size_t n) {
-        return i < 2 ? i : (i < 4 ? n + (i - 2) : 0);
-    }
-};
 
 // Radix-4 CT join across the granule axis: register t holds (F_0..F_3)[t] of the four
 // interleaved M-point sub-DFTs, and X[t + s*M] = sum_q w_4^(s*q) * w_N^(q*t) * F_q[t] lands
@@ -628,37 +623,26 @@ ADM_NOINLINE void granule_line(const std::complex<T>* in, std::complex<T>* out) 
     if constexpr (G == 4) {
         using V = xsimd::make_sized_batch_t<T, 2 * G>;
         using A = typename V::arch_type;
-        using U = xsimd::as_unsigned_integer_t<T>;
         constexpr std::size_t M = N / 4;
         V g[M];
         poet::static_for<0, M>([&](auto t_) ADM_LAMBDA_ALWAYS_INLINE {
             g[t_] = V::load_unaligned(src + V::size * std::size_t(t_));
         });
         granule_dft<M, V, Forward>(g);
-        auto s_store = [&](const V& a, const V& b, std::size_t base) {
-            const V e = xsimd::shuffle(a, b, xsimd::make_batch_constant<U, granule_g0, A>());
-            e.store(dst + base, xsimd::make_batch_bool_constant<T, lane_lt<4>, A>(),
-                    xsimd::unaligned_mode{});
-        };
-        poet::static_for<0, M / 2>([&](auto p_) ADM_LAMBDA_ALWAYS_INLINE {
-            constexpr std::size_t t = std::size_t(p_) * 2;
-            V a0, a1, a2, a3, b0, b1, b2, b3;
-            granule_join4<T, N, t, Forward>(g[t], a0, a1, a2, a3);
-            granule_join4<T, N, t + 1, Forward>(g[t + 1], b0, b1, b2, b3);
-            s_store(a0, b0, 2 * t);
-            s_store(a1, b1, 2 * (t + N / 4));
-            s_store(a2, b2, 2 * (t + N / 2));
-            s_store(a3, b3, 2 * (t + 3 * (N / 4)));
+        const auto lo = xsimd::make_batch_bool_constant<T, lane_lt<2>, A>();
+        poet::static_for<0, M>([&](auto t_) ADM_LAMBDA_ALWAYS_INLINE {
+            constexpr std::size_t t = std::size_t(t_);
+            V o0, o1, o2, o3;
+            granule_join4<T, N, t, Forward>(g[t], o0, o1, o2, o3);
+            // Granule 0 of each join output is one output bin (the other granules are
+            // join arithmetic the store does not read): each bin stores the moment its
+            // join ends, so the accumulators die before the next join (32 zmm pressure)
+            // and no pair shuffle rides the shuffle ports.
+            o0.store(dst + 2 * t, lo, xsimd::unaligned_mode{});
+            o1.store(dst + 2 * (t + N / 4), lo, xsimd::unaligned_mode{});
+            o2.store(dst + 2 * (t + N / 2), lo, xsimd::unaligned_mode{});
+            o3.store(dst + 2 * (t + 3 * (N / 4)), lo, xsimd::unaligned_mode{});
         });
-        if constexpr (M % 2 == 1) {
-            constexpr auto lo = xsimd::make_batch_bool_constant<T, lane_lt<2>, A>();
-            V a0, a1, a2, a3;
-            granule_join4<T, N, M - 1, Forward>(g[M - 1], a0, a1, a2, a3);
-            a0.store(dst + 2 * (M - 1), lo, xsimd::unaligned_mode{});
-            a1.store(dst + 2 * (M - 1 + N / 4), lo, xsimd::unaligned_mode{});
-            a2.store(dst + 2 * (M - 1 + N / 2), lo, xsimd::unaligned_mode{});
-            a3.store(dst + 2 * (M - 1 + 3 * (N / 4)), lo, xsimd::unaligned_mode{});
-        }
     } else if constexpr (G == 2) {
         using V = xsimd::make_sized_batch_t<T, 2 * G>;
         using A = typename V::arch_type;

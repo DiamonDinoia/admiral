@@ -394,11 +394,19 @@ private:
     // behind it. The half-length c2c state keeps its own single arena block.
     dif_arena block_;
     static dif_arena make_plan_block(std::size_t N, bool even, portable_trig::turns_memo* memo);
+    // The recombine row keeps a mirror pad for the full-width tail step of the recombine
+    // (real_recombine.hpp): it reads a maximum of W - 1 twiddle values above k = M / 2.
+    // The pad count is the smaller of W - 1 (tier width) and N / 4 (transform length), so
+    // each pad value mirrors a value in the row.
+    static std::size_t recombine_tw_pad(std::size_t quarter) {
+        return (W - 1 < quarter) ? W - 1 : quarter;
+    }
     // Carve the recombine row from block_ and fill it at den N, before a twin reads the memo.
     static dif_buf<std::complex<T>> fill_recombine_tw(std::size_t N, bool even,
                                                       dif_arena& block,
                                                       portable_trig::turns_memo* memo);
-    dif_buf<std::complex<T>> tw_;  // k = 0 .. M / 2; see mirror_tw
+    // k = 0 .. M / 2 plus the mirror pad. See mirror_tw.
+    dif_buf<std::complex<T>> tw_;
     std::complex<T> tw_at(std::size_t k) const {
         return 2 * k <= M_ ? tw_[k] : mirror_tw(tw_[M_ - k]);
     }
@@ -428,7 +436,8 @@ template<typename T>
 dif_arena real_adm_plan<T>::make_plan_block(std::size_t N, bool even,
                                             portable_trig::turns_memo* memo) {
     dif_arena block;
-    const std::size_t tw_bytes = even ? (N / 4 + 1) * sizeof(std::complex<T>) : 0;
+    const std::size_t tw_bytes =
+        even ? (N / 4 + 1 + recombine_tw_pad(N / 4)) * sizeof(std::complex<T>) : 0;
     const std::size_t memo_elems = portable_trig::turns_memo::table_elems(N);
     block.alloc(tw_bytes + memo_elems * sizeof(double) + 128);
     dif_buf<double> region = block.template carve<double>(memo_elems);
@@ -448,8 +457,12 @@ dif_buf<std::complex<T>> real_adm_plan<T>::fill_recombine_tw(std::size_t N, bool
                                                              portable_trig::turns_memo* memo) {
     if (!even) return {};
     const std::size_t quarter = N / 4;
-    dif_buf<std::complex<T>> tw = block.template carve<std::complex<T>>(quarter + 1);
+    const std::size_t pad = recombine_tw_pad(quarter);
+    dif_buf<std::complex<T>> tw = block.template carve<std::complex<T>>(quarter + 1 + pad);
     geom_twiddle_row_packed<T, true>(1, N, quarter + 1, tw.data(), memo);
+    // The pad holds the row mirror tw[M - k] = -conj(tw[k]) for k above M / 2.
+    for (std::size_t j = 1; j <= pad; ++j)
+        tw[quarter + j] = mirror_tw(tw[N / 2 - quarter - j]);
     return tw;
 }
 

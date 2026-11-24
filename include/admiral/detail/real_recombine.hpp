@@ -80,10 +80,14 @@ struct mirror_store {
 template <typename T>
 inline constexpr bool kRecombineSimd = std::is_same_v<T, float> || std::is_same_v<T, double>;
 
-// Pairs (k, M - k) for k = 1 .. kmax, L of them per step, while a full step fits, then the same
-// at L / 2 down to 4 lanes: a 2-lane step costs more in lane shuffles than the two scalar pairs
-// it replaces. Returns the first k it did not do. Each step loads all its bins before it
-// stores, so out may equal in.
+// Pairs (k, M - k) for k = 1 .. kmax, L of them for each step, where L is the tier width
+// and M is the transform length. A step runs only while its bins stay in the range
+// [k, M - k]: the steps before it wrote the bins that are not in that range and out can
+// equal in. The lane that pairs the middle bin with itself writes bin M / 2 two
+// times. The caller repairs that bin from the value it reads before the steps. The tail
+// step reads twiddle values above k = M / 2, the mirror pad of the row. Below that, the
+// same follows at L / 2 down to 4 lanes and then the scalar loop. The output is the
+// first k it did not do.
 template <bool Forward, typename T, std::size_t L = xsimd::batch<T>::size>
 inline std::size_t even_recombine_simd(const std::complex<T>* in, const std::complex<T>* tw,
                                        std::complex<T>* out, std::size_t M, std::size_t k = 1) {
@@ -92,7 +96,7 @@ inline std::size_t even_recombine_simd(const std::complex<T>* in, const std::com
         using C = xsimd::batch<std::complex<T>, typename R::arch_type>;
         using index = xsimd::as_unsigned_integer_t<typename R::value_type>;
         const std::size_t kend = (M - 1) / 2 + 1;
-        for (; k + L <= kend; k += L) {
+        for (; k < kend && k + L <= M - k + 1; k += L) {
             const std::size_t lo = M - k - L + 1;
             const C a = C::load_unaligned(in + k);
             // The mirror half loads raw: two indexed permutes fuse its deinterleave with the
@@ -148,6 +152,8 @@ inline void r2c_even_recombine(const std::complex<T>* z, const std::complex<T>* 
     Xr[0] = r2c_even_bin(z0, z0, tw[0]);
     Xr[M] = r2c_even_bin(z0, z0, mirror_tw(tw[0]));
     const std::size_t kmax = (M - 1) / 2;
+    // The middle bin is read before a SIMD step writes it twice.
+    const std::complex<T> zm = ((M & 1) == 0) ? z[M / 2] : std::complex<T>();
     std::size_t k = 1;
     if constexpr (kRecombineSimd<T>) k = even_recombine_simd<true>(z, tw, Xr, M);
     for (; k <= kmax; ++k) {
@@ -155,7 +161,7 @@ inline void r2c_even_recombine(const std::complex<T>* z, const std::complex<T>* 
         Xr[k] = r2c_even_bin(zk, zb, tw[k]);
         Xr[M - k] = r2c_even_bin(zb, zk, mirror_tw(tw[k]));
     }
-    if ((M & 1) == 0) Xr[M / 2] = r2c_even_bin(z[M / 2], z[M / 2], tw[M / 2]);
+    if ((M & 1) == 0) Xr[M / 2] = r2c_even_bin(zm, zm, tw[M / 2]);
 }
 
 template <typename T>
@@ -166,6 +172,8 @@ inline void c2r_even_recombine(const std::complex<T>* X, const std::complex<T>* 
     Z[0] = c2r_even_bin(std::complex<T>(X[0].real(), T(0)),
                        std::complex<T>(X[M].real(), T(0)), tw[0]);
     const std::size_t kmax = (M - 1) / 2;
+    // The middle bin is read before a SIMD step writes it twice.
+    const std::complex<T> zm = ((M & 1) == 0) ? X[M / 2] : std::complex<T>();
     std::size_t k = 1;
     if constexpr (kRecombineSimd<T>) k = even_recombine_simd<false>(X, tw, Z, M);
     for (; k <= kmax; ++k) {
@@ -173,7 +181,7 @@ inline void c2r_even_recombine(const std::complex<T>* X, const std::complex<T>* 
         Z[k] = c2r_even_bin(Xk, Xm, tw[k]);
         Z[M - k] = c2r_even_bin(Xm, Xk, mirror_tw(tw[k]));
     }
-    if ((M & 1) == 0) Z[M / 2] = c2r_even_bin(X[M / 2], X[M / 2], tw[M / 2]);
+    if ((M & 1) == 0) Z[M / 2] = c2r_even_bin(zm, zm, tw[M / 2]);
 }
 
 }

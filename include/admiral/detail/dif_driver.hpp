@@ -254,15 +254,13 @@ dif_tape_last_step(const dif_twiddle_set<T>& dtw, std::size_t l1, bool ping) {
     return st;
 }
 
-// The plan-invariant half of the out-aliasable answer (tape shape, the cache probe and the
-// N arithmetic): one value per tape, computed at build. The per-call test leaves only the
-// caller's output alignment.
+// Whether the call can alias the output as the cc1 pair, so the scratch holds only cc0.
+// It depends on the tape shape and N only, so it is one value per tape. Correct at all N.
 template<typename T>
 [[nodiscard]] bool dif_out_aliasable_plan(bool forward, std::size_t N,
                                          const dif_twiddle_set<T>& tw) {
     const auto& tv = tw.tape[forward ? 0 : 1].blk;
     if (tv.size() < 2 || tv.front().dst != 0 || tv.back().src != 0) return false;
-    if (4 * N * sizeof(T) > cpu_cache().l2) return false;
     return N * sizeof(T) % span_align<T> == 0;
 }
 

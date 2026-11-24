@@ -1130,8 +1130,12 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
         return rowperm ? std::size_t(rowperm[i]) : i;
     };
     {
-        // W4 row_split: kept verbatim wherever the W4 route took it, spill included. The
-        // staged split below never replaces it: there it measures parity or worse.
+        // W4 `row_split`: kept verbatim wherever the W4 `route` took it. The `staged`
+        // split below does not replace it. There it measures parity or worse. `Stage B`
+        // runs the in-place Gentleman-Sande `dif_last_sub_dft`. So its live set is 2 x W
+        // plus one working pair. The `butterfly` that keeps its inputs through the two
+        // half groups holds about 4 x W and spills at W >= 8. The counts come from the
+        // radix and the tier (`poet::vector_register_count()`).
         constexpr bool row_split_path =
             detail::has_single_bit(IP) && IP >= 2 * W && dif_butterfly_wants_reload<IP> &&
             poet::vector_register_count() >= 32 && Rows == W;
@@ -1169,7 +1173,7 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
                 }
                 xsimd::transpose(tr2, tr2 + W);
                 xsimd::transpose(ti2, ti2 + W);
-                pow2_dif_butterfly<T, W, batch_t>(
+                dif_last_sub_dft<T, W, batch_t>(
                     tr2, ti2, [&](const auto k, batch_t yr, batch_t yi) {
                         T* dst = reinterpret_cast<T*>(data + b + l1 * (k * G + K0));
                         const auto [xr, xi] = plane_vals<Forward>(yr, yi);
@@ -1346,24 +1350,41 @@ ADM_ALWAYS_INLINE ADM_FLATTEN void dif_pass_last_block(const T* ccre,
             });
             return;
         }
-        batch_t out_re[IP], out_im[IP];
-        if constexpr (Chiplet) {
-            rader_apply<IP, T, batch_t>(btr, bti, 1, out_re, out_im);
-        } else {
-            dif_butterfly_terminal<T, IP>(btr, bti, [&](const auto k, batch_t sr, batch_t si) {
-                out_re[k] = sr;
-                out_im[k] = si;
-            });
-        }
         const batch_t sv(scale_val);
-        for (std::size_t k = 0; k < IP; ++k) {
-            const auto [xr, xi] = plane_vals<Forward>(out_re[k] * sv, out_im[k] * sv);
-            T* dst = reinterpret_cast<T*>(data + b + l1 * k);
+        // `emit_direct` stores each output pair when the `butterfly` makes it. So no
+        // output array is live in the two branches below.
+        const auto emit_direct = [&](const auto k, batch_t yr, batch_t yi) {
+            const auto [xr, xi] = plane_vals<Forward>(yr * sv, yi * sv);
+            T* dst = reinterpret_cast<T*>(data + b + l1 * std::size_t(k));
             if constexpr (Rows == W) {
                 aos_interleave<T>(dst, xr, xi);
             } else {
                 aos_interleave_prefix<Rows>(dst, xr, xi);
             }
+        };
+        if constexpr (Chiplet) {
+            batch_t out_re[IP], out_im[IP];
+            rader_apply<IP, T, batch_t>(btr, bti, 1, out_re, out_im);
+            for (std::size_t k = 0; k < IP; ++k) {
+                emit_direct(k, out_re[k], out_im[k]);
+            }
+        } else if constexpr (detail::has_single_bit(IP)) {
+            // The `dif_butterfly_terminal` kept its inputs through the two half groups
+            // and wrote its outputs to IP pairs of arrays. So the hot loop held about
+            // 4 x IP vectors and spilled at IP >= 8. The in-place Gentleman-Sande
+            // `dif_last_sub_dft` frees each slot as it works (2 x IP plus one working
+            // pair). The `emit_direct` stores each output when the `sub_dft` calculates
+            // it. This shape covers the power-of-two radices (the `run`). The live
+            // counts come from the radix and the tier (`poet::vector_register_count()`).
+            dif_last_sub_dft<T, IP, batch_t>(btr, bti, emit_direct);
+        } else {
+            // A radix that is not a power of two keeps `dif_butterfly_terminal` with
+            // the same `emit_direct`. The non-power-of-two path of `dif_last_sub_dft`
+            // runs `radix_sym_dft`. It holds 4 x ((IP - 1) / 2) working vectors and
+            // the inputs at the same time. So it spills and reloads the pairs and
+            // adds instructions and loads at the odd radices. The pick `butterfly`
+            // is better there. This branch removes only the output arrays.
+            dif_butterfly_terminal<T, IP>(btr, bti, emit_direct);
         }
     }
 }

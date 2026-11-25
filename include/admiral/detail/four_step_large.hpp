@@ -379,11 +379,33 @@ inline void four_step_row_dft_twist(std::complex<T>* row, std::size_t n2, std::s
                                     std::size_t twist_logM) {
     dif_dispatch<T>(is_forward, row, row, n2, rsc.buf(0), rsc.buf(1), rsc.buf(2), rsc.buf(3),
                     dtw, p2_scale, rsc.stride());
-    std::size_t q = 0;
-    for (std::size_t k2 = 0; k2 < n2; ++k2) {
-        row[k2] *= hitab[q >> twist_logM] * lotab[q & (twist_M - 1)];
-        q += j;
+    using batch = xsimd::batch<T>;
+    constexpr std::size_t W = batch::size;
+    const auto tw = [&](std::size_t q) {
+        return hitab[q >> twist_logM] * lotab[q & (twist_M - 1)];
+    };
+    const std::size_t nv = n2 & ~(W - 1);
+    std::size_t k2 = 0;
+    if (nv != 0) {
+        // The twiddle w(j * (k2 + l)) is w(j * k2) * w(j * l). The row gets the lane part w(j * l)
+        // one time, and each batch gets one scalar twiddle w(j * k2).
+        alignas(batch::arch_type::alignment()) std::complex<T> lane[W];
+        for (std::size_t l = 0; l < W; ++l) lane[l] = tw(j * l);
+        batch ur, ui;
+        aos_deinterleave<T>(reinterpret_cast<const T*>(lane), ur, ui);
+        T* const p = reinterpret_cast<T*>(row);
+        for (; k2 < nv; k2 += W) {
+            const std::complex<T> s = tw(j * k2);
+            const batch vr(s.real()), vi(s.imag());
+            const batch twr = piece_fnma(vi, ui, vr * ur);
+            const batch twi = piece_fma(vr, ui, vi * ur);
+            batch sr, si;
+            aos_deinterleave<T>(p + 2 * k2, sr, si);
+            aos_interleave<T>(p + 2 * k2, piece_fnma(twi, si, twr * sr),
+                              piece_fma(twr, si, twi * sr));
+        }
     }
+    for (; k2 < n2; ++k2) row[k2] *= tw(j * k2);
 }
 
 template<typename T>

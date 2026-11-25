@@ -361,6 +361,9 @@ public:
 
 private:
 
+    // The Bluestein inner gate (bluestein.hpp) reads the same decision.
+    template<typename U> friend bool bluestein_inner_six_step_admits(std::size_t);
+
     // The serial line is measured, not constant: large_route_serial_bytes resolves the
     // injected override (tests), then the cached probe answer, running the probe once per
     // process on first consultation. The probe makes this nt-variant and admits-variant

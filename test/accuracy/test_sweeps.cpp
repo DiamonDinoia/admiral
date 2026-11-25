@@ -89,10 +89,20 @@ TEST_CASE("Bluestein pad on the six-step delegate", "[coverage][large][bluestein
     using admiral::detail::bluestein_choose_pad;
     using admiral::detail::bluestein_inner_six_step_admits;
     using admiral::detail::bluestein_plan;
-    REQUIRE(bluestein_inner_six_step_admits<T>(bluestein_choose_pad(std::size_t{524287})));
-    REQUIRE(bluestein_inner_six_step_admits<T>(bluestein_choose_pad(std::size_t{401407})));
-    REQUIRE(!bluestein_inner_six_step_admits<T>(bluestein_choose_pad(std::size_t{262143})));
-    REQUIRE(!bluestein_inner_six_step_admits<T>(bluestein_choose_pad(std::size_t{393749})));
+    using admiral::detail::plan_impl;
+    // The test binary and the library each hold their own cached probe line. Under load
+    // the two probes can disagree at pad 524288. Pin the line so both read the same value.
+    const admiral::detail::large_route_serial_override_scope pin(12 << 20, 0);
+    // The inner FFT of the Bluestein plan uses the `route_kind` that a standalone plan
+    // of the pad length picks (six-step for `four_step_large`, serial when `false`).
+    for (std::size_t n : {std::size_t{524287}, std::size_t{401407}, std::size_t{262143},
+                          std::size_t{393749}}) {
+        INFO("n=" << n << " pad=" << bluestein_choose_pad(n));
+        const std::size_t pad = bluestein_choose_pad(n);
+        const bool plan_large =
+            std::string(plan_impl<T>(pad, true).route_name()) == std::string("four_step_large");
+        REQUIRE(bluestein_inner_six_step_admits<T>(pad) == plan_large);
+    }
 
     for (std::size_t n : {std::size_t{524287}, std::size_t{401407}}) {
         INFO("n=" << n << " pad=" << bluestein_choose_pad(n));

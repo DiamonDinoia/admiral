@@ -4,6 +4,7 @@
 // Frigo, A Fast Fourier Transform Compiler, PLDI 1999, which generates the same shape of code.
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
@@ -558,7 +559,7 @@ struct kernel {
                         }
                     });
                     if constexpr (Wc == r) {
-                        ADM_COMPILER_BARRIER();
+                        std::atomic_signal_fence(std::memory_order_seq_cst);
                         const bool kb_aligned =
                             (reinterpret_cast<std::uintptr_t>(xre) % alignof(V) == 0) &&
                             (reinterpret_cast<std::uintptr_t>(xim) % alignof(V) == 0);

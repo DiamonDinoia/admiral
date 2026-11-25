@@ -1,10 +1,12 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdlib>
 #include <limits>
 #include <memory>
+#include <thread>
 #include <type_traits>
 #include <utility>
 
@@ -23,19 +25,6 @@
 #  define ADM_CONSTEVAL consteval
 #else
 #  define ADM_CONSTEVAL constexpr
-#endif
-
-// Blocks the compiler from moving memory operations across this point. It emits no instruction and
-// no hardware fence. codelet.hpp's cofactor fast arm needs it so a runtime alignment test cannot be
-// hoisted above the reinterpreted loads it guards; gcc 13.3 segfaults there without it. The GNU asm
-// is the spelling that check was made against, so MSVC gets the standard equivalent and nobody else
-// changes.
-#if defined(_MSC_VER) && !defined(__clang__)
-#  include <intrin.h>
-#  include <atomic>
-#  define ADM_COMPILER_BARRIER() std::atomic_signal_fence(std::memory_order_seq_cst)
-#else
-#  define ADM_COMPILER_BARRIER() __asm__ __volatile__("" ::: "memory")
 #endif
 
 #if defined(__cpp_lib_is_constant_evaluated) && __cpp_lib_is_constant_evaluated >= 201811L
@@ -76,6 +65,12 @@
 #  define ADM_RESET_FP_OPTIONS _Pragma("GCC reset_options")
 #else
 #  define ADM_RESET_FP_OPTIONS
+#endif
+
+#if defined(__x86_64__) || defined(__i386__)
+#  include <emmintrin.h>
+#elif defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86) || defined(_M_ARM64))
+#  include <intrin.h>
 #endif
 
 #if __has_include(<span>)
@@ -176,6 +171,52 @@ span(C&) -> span<std::remove_reference_t<decltype(*std::declval<C&>().data())>>;
 #endif
 
 namespace detail {
+
+#if defined(_MSC_VER) && !defined(__clang__)
+#  define ADM_COMPAT_INLINE __forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+#  define ADM_COMPAT_INLINE inline __attribute__((always_inline))
+#else
+#  define ADM_COMPAT_INLINE inline
+#endif
+
+// Hides the value of v from the optimizer: v goes through memory the compiler cannot see into.
+// dd_fft.hpp rounds hi = (fma(c, x, shift) - shift) to the grid. Under fast math the compiler
+// folds that to c * x, and the error-free transform then returns a remainder of zero.
+// MSVC has no inline asm: it gets no barrier and relies on the strict fp model of the TU.
+template <class T>
+ADM_COMPAT_INLINE void value_barrier(T& v) noexcept {
+#if defined(__GNUC__) || defined(__clang__)
+    __asm__ __volatile__("" : "+m"(v));
+#else
+    static_cast<void>(v);
+#endif
+}
+
+// Hint for a spin-wait loop.
+ADM_COMPAT_INLINE void cpu_relax() noexcept {
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86)
+    _mm_pause();
+#elif defined(_MSC_VER) && defined(_M_ARM64)
+    __yield();
+#elif defined(__aarch64__)
+    __asm__ __volatile__("yield" ::: "memory");
+#else
+    std::this_thread::yield();
+#endif
+}
+
+// Publishes what aos_interleave_stream wrote. Only x86 needs it: movnt leaves the line in a
+// write-combining buffer that ordinary release ordering does not drain. xsimd's stream store
+// is a plain aligned store on the generic backend and stnp on neon64, both of which the
+// join's own acquire-release already orders.
+// sfence rather than std::atomic_thread_fence, which gcc rejects under -fsanitize=thread
+// because tsan cannot instrument a fence. It is also the exact strength needed: store-store.
+ADM_COMPAT_INLINE void stream_store_fence() noexcept {
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86)
+    _mm_sfence();
+#endif
+}
 
 #if defined(__cpp_lib_bitops) && __cpp_lib_bitops >= 201907L
 using std::bit_ceil;

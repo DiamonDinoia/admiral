@@ -13,18 +13,6 @@
 #include <type_traits>
 #include <utility>
 
-namespace admiral::detail {
-inline void cpu_relax() noexcept {
-#if defined(__x86_64__) || defined(__i386__)
-    __builtin_ia32_pause();
-#elif defined(__aarch64__)
-    __asm__ __volatile__("yield" ::: "memory");
-#else
-    std::this_thread::yield();
-#endif
-}
-}
-
 #if ADM_THREADS
 #include <atomic>
 #include <cmath>

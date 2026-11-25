@@ -68,9 +68,7 @@ ADM_ALWAYS_INLINE gdd operator-(const gdd& a) { return {-a.hi, -a.lo}; }
 ADM_ALWAYS_INLINE gdd operator*(const gdd& c, const gdd& x) {
     const dd_batch shift(0x1.8p52);
     dd_batch p = xsimd::fma(c.hi, x.hi, shift) - shift;
-#if !defined(_MSC_VER)
-    asm volatile("" : "+m"(p));
-#endif
+    value_barrier(p);
     const dd_batch e = xsimd::fms(c.hi, x.hi, p);
     return {p, xsimd::fma(c.hi, x.lo, xsimd::fma(c.lo, x.hi, e))};
 }

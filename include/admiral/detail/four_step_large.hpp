@@ -463,21 +463,24 @@ inline constexpr std::size_t kLargeRouteThreadFloorF64Bytes = 370727;  // [256, 
 inline constexpr std::size_t kLargeRouteThreadFloorF32Bytes = 185363;  // [128, 256] KiB
 inline constexpr std::size_t kLargeRouteThreadKneeF64Nt = 32;
 inline constexpr std::size_t kLargeRouteThreadKneeF32Nt = 8;
-inline const std::size_t kLargeRouteThreadCapBytes = cpu_cache().l2 / 2;  // 2 = the two live buffers (src, dst) of fsl_ws_s1 (:847) and fsl_ws_s2 (:849)
+// Half the L2: 2 = the two live buffers (in, ws) of fsl_ws_s1 and (ws, out) of fsl_ws_s2.
+// A function, not a namespace-scope variable: cpu_cache() runs at first plan, not at load.
+[[nodiscard]] inline std::size_t large_route_thread_cap_bytes() { return cpu_cache().l2 / 2; }
 
 [[nodiscard]] inline std::size_t large_route_threaded_bytes(std::size_t elem_bytes,
                                                                std::size_t nthreads,
                                                                std::size_t pool_width) {
     const bool f64 = elem_bytes == 16;
-    if (!f64 && nthreads == 2) return kLargeRouteThreadCapBytes;
+    const std::size_t cap = large_route_thread_cap_bytes();
+    if (!f64 && nthreads == 2) return cap;
     const std::size_t knee = f64 ? kLargeRouteThreadKneeF64Nt : kLargeRouteThreadKneeF32Nt;
-    const std::size_t floor =
-        f64 ? kLargeRouteThreadFloorF64Bytes : kLargeRouteThreadFloorF32Bytes;
+    // The floor never exceeds the cap: below a 724 KiB L2 the unsigned cap - floor wraps.
+    const std::size_t floor = std::min(
+        f64 ? kLargeRouteThreadFloorF64Bytes : kLargeRouteThreadFloorF32Bytes, cap);
     if (nthreads <= knee) return floor;
     const std::size_t span =
         (pool_width > 2 * knee ? pool_width : 2 * knee) - knee;
-    return std::min(floor + (kLargeRouteThreadCapBytes - floor) * (nthreads - knee) / span,
-                    kLargeRouteThreadCapBytes);
+    return std::min(floor + (cap - floor) * (nthreads - knee) / span, cap);
 }
 
 // --- serial lines: probed on the host, not keyed on it ---

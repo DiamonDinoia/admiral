@@ -454,8 +454,8 @@ ADM_ALWAYS_INLINE void granule_dft(V (&g)[N]) {
 // The line kernel's shape: M = N/G registers of G interleaved complex granules, the M-point
 // granule DFT runs the G sub-DFTs, and a G-way CT join across the granule axis places
 // X[t + s*M]. The join runs the 8-lane, 4-lane and 2-lane register rungs (one granule is one
-// complex, two lanes), so G is a rung width in granules and divisibility G | N picks the
-// widest arm that divides N; the G = 1 form is one complex per 2-lane register with no join.
+// complex, two lanes), so G is a rung width in granules and granule_pick picks the
+// cheapest arm that divides N; the G = 1 form is one complex per 2-lane register with no join.
 // The G = 4 join arm is lane-generic over the 8-lane register, so one rung walk serves every
 // precision whose sized batch of 2*G lanes exists (the 8-lane rung is ymm at float and zmm
 // at double).
@@ -469,15 +469,6 @@ inline constexpr bool kGranuleArm =
     N / G + 2 <= poet::vector_register_count() &&
     !std::is_void_v<xsimd::make_sized_batch_t<T, 2 * G>>;
 
-// Granules per register: the valid arm of least cost. The cost per complex, in uops scaled
-// by the vector width, is the G-way join against the row-DFT stage work the rung saves:
-// the join pays (G-1) fma uops and (G-1) shuffle uops per complex (granule_join4's pow
-// twiddle and the (G-1) butterfly stages of the granule-axis CT), and one shuffle uop costs
-// its register width (2*G lanes) over the vector width; the rung shrinks the row length
-// M = N/G and drops one radix stage per halving, 2 fma + 1 shuffle per complex per stage
-// (granule_dif's butterfly pair and its stage twiddle swap). The join cost grows with G,
-// the stage saving only with log2(M), so the narrow rung wins wherever it fits and the
-// 8-lane rung stays only where no narrower rung fits the register file.
 template<typename T>
 constexpr std::size_t granule_vec_width() noexcept {
     if constexpr (is_simd_precision_v<T>) {
@@ -487,15 +478,9 @@ constexpr std::size_t granule_vec_width() noexcept {
     }
 }
 
-constexpr std::size_t granule_stages(std::size_t m) noexcept {
-    std::size_t k = 0;
-    for (; m > 1; m /= 2) ++k;
-    return k;
-}
-
 // Spill: live set N/G rows + G join accumulators + 2 butterfly registers over the register
 // file; 2 uops (store + reload) per excess register, in uops as the terms above.
-template<unsigned N, typename T, std::size_t G>
+template<unsigned N, std::size_t G>
 inline constexpr std::size_t kGranuleSpill =
     N / G + G + 2 > poet::vector_register_count()
         ? (N / G + G + 2 - poet::vector_register_count()) * 2
@@ -504,21 +489,31 @@ inline constexpr std::size_t kGranuleSpill =
 template<unsigned N, typename T, std::size_t G>
 inline constexpr std::size_t kGranuleCost =
     std::size_t{G - 1} * granule_vec_width<T>() + std::size_t{G - 1} * 2 * G +
-    3 * granule_stages(N / G) * granule_vec_width<T>() + kGranuleSpill<N, T, G>;
+    3 * bit_width(N / G / 2) * granule_vec_width<T>() + kGranuleSpill<N, G>;
 
+// Granules per register: the valid arm of least cost. The cost per complex, in uops scaled
+// by the vector width, is the G-way join against the row-DFT stage work the rung saves:
+// the join pays (G-1) fma uops and (G-1) shuffle uops per complex (granule_join4's pow
+// twiddle and the (G-1) butterfly stages of the granule-axis CT), and one shuffle uop costs
+// its register width (2*G lanes) over the vector width; the rung shrinks the row length
+// M = N/G and drops one radix stage per halving, 2 fma + 1 shuffle per complex per stage
+// (granule_dif's butterfly pair and its stage twiddle swap). The join cost grows with G,
+// the stage saving only with log2(M), so the narrow rung wins wherever it fits and the
+// 8-lane rung stays only where no narrower rung fits the register file.
 template<unsigned N, typename T>
 constexpr std::size_t granule_pick() noexcept {
     std::size_t best = 0;
     std::size_t best_cost = 0;
-    constexpr std::size_t rungs[] = {4, 2, 1};
-    for (std::size_t G : rungs) {
-        bool arm = false;
-        std::size_t cost = 0;
-        if (G == 4 && kGranuleArm<N, T, 4>) { arm = true; cost = kGranuleCost<N, T, 4>; }
-        if (G == 2 && kGranuleArm<N, T, 2>) { arm = true; cost = kGranuleCost<N, T, 2>; }
-        if (G == 1 && kGranuleArm<N, T, 1>) { arm = true; cost = kGranuleCost<N, T, 1>; }
-        if (arm && (best == 0 || cost < best_cost)) { best = G; best_cost = cost; }
-    }
+    const auto rung = [&](auto g) {
+        constexpr std::size_t G = g;
+        if (kGranuleArm<N, T, G> && (best == 0 || kGranuleCost<N, T, G> < best_cost)) {
+            best = G;
+            best_cost = kGranuleCost<N, T, G>;
+        }
+    };
+    rung(std::integral_constant<std::size_t, 4>{});
+    rung(std::integral_constant<std::size_t, 2>{});
+    rung(std::integral_constant<std::size_t, 1>{});
     return best;
 }
 

@@ -199,9 +199,8 @@ TEMPLATE_TEST_CASE("out-aliased SoA pair equals the 4-plane path", "[dif][align]
         const auto in = tone_input<T>(N, N / 4 + 7);
         for (const bool forward : {true, false}) {
             offset_buffer<T> aligned(N, 0), off(N, 1);
-            if (!admiral::detail::dif_out_aliasable<T>(forward, aligned.ptr, N, tw)) continue;
+            if (!tw.tape[forward ? 0 : 1].out_aliasable) continue;
             CAPTURE(N, forward);
-            REQUIRE_FALSE(admiral::detail::dif_out_aliasable<T>(forward, off.ptr, N, tw));
             ++fired;
             admiral::detail::dif_execute_in_place<T>(forward, in.data(), aligned.ptr, N, tw, T(1));
             admiral::detail::dif_execute_in_place<T>(forward, in.data(), off.ptr, N, tw, T(1));

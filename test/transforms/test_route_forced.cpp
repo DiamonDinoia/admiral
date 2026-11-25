@@ -11,6 +11,7 @@
 
 #include <admiral/detail/granule_codelet.hpp>
 
+#include <algorithm>
 #include <array>
 #include <complex>
 #include <cstddef>
@@ -214,7 +215,7 @@ TEST_CASE("threaded four_step_large admission matches the measured crossovers",
     // every nt below the knees and at any pool width. The line is the pinned floor, clamped
     // to the cap as the library does, so the pins hold on any L2: on a 2 MiB L2 they are
     // the rungs measured on the reference hosts. The nt=2 f32 cell reads the cap outright.
-    const std::size_t cap = kLargeRouteThreadCapBytes;
+    const std::size_t cap = large_route_thread_cap_bytes();
     const auto pin = [](auto tag, std::size_t n, std::size_t nt, std::size_t line) {
         using T = decltype(tag);
         CAPTURE(n, nt, line);
@@ -246,23 +247,33 @@ TEST_CASE("the threaded large-route law's shape: floor, knees, rise to the share
     REQUIRE(kLargeRouteThreadFloorF32Bytes == 185363);  // [128, 256] KiB geo-mid
     REQUIRE(kLargeRouteThreadKneeF64Nt == 32);
     REQUIRE(kLargeRouteThreadKneeF32Nt == 8);
-    REQUIRE(kLargeRouteThreadCapBytes == cpu_cache().l2 / 2);  // 2 = the two live buffers (src, dst) of fsl_ws_s1 (:847) and fsl_ws_s2 (:849)
+    REQUIRE(large_route_thread_cap_bytes() == cpu_cache().l2 / 2);
 
+    // The floor is clamped to the cap, as the library does: a host with a small L2 has a
+    // cap below the pinned floor.
+    const std::size_t cap = large_route_thread_cap_bytes();
+    const std::size_t floor64 = std::min(kLargeRouteThreadFloorF64Bytes, cap);
+    const std::size_t floor32 = std::min(kLargeRouteThreadFloorF32Bytes, cap);
     // Flat at or below the knee at any pool width; nt=2 f32 is the cap outright.
-    REQUIRE(large_route_threaded_bytes(16, 2, 128) == kLargeRouteThreadFloorF64Bytes);
-    REQUIRE(large_route_threaded_bytes(16, 32, 64) == kLargeRouteThreadFloorF64Bytes);
-    REQUIRE(large_route_threaded_bytes(8, 4, 96) == kLargeRouteThreadFloorF32Bytes);
-    REQUIRE(large_route_threaded_bytes(8, 8, 16) == kLargeRouteThreadFloorF32Bytes);
-    REQUIRE(large_route_threaded_bytes(8, 2, 128) == kLargeRouteThreadCapBytes);
-    // Rise: linear in nt from the knee to the cap at nt = pool width, min-pinned; the
-    // 2*knee span stand-in governs only when the pool is narrower than the knee.
-    REQUIRE(large_route_threaded_bytes(16, 64, 128) == kLargeRouteThreadFloorF64Bytes + (kLargeRouteThreadCapBytes - kLargeRouteThreadFloorF64Bytes) * (64 - kLargeRouteThreadKneeF64Nt) / (128 - kLargeRouteThreadKneeF64Nt));
-    REQUIRE(large_route_threaded_bytes(16, 128, 128) == kLargeRouteThreadCapBytes);
-    REQUIRE(large_route_threaded_bytes(8, 32, 64) == kLargeRouteThreadFloorF32Bytes + (kLargeRouteThreadCapBytes - kLargeRouteThreadFloorF32Bytes) * (32 - kLargeRouteThreadKneeF32Nt) / (64 - kLargeRouteThreadKneeF32Nt));
-    REQUIRE(large_route_threaded_bytes(8, 32, 96) == kLargeRouteThreadFloorF32Bytes + (kLargeRouteThreadCapBytes - kLargeRouteThreadFloorF32Bytes) * (32 - kLargeRouteThreadKneeF32Nt) / (96 - kLargeRouteThreadKneeF32Nt));
-    REQUIRE(large_route_threaded_bytes(8, 64, 64) == kLargeRouteThreadCapBytes);
-    REQUIRE(large_route_threaded_bytes(16, 33, 16) == kLargeRouteThreadFloorF64Bytes + (kLargeRouteThreadCapBytes - kLargeRouteThreadFloorF64Bytes) * (33 - kLargeRouteThreadKneeF64Nt) / (2 * kLargeRouteThreadKneeF64Nt - kLargeRouteThreadKneeF64Nt));
-    REQUIRE(large_route_threaded_bytes(16, 64, 16) == kLargeRouteThreadCapBytes);
+    REQUIRE(large_route_threaded_bytes(16, 2, 128) == floor64);
+    REQUIRE(large_route_threaded_bytes(16, 32, 64) == floor64);
+    REQUIRE(large_route_threaded_bytes(8, 4, 96) == floor32);
+    REQUIRE(large_route_threaded_bytes(8, 8, 16) == floor32);
+    REQUIRE(large_route_threaded_bytes(8, 2, 128) == cap);
+    // Rise: the cap at nt = pool width, the half-way point at the half-way nt, never
+    // decreasing, never outside [floor, cap].
+    REQUIRE(large_route_threaded_bytes(16, 128, 128) == cap);
+    REQUIRE(large_route_threaded_bytes(8, 64, 64) == cap);
+    REQUIRE(large_route_threaded_bytes(16, 64, 16) == cap);  // pool narrower than the knee
+    REQUIRE(large_route_threaded_bytes(16, 80, 128) == floor64 + (cap - floor64) / 2);
+    std::size_t prev = 0;
+    for (std::size_t nt = 1; nt <= 128; ++nt) {
+        CAPTURE(nt);
+        const std::size_t v = large_route_threaded_bytes(16, nt, 128);
+        REQUIRE(v >= std::max(prev, floor64));
+        REQUIRE(v <= cap);
+        prev = v;
+    }
 }
 
 TEMPLATE_TEST_CASE("plan rejects bad sizes and handles N==1", "[coverage][route]",

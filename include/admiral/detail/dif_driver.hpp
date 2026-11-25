@@ -264,13 +264,6 @@ template<typename T>
     return N * sizeof(T) % span_align<T> == 0;
 }
 
-template<typename T>
-[[nodiscard]] bool dif_out_aliasable(bool forward, const std::complex<T>* out, std::size_t N,
-                                     const dif_twiddle_set<T>& tw) {
-    return dif_out_aliasable_plan<T>(forward, N, tw) &&
-           reinterpret_cast<std::uintptr_t>(out) % span_align<T> == 0;
-}
-
 template<typename T, bool Forward>
 void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
     const std::size_t n_passes = dtw.radices.size();

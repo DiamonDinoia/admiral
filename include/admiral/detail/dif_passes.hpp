@@ -385,32 +385,40 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
             if constexpr (!kHalfSweep) {
                 for (; a + W <= ido; a += W) do_batch(a);
             }
+            // The masked batch arm for the tail: one helper for the two `route` paths. It
+            // uses `lane_prefix_mask` with `tw_store_masked` on the tier batch. The remainder
+            // is one masked vector, so no scalar tail stays and each lane keeps the scalar
+            // butterfly sequence.
+            auto tail_masked = [&](std::size_t aa) ADM_LAMBDA_ALWAYS_INLINE {
+                constexpr auto um = xsimd::unaligned_mode{};
+                const std::size_t rem = ido - aa;
+                const xsimd::batch_bool<T> m = lane_prefix_mask<T>(rem);
+                batch tr[IP], ti_arr[IP];
+                for (std::size_t j = 0; j < IP; ++j) {
+                    tr[j] = batch::load(ccre + (aa * esi + idi * (j + IP * b)), m, um);
+                    ti_arr[j] = batch::load(ccim + (aa * esi + idi * (j + IP * b)), m, um);
+                }
+                dif_butterfly<T, IP>(
+                    tr, ti_arr, [&](const auto k, batch sr, batch si) {
+                        const std::size_t off = obase + aa * eso + kstride * ocol(k);
+                        if constexpr (k > 0u) {
+                            const batch owr =
+                                batch::load(twre + ((k - 1u) * ido + aa), m, um);
+                            const batch owi =
+                                batch::load(twim + ((k - 1u) * ido + aa), m, um);
+                            tw_store_masked(chre + off, chim + off,
+                                                       m, um, owr, owi, sr, si);
+                        } else {
+                            sr.store(chre + off, m, um);
+                            si.store(chim + off, m, um);
+                        }
+                    });
+            };
             if constexpr (InPlace) {
                 if (a < ido) {
                     const std::size_t rem = ido - a;
                     if (kSplitCols || (2 * rem >= W && !((kPieceWidths<T> >> rem) & 1u))) {
-                        constexpr auto um = xsimd::unaligned_mode{};
-                        const xsimd::batch_bool<T> m = lane_prefix_mask<T>(rem);
-                        batch tr[IP], ti_arr[IP];
-                        for (std::size_t j = 0; j < IP; ++j) {
-                            tr[j] = batch::load(ccre + (a * esi + idi * (j + IP * b)), m, um);
-                            ti_arr[j] = batch::load(ccim + (a * esi + idi * (j + IP * b)), m, um);
-                        }
-                        dif_butterfly<T, IP>(
-                            tr, ti_arr, [&](const auto k, batch sr, batch si) {
-                                const std::size_t off = obase + a * eso + kstride * ocol(k);
-                                if constexpr (k > 0u) {
-                                    const batch owr =
-                                        batch::load(twre + ((k - 1u) * ido + a), m, um);
-                                    const batch owi =
-                                        batch::load(twim + ((k - 1u) * ido + a), m, um);
-                                    tw_store_masked(chre + off, chim + off,
-                                                               m, um, owr, owi, sr, si);
-                                } else {
-                                    sr.store(chre + off, m, um);
-                                    si.store(chim + off, m, um);
-                                }
-                            });
+                        tail_masked(a);
                     } else {
                         constexpr std::size_t W0 = sized_piece_width<T, W / 2>();
                         sized_cover<T, W0, false>(a, ido, [&](auto PWc, std::size_t aa) {
@@ -423,25 +431,7 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                 if constexpr (!kHalfSweep) {
                     if (ido >= W && (ido - a) * 2 >= W) { do_batch(ido - W); a = ido; }
                 }
-                for (; a < ido; ++a) {
-                    T tr_s[IP], ti_s[IP];
-                    for (std::size_t j = 0; j < IP; ++j) {
-                        tr_s[j] = ccre[a * esi + idi * (j + IP * b)];
-                        ti_s[j] = ccim[a * esi + idi * (j + IP * b)];
-                    }
-                    dif_butterfly<T, IP>(tr_s, ti_s, [&](const auto k, T sr, T si) {
-                        if constexpr (k > 0u) {
-                            const T owr = twre[(k - 1u) * ido + a];
-                            const T owi = twim[(k - 1u) * ido + a];
-                            tw_store_scalar(chre[obase + a * eso + kstride * k],
-                                                       chim[obase + a * eso + kstride * k],
-                                                       owr, owi, sr, si);
-                        } else {
-                            chre[obase + a * eso + kstride * k] = sr;
-                            chim[obase + a * eso + kstride * k] = si;
-                        }
-                    });
-                }
+                if (a < ido) tail_masked(a);
             }
         }
     }

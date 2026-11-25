@@ -27,7 +27,6 @@ inline void cpu_relax() noexcept {
 
 #if ADM_THREADS
 #include <atomic>
-#include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
@@ -199,27 +198,8 @@ inline void pool_pin_worker([[maybe_unused]] std::size_t tid,
 #endif
 }
 
-[[nodiscard]] inline double core_cyc_per_ns() {
-    static const double cyc_per_ns = [] {
-        using clock = std::chrono::steady_clock;
-        std::uint64_t x = 0x9E3779B97F4A7C15ull;
-        std::uint64_t n  = 0;
-        long long ns = 0;
-        const auto t0 = clock::now();
-        do {
-            for (int i = 0; i < 64; ++i)
-                x = x * 6364136223846793005ull + 1442695040888963407ull;
-            n += 64;
-            ns = std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now() - t0).count();
-        } while (ns < 1000000);
-        [[maybe_unused]] volatile std::uint64_t sink = x;
-        return static_cast<double>(3 * n) / static_cast<double>(ns);
-    }();
-    return cyc_per_ns;
-}
-
-inline constexpr double kPocketOnsetNs = 30e3;
-inline constexpr double kPocketTierNs = 100e3;
+inline constexpr double kPocketOnsetCyc = 81e3;
+inline constexpr double kPocketTierCyc = 270e3;
 
 struct wake_family_row {
     std::size_t P;
@@ -230,48 +210,52 @@ struct wake_family_row {
 };
 
 [[nodiscard]] inline const wake_family_row& wake_family_for(std::size_t P, std::size_t C0) {
+    // Cycles. Fitted constant: each entry is the ns wake law of commit a4079596 times 2.70,
+    // the median of 7 runs of the removed timed loop (2.69 to 2.76) on a Xeon w5-3435X.
+    // No count replaces it. The ns table is a fit of measured wake times, not a count of
+    // instructions, and the clock of a host changes the cycles of one ns.
     static constexpr wake_family_row rows[3] = {
         {64, 32, {{32, 32}, {32, 64}, {32, 64}}, {48, 48, 48}, {
-            {417.6, 2190.3, 3249.3, 44969.9, 69767.1, 71166.9},
-            {659.4, 3325.1, 4036.6, 83426.6, 85974.7, 94599.9},
-            {863.2, 4290.9, 67169.3, 103528.2, 107990.6, 105262.3},
-            {994.6, 4697.1, 56299.3, 121667.0, 115548.8, 122090.8},
-            {1285.1, 5051.3, 100853.2, 147251.1, 137009.1, 135459.1},
-            {1572.6, 193924.6, 201834.1, 213123.9, 149816.5, 146465.7},
-            {66344.2, 260911.9, 195271.4, 276801.4, 198020.8, 173496.2},
-            {2629.2, 2608.2, 285792.7, 302605.0, 228081.9, 199131.2},
-            {349718.6, 353449.7, 360336.7, 356031.5, 285706.6, 320509.6},
-            {478692.6, 466653.6, 469364.1, 462019.9, 396584.9, 436007.0},
-            {478692.6, 466653.6, 469364.1, 462019.9, 396584.9, 436007.0},
-            {478692.6, 466653.6, 469364.1, 462019.9, 396584.9, 436007.0},
+            {1127.52, 5913.81, 8773.11, 121418.73, 188371.17, 192150.63},
+            {1780.38, 8977.77, 10898.82, 225251.82, 232131.69, 255419.73},
+            {2330.64, 11585.43, 181357.11, 279526.14, 291574.62, 284208.21},
+            {2685.42, 12682.17, 152008.11, 328500.9, 311981.76, 329645.16},
+            {3469.77, 13638.51, 272303.64, 397577.97, 369924.57, 365739.57},
+            {4246.02, 523596.42, 544952.07, 575434.53, 404504.55, 395457.39},
+            {179129.34, 704462.13, 527232.78, 747363.78, 534656.16, 468439.74},
+            {7098.84, 7042.14, 771640.29, 817033.5, 615821.13, 537654.24},
+            {944240.22, 954314.19, 972909.09, 961285.05, 771407.82, 865375.92},
+            {1292470.02, 1259964.72, 1267283.07, 1247453.73, 1070779.23, 1177218.9},
+            {1292470.02, 1259964.72, 1267283.07, 1247453.73, 1070779.23, 1177218.9},
+            {1292470.02, 1259964.72, 1267283.07, 1247453.73, 1070779.23, 1177218.9},
         }},
         {128, 64, {{16, 32}, {16, 32}, {16, 32}}, {64, 256, 256}, {
-            {845.5, 854.3, 4660.3, 5585.7, 12267.9, 29903.1},
-            {1221.8, 1200.2, 5997.1, 7244.4, 15280.6, 32800.4},
-            {1271.6, 1212.2, 6494.1, 8201.1, 19119.3, 34722.1},
-            {1274.6, 1294.8, 6963.1, 8795.1, 20654.7, 113723.9},
-            {1351.2, 1321.7, 9080.8, 11508.1, 20858.1, 219841.6},
-            {1301.3, 1348.6, 10175.6, 13851.7, 23216.0, 446072.1},
-            {7976.1, 2117.7, 15984.7, 21724.2, 32476.7, 456294.1},
-            {30277.8, 2163.2, 21722.2, 27728.3, 36682.4, 475597.9},
-            {47854.7, 3083.9, 29885.5, 41650.8, 55572.8, 541734.9},
-            {80238.7, 3355.9, 48328.7, 54941.1, 64184.7, 553153.7},
-            {44709.1, 134241.8, 165196.5, 212308.3, 209231.0, 651361.0},
-            {279548.0, 291422.2, 290223.4, 287607.0, 291248.4, 810145.2},
+            {2282.85, 2306.61, 12582.81, 15081.39, 33123.33, 80738.37},
+            {3298.86, 3240.54, 16192.17, 19559.88, 41257.62, 88561.08},
+            {3433.32, 3272.94, 17534.07, 22142.97, 51622.11, 93749.67},
+            {3441.42, 3495.96, 18800.37, 23746.77, 55767.69, 307054.53},
+            {3648.24, 3568.59, 24518.16, 31071.87, 56316.87, 593572.32},
+            {3513.51, 3641.22, 27474.12, 37399.59, 62683.2, 1204394.67},
+            {21535.47, 5717.79, 43158.69, 58655.34, 87687.09, 1231994.07},
+            {81750.06, 5840.64, 58649.94, 74866.41, 99042.48, 1284114.33},
+            {129207.69, 8326.53, 80690.85, 112457.16, 150046.56, 1462684.23},
+            {216644.49, 9060.93, 130487.49, 148340.97, 173298.69, 1493514.99},
+            {120714.57, 362452.86, 446030.55, 573232.41, 564923.7, 1758674.7},
+            {754779.6, 786839.94, 783603.18, 776538.9, 786370.68, 2187392.04},
         }},
         {96, 48, {{32, 32}, {32, 64}, {32, 64}}, {512, 512, 512}, {
-            {803.6, 734.4, 5502.3, 6529.2, 7360.2, 21300.4},
-            {1314.9, 1256.1, 7467.7, 8481.8, 9172.5, 23979.8},
-            {1694.2, 1656.0, 10002.0, 10627.2, 12025.9, 26398.2},
-            {2018.3, 2011.8, 12647.3, 14096.7, 13916.3, 28574.9},
-            {2000.8, 1985.7, 17464.6, 17207.0, 18543.0, 31657.5},
-            {2094.6, 2158.6, 21817.9, 20548.1, 21579.8, 35592.9},
-            {2458.7, 2356.6, 30047.4, 28170.2, 29060.9, 40903.5},
-            {2768.7, 2703.4, 41071.3, 35955.3, 37372.9, 47862.6},
-            {3237.2, 3005.4, 76411.8, 72413.6, 62735.4, 66301.4},
-            {73738.4, 4793.8, 119574.1, 141263.5, 142164.6, 137390.7},
-            {261820.4, 231940.8, 236950.1, 275106.1, 296582.1, 266333.0},
-            {261820.4, 231940.8, 236950.1, 275106.1, 296582.1, 266333.0},
+            {2169.72, 1982.88, 14856.21, 17628.84, 19872.54, 57511.08},
+            {3550.23, 3391.47, 20162.79, 22900.86, 24765.75, 64745.46},
+            {4574.34, 4471.2, 27005.4, 28693.44, 32469.93, 71275.14},
+            {5449.41, 5431.86, 34147.71, 38061.09, 37574.01, 77152.23},
+            {5402.16, 5361.39, 47154.42, 46458.9, 50066.1, 85475.25},
+            {5655.42, 5828.22, 58908.33, 55479.87, 58265.46, 96100.83},
+            {6638.49, 6362.82, 81127.98, 76059.54, 78464.43, 110439.45},
+            {7475.49, 7299.18, 110892.51, 97079.31, 100906.83, 129229.02},
+            {8740.44, 8114.58, 206311.86, 195516.72, 169385.58, 179013.78},
+            {199093.68, 12943.26, 322850.07, 381411.45, 383844.42, 370954.89},
+            {706915.08, 626240.16, 639765.27, 742786.47, 800771.67, 719099.1},
+            {706915.08, 626240.16, 639765.27, 742786.47, 800771.67, 719099.1},
         }},
     };
     for (const wake_family_row& r : rows)
@@ -279,19 +263,19 @@ struct wake_family_row {
     return rows[1];
 }
 
-[[nodiscard]] inline double dhat_ns(const wake_family_row& fam, std::size_t nt, double gap_ns) {
+[[nodiscard]] inline double dhat_cyc(const wake_family_row& fam, std::size_t nt, double gap_cyc) {
     static constexpr std::size_t nts[12] = {2, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128};
-    static constexpr double gaps[6] = {0.0, 30e3, 100e3, 300e3, 1e6, 1e7};
+    static constexpr double gaps[6] = {0.0, 81e3, 270e3, 810e3, 2.7e6, 27e6};
     if (nt <= 1) return 0.0;
     if (nt > nts[11]) nt = nts[11];
-    gap_ns = std::min(std::max(gap_ns, 0.0), gaps[5]);
+    gap_cyc = std::min(std::max(gap_cyc, 0.0), gaps[5]);
     std::size_t row_i = 0;
     while (row_i < 11 && nts[row_i] < nt) ++row_i;
     if (nts[row_i] != nt && row_i > 0) --row_i;
     const double* row = fam.dhat[row_i];
     for (std::size_t i = 0; i + 1 < 6; ++i) {
-        if (gap_ns <= gaps[i + 1]) {
-            const double t = (gap_ns - gaps[i]) / (gaps[i + 1] - gaps[i]);
+        if (gap_cyc <= gaps[i + 1]) {
+            const double t = (gap_cyc - gaps[i]) / (gaps[i + 1] - gaps[i]);
             return std::max((1.0 - t) * row[i] + t * row[i + 1], 0.0);
         }
     }
@@ -299,7 +283,7 @@ struct wake_family_row {
 }
 
 [[nodiscard]] inline std::size_t resolve_nthreads(std::size_t n, std::size_t total,
-                                                  std::size_t dispatch_k, double work_ns,
+                                                  std::size_t dispatch_k, double work_cyc,
                                                   unsigned cls) {
     if (n != 0) return n;
     if (total < kAutoSerialElems || dispatch_k == 0) return 1;
@@ -311,18 +295,18 @@ struct wake_family_row {
                       static_cast<double>(fam.gateMB[cls_i]) * 1e6;
     const std::size_t knee = fam.knee[cls_i][deep];
     std::size_t best = 1;
-    double best_t = work_ns;
+    double best_t = work_cyc;
     for (std::size_t nt = 2; nt <= P; nt <<= 1) {
-        const double work = work_ns / static_cast<double>(std::min(nt, knee));
+        const double work = work_cyc / static_cast<double>(std::min(nt, knee));
         const double gh = work / static_cast<double>(dispatch_k);
-        const bool pocket = gh < kPocketOnsetNs && nt >= C0 / 2;
-        double gap = pocket ? std::max(gh, kPocketTierNs) : gh;
-        double dh = dhat_ns(fam, nt, gap);
+        const bool pocket = gh < kPocketOnsetCyc && nt >= C0 / 2;
+        double gap = pocket ? std::max(gh, kPocketTierCyc) : gh;
+        double dh = dhat_cyc(fam, nt, gap);
         for (int i = 0; i < 2; ++i) {
             const double t = work + static_cast<double>(dispatch_k) * dh;
             gap = t / static_cast<double>(dispatch_k);
-            if (pocket) gap = std::max(gap, kPocketTierNs);
-            dh = dhat_ns(fam, nt, gap);
+            if (pocket) gap = std::max(gap, kPocketTierCyc);
+            dh = dhat_cyc(fam, nt, gap);
         }
         if (const double t = work + static_cast<double>(dispatch_k) * dh; t < best_t) {
             best_t = t;
@@ -449,7 +433,6 @@ private:
 [[nodiscard]] inline std::size_t resolve_nthreads(std::size_t) noexcept { return 1; }
 [[nodiscard]] inline std::size_t resolve_nthreads(std::size_t, std::size_t, std::size_t, double,
                                                   unsigned) noexcept { return 1; }
-[[nodiscard]] inline double core_cyc_per_ns() noexcept { return 1.0; }
 
 class thread_pool {
 public:

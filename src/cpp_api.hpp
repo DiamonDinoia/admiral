@@ -45,7 +45,7 @@ inline std::size_t split_batch_threads(std::size_t requested, std::size_t total,
     if (lines >= 2 && total >= kThreadMinElems) {
         const std::size_t nthreads =
             resolve_nthreads(requested, total, 1,
-                             double(lines) * line_work_cyc<T>(len) / core_cyc_per_ns(), 1);
+                             double(lines) * line_work_cyc<T>(len), 1);
         if (nthreads > 1) pool = std::make_unique<thread_pool>(nthreads, pin);
         return 1;
     }
@@ -238,7 +238,7 @@ struct strides_state_impl final : strides_state<T> {
         if (need_slab && pool && opts.nthreads == 0) {
             const std::size_t n1 =
                 resolve_nthreads(0, *total, 2,
-                                 double(n) * line_work_cyc<T>(len_) / core_cyc_per_ns(), 1);
+                                 double(n) * line_work_cyc<T>(len_), 1);
             if (n1 > 1 && n1 != pool->size())
                 pool = std::make_unique<thread_pool>(n1, opts.pin_threads);
         }
@@ -351,7 +351,7 @@ struct r2r_state_impl final : r2r_state<T> {
     r2r_state_impl(std::size_t N, r2r_kind kind, std::size_t rows, const admiral::options& opts)
         : plan{N, kind, rows, opts.eff,
                resolve_nthreads(opts.nthreads, sat_elems(N, rows), 1,
-                                double(rows) * line_work_cyc<T>(N) / core_cyc_per_ns(), 1),
+                                double(rows) * line_work_cyc<T>(N), 1),
                opts.pin_threads} {}
 
     [[nodiscard]] std::size_t size() const noexcept override { return plan.size(); }
@@ -501,7 +501,7 @@ struct strides_state {
         if (need_slab && pool && opts.nthreads == 0) {
             const std::size_t n1 =
                 resolve_nthreads(0, *total, 2,
-                                 double(n) * line_work_cyc<T>(len_) / core_cyc_per_ns(), 1);
+                                 double(n) * line_work_cyc<T>(len_), 1);
             if (n1 > 1 && n1 != pool->size())
                 pool = std::make_unique<thread_pool>(n1, opts.pin_threads);
         }
@@ -606,7 +606,7 @@ struct r2r_state {
     r2r_state(std::size_t N, r2r_kind kind, std::size_t rows, const admiral::options& opts)
         : plan{N, kind, rows, opts.eff,
                resolve_nthreads(opts.nthreads, sat_elems(N, rows), 1,
-                                double(rows) * line_work_cyc<T>(N) / core_cyc_per_ns(), 1),
+                                double(rows) * line_work_cyc<T>(N), 1),
                opts.pin_threads} {}
 };
 

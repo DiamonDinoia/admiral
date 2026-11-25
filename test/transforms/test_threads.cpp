@@ -244,11 +244,11 @@ TEST_CASE("threaded out-of-place four_step_large matches serial (double)",
 }
 
 TEST_CASE("resolve_nthreads wake law: serial floor, knee, pocket, pow2, cap", "[threads]") {
-    using admiral::detail::dhat_ns;
+    using admiral::detail::dhat_cyc;
     using admiral::detail::has_single_bit;
     using admiral::detail::kAutoSerialElems;
-    using admiral::detail::kPocketOnsetNs;
-    using admiral::detail::kPocketTierNs;
+    using admiral::detail::kPocketOnsetCyc;
+    using admiral::detail::kPocketTierCyc;
     using admiral::detail::resolve_nthreads;
     using admiral::detail::wake_family_for;
     using admiral::detail::wake_family_row;
@@ -290,14 +290,14 @@ TEST_CASE("resolve_nthreads wake law: serial floor, knee, pocket, pow2, cap", "[
         for (std::size_t nt = 2; nt <= P; nt <<= 1) {
             const double work = w_ns / double(std::min(nt, knee));
             const double gh = work / double(K);
-            const bool pocket = gh < kPocketOnsetNs && nt >= C0 / 2;
-            double gap = pocket ? std::max(gh, kPocketTierNs) : gh;
-            double dh = dhat_ns(fam, nt, gap);
+            const bool pocket = gh < kPocketOnsetCyc && nt >= C0 / 2;
+            double gap = pocket ? std::max(gh, kPocketTierCyc) : gh;
+            double dh = dhat_cyc(fam, nt, gap);
             for (int i = 0; i < 2; ++i) {
                 const double t = work + double(K) * dh;
                 gap = t / double(K);
-                if (pocket) gap = std::max(gap, kPocketTierNs);
-                dh = dhat_ns(fam, nt, gap);
+                if (pocket) gap = std::max(gap, kPocketTierCyc);
+                dh = dhat_cyc(fam, nt, gap);
             }
             if (const double t = work + double(K) * dh; t < best_t) { best_t = t; best = nt; }
         }
@@ -319,12 +319,12 @@ TEST_CASE("resolve_nthreads wake law: serial floor, knee, pocket, pow2, cap", "[
                              (double(sp.n1) * admiral::detail::line_work_cyc<double>(sp.n2) +
                               double(sp.n2) * admiral::detail::line_work_cyc<double>(sp.n1))
                        : admiral::detail::line_work_cyc<double>(n);
-        return resolve_nthreads(0, n, 5, cyc / admiral::detail::core_cyc_per_ns(), 0);
+        return resolve_nthreads(0, n, 5, cyc, 0);
     };
     const auto sq2_pick = [&](std::size_t e) {
         const std::size_t n = std::size_t{1} << e;
         const double cyc = 2.0 * double(n) * admiral::detail::line_work_cyc<double>(n);
-        return resolve_nthreads(0, n * n, 2, cyc / admiral::detail::core_cyc_per_ns(), 1);
+        return resolve_nthreads(0, n * n, 2, cyc, 1);
     };
     if (P == 128 && C0 == 64) {
         REQUIRE(fsl_pick(21) == 16);

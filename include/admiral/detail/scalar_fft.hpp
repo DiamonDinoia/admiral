@@ -498,7 +498,7 @@ template<typename T>
             work_cyc += double(total / d) * line_work_cyc<T>(d);
         }
     }
-    return resolve_nthreads(0, total, dispatches, work_cyc / core_cyc_per_ns(),
+    return resolve_nthreads(0, total, dispatches, work_cyc,
                             shape.size() >= 3 ? 2 : 1);
 }
 
@@ -553,7 +553,7 @@ template<typename T>
     const std::size_t nh = shape.back() / 2 + 1;
     work_cyc += double(rows) * line_work_cyc<T>(nh);
     return resolve_nthreads(0, sat_elems(rows, shape.back()), dispatches,
-                            work_cyc / core_cyc_per_ns(), shape.size() >= 3 ? 2 : 1);
+                            work_cyc, shape.size() >= 3 ? 2 : 1);
 }
 
 template<typename T, typename Eng = scalar_c2c<T>, typename R2c = scalar_r2c_1d<T, Eng>>

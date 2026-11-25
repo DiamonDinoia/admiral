@@ -809,7 +809,7 @@ nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forwa
             work_cyc += double(m.total / d) * line_work_cyc<T>(d);
         }
         const unsigned cls = m.shape.size() >= 3 ? 2 : 1;
-        nthreads = resolve_nthreads(0, m.total, dispatches, work_cyc / core_cyc_per_ns(), cls);
+        nthreads = resolve_nthreads(0, m.total, dispatches, work_cyc, cls);
     }
     if (nthreads > 1 && batch_threadable)
         m.pool = std::make_unique<thread_pool>(nthreads, pin);

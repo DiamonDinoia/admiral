@@ -595,7 +595,7 @@ nd_real_plan<T>::nd_real_plan(span<const std::size_t> shape, std::size_t nthread
                 ++dispatches;
                 work_cyc += double(m.total_c / m.shape[d]) * line_work_cyc<T>(m.shape[d]);
             }
-            nthreads = resolve_nthreads(0, m.total_c, dispatches, work_cyc / core_cyc_per_ns(),
+            nthreads = resolve_nthreads(0, m.total_c, dispatches, work_cyc,
                                         n >= 3 ? 2 : 1);
         } else {
             nthreads = 1;

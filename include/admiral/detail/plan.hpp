@@ -145,13 +145,13 @@ private:
               const dif_factor_plan* dif_override, measured_choice choice)
         : plan_impl(size, is_forward, routed_plan{choice, nthreads, dif_override}, false) {}
 
-    static double large_work_ns(std::size_t size) {
+    static double large_work_cyc(std::size_t size) {
         const large_split sp = choose_large_split(size);
         const double cyc =
             sp.valid() ? kFourStepOverhead * (double(sp.n1) * line_work_cyc<T>(sp.n2) +
                                               double(sp.n2) * line_work_cyc<T>(sp.n1))
                        : line_work_cyc<T>(size);
-        return cyc / core_cyc_per_ns();
+        return cyc;
     }
 
     static routed_plan route_plan(std::size_t size, bool is_forward, std::size_t nthreads,
@@ -187,7 +187,7 @@ private:
             }
             return {elect(1), 1, dif_override};
         }
-        const std::size_t nt = resolve_nthreads(0, size, kLargeDispatches, large_work_ns(size), 0);
+        const std::size_t nt = resolve_nthreads(0, size, kLargeDispatches, large_work_cyc(size), 0);
         measured_choice ch = elect(nt);
         if (ch.route != route_kind::four_step_large)
             return {ch, 1, dif_override};

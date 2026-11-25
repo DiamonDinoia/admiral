@@ -2,8 +2,8 @@
 
 // The engine half of the public API. Under ADM_DISPATCH this header carries one engine tier:
 // the states derive from the abstract bases of api_tier.hpp and the tier entry builds the
-// dispatch table. Without ADM_DISPATCH it carries master's concrete states and the public
-// API itself, verbatim, so an OFF build keeps master's codegen and exports.
+// dispatch table. Without ADM_DISPATCH it carries the concrete states and the public
+// API itself, so an OFF build keeps its codegen and exports.
 
 #ifdef ADM_DISPATCH
 #include "api_tier.hpp"
@@ -128,11 +128,11 @@ struct plan_state_impl final : plan_state<T> {
 
     [[nodiscard]] std::size_t size() const noexcept override { return total; }
     void run(bool is_forward, std::complex<T>* data, const T* fct) const override {
-        lazy_dir(is_forward).execute(data, fct, debug);
+        lazy_dir(is_forward).execute(data, fct);
     }
     void run(bool is_forward, const std::complex<T>* src, std::complex<T>* dst,
              const T* fct) const override {
-        lazy_dir(is_forward).execute(src, dst, fct, debug);
+        lazy_dir(is_forward).execute(src, dst, fct);
     }
 
 private:
@@ -316,16 +316,15 @@ public:
 template<typename T>
 struct real_state_impl final : real_state<T> {
     nd_real_plan<T> plan;
-    unsigned debug;
 
     real_state_impl(span<const std::size_t> shape, const admiral::options& opts)
-        : plan{shape, opts.nthreads, opts.eff, opts.pin_threads, opts.debug}, debug(opts.debug) {}
+        : plan{shape, opts.nthreads, opts.eff, opts.pin_threads, opts.debug} {}
 
     void forward(const T* in, std::complex<T>* out, std::optional<T> fct) const override {
-        plan.forward(in, out, {fct, debug});
+        plan.forward(in, out, fct);
     }
     void inverse(std::complex<T>* spec, T* out, std::optional<T> fct) const override {
-        plan.inverse(spec, out, {fct, debug});
+        plan.inverse(spec, out, fct);
     }
     [[nodiscard]] std::size_t real_size() const noexcept override { return plan.real_size(); }
     [[nodiscard]] std::size_t cplx_size() const noexcept override { return plan.cplx_size(); }
@@ -363,7 +362,7 @@ struct r2r_state_impl final : r2r_state<T> {
     }
 };
 
-#else  // !ADM_DISPATCH: master's concrete states, verbatim
+#else  // !ADM_DISPATCH: the concrete states
 
 template<typename T>
 struct plan_state {
@@ -401,11 +400,11 @@ struct plan_state {
 
     [[nodiscard]] std::size_t size() const noexcept { return total; }
     void run(bool is_forward, std::complex<T>* data, const T* fct) const {
-        lazy_dir(is_forward).execute(data, fct, debug);
+        lazy_dir(is_forward).execute(data, fct);
     }
     void run(bool is_forward, const std::complex<T>* src, std::complex<T>* dst,
              const T* fct) const {
-        lazy_dir(is_forward).execute(src, dst, fct, debug);
+        lazy_dir(is_forward).execute(src, dst, fct);
     }
 
 private:
@@ -577,16 +576,15 @@ public:
 template<typename T>
 struct real_state {
     nd_real_plan<T> plan;
-    unsigned debug;
 
     real_state(span<const std::size_t> shape, const admiral::options& opts)
-        : plan{shape, opts.nthreads, opts.eff, opts.pin_threads, opts.debug}, debug(opts.debug) {}
+        : plan{shape, opts.nthreads, opts.eff, opts.pin_threads, opts.debug} {}
 
     void forward(const T* in, std::complex<T>* out, std::optional<T> fct) const {
-        plan.forward(in, out, {fct, debug});
+        plan.forward(in, out, fct);
     }
     void inverse(std::complex<T>* spec, T* out, std::optional<T> fct) const {
-        plan.inverse(spec, out, {fct, debug});
+        plan.inverse(spec, out, fct);
     }
     [[nodiscard]] std::size_t real_size() const noexcept { return plan.real_size(); }
     [[nodiscard]] std::size_t cplx_size() const noexcept { return plan.cplx_size(); }
@@ -649,7 +647,7 @@ void one_shot_nd(std::complex<T>* data, span<const std::size_t> shape, bool is_f
     } else {
         detail::nd_runtime_plan<T>(shape, is_forward, opts.nthreads, effort::estimate,
                                    opts.pin_threads, nullptr, opts.debug)
-            .execute(data, {fct, opts.debug});
+            .execute(data, fct ? &*fct : nullptr);
     }
 }
 
@@ -663,7 +661,7 @@ void one_shot_r2c(const T* in, std::complex<T>* out, span<const std::size_t> sha
     } else {
         detail::nd_real_plan<T>(shape, opts.nthreads, effort::estimate, opts.pin_threads,
                                 opts.debug)
-            .forward(in, out, {fct, opts.debug});
+            .forward(in, out, fct);
     }
 }
 
@@ -675,7 +673,7 @@ void one_shot_c2r(std::complex<T>* spec, T* out, span<const std::size_t> shape,
     } else {
         detail::nd_real_plan<T>(shape, opts.nthreads, effort::estimate, opts.pin_threads,
                                 opts.debug)
-            .inverse(spec, out, {fct, opts.debug});
+            .inverse(spec, out, fct);
     }
 }
 
@@ -825,7 +823,7 @@ const tier_ops<T>* tier_entry::operator()(Arch, T*) const noexcept {
 
 }
 
-#else  // !ADM_DISPATCH: master's public API definitions, verbatim
+#else  // !ADM_DISPATCH: the public API definitions
 
 #if ADM_CXX20
 template<detail::precision T>
@@ -889,7 +887,7 @@ forward(const T* in, std::complex<T>* out, span<const std::size_t> shape,
     } else {
         detail::nd_real_plan<T>(shape, opts.nthreads, effort::estimate, opts.pin_threads,
                                 opts.debug)
-            .forward(in, out, {fct, opts.debug});
+            .forward(in, out, fct);
     }
 }
 
@@ -907,7 +905,7 @@ inverse(std::complex<T>* spec, T* out, span<const std::size_t> shape,
     } else {
         detail::nd_real_plan<T>(shape, opts.nthreads, effort::estimate, opts.pin_threads,
                                 opts.debug)
-            .inverse(spec, out, {fct, opts.debug});
+            .inverse(spec, out, fct);
     }
 }
 

@@ -714,10 +714,9 @@ TEMPLATE_TEST_CASE("fast3d cube execution matches the separable 3-D reference",
             require_close_pointwise(b, ref);
 
             // A custom factor rides the same single fold on both plan kinds.
-            admiral::detail::exec_options<T> opts{};
-            opts.fct = T(2);
+            const T two = T(2);
             std::vector<std::complex<T>> c(n3);
-            p.execute(in.data(), c.data(), opts);
+            p.execute(in.data(), c.data(), &two);
             std::vector<std::complex<long double>> refc(n3);
             for (std::size_t i = 0; i < n3; ++i) refc[i] = ref0[i] * 2.0L;
             require_close_pointwise(c, refc);

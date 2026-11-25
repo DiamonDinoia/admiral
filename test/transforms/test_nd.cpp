@@ -13,11 +13,15 @@
 #include <complex>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <optional>
 #include <random>
 #include <vector>
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 
 using namespace Catch::Matchers;
 
@@ -343,12 +347,11 @@ TEMPLATE_TEST_CASE("fast2d rank-2 path is bit-identical to the general nd_execut
         REQUIRE(fast.uses_fast2d());
         REQUIRE_FALSE(general.uses_fast2d());
 
-        admiral::detail::exec_options<T> opts{};
-        opts.fct = fct;
+        const T* const fp = fct ? &*fct : nullptr;
         auto a = in;
-        fast.execute(a.data(), opts);
+        fast.execute(a.data(), fp);
         auto b = in;
-        general.execute(b.data(), opts);
+        general.execute(b.data(), fp);
         REQUIRE(std::memcmp(a.data(), b.data(), n * sizeof(std::complex<T>)) == 0);
     };
     for (const bool forward : {true, false}) {
@@ -766,3 +769,50 @@ TEMPLATE_TEST_CASE("N-D out-of-place catalog rows match the reference DFT", "[nd
         require_close(out2, fwd2, fft_tol<T>());
     }
 }
+
+#if !defined(_WIN32)
+// The debug level is plan-time state: a plan built with debug > 0 traces on every execute
+// form, fast1d and fast2d shapes included. Each shape is the one that skips the trace when the
+// fast path ignores the level, so the REQUIRE on the trace line fails if that path is taken.
+TEMPLATE_TEST_CASE("nd_runtime_plan traces on the fast shapes when built with debug",
+                   "[nd][debug]", float, double) {
+    using T = TestType;
+    for (const std::vector<std::size_t>& shape :
+         {std::vector<std::size_t>{16}, std::vector<std::size_t>{16, 16}}) {
+        CAPTURE(shape);
+        const admiral::span<const std::size_t> sp(shape);
+        std::size_t n = 1;
+        for (const std::size_t e : shape) n *= e;
+        const auto in = make_input<T>(n, 71);
+        const admiral::detail::nd_runtime_plan<T> quiet(sp, true);
+        const admiral::detail::nd_runtime_plan<T> loud(sp, true, 1, admiral::effort::estimate,
+                                                       false, nullptr, 1);
+        if (shape.size() == 2) REQUIRE(quiet.uses_fast2d());
+
+        char path[] = "/tmp/admiral_dbg_XXXXXX";
+        const int fd = mkstemp(path);
+        REQUIRE(fd >= 0);
+        std::fflush(stderr);
+        const int saved = dup(STDERR_FILENO);
+        dup2(fd, STDERR_FILENO);
+        auto a = in, b = in;
+        std::vector<std::complex<T>> c(n);
+        quiet.execute(a.data());
+        const std::size_t quiet_bytes = static_cast<std::size_t>(lseek(fd, 0, SEEK_CUR));
+        loud.execute(b.data());
+        const std::size_t in_place_bytes = static_cast<std::size_t>(lseek(fd, 0, SEEK_CUR));
+        loud.execute(in.data(), c.data());
+        const std::size_t oop_bytes = static_cast<std::size_t>(lseek(fd, 0, SEEK_CUR));
+        std::fflush(stderr);
+        dup2(saved, STDERR_FILENO);
+        close(saved);
+        close(fd);
+        unlink(path);
+
+        REQUIRE(quiet_bytes == 0);
+        REQUIRE(in_place_bytes > 0);
+        REQUIRE(oop_bytes > in_place_bytes);
+        REQUIRE(std::memcmp(a.data(), b.data(), n * sizeof(std::complex<T>)) == 0);
+    }
+}
+#endif

@@ -517,9 +517,7 @@ private:
 public:
     [[nodiscard]] std::size_t size() const noexcept { return plan.size(); }
     void run(bool is_forward, std::complex<T>* data, const T* fct) const {
-        const T s = fct ? *fct : default_transform_fct<T>(is_forward, plan.size());
-        if (is_forward) plan.template execute<true>(data, s, pool_.get());
-        else plan.template execute<false>(data, s, pool_.get());
+        run(is_forward, data, data, fct);
     }
     void run(bool is_forward, const std::complex<T>* src, std::complex<T>* dst,
              const T* fct) const {
@@ -623,8 +621,7 @@ public:
 
 private:
     // The shapes the fast flags exclude: a size without a codelet, or more than one row.
-    // ADM_NOINLINE keeps the multi-row parallel_for frame off the fast call: inlined, the
-    // body costs a 0xb8 stack frame and 6 register saves a call (the OLD disassembly).
+    // ADM_NOINLINE keeps the multi-row parallel_for frame off the fast call.
     ADM_NOINLINE void forward_general(const T* in, std::complex<T>* out, T s) const {
         if (rows_ == 1) {
             inner_.forward(in, out, 0);

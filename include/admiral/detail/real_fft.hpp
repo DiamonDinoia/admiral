@@ -495,9 +495,13 @@ public:
     [[nodiscard]] std::size_t cplx_size() const noexcept { return m.total_c; }
     [[nodiscard]] std::size_t real_size() const noexcept { return m.rows * m.inner_len; }
 
-    void forward(const T* in, std::complex<T>* out, const exec_options<T>& opts = {}) const;
+    // gcc 14 copies a by-value std::optional<double> through the stack in plan_r2c::forward.
+    // A std::optional<T> not larger than a pointer stays by value, which is faster for float.
+    using scale_arg = std::conditional_t<sizeof(std::optional<T>) <= sizeof(void*),
+                                         std::optional<T>, const std::optional<T>&>;
+    void forward(const T* in, std::complex<T>* out, scale_arg fct = std::nullopt) const;
 
-    void inverse(std::complex<T>* spec, T* out, const exec_options<T>& opts = {}) const;
+    void inverse(std::complex<T>* spec, T* out, scale_arg fct = std::nullopt) const;
 
 private:
     // The rank >= 2 or threaded paths, out of line so that the rank-1 path keeps a small frame.
@@ -608,7 +612,7 @@ nd_real_plan<T>::nd_real_plan(span<const std::size_t> shape, std::size_t nthread
 }
 
 template<typename T>
-void nd_real_plan<T>::forward(const T* in, std::complex<T>* out, const exec_options<T>& opts) const {
+void nd_real_plan<T>::forward(const T* in, std::complex<T>* out, scale_arg fct) const {
     if (m.fast_run) {
         // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
         m.rp->r2c_row(in, out);
@@ -616,12 +620,12 @@ void nd_real_plan<T>::forward(const T* in, std::complex<T>* out, const exec_opti
         if (m.debug >= dbg_route) ADM_UNLIKELY trace(m.debug, "fwd", m.fwd_axes);
         forward_rows(in, out);
     }
-    if (opts.fct && *opts.fct != T(1))
-        for (std::size_t i = 0; i < m.total_c; ++i) out[i] *= *opts.fct;
+    if (fct && *fct != T(1))
+        for (std::size_t i = 0; i < m.total_c; ++i) out[i] *= *fct;
 }
 
 template<typename T>
-void nd_real_plan<T>::inverse(std::complex<T>* spec, T* out, const exec_options<T>& opts) const {
+void nd_real_plan<T>::inverse(std::complex<T>* spec, T* out, scale_arg fct) const {
     if (m.fast_run) {
         // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
         m.rp->c2r_row(spec, out);
@@ -629,11 +633,11 @@ void nd_real_plan<T>::inverse(std::complex<T>* spec, T* out, const exec_options<
         if (m.debug >= dbg_route) ADM_UNLIKELY trace(m.debug, "inv", m.inv_axes);
         inverse_rows(spec, out);
     }
-    if (opts.fct) {
+    if (fct) {
         const std::size_t Nr = real_size();
         const T def = inv_extent<T>(Nr);
-        if (*opts.fct != def) {
-            const T s = *opts.fct * static_cast<T>(Nr);
+        if (*fct != def) {
+            const T s = *fct * static_cast<T>(Nr);
             for (std::size_t i = 0; i < Nr; ++i) out[i] *= s;
         }
     }

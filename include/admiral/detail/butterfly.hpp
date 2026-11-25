@@ -424,8 +424,8 @@ template<typename T>
 
 // Unit gate for the odd-half leaves: the fold window 2 * M + 4 (M = ceil(H / 2) coefficients
 // plus the accumulators and the step temporaries, the window of use_c2c_pairs) against the
-// register file. At or over the file each odd K group runs as one register-resident unit and
-// the sums half runs before the odd half. The register count is a hardware fact.
+// register file. At or over the file the sums half runs before the odd half and the c2c odd
+// folds use c2c_small_fold_unit.
 template<std::size_t H, typename T>
 [[nodiscard]] constexpr bool use_small_units() {
     constexpr std::size_t M = (H + 1) / 2;
@@ -540,30 +540,6 @@ template<std::size_t H, typename T, std::size_t Stride>
 ADM_ALWAYS_INLINE void r2c_small_odd(const T* d, std::complex<T>* out) {
     if constexpr (H == 2) {
         out[Stride] = std::complex<T>(d[0], -d[1]);
-    } else if constexpr (use_small_units<H, T>()) {
-        // One register-resident unit per odd K group: E fold, F fold, the shared product and the
-        // emits, with no value of a unit live into the next unit. The x87 stack is empty at each
-        // unit end, so the chain of one call spans one bin pair.
-        constexpr std::size_t NE = (H + 1) / 2;
-        constexpr std::size_t NO = H / 2;
-        T ea[NE], fa[NO];
-        poet::static_for<0, NE>([&](auto I) { ea[I] = d[2 * I]; });
-        poet::static_for<0, NO>([&](auto I) { fa[I] = d[2 * I + 1]; });
-        poet::static_for<1, H + 1>([&](auto Kc) {
-            if constexpr (Kc % 2 == 1) {
-                constexpr std::size_t K = Kc;
-                T er, ei, fr, fi;
-                r2c_small_fold<H, K, NE, T>(ea, er, ei);
-                r2c_small_fold<H, K, NO, T>(fa, fr, fi);
-                auto [or_, oi] = apply_stage_twiddle<T, 2 * H, K, T>(fr, fi);
-                if constexpr (H % 2 == 0 && K < H - K) {
-                    out[K * Stride] = std::complex<T>(er + or_, ei + oi);
-                    out[(H - K) * Stride] = std::complex<T>(er - or_, oi - ei);
-                } else if constexpr (H % 2 == 1 || K == H - K) {
-                    out[K * Stride] = std::complex<T>(er + or_, ei + oi);
-                }
-            }
-        });
     } else {
         constexpr std::size_t NE = (H + 1) / 2;
         constexpr std::size_t NO = H / 2;
@@ -705,33 +681,6 @@ ADM_ALWAYS_INLINE void c2c_small_odd(const T* dr, const T* di, Emit&& emit) {
     static_assert(H >= 2, "c2c_small_odd: H must be at least 2");
     constexpr std::size_t NE = (H + 1) / 2;
     constexpr std::size_t NO = H / 2;
-    if constexpr (use_small_units<H, T>()) {
-        // One register-resident unit per odd K group: E fold, F fold, the shared product and the
-        // emits, with no value of a unit live into the next unit. The x87 stack is empty at each
-        // unit end, so the chain of one call spans one bin pair.
-        T er[NE], ei[NE], fr[NO], fi[NO];
-        poet::static_for<0, NE>([&](auto I) {
-            er[I] = dr[2 * I];
-            ei[I] = di[2 * I];
-        });
-        poet::static_for<0, NO>([&](auto I) {
-            fr[I] = dr[2 * I + 1];
-            fi[I] = di[2 * I + 1];
-        });
-        poet::static_for<1, 2 * H>([&](auto Kc) {
-            if constexpr (Kc % 2 == 1 && (H % 2 == 1 || Kc < H)) {
-                constexpr std::size_t K = Kc;
-                T ar, ai, br, bi;
-                c2c_small_fold_unit<H, K, NE, T>(er, ei, ar, ai);
-                c2c_small_fold_unit<H, K, NO, T>(fr, fi, br, bi);
-                auto [orr, oii] = apply_stage_twiddle<T, 2 * H, K, T>(br, bi);
-                emit(IC<K * Stride>{}, ar + orr, ai + oii);
-                if constexpr (H % 2 == 0) {
-                    emit(IC<(K + H) * Stride>{}, ar - orr, ai - oii);
-                }
-            }
-        });
-    } else {
     T er[NE], ei[NE], fr[NO], fi[NO];
     poet::static_for<0, NE>([&](auto I) {
         er[I] = dr[2 * I];
@@ -745,8 +694,14 @@ ADM_ALWAYS_INLINE void c2c_small_odd(const T* dr, const T* di, Emit&& emit) {
         if constexpr (Kc % 2 == 1 && (H % 2 == 1 || Kc < H)) {
             constexpr std::size_t K = Kc;
             T ar, ai, br, bi;
-            c2c_small_fold<H, K, NE, T>(er, ei, ar, ai);
-            c2c_small_fold<H, K, NO, T>(fr, fi, br, bi);
+            // Over the register file the folds stream their coefficients.
+            if constexpr (use_small_units<H, T>()) {
+                c2c_small_fold_unit<H, K, NE, T>(er, ei, ar, ai);
+                c2c_small_fold_unit<H, K, NO, T>(fr, fi, br, bi);
+            } else {
+                c2c_small_fold<H, K, NE, T>(er, ei, ar, ai);
+                c2c_small_fold<H, K, NO, T>(fr, fi, br, bi);
+            }
             auto [orr, oii] = apply_stage_twiddle<T, 2 * H, K, T>(br, bi);
             emit(IC<K * Stride>{}, ar + orr, ai + oii);
             if constexpr (H % 2 == 0) {
@@ -754,7 +709,6 @@ ADM_ALWAYS_INLINE void c2c_small_odd(const T* dr, const T* di, Emit&& emit) {
             }
         }
     });
-    }
 }
 
 // One complex transform of length N in place, bin k written at x[k * Stride]. Pairs-first: the

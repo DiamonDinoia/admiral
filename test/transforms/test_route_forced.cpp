@@ -209,23 +209,32 @@ static bool routes_large(std::size_t n, std::size_t threads) {
 
 TEST_CASE("threaded four_step_large admission matches the measured crossovers",
           "[coverage][route][four_step_large][threads]") {
+    using namespace admiral::detail;
     // The plateau is element-keyed, so the same element counts pin both precisions, at
-    // every nt below the knees and at any pool width -- the plateau rungs are the only
-    // route-level pins the law's pool anchoring allows a host-independent case to make.
-    // The nt=2 f32 cell reads the cap outright (its bracket sits far above the plateau on
-    // every class: [64K, 512K] elems, union geo-mid 1.41 MiB).
+    // every nt below the knees and at any pool width. The line is the pinned floor, clamped
+    // to the cap as the library does, so the pins hold on any L2: on a 2 MiB L2 they are
+    // the rungs measured on the reference hosts. The nt=2 f32 cell reads the cap outright.
+    const std::size_t cap = kLargeRouteThreadCapBytes;
+    const auto pin = [](auto tag, std::size_t n, std::size_t nt, std::size_t line) {
+        using T = decltype(tag);
+        CAPTURE(n, nt, line);
+        REQUIRE(routes_large<T>(n, nt) == (n * sizeof(std::complex<T>) > line));
+    };
+    const std::size_t line64 = std::min(kLargeRouteThreadFloorF64Bytes, cap);
+    const std::size_t line32 = std::min(kLargeRouteThreadFloorF32Bytes, cap);
     for (const std::size_t nt : {std::size_t{2}, std::size_t{4}, std::size_t{8}}) {
-        CAPTURE(nt);
-        REQUIRE_FALSE(routes_large<double>(16384, nt));
-        REQUIRE(routes_large<double>(32768, nt));
+        pin(double{}, 16384, nt, line64);
+        pin(double{}, 32768, nt, line64);
     }
     for (const std::size_t nt : {std::size_t{4}, std::size_t{8}}) {
-        CAPTURE(nt);
-        REQUIRE_FALSE(routes_large<float>(16384, nt));
-        REQUIRE(routes_large<float>(32768, nt));
+        pin(float{}, 16384, nt, line32);
+        pin(float{}, 32768, nt, line32);
     }
-    REQUIRE_FALSE(routes_large<float>(131072, 2));  // 1 MiB, below the nt=2 cap
-    REQUIRE(routes_large<float>(262144, 2));        // 2 MiB, above it
+    // Both sides of the cap: the largest power-of-two rung at or below it, and the next one.
+    std::size_t below = 1024;
+    while (below * 2 * sizeof(std::complex<float>) <= cap) below *= 2;
+    pin(float{}, below, 2, cap);
+    pin(float{}, below * 2, 2, cap);
 }
 
 TEST_CASE("the threaded large-route law's shape: floor, knees, rise to the shared cap",
@@ -237,7 +246,7 @@ TEST_CASE("the threaded large-route law's shape: floor, knees, rise to the share
     REQUIRE(kLargeRouteThreadFloorF32Bytes == 185363);  // [128, 256] KiB geo-mid
     REQUIRE(kLargeRouteThreadKneeF64Nt == 32);
     REQUIRE(kLargeRouteThreadKneeF32Nt == 8);
-    REQUIRE(kLargeRouteThreadCapBytes == 1482910);      // [1, 2] MiB geo-mid
+    REQUIRE(kLargeRouteThreadCapBytes == cpu_cache().l2 / 2);  // 2 = the two live buffers (src, dst) of fsl_ws_s1 (:847) and fsl_ws_s2 (:849)
 
     // Flat at or below the knee at any pool width; nt=2 f32 is the cap outright.
     REQUIRE(large_route_threaded_bytes(16, 2, 128) == kLargeRouteThreadFloorF64Bytes);
@@ -247,12 +256,12 @@ TEST_CASE("the threaded large-route law's shape: floor, knees, rise to the share
     REQUIRE(large_route_threaded_bytes(8, 2, 128) == kLargeRouteThreadCapBytes);
     // Rise: linear in nt from the knee to the cap at nt = pool width, min-pinned; the
     // 2*knee span stand-in governs only when the pool is narrower than the knee.
-    REQUIRE(large_route_threaded_bytes(16, 64, 128) == 741454);
+    REQUIRE(large_route_threaded_bytes(16, 64, 128) == kLargeRouteThreadFloorF64Bytes + (kLargeRouteThreadCapBytes - kLargeRouteThreadFloorF64Bytes) * (64 - kLargeRouteThreadKneeF64Nt) / (128 - kLargeRouteThreadKneeF64Nt));
     REQUIRE(large_route_threaded_bytes(16, 128, 128) == kLargeRouteThreadCapBytes);
-    REQUIRE(large_route_threaded_bytes(8, 32, 64) == 741454);
-    REQUIRE(large_route_threaded_bytes(8, 32, 96) == 539239);
+    REQUIRE(large_route_threaded_bytes(8, 32, 64) == kLargeRouteThreadFloorF32Bytes + (kLargeRouteThreadCapBytes - kLargeRouteThreadFloorF32Bytes) * (32 - kLargeRouteThreadKneeF32Nt) / (64 - kLargeRouteThreadKneeF32Nt));
+    REQUIRE(large_route_threaded_bytes(8, 32, 96) == kLargeRouteThreadFloorF32Bytes + (kLargeRouteThreadCapBytes - kLargeRouteThreadFloorF32Bytes) * (32 - kLargeRouteThreadKneeF32Nt) / (96 - kLargeRouteThreadKneeF32Nt));
     REQUIRE(large_route_threaded_bytes(8, 64, 64) == kLargeRouteThreadCapBytes);
-    REQUIRE(large_route_threaded_bytes(16, 33, 16) == 405482);
+    REQUIRE(large_route_threaded_bytes(16, 33, 16) == kLargeRouteThreadFloorF64Bytes + (kLargeRouteThreadCapBytes - kLargeRouteThreadFloorF64Bytes) * (33 - kLargeRouteThreadKneeF64Nt) / (2 * kLargeRouteThreadKneeF64Nt - kLargeRouteThreadKneeF64Nt));
     REQUIRE(large_route_threaded_bytes(16, 64, 16) == kLargeRouteThreadCapBytes);
 }
 

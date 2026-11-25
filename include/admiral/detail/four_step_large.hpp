@@ -441,9 +441,9 @@ inline constexpr std::size_t kLargeRouteThreadFloorF64Bytes = 370727;  // [256, 
 inline constexpr std::size_t kLargeRouteThreadFloorF32Bytes = 185363;  // [128, 256] KiB
 inline constexpr std::size_t kLargeRouteThreadKneeF64Nt = 32;
 inline constexpr std::size_t kLargeRouteThreadKneeF32Nt = 8;
-inline constexpr std::size_t kLargeRouteThreadCapBytes = 1482910;  // [1, 2] MiB
+inline const std::size_t kLargeRouteThreadCapBytes = cpu_cache().l2 / 2;  // 2 = the two live buffers (src, dst) of fsl_ws_s1 (:847) and fsl_ws_s2 (:849)
 
-[[nodiscard]] constexpr std::size_t large_route_threaded_bytes(std::size_t elem_bytes,
+[[nodiscard]] inline std::size_t large_route_threaded_bytes(std::size_t elem_bytes,
                                                                std::size_t nthreads,
                                                                std::size_t pool_width) {
     const bool f64 = elem_bytes == 16;

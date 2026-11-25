@@ -6,13 +6,16 @@
 # dedups one tier's groups against another's and drops the tier's definitions.
 cmake_minimum_required(VERSION 3.25)
 file(STRINGS "${LIST}" objects)
-execute_process(COMMAND "${NM}" --defined-only --format=just-symbols ${objects}
+execute_process(COMMAND "${NM}" --defined-only --format=posix ${objects}
                 OUTPUT_VARIABLE out COMMAND_ERROR_IS_FATAL ANY)
 if(out MATCHES "[][;]")
     message(FATAL_ERROR "rename_tier: a name holds [, ] or ;, which a CMake list cannot carry")
 endif()
 string(REPLACE "\n" ";" names "${out}")
-list(FILTER names EXCLUDE REGEX ":$|^$|tier_entry|@feat\\.00")
+list(FILTER names EXCLUDE REGEX ":$|^$")
+# POSIX format (GNU nm and llvm-nm alike) prints "name type value size"; field 1 is the name.
+list(TRANSFORM names REPLACE " .*$" "")
+list(FILTER names EXCLUDE REGEX "tier_entry|@feat\\.00")
 list(REMOVE_DUPLICATES names)
 list(SORT names)
 list(LENGTH names n)

@@ -468,10 +468,9 @@ public:
         // c2r and the odd path above.
         c2r_even_recombine(spec, tw_.data(), z, M);
         eng_.template execute<false>(z, T(1), tid);
-        const T inv_m = extra_scale / T(M);
         for (std::size_t j = 0; j < M; ++j) {
-            out[2 * j] = z[j].real() * inv_m;
-            out[2 * j + 1] = z[j].imag() * inv_m;
+            out[2 * j] = z[j].real() * extra_scale;
+            out[2 * j + 1] = z[j].imag() * extra_scale;
         }
     }
 

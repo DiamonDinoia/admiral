@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <type_traits>
 
+#include "math.hpp"
 #include "simd.hpp"
 
 namespace admiral {
@@ -36,20 +37,14 @@ inline std::complex<T> r2c_even_bin(const std::complex<T>* z, std::complex<T> tw
 
 template <typename T>
 inline std::complex<T> c2r_even_bin(const std::complex<T>& Xk, const std::complex<T>& Xmk,
-                                   std::complex<T> tw) {
-    const T zer = (Xk.real() + Xmk.real()) * T(0.5);
-    const T zei = (Xk.imag() - Xmk.imag()) * T(0.5);
-    const T vor = (Xk.real() - Xmk.real()) * T(0.5);
-    const T voi = (Xk.imag() + Xmk.imag()) * T(0.5);
+                                   std::complex<T> tw, T h) {
+    const T zer = (Xk.real() + Xmk.real()) * h;
+    const T zei = (Xk.imag() - Xmk.imag()) * h;
+    const T vor = (Xk.real() - Xmk.real()) * h;
+    const T voi = (Xk.imag() + Xmk.imag()) * h;
     const T zor = tw.real() * vor + tw.imag() * voi;
     const T zoi = tw.real() * voi - tw.imag() * vor;
     return {zer - zoi, zei + zor};
-}
-
-template <typename T>
-inline std::complex<T> c2r_even_bin(const std::complex<T>* X, std::complex<T> tw,
-                                   std::size_t M, std::size_t k) {
-    return c2r_even_bin(X[k], X[M - k], tw);
 }
 
 // Two-source gather masks for even_recombine_simd over the raw interleaved halves. Word
@@ -87,10 +82,11 @@ inline constexpr bool kRecombineSimd = std::is_same_v<T, float> || std::is_same_
 // times. The caller repairs that bin from the value it reads before the steps. The tail
 // step reads twiddle values above k = M / 2, the mirror pad of the row. Below that, the
 // same follows at L / 2 down to 4 lanes and then the scalar loop. The output is the
-// first k it did not do.
+// first k it did not do. hs scales the sum and difference terms: 0.5 for r2c, 0.5 / M for c2r.
 template <bool Forward, typename T, std::size_t L = xsimd::batch<T>::size>
 inline std::size_t even_recombine_simd(const std::complex<T>* in, const std::complex<T>* tw,
-                                       std::complex<T>* out, std::size_t M, std::size_t k = 1) {
+                                       std::complex<T>* out, std::size_t M, T hs,
+                                       std::size_t k = 1) {
     using R = xsimd::make_sized_batch_t<T, L>;
     if constexpr (L >= 2 && !std::is_void_v<R>) {
         using C = xsimd::batch<std::complex<T>, typename R::arch_type>;
@@ -107,9 +103,9 @@ inline std::size_t even_recombine_simd(const std::complex<T>* in, const std::com
                 xsimd::shuffle(bh, bl, xsimd::make_batch_constant<index, mirror_pair<0>, typename R::arch_type>()),
                 xsimd::shuffle(bh, bl, xsimd::make_batch_constant<index, mirror_pair<1>, typename R::arch_type>()));
             const C ta = C::load_unaligned(tw + k);
-            // The 0.5 goes on the sum and difference terms before the twiddle FMAs, as in
+            // h goes on the sum and difference terms before the twiddle FMAs, as in
             // r2c_even_bin. A bin near the type maximum then does not overflow in the FMAs.
-            const R h(typename R::value_type(0.5)), two(typename R::value_type(2));
+            const R h(hs), two(typename R::value_type(2));
             const R sre = (a.real() + br.real()) * h, si = (a.imag() + br.imag()) * h;
             const R sd = (a.imag() - br.imag()) * h, d = (br.real() - a.real()) * h;
             const R tr = ta.real(), ti = ta.imag();
@@ -125,8 +121,8 @@ inline std::size_t even_recombine_simd(const std::complex<T>* in, const std::com
             // The mirror bin of pair (k + i, M - k - i) is (2 sre - xkr, xki - 2 sd) in both
             // directions: the scalar bin on the swapped inputs and the mirrored twiddle
             // tw[M - k] = -conj(tw[k]). The conjugate of the partner is a different value.
-            // The product 2 sre is the exact sum a + b, so it is finite when the sum is. This
-            // holds with and without FMA.
+            // The product 2 sre adds no rounding, and h <= 0.5 keeps it finite when a + b is.
+            // This holds with and without FMA.
             // Two indexed permutes fuse the lane reverse with the store interleave.
             const R mre = xsimd::fms(two, sre, xkr), mim = xsimd::fnma(two, sd, xki);
             T* bop = reinterpret_cast<T*>(out + lo);
@@ -135,7 +131,8 @@ inline std::size_t even_recombine_simd(const std::complex<T>* in, const std::com
             xsimd::shuffle(mim, mre, xsimd::make_batch_constant<index, mirror_store<1>, typename R::arch_type>())
                 .store_unaligned(bop + L);
         }
-        if constexpr (L / 2 >= 4) return even_recombine_simd<Forward, T, L / 2>(in, tw, out, M, k);
+        if constexpr (L / 2 >= 4)
+            return even_recombine_simd<Forward, T, L / 2>(in, tw, out, M, hs, k);
         else return k;
     } else {
         return k;
@@ -155,7 +152,7 @@ inline void r2c_even_recombine(const std::complex<T>* z, const std::complex<T>* 
     // The middle bin is read before a SIMD step writes it twice.
     const std::complex<T> zm = ((M & 1) == 0) ? z[M / 2] : std::complex<T>();
     std::size_t k = 1;
-    if constexpr (kRecombineSimd<T>) k = even_recombine_simd<true>(z, tw, Xr, M);
+    if constexpr (kRecombineSimd<T>) k = even_recombine_simd<true>(z, tw, Xr, M, T(0.5));
     for (; k <= kmax; ++k) {
         const std::complex<T> zk = z[k], zb = z[M - k];
         Xr[k] = r2c_even_bin(zk, zb, tw[k]);
@@ -164,24 +161,28 @@ inline void r2c_even_recombine(const std::complex<T>* z, const std::complex<T>* 
     if ((M & 1) == 0) Xr[M / 2] = r2c_even_bin(zm, zm, tw[M / 2]);
 }
 
+// The 1 / M scale of the length-M inverse c2c goes here, so the caller runs the c2c with a
+// scale of 1. Unscaled, the c2c of a bin near the type maximum can overflow in its
+// intermediate sums while its output is finite.
 template <typename T>
 inline void c2r_even_recombine(const std::complex<T>* X, const std::complex<T>* tw,
                                std::complex<T>* Z, std::size_t M) {
+    const T h = T(0.5) * inv_extent<T>(M);
     // Edge bins: the imaginary parts of DC and Nyquist are ignored, matching
     // pocketfft's c2r. The spectrum input stays read-only for direct feeds.
     Z[0] = c2r_even_bin(std::complex<T>(X[0].real(), T(0)),
-                       std::complex<T>(X[M].real(), T(0)), tw[0]);
+                       std::complex<T>(X[M].real(), T(0)), tw[0], h);
     const std::size_t kmax = (M - 1) / 2;
     // The middle bin is read before a SIMD step writes it twice.
     const std::complex<T> zm = ((M & 1) == 0) ? X[M / 2] : std::complex<T>();
     std::size_t k = 1;
-    if constexpr (kRecombineSimd<T>) k = even_recombine_simd<false>(X, tw, Z, M);
+    if constexpr (kRecombineSimd<T>) k = even_recombine_simd<false>(X, tw, Z, M, h);
     for (; k <= kmax; ++k) {
         const std::complex<T> Xk = X[k], Xm = X[M - k];
-        Z[k] = c2r_even_bin(Xk, Xm, tw[k]);
-        Z[M - k] = c2r_even_bin(Xm, Xk, mirror_tw(tw[k]));
+        Z[k] = c2r_even_bin(Xk, Xm, tw[k], h);
+        Z[M - k] = c2r_even_bin(Xm, Xk, mirror_tw(tw[k]), h);
     }
-    if ((M & 1) == 0) Z[M / 2] = c2r_even_bin(zm, zm, tw[M / 2]);
+    if ((M & 1) == 0) Z[M / 2] = c2r_even_bin(zm, zm, tw[M / 2], h);
 }
 
 }

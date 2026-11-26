@@ -283,7 +283,7 @@ private:
             // them there and the inverse runs in place, so no pack loop is needed.
             std::complex<T>* Z = reinterpret_cast<std::complex<T>*>(out + r * N_);
             c2r_even_recombine(in + r * Nh_, tw_.data(), Z, M);
-            inv.execute(span<std::complex<T>>(Z, M));
+            inv.execute(span<std::complex<T>>(Z, M), exec_options<T>{T(1)});
         }
     }
 

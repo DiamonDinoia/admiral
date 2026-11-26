@@ -157,6 +157,44 @@ TEST_CASE("long double r2c/c2r with an explicit fct scale every element", "[long
     }
 }
 
+// The c2r applies 1 / n before the inner transform. A bin near the type maximum then gives a
+// finite output on the x87 codelets (n <= 17) and on the scalar engine for odd n. The odd
+// sizes above 17 are 7-smooth, because the scalar Bluestein applies 1 / pad after its inner
+// convolution. The reference runs on the spectrum scaled down by an exact power of two.
+TEST_CASE("long double c2r stays finite and accurate with a bin near the type maximum",
+          "[longdouble][overflow]") {
+    const lt_t cpeak = lt_t(0.85) * std::numeric_limits<lt_t>::max();
+    const int shift = std::numeric_limits<lt_t>::max_exponent - 100;
+    std::uniform_real_distribution<lt_t> unif(-1, 1);
+    for (const std::size_t n : {8u, 9u, 15u, 16u, 128u, 135u, 945u}) {
+        CAPTURE(n);
+        const std::size_t m = n / 2 + 1;
+        std::vector<lc_t> spec(m);
+        for (std::size_t k = 0; k < m; ++k)
+            spec[k] = {lt_t(1e-3) * cpeak * unif(rng),
+                       (k == 0 || 2 * k == n) ? lt_t(0) : lt_t(1e-3) * cpeak * unif(rng)};
+        spec[1] = std::polar(cpeak, -admiral::detail::numbers::pi_v<lt_t> / 4);
+        std::vector<lc_t> full(n);
+        for (std::size_t k = 0; k < n; ++k) {
+            const lc_t v = k < m ? spec[k] : std::conj(spec[n - k]);
+            full[k] = {std::ldexp(v.real(), -shift), std::ldexp(v.imag(), -shift)};
+        }
+        const auto back = reference_dft<lt_t, lt_t>(full, false);
+        std::vector<lt_t> ref(n), out(n);
+        for (std::size_t j = 0; j < n; ++j) ref[j] = back[j].real() / static_cast<lt_t>(n);
+        admiral::plan_r2c<lt_t>(n).inverse(spec.data(), out.data());
+        bool finite = true;
+        for (auto& v : out) {
+            finite = finite && std::isfinite(v);
+            v = std::ldexp(v, -shift);
+        }
+        REQUIRE(finite);
+        const double e = static_cast<double>(relerr_ld(ref, out));
+        INFO("relative L2 error " << e / digits_eps<lt_t>() << " eps");
+        REQUIRE(e <= 4 * digits_eps<lt_t>() * std::log2(static_cast<double>(n)));
+    }
+}
+
 namespace {
 
 constexpr lt_t kTwoPi = 2 * admiral::detail::numbers::pi_v<lt_t>;

@@ -406,6 +406,19 @@ private:
     c2c_small_fn<T> leaf_fwd_ = nullptr, leaf_inv_ = nullptr;
 };
 
+// A c2r codelet on the spectrum times 1 / n, then the output times s. The 1 / n goes first, so
+// a bin near the type maximum does not overflow inside the codelet.
+template<typename T>
+void c2r_small_scaled(c2r_small_fn<T> leaf, const std::complex<T>* spec, T* out, std::size_t n,
+                      T s) {
+    std::complex<T> x[9];  // pick_small stops at n = 17, so n / 2 + 1 <= 9.
+    const T inv_n = inv_extent<T>(n);
+    for (std::size_t k = 0; k <= n / 2; ++k) x[k] = spec[k] * inv_n;
+    leaf(x, out);
+    if (s != T(1))
+        for (std::size_t i = 0; i < n; ++i) out[i] *= s;
+}
+
 template<typename T, typename Eng = scalar_c2c<T>>
 class scalar_r2c_1d {
 public:
@@ -447,19 +460,18 @@ public:
 
     void inverse(std::complex<T>* spec, T* out, T extra_scale, std::size_t tid) const {
         if (small_inv_) {
-            small_inv_(spec, out);
-            const T inv_n = extra_scale / T(n_);
-            for (std::size_t i = 0; i < n_; ++i) out[i] *= inv_n;
+            c2r_small_scaled(small_inv_, spec, out, n_, extra_scale);
             return;
         }
         soa_scratch<T, 1> buf_sc(2 * (even_ ? n_ / 2 : n_));
         auto buf = reinterpret_cast<std::complex<T>*>(buf_sc.buf(0));
         if (!even_) {
-            for (std::size_t k = 0; k < nh_; ++k) buf[k] = spec[k];
-            for (std::size_t k = nh_; k < n_; ++k) buf[k] = std::conj(spec[n_ - k]);
+            // The Hermitian copy applies 1 / n, so the c2c values stay near the output magnitude.
+            const T inv_n = inv_extent<T>(n_);
+            for (std::size_t k = 0; k < nh_; ++k) buf[k] = spec[k] * inv_n;
+            for (std::size_t k = nh_; k < n_; ++k) buf[k] = std::conj(spec[n_ - k]) * inv_n;
             eng_.template execute<false>(buf, T(1), tid);
-            const T inv_n = extra_scale / T(n_);
-            for (std::size_t i = 0; i < n_; ++i) out[i] = buf[i].real() * inv_n;
+            for (std::size_t i = 0; i < n_; ++i) out[i] = buf[i].real() * extra_scale;
             return;
         }
         const std::size_t M = n_ / 2;
@@ -605,17 +617,13 @@ public:
     void inverse(std::complex<T>* spec, T* out, std::optional<T> fct) const {
         const T* fp = fct ? &*fct : nullptr;
         if (fast_inv_) {
-            inv_leaf_(spec, out);
             T s = T(1);
             if (fp) s = *fp * static_cast<T>(real_size());
-            const T inv_n = s / static_cast<T>(n_);
-            for (std::size_t i = 0; i < n_; ++i) out[i] *= inv_n;
+            c2r_small_scaled(inv_leaf_, spec, out, n_, s);
             return;
         }
         const T v = fct.value_or(T(1));
-        const T s = fct ? v * static_cast<T>(real_size()) : T(1);
-        const T inv_n = s / static_cast<T>(n_);
-        inverse_general(spec, out, s, inv_n);
+        inverse_general(spec, out, fct ? v * static_cast<T>(real_size()) : T(1));
     }
 
 private:
@@ -639,7 +647,7 @@ private:
         outer_.template execute<true>(out, s, pool_.get());
     }
 
-    ADM_NOINLINE void inverse_general(std::complex<T>* spec, T* out, T s, T inv_n) const {
+    ADM_NOINLINE void inverse_general(std::complex<T>* spec, T* out, T s) const {
         if (rows_ != 1) outer_.template execute<false>(spec, inv_extent<T>(rows_), pool_.get());
         if (rows_ == 1) {
             inner_.inverse(spec, out, s, 0);
@@ -651,8 +659,7 @@ private:
                 for (std::size_t r = begin; r < end; ++r) {
                     T* o = out + r * n_;
                     if (inv_leaf_) {
-                        inv_leaf_(spec + r * nh_, o);
-                        for (std::size_t i = 0; i < n_; ++i) o[i] *= inv_n;
+                        c2r_small_scaled(inv_leaf_, spec + r * nh_, o, n_, s);
                     } else {
                         inner_.inverse(spec + r * nh_, o, s, tid);
                     }

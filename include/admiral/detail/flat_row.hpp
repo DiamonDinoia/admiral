@@ -300,7 +300,8 @@ ADM_ALWAYS_INLINE void fr_dif_regs(V* t) {
     }
 }
 
-// One whole row, packed re/im: 2N/W contiguous loads, the network, N complex back. The
+// One whole row, packed re/im: 2N/W contiguous loads that take the scale f, the network, N
+// complex back. A scale < 1 after the network lets a finite output overflow inside it. The
 // stores are relabeled, never shuffled: slot(G*rev2(l) + g) receives lifted cell (g, l), and
 // at C == 2 the two output classes split by bit of rev_{log2 N}(2s) share one merge shape.
 template<unsigned N, typename T, typename V, bool Forward>
@@ -312,7 +313,7 @@ ADM_ALWAYS_INLINE void flat_row_apply(const T* ADM_RESTRICT srcp, T* ADM_RESTRIC
     using arch = typename V::arch_type;
 
     V d[K];
-    poet::static_for<0, K>([&](auto k) { d[k] = V::load_unaligned(srcp + k * W); });
+    poet::static_for<0, K>([&](auto k) { d[k] = V::load_unaligned(srcp + k * W) * f; });
     fr_stages<N, N / 2, Forward, T, V>(d);
 
     if constexpr (C == 2) {
@@ -330,8 +331,8 @@ ADM_ALWAYS_INLINE void flat_row_apply(const T* ADM_RESTRICT srcp, T* ADM_RESTRIC
             const V o1 = xsimd::shuffle(
                 da, db, xsimd::make_batch_constant<index, fr_merge_lo<W>, arch>());
             constexpr std::size_t s0 = fr_rev2(a);
-            (o0 * f).store_unaligned(dstp + s0 * W);
-            (o1 * f).store_unaligned(dstp + (s0 + K / 2) * W);
+            o0.store_unaligned(dstp + s0 * W);
+            o1.store_unaligned(dstp + (s0 + K / 2) * W);
         });
     } else {
         static_assert(C == 4 && (K == 4 || K == 8 || K == 16), "lift shape derived for C == 4");
@@ -388,7 +389,7 @@ ADM_ALWAYS_INLINE void flat_row_apply(const T* ADM_RESTRICT srcp, T* ADM_RESTRIC
             }
             fr_dif_regs<4, Forward, T, V>(t);
             poet::static_for<0, 4>([&](auto l) {
-                (t[fr_rev2(l)] * f).store_unaligned(dstp + (G * l + g) * W);
+                t[fr_rev2(l)].store_unaligned(dstp + (G * l + g) * W);
             });
         });
     }

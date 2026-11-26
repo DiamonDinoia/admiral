@@ -111,6 +111,8 @@ foreach(CODELET_N IN LISTS ADM_CODELET_SIZES)
             "extern template void codelet_apply<${CODELET_N}, float,  false>(const std::complex<float>*, std::complex<float>*);\n"
             "extern template void codelet_apply<${CODELET_N}, double, true >(const std::complex<double>*, std::complex<double>*);\n"
             "extern template void codelet_apply<${CODELET_N}, double, false>(const std::complex<double>*, std::complex<double>*);\n"
+            "extern template void codelet_apply<${CODELET_N}, float,  false>(const std::complex<float>*,  std::complex<float>*,  float);\n"
+            "extern template void codelet_apply<${CODELET_N}, double, false>(const std::complex<double>*, std::complex<double>*, double);\n"
             "extern template void codelet_apply_many<${CODELET_N}, float,  true >(std::complex<float>*,  std::size_t, std::size_t, float);\n"
             "extern template void codelet_apply_many<${CODELET_N}, float,  false>(std::complex<float>*,  std::size_t, std::size_t, float);\n"
             "extern template void codelet_apply_many<${CODELET_N}, double, true >(std::complex<double>*, std::size_t, std::size_t, double);\n"

@@ -192,9 +192,11 @@ template<typename T, std::size_t N1, std::size_t N2, std::size_t N3>
     return N <= 32 && W >= 4;
 }
 
-template<typename T, std::size_t N1, std::size_t N2, std::size_t N3, bool Forward>
-ADM_NOINLINE void good_thomas_execute(const std::complex<T>* in,
-                                      std::complex<T>* out) noexcept {
+// f is empty, or the scale that the input gather takes: a scale < 1 after the transform lets a
+// finite output overflow inside it. With no f the multiply by 1 folds away.
+template<typename T, std::size_t N1, std::size_t N2, std::size_t N3, bool Forward, typename... F>
+ADM_NOINLINE void good_thomas_execute(const std::complex<T>* in, std::complex<T>* out,
+                                      F... f) noexcept {
     static_assert(good_thomas_coprime(N1,N2) && good_thomas_coprime(N1,N3) && good_thomas_coprime(N2,N3),
                   "good_thomas_execute: factors must be pairwise coprime");
 
@@ -231,7 +233,16 @@ ADM_NOINLINE void good_thomas_execute(const std::complex<T>* in,
         im_src[s] = xsimd::shuffle(lo, hi, xsimd::make_batch_constant<U, aos_odd_lane,  Arch>());
     });
 
-    if constexpr (!Forward) {
+    // The inverse negates the imaginary part in the same multiply as the scale. With no f the
+    // code is the plain gather: GCC can contract a multiply by 1 into an FMA.
+    if constexpr (sizeof...(F) != 0) {
+        const T fs = (f * ...);
+        const Batch fr(fs), fi(Forward ? fs : -fs);
+        poet::static_for<0, NS>([&](const auto s) {
+            re_src[s] *= fr;
+            im_src[s] *= fi;
+        });
+    } else if constexpr (!Forward) {
         poet::static_for<0, NS>([&](const auto s) { im_src[s] = -im_src[s]; });
     }
 
@@ -296,12 +307,13 @@ struct good_thomas_desc {
     static constexpr std::size_t n = N1 * N2 * N3;
     template<typename T>
     static constexpr bool admits = good_thomas_eligible<T, N1, N2, N3>();
-    template<typename T, bool Forward>
-    static void run(const std::complex<T>* in, std::complex<T>* out) noexcept {
+    // f is empty, or the scale that the loads take.
+    template<typename T, bool Forward, typename... F>
+    static void run(const std::complex<T>* in, std::complex<T>* out, F... f) noexcept {
         if constexpr (kGranuleLine<n, T>)
-            granule_line<T, n, Forward>(in, out);
+            granule_line<T, n, Forward>(in, out, f...);
         else
-            good_thomas_execute<T, N1, N2, N3, Forward>(in, out);
+            good_thomas_execute<T, N1, N2, N3, Forward>(in, out, f...);
     }
 };
 
@@ -311,25 +323,28 @@ struct good_thomas_catalog_t {
     static constexpr bool available(std::size_t n) noexcept {
         return ((Ds::template admits<T> && n == Ds::n) || ...);
     }
-    template<typename T, bool Forward>
-    static void run(const std::complex<T>* in, std::complex<T>* out, std::size_t n) noexcept {
+    template<typename T, bool Forward, typename... F>
+    static void run(const std::complex<T>* in, std::complex<T>* out, std::size_t n,
+                    F... f) noexcept {
         ([&] {
             if constexpr (Ds::template admits<T>) {
-                if (n == Ds::n) Ds::template run<T, Forward>(in, out);
+                if (n == Ds::n) Ds::template run<T, Forward>(in, out, f...);
             }
         }(), ...);
     }
     // The kernel of n as a plain pointer, or null. Every kernel loads the whole line before
-    // the first store, so the pointer also runs in place.
-    template<typename T, bool Forward>
-    static auto fn(std::size_t n) noexcept -> void (*)(const std::complex<T>*, std::complex<T>*) {
-        void (*f)(const std::complex<T>*, std::complex<T>*) = nullptr;
+    // the first store, so the pointer also runs in place. F = T gives the kernel that takes
+    // the scale on its loads.
+    template<typename T, bool Forward, typename... F>
+    static auto fn(std::size_t n) noexcept
+        -> void (*)(const std::complex<T>*, std::complex<T>*, F...) {
+        void (*p)(const std::complex<T>*, std::complex<T>*, F...) = nullptr;
         ([&] {
             if constexpr (Ds::template admits<T>) {
-                if (n == Ds::n) f = &Ds::template run<T, Forward>;
+                if (n == Ds::n) p = &Ds::template run<T, Forward, F...>;
             }
         }(), ...);
-        return f;
+        return p;
     }
 };
 
@@ -344,15 +359,19 @@ using good_thomas_catalog = good_thomas_catalog_t<
     good_thomas_desc<16, 3, 1>,
     good_thomas_desc<3, 4, 5>>;
 
-template<typename T, bool Forward>
-void good_thomas_run(const std::complex<T>* in, std::complex<T>* out, std::size_t n) noexcept {
-    good_thomas_catalog::run<T, Forward>(in, out, n);
+// f is empty, or the scale that the loads take.
+template<typename T, bool Forward, typename... F>
+void good_thomas_run(const std::complex<T>* in, std::complex<T>* out, std::size_t n,
+                     F... f) noexcept {
+    good_thomas_catalog::run<T, Forward>(in, out, n, f...);
 }
 
 extern template void good_thomas_run<float, true>(const std::complex<float>*, std::complex<float>*, std::size_t) noexcept;
 extern template void good_thomas_run<float, false>(const std::complex<float>*, std::complex<float>*, std::size_t) noexcept;
 extern template void good_thomas_run<double, true>(const std::complex<double>*, std::complex<double>*, std::size_t) noexcept;
 extern template void good_thomas_run<double, false>(const std::complex<double>*, std::complex<double>*, std::size_t) noexcept;
+extern template void good_thomas_run<float, false>(const std::complex<float>*, std::complex<float>*, std::size_t, float) noexcept;
+extern template void good_thomas_run<double, false>(const std::complex<double>*, std::complex<double>*, std::size_t, double) noexcept;
 
 }
 }

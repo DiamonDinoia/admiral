@@ -21,8 +21,8 @@ namespace detail {
 // Existing residual owners the drivers hand their leftovers to (one tail owner,
 // no duplicated tail code). Definitions live below the include point in
 // codelet_apply.hpp.
-template<unsigned N, typename T, bool Forward>
-void codelet_apply(const std::complex<T>* in, std::complex<T>* out);
+template<unsigned N, typename T, bool Forward, typename... F>
+void codelet_apply(const std::complex<T>* in, std::complex<T>* out, F... f);
 template<unsigned N, typename T>
 void col_codelet_body(const std::complex<T>* in, std::size_t in_inner, std::complex<T>* out,
                       std::size_t out_inner, std::size_t ncols, T scale, bool fwd);

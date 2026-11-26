@@ -109,6 +109,8 @@ private:
         // construction, so the variant visit, the direction branch and the runtime codelet
         // jump table move to plan time (codelet_fn is the same idiom as nd's fast1d).
         codelet_fn_t<T> codelet = nullptr;
+        // The inverse codelet with the scale on its loads, else null.
+        codelet_scaled_fn_t<T> codelet_s = nullptr;
         void (*run)(const plan_impl&, const std::complex<T>*, std::complex<T>*, T) = nullptr;
         void (*run_many)(const plan_impl&, std::complex<T>*, std::size_t, std::size_t,
                          T) = nullptr;
@@ -199,6 +201,7 @@ private:
         switch (m.route) {
         case route_kind::codelet:
             m.codelet = is_forward ? codelet_fn<T, true>(size) : codelet_fn<T, false>(size);
+            if (!is_forward) m.codelet_s = codelet_scaled_fn<T>(size);
             break;
         case route_kind::good_thomas:
             m.st.template emplace<good_thomas_state>();
@@ -489,6 +492,11 @@ private:
     template<bool Forward>
     void execute_route(const good_thomas_state&, const std::complex<T>* in,
                        std::complex<T>* out, T fct) const {
+        // The inverse gather takes the scale: a scale < 1 after the transform lets a finite
+        // output overflow inside it.
+        if constexpr (!Forward) {
+            if (fct != T(1)) return good_thomas_run<T, false>(in, out, m.size, fct);
+        }
         good_thomas_run<T, Forward>(in, out, m.size);
         apply_scale(out, fct);
     }
@@ -496,8 +504,7 @@ private:
     template<bool Forward>
     void execute_route(const codelet_state&, const std::complex<T>* in,
                        std::complex<T>* out, T fct) const {
-        m.codelet(in, out);
-        apply_scale(out, fct);
+        run_codelet(m.codelet, m.codelet_s, in, out, m.size, fct);
     }
 
     template<bool Forward>
@@ -900,11 +907,10 @@ ADM_HOT void plan_impl<T>::execute(const std::complex<T>* src, std::complex<T>* 
     if (opts.debug >= dbg_route) ADM_UNLIKELY
         trace(opts.debug, src == dst ? "in-place" : "oop", fct);
     if (m.size == 1) ADM_UNLIKELY { *dst = *src * fct; return; }
-    // The arithmetic of execute_route(codelet) plus apply_scale, with the dispatch already
-    // bound at build (m.codelet).
+    // The arithmetic of execute_route(codelet), with the dispatch already bound at build
+    // (m.codelet).
     if (m.route == route_kind::codelet) {
-        m.codelet(src, dst);
-        apply_scale(dst, fct);
+        run_codelet(m.codelet, m.codelet_s, src, dst, m.size, fct);
         return;
     }
     m.run(*this, src, dst, fct);

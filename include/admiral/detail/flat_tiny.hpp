@@ -178,7 +178,8 @@ ADM_ALWAYS_INLINE void ft_intra_all(V* d) {
 // One whole row, 2N/W >= 1 registers: contiguous loads, inter-register DIF stages while the
 // partner distance spans registers (reused fr_stages), intra stages below one register, then
 // the output order fix per (K, C) shape. The stores are relabeled or merged, never a
-// transpose tree, and the scale folds into them.
+// transpose tree. The loads take the scale f: a scale < 1 after the network lets a finite
+// output overflow inside it.
 template<unsigned N, typename T, typename V, bool Forward>
 ADM_ALWAYS_INLINE void flat_tiny_apply(const T* ADM_RESTRICT srcp, T* ADM_RESTRICT dstp,
                                        V f) {
@@ -191,18 +192,18 @@ ADM_ALWAYS_INLINE void flat_tiny_apply(const T* ADM_RESTRICT srcp, T* ADM_RESTRI
     using arch = typename V::arch_type;
 
     V d[K];
-    poet::static_for<0, K>([&](auto k) { d[k] = V::load_unaligned(srcp + k * W); });
+    poet::static_for<0, K>([&](auto k) { d[k] = V::load_unaligned(srcp + k * W) * f; });
     fr_stages<N, N / 2, Forward, T, V>(d);
     if constexpr (C >= 2) ft_intra_all<C / 2, K, Forward, T, V>(d);
 
     if constexpr (K == 1) {
         const V r = xsimd::swizzle(d[0],
                                    xsimd::make_batch_constant<index, ft_rev_lane<C>, arch>());
-        (r * f).store_unaligned(dstp);
+        r.store_unaligned(dstp);
     } else if constexpr (C == 1) {
         poet::static_for<0, K>([&](auto k) {
             constexpr std::size_t kk = k;
-            (d[k] * f).store_unaligned(dstp + ft_rev_v<kk, K> * W);
+            d[k].store_unaligned(dstp + ft_rev_v<kk, K> * W);
         });
     } else {
         static_assert(K <= 4 && C <= 4, "the two-source output merge set is (K, C) in "
@@ -213,7 +214,7 @@ ADM_ALWAYS_INLINE void flat_tiny_apply(const T* ADM_RESTRICT srcp, T* ADM_RESTRI
             const V m = xsimd::shuffle(
                 d[pr.first], d[pr.second],
                 xsimd::make_batch_constant<index, ft_outm<o, K, C>, arch>());
-            (m * f).store_unaligned(dstp + o * W);
+            m.store_unaligned(dstp + o * W);
         });
     }
 }

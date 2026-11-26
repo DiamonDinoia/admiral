@@ -604,9 +604,11 @@ ADM_ALWAYS_INLINE void granule_join4(const V& g, V& o0, V& o1, V& o2, V& o3) {
 
 // One line of N: G interleaved complex granules per register over M = N/G registers, the G
 // sub-DFTs of M inside granule_dft, then the G-way CT join (radix-4 or radix-2) or a straight
-// store at G == 1. All loads come before the first store, so out may alias in.
-template<typename T, unsigned N, bool Forward>
-ADM_NOINLINE void granule_line(const std::complex<T>* in, std::complex<T>* out) {
+// store at G == 1. All loads come before the first store, so out may alias in. f is empty, or
+// the scale that the loads take: a scale < 1 after the DFT lets a finite output overflow inside it.
+// Fast math can change a * sc + b * sc to (a + b) * sc, so a value_barrier keeps sc on the loads.
+template<typename T, unsigned N, bool Forward, typename... F>
+ADM_NOINLINE void granule_line(const std::complex<T>* in, std::complex<T>* out, F... f) {
     constexpr std::size_t G = kGranuleCount<N, T>;
     static_assert(G != 0, "granule_line: no granule shape for this N");
     const T* src = reinterpret_cast<const T*>(in);
@@ -618,7 +620,9 @@ ADM_NOINLINE void granule_line(const std::complex<T>* in, std::complex<T>* out) 
         V g[M];
         poet::static_for<0, M>([&](auto t_) ADM_LAMBDA_ALWAYS_INLINE {
             g[t_] = V::load_unaligned(src + V::size * std::size_t(t_));
+            if constexpr (sizeof...(F) != 0) g[t_] *= V((f * ...));
         });
+        if constexpr (sizeof...(F) != 0) value_barrier(g);
         granule_dft<M, V, Forward>(g);
         const auto lo = xsimd::make_batch_bool_constant<T, lane_lt<2>, A>();
         poet::static_for<0, M>([&](auto t_) ADM_LAMBDA_ALWAYS_INLINE {
@@ -642,7 +646,9 @@ ADM_NOINLINE void granule_line(const std::complex<T>* in, std::complex<T>* out) 
         V g[M];
         poet::static_for<0, M>([&](auto j) ADM_LAMBDA_ALWAYS_INLINE {
             g[j] = V::load_unaligned(src + V::size * std::size_t(j));
+            if constexpr (sizeof...(F) != 0) g[j] *= V((f * ...));
         });
+        if constexpr (sizeof...(F) != 0) value_barrier(g);
         granule_dft<M, V, Forward>(g);
         // Low half E + w*O, high half E - w*O over the two granule sub-DFTs.
         const V sgn(T(1), T(1), T(-1), T(-1));
@@ -670,7 +676,9 @@ ADM_NOINLINE void granule_line(const std::complex<T>* in, std::complex<T>* out) 
         V g[N];
         poet::static_for<0, N>([&](auto j) ADM_LAMBDA_ALWAYS_INLINE {
             g[j] = V::load_unaligned(src + V::size * std::size_t(j));
+            if constexpr (sizeof...(F) != 0) g[j] *= V((f * ...));
         });
+        if constexpr (sizeof...(F) != 0) value_barrier(g);
         granule_dft<N, V, Forward>(g);
         poet::static_for<0, N>([&](auto j) ADM_LAMBDA_ALWAYS_INLINE {
             g[j].store_unaligned(dst + V::size * std::size_t(j));

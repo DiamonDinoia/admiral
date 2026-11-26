@@ -659,8 +659,12 @@ class nd_runtime_plan {
         bool fast3d = false;
         // Rank 1, serial, codelet or good_thomas route: the kernel itself, else null.
         codelet_fn_t<T> fast1d = nullptr;
+        // The inverse kernel with the scale on its loads, else null.
+        codelet_scaled_fn_t<T> fast1d_s = nullptr;
         // The per-call entry decision (fast1d bound and no debug trace wanted), fixed at build.
+        // fast_run_s replaces fast_run when fast1d_s is bound, so the forward entry is the same.
         bool fast_run = false;
+        bool fast_run_s = false;
         unsigned debug = 0;
         // The default-fct scale: make_scale_plan reads only plan-invariant members.
         scale_plan def_sp{false, T(1), 0};
@@ -678,12 +682,14 @@ public:
     // debug source: a plan built with debug > 0 never takes the fast path.
     void execute(std::complex<T>* data, const T* fct = nullptr) const {
         if (m.fast_run) run_fast1d(data, data, fct);
+        else if (m.fast_run_s) run_fast1d_s(data, data, fct);
         else execute_routes(data, fct ? std::optional<T>(*fct) : std::nullopt);
     }
     // The codelets load the whole line before the first store, so fast1d runs in place too.
     void execute(const std::complex<T>* src, std::complex<T>* dst,
                  const T* fct = nullptr) const {
         if (m.fast_run) run_fast1d(src, dst, fct);
+        else if (m.fast_run_s) run_fast1d_s(src, dst, fct);
         else execute_routes(src, dst, fct ? std::optional<T>(*fct) : std::nullopt);
     }
 
@@ -744,6 +750,11 @@ private:
         m.fast1d(src, dst);
         const T f = fct ? *fct : m.def_fct;
         if (f != T(1)) scale_inplace(dst, m.total, f);
+    }
+    // Not inline: an indirect tail call in execute() adds a stack realignment to the forward entry.
+    ADM_NOINLINE void run_fast1d_s(const std::complex<T>* src, std::complex<T>* dst,
+                                   const T* fct) const {
+        m.fast1d_s(src, dst, fct ? *fct : m.def_fct);
     }
     ADM_NOINLINE void execute_nd(std::complex<T>* data, std::optional<T> fct) const;
     ADM_NOINLINE void execute_nd(const std::complex<T>* src, std::complex<T>* dst,
@@ -895,15 +906,19 @@ nd_runtime_plan<T>::nd_runtime_plan(span<const std::size_t> shape, bool is_forwa
     if (m.shape.size() == 1 && m.shape[0] > 1 && m.pool == nullptr) {
         const std::optional<plan_impl<T>>& p0 = m.axes[0].plan;
         using rk = typename plan_impl<T>::route_kind;
-        if (p0 && p0->route() == rk::codelet)
+        if (p0 && p0->route() == rk::codelet) {
             m.fast1d = is_forward ? codelet_fn<T, true>(m.shape[0])
                                   : codelet_fn<T, false>(m.shape[0]);
-        else if (p0 && p0->route() == rk::good_thomas)
+            if (!is_forward) m.fast1d_s = codelet_scaled_fn<T>(m.shape[0]);
+        } else if (p0 && p0->route() == rk::good_thomas) {
             m.fast1d = is_forward ? good_thomas_catalog::fn<T, true>(m.shape[0])
                                   : good_thomas_catalog::fn<T, false>(m.shape[0]);
+            if (!is_forward) m.fast1d_s = good_thomas_catalog::fn<T, false, T>(m.shape[0]);
+        }
     }
     m.debug = debug;
-    m.fast_run = m.fast1d != nullptr && debug == 0;
+    m.fast_run = m.fast1d != nullptr && m.fast1d_s == nullptr && debug == 0;
+    m.fast_run_s = m.fast1d_s != nullptr && debug == 0;
 }
 
 template<typename T>

@@ -63,6 +63,24 @@ template codelet_fn_t<float>  codelet_fn<float,  false>(std::size_t);
 template codelet_fn_t<double> codelet_fn<double, true >(std::size_t);
 template codelet_fn_t<double> codelet_fn<double, false>(std::size_t);
 
+template<typename T>
+struct codelet_scaled_fn_pick {
+    template<std::size_t N>
+    codelet_scaled_fn_t<T> operator()() const { return &codelet_apply<N, T, false>; }
+};
+
+template<typename T>
+codelet_scaled_fn_t<T> codelet_scaled_fn(std::size_t N) {
+    // The extras below return the inverse codelet: the return type picks the scaled overload.
+    [[maybe_unused]] constexpr bool Forward = false;
+@ADM_CODELET_EXTRA_FN@
+    return poet::dispatch(codelet_scaled_fn_pick<T>{},
+                          poet::dispatch_param<codelet_catalog_seq>{N});
+}
+
+template codelet_scaled_fn_t<float>  codelet_scaled_fn<float >(std::size_t);
+template codelet_scaled_fn_t<double> codelet_scaled_fn<double>(std::size_t);
+
 // Lanes-as-lines twin. Same dense-jump-table + extras-if-chain shape.
 template<typename T, bool Forward>
 struct codelet_apply_many_invoke {

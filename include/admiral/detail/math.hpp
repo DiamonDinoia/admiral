@@ -313,6 +313,33 @@ extern template codelet_fn_t<float>  codelet_fn<float,  false>(std::size_t);
 extern template codelet_fn_t<double> codelet_fn<double, true >(std::size_t);
 extern template codelet_fn_t<double> codelet_fn<double, false>(std::size_t);
 
+// An inverse kernel that takes the scale on its loads.
+template<typename T>
+using codelet_scaled_fn_t = void (*)(const std::complex<T>*, std::complex<T>*, T);
+
+// The inverse codelet of catalog size N with the scale on its loads, or null.
+template<typename T>
+codelet_scaled_fn_t<T> codelet_scaled_fn(std::size_t N);
+
+extern template codelet_scaled_fn_t<float>  codelet_scaled_fn<float >(std::size_t);
+extern template codelet_scaled_fn_t<double> codelet_scaled_fn<double>(std::size_t);
+
+// dst = DFT(src) * f, and src may equal dst. An inverse kernel takes f on its loads (fn_s): a
+// scale < 1 after the kernel lets a finite output overflow inside it. A forward kernel has no
+// fn_s and keeps the scale after it.
+template<typename T>
+inline void run_codelet(codelet_fn_t<T> fn, codelet_scaled_fn_t<T> fn_s,
+                        const std::complex<T>* src, std::complex<T>* dst, std::size_t n, T f) {
+    if (f == T(1)) {
+        fn(src, dst);
+    } else if (fn_s != nullptr) {
+        fn_s(src, dst, f);
+    } else {
+        fn(src, dst);
+        scale_inplace(dst, n, f);
+    }
+}
+
 extern template void codelet_dispatch<float,  true >(const std::complex<float>*,  std::complex<float>*,  std::size_t);
 extern template void codelet_dispatch<float,  false>(const std::complex<float>*,  std::complex<float>*,  std::size_t);
 extern template void codelet_dispatch<double, true >(const std::complex<double>*, std::complex<double>*, std::size_t);

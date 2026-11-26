@@ -64,27 +64,36 @@ struct flat_line<N, T, W, false> {
 template<unsigned N>
 inline constexpr bool kLineDft = N == 11 || N == 17 || N == 19 || N == 23;
 
-template<unsigned N, typename T, bool Forward>
-void codelet_apply(const std::complex<T>* in, std::complex<T>* out) {
+// f is empty, or the scale that the loads take: a scale < 1 after the DFT lets a finite output
+// overflow inside it. With no f the multiply by 1 folds away. Fast math can change
+// a * sc + b * sc to (a + b) * sc, so a value_barrier keeps sc on the loads.
+// shortcut: the flat lines scale in their kernel with no barrier. Add one if a build fails there.
+template<unsigned N, typename T, bool Forward, typename... F>
+void codelet_apply(const std::complex<T>* in, std::complex<T>* out, F... f) {
+    const T sc = (T(1) * ... * f);
     // One line in registers skips the split-plane copies of the kernel below.
     using VF = typename flat_line<N, T>::type;
     if constexpr (!std::is_void_v<VF>) {
         const T* src = reinterpret_cast<const T*>(in);
         T* dst = reinterpret_cast<T*>(out);
-        if constexpr (N < 16) flat_tiny_apply<N, T, VF, Forward>(src, dst, VF(T(1)));
-        else                  flat_row_apply<N, T, VF, Forward>(src, dst, VF(T(1)));
+        if constexpr (N < 16) flat_tiny_apply<N, T, VF, Forward>(src, dst, VF(sc));
+        else                  flat_row_apply<N, T, VF, Forward>(src, dst, VF(sc));
         return;
     } else if constexpr (kGranuleLine<N, T>) {
-        granule_line<T, N, Forward>(in, out);
+        granule_line<T, N, Forward>(in, out, f...);
         return;
     } else if constexpr (kLineDft<N>) {
         // The inverse is the forward DFT with re and im swapped on both sides. All loads come
         // before the first store, so out may alias in.
         T tr[N], ti[N];
         poet::static_for<0, N>([&](auto J) {
-            tr[J] = Forward ? in[J].real() : in[J].imag();
-            ti[J] = Forward ? in[J].imag() : in[J].real();
+            tr[J] = (Forward ? in[J].real() : in[J].imag()) * sc;
+            ti[J] = (Forward ? in[J].imag() : in[J].real()) * sc;
         });
+        if constexpr (sizeof...(F) != 0) {
+            value_barrier(tr);
+            value_barrier(ti);
+        }
         dif_butterfly<T, N, T>(tr, ti, [&](auto K, T re, T im) {
             out[K] = Forward ? std::complex<T>(re, im) : std::complex<T>(im, re);
         });
@@ -97,13 +106,15 @@ void codelet_apply(const std::complex<T>* in, std::complex<T>* out) {
     T* yim = buf + 3 * N;
 
     // The kernel's leaves gather strided scalars out of these planes. A wide store that
-    // splits a leaf load stalls the call, so the pairs land one at a time and the inverse
-    // negation folds into the same pass.
+    // splits a leaf load stalls the call, so the pairs land one at a time and the scale and
+    // the inverse negation fold into the same pass.
     const T* s = reinterpret_cast<const T*>(in);
+    const T sci = Forward ? sc : -sc;
     for (std::size_t i = 0; i < N; ++i) {
-        xre[i] = s[2 * i];
-        xim[i] = Forward ? s[2 * i + 1] : -s[2 * i + 1];
+        xre[i] = s[2 * i] * sc;
+        xim[i] = s[2 * i + 1] * sci;
     }
+    if constexpr (sizeof...(F) != 0) value_barrier(buf);
     kernel<N, T, true>::apply_sink(xre, xim, 1, yre, yim, aos_sink<T, Forward>{out});
 }
 

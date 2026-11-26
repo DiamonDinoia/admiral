@@ -59,11 +59,6 @@ inline constexpr bool kFlatRow64 =
     XSIMD_TARGET_X86 != 0 && N == 64u && V::size == 8 &&
     16u + 4u <= usable_vector_regs(poet::vector_register_count());
 
-// Swap re/im inside every complex element.
-struct fr_swap_pair {
-    static constexpr std::size_t get(std::size_t i, std::size_t) { return i ^ 1; }
-};
-
 // 128-bit half swap, the C == 2 intra butterfly partner exchange (W == 4 only).
 struct fr_half_swap {
     static constexpr std::size_t get(std::size_t i, std::size_t) { return i ^ 2; }

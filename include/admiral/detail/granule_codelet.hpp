@@ -119,15 +119,11 @@ template<typename T, std::size_t W>
 // precisions (adjacent re/im lanes swap at float and at double granularity alike)
 // and every sized-batch rung (the generator reads the arch's width).
 // ----------------------------------------------------------------------
-struct granule_swap_lane {  // [re,im] -> [im,re] within every granule (fr_swap_pair's i^1)
-    static constexpr std::size_t get(std::size_t i, std::size_t) { return i ^ 1; }
-};
-
 template<typename V>
 ADM_ALWAYS_INLINE V granule_swp(V a) {
     return xsimd::swizzle(a, xsimd::make_batch_constant<xsimd::as_unsigned_integer_t<
                                  typename V::value_type>,
-                                 granule_swap_lane, typename V::arch_type>());
+                                 fr_swap_pair, typename V::arch_type>());
 }
 
 // Sign flips go through top-bit INTEGER masks: an FP pool of -0.0 entries is a constant

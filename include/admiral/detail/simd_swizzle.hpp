@@ -25,6 +25,11 @@ struct aos_odd_lane {
     static constexpr std::size_t get(std::size_t i, std::size_t) { return 2 * i + 1; }
 };
 
+// Swap re/im inside every complex element.
+struct fr_swap_pair {
+    static constexpr std::size_t get(std::size_t i, std::size_t) { return i ^ 1; }
+};
+
 template<bool Forward, typename V>
 [[nodiscard]] ADM_ALWAYS_INLINE auto plane_refs(V& re, V& im) {
     if constexpr (Forward) return std::tie(re, im);

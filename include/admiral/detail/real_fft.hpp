@@ -199,7 +199,9 @@ private:
         V* cur_re = scratch;         V* cur_im = scratch + M;
         V* nxt_re = scratch + 2 * M; V* nxt_im = scratch + 3 * M;
 
-        const V hv(T(0.5));
+        // The recombine applies the 1 / M of the c2c, so the c2c values stay near the output
+        // magnitude (c2r_even_recombine does the same).
+        const V hv(T(0.5) * inv_extent<T>(M));
         constexpr std::size_t H = W / 2;
         std::size_t k = 0;
         for (; k + H <= M; k += H) {
@@ -244,18 +246,17 @@ private:
         const V* Gre = G.first;
         const V* Gim = G.second;
 
-        const V invM(inv_extent<T>(M));
         std::size_t j = 0;
         for (; j + H <= M; j += H) {
             V t[W];
-            poet::static_for<0, H>([&](auto m) { t[2 * m] = Gre[j + m] * invM; t[2 * m + 1] = Gim[j + m] * invM; });
+            poet::static_for<0, H>([&](auto m) { t[2 * m] = Gre[j + m]; t[2 * m + 1] = Gim[j + m]; });
             xsimd::transpose(t, t + W);
             poet::static_for<0, W>([&](auto l) { t[l].store_unaligned(out + l * N_ + 2 * j); });
         }
         for (; j < M; ++j) {
             alignas(V) T zr[W], zi[W];
-            (Gre[j] * invM).store_aligned(zr);
-            (Gim[j] * invM).store_aligned(zi);
+            Gre[j].store_aligned(zr);
+            Gim[j].store_aligned(zi);
             for (std::size_t l = 0; l < W; ++l) {
                 T* xr = out + l * N_;
                 xr[2 * j] = zr[l]; xr[2 * j + 1] = zi[l];

@@ -14,6 +14,7 @@
 #include <limits>
 #include <random>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "catch2/catch_template_test_macros.hpp"
@@ -21,6 +22,12 @@
 
 #include <admiral/admiral.hpp>
 #include <admiral/detail/ct_math.hpp>
+
+// The row-batched c2r entries of the numpy binding (src/inst_real_f.cpp, src/inst_real_d.cpp).
+extern "C" void admiral_c2r_rows_f32(const std::complex<float>* in, float* out, std::size_t rows,
+                                     std::size_t n);
+extern "C" void admiral_c2r_rows_f64(const std::complex<double>* in, double* out,
+                                     std::size_t rows, std::size_t n);
 
 namespace {
 
@@ -48,6 +55,22 @@ double rel_err(const std::complex<double>* got, const std::vector<dd>& rre,
         den += rre[i] * rre[i] + rim[i] * rim[i];
     }
     return std::sqrt((num.hi + num.lo) / (den.hi + den.lo));
+}
+
+// A real output times 2^-shift must be finite and within tol of the reference rre.
+template<typename T>
+void require_real_close(const T* out, const std::vector<dd>& rre, int shift, double tol) {
+    const std::size_t n = rre.size();
+    std::vector<std::complex<double>> got(n);
+    bool finite = true;
+    for (std::size_t j = 0; j < n; ++j) {
+        finite = finite && std::isfinite(out[j]);
+        got[j] = {std::ldexp(static_cast<double>(out[j]), -shift), 0.0};
+    }
+    REQUIRE(finite);
+    const double e = rel_err(got.data(), rre, std::vector<dd>(n));
+    INFO("rel_err " << e);
+    REQUIRE(e <= tol);
 }
 
 }  // namespace
@@ -113,7 +136,8 @@ TEST_CASE("one-shot plan transforms stay at machine precision in norm", "[norm_g
 
 // The real recombine halves its sum and difference terms before the twiddle products. An
 // order that scales after them overflows when a bin is above half the type maximum, while
-// the exact output is finite. The r2c spectrum peak is 0.55 of the maximum. The reference
+// the exact output is finite. The r2c spectrum peak is 0.55 of the maximum. The c2r tile of
+// the row-batched entry applies 1 / n before the inner c2c for the same reason. The reference
 // runs on the input scaled down by an exact power of two, so ct_dd does not overflow.
 TEMPLATE_TEST_CASE("real transforms stay finite and accurate with a bin near the type maximum",
                    "[norm_gate][accuracy][overflow]", float, double) {
@@ -170,7 +194,7 @@ TEMPLATE_TEST_CASE("real transforms stay finite and accurate with a bin near the
                 spec[k] = {static_cast<T>(1e-3 * cpeak * nd(rng)),
                            (k == 0 || k == n / 2) ? T(0) : static_cast<T>(1e-3 * cpeak * nd(rng))};
             spec[1] = {static_cast<T>(cpeak * std::cos(-0.25 * pi)), static_cast<T>(cpeak * std::sin(-0.25 * pi))};
-            std::vector<dd> rre(n), rim(n);
+            std::vector<dd> rre(n);
             for (std::size_t j = 0; j < n; ++j) {
                 dd acc{0.0};
                 for (std::size_t k = 0; k < m; ++k) {
@@ -182,19 +206,30 @@ TEMPLATE_TEST_CASE("real transforms stay finite and accurate with a bin near the
                 }
                 rre[j] = acc / dd{static_cast<double>(n)};
             }
-            std::vector<T> out(n);
-            admiral::plan_r2c<T> p(n, opts);
-            p.inverse(spec.data(), out.data());
-            std::vector<std::complex<double>> got(n);
-            bool finite = true;
-            for (std::size_t j = 0; j < n; ++j) {
-                finite = finite && std::isfinite(out[j]);
-                got[j] = {std::ldexp(static_cast<double>(out[j]), -shift), 0.0};
+            SECTION("plan") {
+                std::vector<T> out(n);
+                admiral::plan_r2c<T> p(n, opts);
+                p.inverse(spec.data(), out.data());
+                require_real_close(out.data(), rre, shift, tol);
             }
-            REQUIRE(finite);
-            const double e = rel_err(got.data(), rre, rim);
-            INFO("rel_err " << e);
-            REQUIRE(e <= tol);
+            SECTION("16 rows") {
+                // The row-batched entry of the numpy binding: 16 rows take the tile path
+                // when n * sizeof(T) <= 4096 and the SIMD width is 16 or less.
+                constexpr std::size_t rows = 16;
+                std::vector<std::complex<T>> in(rows * m);
+                for (std::size_t r = 0; r < rows; ++r)
+                    std::copy(spec.begin(), spec.end(),
+                              in.begin() + static_cast<std::ptrdiff_t>(r * m));
+                std::vector<T> out(rows * n);
+                if constexpr (std::is_same_v<T, float>)
+                    admiral_c2r_rows_f32(in.data(), out.data(), rows, n);
+                else
+                    admiral_c2r_rows_f64(in.data(), out.data(), rows, n);
+                for (std::size_t r = 0; r < rows; ++r) {
+                    INFO("row " << r);
+                    require_real_close(out.data() + r * n, rre, shift, tol);
+                }
+            }
         }
     }
 }

@@ -136,9 +136,10 @@ TEST_CASE("one-shot plan transforms stay at machine precision in norm", "[norm_g
 
 // The real recombine halves its sum and difference terms before the twiddle products. An
 // order that scales after them overflows when a bin is above half the type maximum, while
-// the exact output is finite. The r2c spectrum peak is 0.55 of the maximum. The c2r tile of
-// the row-batched entry applies 1 / n before the inner c2c for the same reason. The reference
-// runs on the input scaled down by an exact power of two, so ct_dd does not overflow.
+// the exact output is finite. The r2c spectrum peak is 0.55 of the maximum. The inverse
+// transforms apply 1 / n before the growth for the same reason: the c2r tile of the
+// row-batched entry, and the DCT-II that inverts a DCT-III or DST-III. The reference runs on
+// the input scaled down by an exact power of two, so ct_dd does not overflow.
 TEMPLATE_TEST_CASE("real transforms stay finite and accurate with a bin near the type maximum",
                    "[norm_gate][accuracy][overflow]", float, double) {
     using T = TestType;
@@ -229,6 +230,30 @@ TEMPLATE_TEST_CASE("real transforms stay finite and accurate with a bin near the
                     INFO("row " << r);
                     require_real_close(out.data() + r * n, rre, shift, tol);
                 }
+            }
+        }
+        SECTION("r2r inverse n=" + std::to_string(n)) {
+            // The inverse of a DCT-III or DST-III is the DCT-II or DST-II times 1 / (2 n).
+            // Every input is near 0.6 of the maximum, so the unscaled sums overflow.
+            const std::vector<std::complex<double>> w = root_table(4 * n, false);
+            std::vector<T> x(n);
+            for (auto& v : x)
+                v = static_cast<T>(0.6 * static_cast<double>(top) * (1.0 + 1e-3 * nd(rng)));
+            for (const auto kind : {admiral::r2r_kind::dct3, admiral::r2r_kind::dst3}) {
+                const bool sine = kind == admiral::r2r_kind::dst3;
+                INFO((sine ? "dst3" : "dct3"));
+                // cos(pi k (2 j + 1) / (2 n)), or sin(pi (k + 1) (2 j + 1) / (2 n)) for the sine.
+                std::vector<dd> rre(n);
+                for (std::size_t k = 0; k < n; ++k)
+                    for (std::size_t j = 0; j < n; ++j) {
+                        const auto wj = w[((sine ? k + 1 : k) * (2 * j + 1)) % (4 * n)];
+                        rre[k] += dd{std::ldexp(static_cast<double>(x[j]), -shift)} *
+                                  dd{sine ? wj.imag() : wj.real()};
+                    }
+                for (auto& v : rre) v = v / dd{dn};
+                std::vector<T> out(n);
+                admiral::plan_r2r<T>(n, kind, 1, opts).inverse(x.data(), out.data());
+                require_real_close(out.data(), rre, shift, tol);
             }
         }
     }

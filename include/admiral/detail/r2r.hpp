@@ -45,6 +45,9 @@ public:
     [[nodiscard]] std::size_t size() const noexcept { return N_ * rows_; }
 
 private:
+    // Inv: the DCT-II that inverts a DCT-III or DST-III. It applies 1 / N to the input, so the
+    // r2c values stay near the output magnitude. Its output factor 2 * scale is then 1.
+    template<bool Inv>
     void dct2_rows(const T* in, T* out, T scale) const;
     void dct3_rows(const T* in, T* out, T scale) const;
 
@@ -55,12 +58,13 @@ private:
 
     void run(const T* in, T* out, bool use_dct2, std::optional<T> fct) const {
         const T two_n = static_cast<T>(2 * N_);
-        const T def = r2r_forward_is_dct2(kind_) ? T(1)
-                      : use_dct2                 ? T(1) / two_n
-                                                 : two_n;
-        const T scale = fct.value_or(def);
-        if (use_dct2) dct2_rows(in, out, scale);
-        else          dct3_rows(in, out, scale);
+        // A user scale stays after the r2c of the inverse DCT-II, as fct * N.
+        if (use_dct2 && !r2r_forward_is_dct2(kind_))
+            dct2_rows<true>(in, out, fct ? *fct * static_cast<T>(N_) : T(0.5));
+        else if (use_dct2)
+            dct2_rows<false>(in, out, fct.value_or(T(1)));
+        else
+            dct3_rows(in, out, fct.value_or(r2r_forward_is_dct2(kind_) ? T(1) : two_n));
     }
 
     std::size_t N_, rows_;
@@ -84,33 +88,51 @@ r2r_plan<T>::r2r_plan(std::size_t N, r2r_kind kind, std::size_t rows, admiral::e
 }
 
 template<typename T>
+template<bool Inv>
 void r2r_plan<T>::dct2_rows(const T* in, T* out, T scale) const {
     const bool sine = r2r_is_sine(kind_);
     soa_scratch<T, 1> v_sc(rows_ * N_);
     soa_scratch<T, 1> spec_sc(2 * (rows_ * Nh_));
     T* v_buf = v_sc.buf(0);
     std::complex<T>* spec_buf = reinterpret_cast<std::complex<T>*>(spec_sc.buf(0));
-    for (std::size_t r = 0; r < rows_; ++r) {
-        const T* x = in + r * N_;
-        T* v = v_buf + r * N_;
-        for (std::size_t j = 0; 2 * j < N_; ++j) v[j] = x[2 * j];
-        for (std::size_t j = 0; 2 * j + 1 < N_; ++j)
-            v[N_ - 1 - j] = sine ? -x[2 * j + 1] : x[2 * j + 1];
+    if constexpr (Inv) {
+        // The sine sign goes into the odd factor, so the scaled loops have no select.
+        const T pre = T(1) / static_cast<T>(N_);
+        const T pre_odd = sine ? -pre : pre;
+        for (std::size_t r = 0; r < rows_; ++r) {
+            const T* x = in + r * N_;
+            T* v = v_buf + r * N_;
+            for (std::size_t j = 0; 2 * j < N_; ++j) v[j] = x[2 * j] * pre;
+            for (std::size_t j = 0; 2 * j + 1 < N_; ++j) v[N_ - 1 - j] = x[2 * j + 1] * pre_odd;
+        }
+    } else {
+        for (std::size_t r = 0; r < rows_; ++r) {
+            const T* x = in + r * N_;
+            T* v = v_buf + r * N_;
+            for (std::size_t j = 0; 2 * j < N_; ++j) v[j] = x[2 * j];
+            for (std::size_t j = 0; 2 * j + 1 < N_; ++j)
+                v[N_ - 1 - j] = sine ? -x[2 * j + 1] : x[2 * j + 1];
+        }
     }
     rp_.r2c(v_buf, spec_buf, rows_, pool_.get());
     const T two = scale * T(2);
-    for (std::size_t r = 0; r < rows_; ++r) {
-        const std::complex<T>* V = spec_buf + r * Nh_;
-        T* y = out + r * N_;
-        for (std::size_t k = 0; k < Nh_; ++k) {
-            const std::complex<T> W = tw_[k] * V[k];
-            const std::size_t lo = sine ? N_ - 1 - k : k;
-            y[lo] = two * W.real();
-            if (k == 0 || 2 * k == N_) continue;
-            const std::size_t hi = sine ? k - 1 : N_ - k;
-            y[hi] = -two * W.imag();
+    const auto post = [&](auto f) {
+        for (std::size_t r = 0; r < rows_; ++r) {
+            const std::complex<T>* V = spec_buf + r * Nh_;
+            T* y = out + r * N_;
+            for (std::size_t k = 0; k < Nh_; ++k) {
+                const std::complex<T> W = tw_[k] * V[k];
+                const std::size_t lo = sine ? N_ - 1 - k : k;
+                y[lo] = f(W.real());
+                if (k == 0 || 2 * k == N_) continue;
+                const std::size_t hi = sine ? k - 1 : N_ - k;
+                y[hi] = f(-W.imag());
+            }
         }
-    }
+    };
+    // The inverse DCT-II without a user scale gets two == 1, so its output loop has no multiply.
+    if (Inv && two == T(1)) post([](T a) { return a; });
+    else                    post([two](T a) { return two * a; });
 }
 
 template<typename T>

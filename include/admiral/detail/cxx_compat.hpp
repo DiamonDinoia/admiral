@@ -181,21 +181,6 @@ namespace detail {
 #  define ADM_COMPAT_INLINE inline
 #endif
 
-// Hides the value of v from the optimizer: v goes through memory the compiler cannot see into.
-// dd_fft.hpp rounds hi = (fma(c, x, shift) - shift) to the grid. Under fast math the compiler
-// folds that to c * x, and the error-free transform then returns a remainder of zero.
-// MSVC has no inline asm: v goes through a volatile pointer, and the compiler cannot know
-// what the copy through that pointer reads.
-template <class T>
-ADM_COMPAT_INLINE void value_barrier(T& v) noexcept {
-#if defined(__GNUC__) || defined(__clang__)
-    __asm__ __volatile__("" : "+m"(v));
-#else
-    T* volatile p = &v;
-    std::memmove(&v, p, sizeof(T));
-#endif
-}
-
 // Hint for a spin-wait loop.
 ADM_COMPAT_INLINE void cpu_relax() noexcept {
 #if defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86)

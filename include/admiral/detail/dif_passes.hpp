@@ -583,14 +583,15 @@ ADM_NOINLINE void dif_pass_first_prime(const T* ADM_RESTRICT src,
     }
 }
 
-template<typename T, std::size_t P1, std::size_t P2>
+// TileBytes: one L1 tile, both planes. dif_build_tape picks it with fused_tile_bytes.
+template<typename T, std::size_t P1, std::size_t P2, std::size_t TileBytes>
 void dif_pass_fused2(const T* ccre, const T* ccim,
                      T* chre, T* chim,
                      std::size_t l1, std::size_t ido,
                      const T* ptw) {
     using batch = xsimd::batch<T>;
     constexpr std::size_t W  = batch::size;
-    constexpr std::size_t WaMax = (kFusedTileBytes / (2 * P1 * P2 * sizeof(T)) / W) * W;
+    constexpr std::size_t WaMax = (TileBytes / (2 * P1 * P2 * sizeof(T)) / W) * W;
     static_assert(WaMax >= W, "fused2: L1 tile too small for this SIMD width");
     const std::size_t ido2 = ido / P2;
     const std::size_t l12  = l1 * P1;
@@ -660,7 +661,8 @@ void dif_pass_fused2(const T* ccre, const T* ccim,
     }
 }
 
-template<typename T, std::size_t P1, std::size_t P2, std::size_t P3>
+// TileBytes: one L1 tile per stage, both planes; tile1 and tile2 each hold TileBytes.
+template<typename T, std::size_t P1, std::size_t P2, std::size_t P3, std::size_t TileBytes>
 void dif_pass_fused3(const T* ccre, const T* ccim,
                      T* chre, T* chim,
                      std::size_t l1, std::size_t ido,
@@ -669,7 +671,7 @@ void dif_pass_fused3(const T* ccre, const T* ccim,
                      const T* tw3re, const T* tw3im) {
     using batch = xsimd::batch<T>;
     constexpr std::size_t W  = batch::size;
-    constexpr std::size_t WaMax = (kFusedTileBytes / (4 * P1 * P2 * P3 * sizeof(T)) / W) * W;
+    constexpr std::size_t WaMax = (TileBytes / (2 * P1 * P2 * P3 * sizeof(T)) / W) * W;
     static_assert(WaMax >= W,
                   "fused3: WaMax must be >= W (tile too small for target)");
 

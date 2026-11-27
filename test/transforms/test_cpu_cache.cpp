@@ -53,3 +53,15 @@ TEST_CASE("cpu_cache: arm64 Darwin counts physical cores and never invents an L3
     CHECK(cc.l3 == probe_expected("hw.l3cachesize", 3));
 }
 #endif
+
+TEST_CASE("fused_tile_bytes: bit_floor(L1D/4), clamped to the compiled tile sizes") {
+    using admiral::detail::fused_tile_bytes;
+    constexpr std::size_t KiB = 1024;
+    CHECK(fused_tile_bytes(16 * KiB) == 8 * KiB);   // 4 KiB, clamped to kFusedTileMinBytes
+    CHECK(fused_tile_bytes(32 * KiB) == 8 * KiB);
+    CHECK(fused_tile_bytes(48 * KiB) == 8 * KiB);
+    CHECK(fused_tile_bytes(64 * KiB) == 16 * KiB);
+    CHECK(fused_tile_bytes(128 * KiB) == 16 * KiB);  // 32 KiB, clamped to kFusedTileMaxBytes
+    // cpu_cache() reads an unknown L1D as kFallbackL1DBytes.
+    CHECK(fused_tile_bytes(admiral::detail::kFallbackL1DBytes) == 8 * KiB);
+}

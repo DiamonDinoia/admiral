@@ -14,6 +14,7 @@
 #include <initializer_list>
 #include <limits>
 #include <stdexcept>
+#include <type_traits>
 #include <vector>
 
 using namespace admiral::detail;
@@ -233,4 +234,101 @@ TEST_CASE("a one-direction build carries only that direction's tape", "[iterativ
         REQUIRE_FALSE(both.tape[0].blk.empty());
         REQUIRE_FALSE(both.tape[1].blk.empty());
     }
+}
+
+namespace {
+
+// Every element must be written (NaN prefill) and match `ref` bit for bit.
+template<typename T>
+void require_same_bits(const std::vector<T>& got, const std::vector<T>& ref) {
+    REQUIRE(got.size() == ref.size());
+    for (std::size_t i = 0; i < got.size(); ++i) {
+        INFO("element " << i);
+        REQUIRE(std::isfinite(got[i]));
+        REQUIRE(got[i] == ref[i]);
+    }
+}
+
+template<typename T>
+std::vector<T> fused_test_data(std::size_t n, double seed) {
+    std::vector<T> v(n);
+    for (std::size_t i = 0; i < n; ++i) v[i] = T(std::sin(seed * double(i + 1)));
+    return v;
+}
+
+// Runs `pass(tile, re, im)` at both tile sizes; the small-tile output must match bit for bit.
+template<typename T, typename Pass>
+void check_fused_tiles(std::size_t n, Pass pass) {
+    const T nan = std::numeric_limits<T>::quiet_NaN();
+    std::vector<T> rre(n, nan), rim(n, nan), hre(n, nan), him(n, nan);
+    pass(std::integral_constant<std::size_t, kFusedTileMaxBytes>{}, rre, rim);
+    pass(std::integral_constant<std::size_t, kFusedTileMinBytes>{}, hre, him);
+    require_same_bits(hre, rre);
+    require_same_bits(him, rim);
+}
+
+// Counts the fused steps of the forward tape that run the passes compiled for `tile`.
+template<typename T>
+std::size_t fused_steps_with_tile(const dif_twiddle_set<T>& dtw, std::size_t tile) {
+    std::size_t fused = 0;
+    for (const auto& s : dtw.tape[0].blk) {
+        if (s.p == 0 || s.p + 1 >= dtw.radices.size()) continue;
+        if (dtw.sched[s.p] == dif_fuse::f3head && s.fn == dif_thunk<T>::fused3(tile)) ++fused;
+        if (dtw.sched[s.p] == dif_fuse::f2head
+            && s.fn == dif_thunk<T>::fused2(dtw.radices[s.p], dtw.radices[s.p + 1], tile))
+            ++fused;
+    }
+    return fused;
+}
+
+}  // namespace
+
+// The tile size only regroups columns: each column runs the same loads, butterflies and
+// stores, so both sizes give the same bits. ido spans 3 large tiles plus W columns.
+TEST_CASE("a fused pass gives the same bits at both tile sizes", "[iterative_dif][fused]") {
+    {
+        using T = float;
+        constexpr std::size_t P1 = 8, P2 = 8;
+        const std::size_t l1 = 2;
+        const std::size_t ido2 = 3 * (kFusedTileMaxBytes / (2 * P1 * P2 * sizeof(T)))
+                                 + xsimd::batch<T>::size;
+        const std::size_t ido = P2 * ido2, N = l1 * P1 * ido;
+        const auto cre = fused_test_data<T>(N, 0.37), cim = fused_test_data<T>(N, 0.53);
+        const auto ptw = fused_test_data<T>(ido * 2 * (P1 - 1) + ido2 * 2 * (P2 - 1), 0.71);
+        check_fused_tiles<T>(N, [&](auto tile, auto& hre, auto& him) {
+            dif_pass_fused2<T, P1, P2, decltype(tile)::value>(
+                cre.data(), cim.data(), hre.data(), him.data(), l1, ido, ptw.data());
+        });
+    }
+    {
+        using T = double;
+        const std::size_t l1 = 2;
+        const std::size_t ido3 = 3 * (kFusedTileMaxBytes / (2 * 64 * sizeof(T)))
+                                 + xsimd::batch<T>::size;
+        const std::size_t ido = 16 * ido3, N = l1 * 4 * ido;
+        const auto cre = fused_test_data<T>(N, 0.37), cim = fused_test_data<T>(N, 0.53);
+        const auto t1 = fused_test_data<T>(3 * ido, 0.71);
+        const auto t2 = fused_test_data<T>(3 * ido / 4, 0.29);
+        const auto t3 = fused_test_data<T>(3 * ido3, 0.83);
+        check_fused_tiles<T>(N, [&](auto tile, auto& hre, auto& him) {
+            dif_pass_fused3<T, 4, 4, 4, decltype(tile)::value>(
+                cre.data(), cim.data(), hre.data(), him.data(), l1, ido, t1.data(), t1.data(),
+                t2.data(), t2.data(), t3.data(), t3.data());
+        });
+    }
+}
+
+TEST_CASE("the plan runs the fused passes compiled for the L1D-derived tile",
+          "[iterative_dif][fused]") {
+    const std::size_t tile = fused_tile_bytes(cpu_cache().l1d);
+    const std::size_t other = tile == kFusedTileMinBytes ? kFusedTileMaxBytes : kFusedTileMinBytes;
+    std::size_t hit = 0, miss = 0;
+    for (const std::size_t N : {std::size_t{16384}, std::size_t{65536}}) {
+        const auto f = build_dif_twiddle_set<float>(N);
+        const auto d = build_dif_twiddle_set<double>(N);
+        hit += fused_steps_with_tile(f, tile) + fused_steps_with_tile(d, tile);
+        miss += fused_steps_with_tile(f, other) + fused_steps_with_tile(d, other);
+    }
+    REQUIRE(hit > 0);  // the sizes above must carry fused steps
+    CHECK(miss == 0);
 }

@@ -64,21 +64,22 @@ void dif_tape_step_ip(const T*, const T*, T* dr, T* di,
                             es, es);
 }
 
-template<typename T, std::size_t P1, std::size_t P2>
+template<typename T, std::size_t P1, std::size_t P2, std::size_t Tile>
 void dif_tape_step_f2(const T* sr, const T* si, T* dr, T* di,
                       const dif_step<T>& s, const dif_rt<T>& rt) {
-    dif_pass_fused2<T, P1, P2>(sr, si, dr, di, s.l1, s.ido, rt.dtw->packed_pair[s.p].data());
+    dif_pass_fused2<T, P1, P2, Tile>(sr, si, dr, di, s.l1, s.ido,
+                                     rt.dtw->packed_pair[s.p].data());
 }
 
-template<typename T>
+template<typename T, std::size_t Tile>
 void dif_tape_step_f3(const T* sr, const T* si, T* dr, T* di,
                       const dif_step<T>& s, const dif_rt<T>& rt) {
     const auto& t0 = rt.dtw->passes[s.p];
     const auto& t1 = rt.dtw->passes[s.p + 1];
     const auto& t2 = rt.dtw->passes[s.p + 2];
-    dif_pass_fused3<T, 4, 4, 4>(sr, si, dr, di, s.l1, s.ido,
-                                t0.first.data(), t0.second.data(), t1.first.data(),
-                                t1.second.data(), t2.first.data(), t2.second.data());
+    dif_pass_fused3<T, 4, 4, 4, Tile>(sr, si, dr, di, s.l1, s.ido,
+                                      t0.first.data(), t0.second.data(), t1.first.data(),
+                                      t1.second.data(), t2.first.data(), t2.second.data());
 }
 
 template<typename T, bool Forward, std::size_t IP, bool Chiplet = false>
@@ -116,8 +117,15 @@ struct dif_thunk_ip_maker {
 template<typename T>
 struct dif_thunk_f2_maker {
     using fn_t = typename dif_step<T>::fn_t;
-    template<std::size_t P1, std::size_t P2>
-    fn_t operator()() const noexcept { return &dif_tape_step_f2<T, P1, P2>; }
+    template<std::size_t P1, std::size_t P2, std::size_t Tile>
+    fn_t operator()() const noexcept { return &dif_tape_step_f2<T, P1, P2, Tile>; }
+};
+
+template<typename T>
+struct dif_thunk_f3_maker {
+    using fn_t = typename dif_step<T>::fn_t;
+    template<std::size_t Tile>
+    fn_t operator()() const noexcept { return &dif_tape_step_f3<T, Tile>; }
 };
 
 template<typename T, bool Forward, std::size_t P>
@@ -165,8 +173,8 @@ struct dif_thunk {
     static auto body(std::size_t ip) -> fn_t;
     static auto chiplet(std::size_t ip) -> fn_t;
     static auto in_place(std::size_t ip) -> fn_t;
-    static auto fused2(std::size_t p1, std::size_t p2) -> fn_t;
-    static auto fused3() -> fn_t;
+    static auto fused2(std::size_t p1, std::size_t p2, std::size_t tile) -> fn_t;
+    static auto fused3(std::size_t tile) -> fn_t;
 };
 
 template<typename T>
@@ -187,15 +195,17 @@ auto dif_thunk<T>::in_place(std::size_t ip) -> fn_t {
 }
 
 template<typename T>
-auto dif_thunk<T>::fused2(std::size_t p1, std::size_t p2) -> fn_t {
+auto dif_thunk<T>::fused2(std::size_t p1, std::size_t p2, std::size_t tile) -> fn_t {
     return poet::dispatch(poet::throw_on_no_match, dif_thunk_f2_maker<T>{},
                           poet::dispatch_param<dif_fused_pair_set>{p1},
-                          poet::dispatch_param<dif_fused_pair_set>{p2});
+                          poet::dispatch_param<dif_fused_pair_set>{p2},
+                          poet::dispatch_param<fused_tile_set>{tile});
 }
 
 template<typename T>
-auto dif_thunk<T>::fused3() -> fn_t {
-    return &dif_tape_step_f3<T>;
+auto dif_thunk<T>::fused3(std::size_t tile) -> fn_t {
+    return poet::dispatch(poet::throw_on_no_match, dif_thunk_f3_maker<T>{},
+                          poet::dispatch_param<fused_tile_set>{tile});
 }
 
 extern template struct dif_thunk<float>;
@@ -308,6 +318,7 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
         return;
     }
 
+    const std::size_t tile = fused_tile_bytes(cpu_cache().l1d);
     std::size_t l1 = dtw.radices[0];
     bool ping = false;
     for (std::size_t p = 1; p + 1 < n_passes; ++p) {
@@ -352,7 +363,7 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
             continue;
         }
         if (dtw.sched[p] == dif_fuse::f3head) {
-            st.fn = dif_thunk<T>::fused3();
+            st.fn = dif_thunk<T>::fused3(tile);
             tp.blk[k] = st;
             st.sim = sim_flat;
             st.dim = b8(!ping);
@@ -365,7 +376,7 @@ void dif_build_tape(dif_twiddle_set<T>& dtw, std::size_t N) {
             continue;
         }
         if (dtw.sched[p] == dif_fuse::f2head) {
-            st.fn = dif_thunk<T>::fused2(ip, dtw.radices[p + 1]);
+            st.fn = dif_thunk<T>::fused2(ip, dtw.radices[p + 1], tile);
             tp.blk[k] = st;
             st.sim = sim_flat;
             st.dim = b8(!ping);

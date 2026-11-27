@@ -1,6 +1,8 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
+#include <utility>
 #if defined(__APPLE__)
 #include <cstdint>
 #endif
@@ -12,6 +14,8 @@
 #include <sys/sysctl.h>
 #endif
 
+#include "cxx_compat.hpp"
+
 namespace admiral {
 namespace detail {
 
@@ -19,11 +23,22 @@ inline constexpr std::size_t kCacheLine = 64;
 
 inline constexpr std::size_t kIpTileBytes = 32u * 1024u;
 
-inline constexpr std::size_t kFusedTileBytes = 16u * 1024u;
+// The sizes of one fused-pass L1 tile, both planes. Each size has its own compiled fused passes.
+inline constexpr std::size_t kFusedTileMinBytes = 8u * 1024u;
+inline constexpr std::size_t kFusedTileMaxBytes = 16u * 1024u;
+using fused_tile_set = std::integer_sequence<std::size_t, kFusedTileMinBytes, kFusedTileMaxBytes>;
 
 inline constexpr std::size_t kFallbackL2Bytes = std::size_t{2} << 20;
 inline constexpr std::size_t kFallbackL3Bytes = std::size_t{45} << 20;
 inline constexpr std::size_t kFallbackL1DBytes = std::size_t{32} << 10;
+
+// Per tile, a fused pass also streams one tile of input, one tile of output and a twiddle slice
+// through L1D: 62 KiB at a 16 KiB tile, about 3.9x the tile. So the tile is bit_floor(L1D/4).
+// shortcut: an L1D below 32 KiB gets the 8 KiB tile, which overflows it; add a 4 KiB size to
+// fused_tile_set when such a target matters.
+[[nodiscard]] constexpr std::size_t fused_tile_bytes(std::size_t l1d) noexcept {
+    return std::clamp(detail::bit_floor(l1d / 4), kFusedTileMinBytes, kFusedTileMaxBytes);
+}
 
 #if defined(__linux__)
 // Visit every cpu id in a sysfs cpu list ("0-15,32-47").

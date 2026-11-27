@@ -277,7 +277,7 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                 constexpr std::size_t H = IP / 2;
                 const std::size_t obs = obase + aa * eso;
                 const std::size_t ib = aa * esi + idi * (IP * b);
-                auto emit_h = [&](const auto k, batch sr, batch si) {
+                auto emit_h = [&](const auto k, batch sr, batch si) ADM_LAMBDA_ALWAYS_INLINE {
                     const std::size_t off = obs + kstride * k;
                     if constexpr (k > 0u) {
                         const batch owr = batch::load_unaligned(twre + ((k - 1u) * ido + aa));
@@ -289,7 +289,7 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                     }
                 };
                 batch hr[H], hi[H];
-                poet::static_for<0, H>([&](const auto n) {
+                poet::static_for<0, H>([&](const auto n) ADM_LAMBDA_ALWAYS_INLINE {
                     const batch ar = batch::load_unaligned(ccre + (ib + idi * n));
                     const batch ai = batch::load_unaligned(ccim + (ib + idi * n));
                     const batch br = batch::load_unaligned(ccre + (ib + idi * (n + H)));
@@ -304,9 +304,10 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                         hi[n] = ai + bi;
                     }
                 });
-                pow2_dif_butterfly<T, H, batch>(hr, hi, [&](auto Kc, batch yr, batch yi) {
-                    emit_h(IC<2 * Kc + ODD>{}, yr, yi);
-                });
+                pow2_dif_butterfly<T, H, batch>(
+                    hr, hi, [&](auto Kc, batch yr, batch yi) ADM_LAMBDA_ALWAYS_INLINE {
+                        emit_h(IC<2 * Kc + ODD>{}, yr, yi);
+                    });
             };
             std::size_t a = amain;
             if constexpr (kHalfSweep) {

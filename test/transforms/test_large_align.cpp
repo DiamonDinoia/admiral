@@ -193,8 +193,9 @@ TEMPLATE_TEST_CASE("execute() input/output alignment variants vs analytical",
 TEMPLATE_TEST_CASE("out-aliased SoA pair equals the 4-plane path", "[dif][align]", float, double) {
     using T = TestType;
     std::size_t fired = 0;
-    for (const std::size_t N : {std::size_t{4096}, std::size_t{12288}, std::size_t{24576},
-                                std::size_t{49152}, std::size_t{65536}}) {
+    for (const std::size_t N :
+         {std::size_t{2000}, std::size_t{4096}, std::size_t{6000}, std::size_t{12288},
+          std::size_t{24576}, std::size_t{49152}, std::size_t{65536}}) {
         const auto tw = admiral::detail::build_dif_twiddle_set<T>(N);
         const auto in = tone_input<T>(N, N / 4 + 7);
         for (const bool forward : {true, false}) {

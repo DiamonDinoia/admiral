@@ -1065,13 +1065,22 @@ template<typename T>
             ip_prefix = p;
         }
         for (std::size_t p = 1; p <= ip_prefix; ++p) ip_mask |= 1u << p;
+        std::size_t n_ip = ip_prefix;
 
-        for (std::size_t p = 1, l1p = planned[0]; p + 2 < np; l1p *= planned[p], ++p) {
+        for (std::size_t p = 1, l1p = planned[0]; p + 1 < np; l1p *= planned[p], ++p) {
             const std::size_t ip = planned[p];
-            if (sched_st[p] == dif_fuse::plain &&
+            // The last middle pass joins only with the column form of dif_pass_body (the tile
+            // form spills), and only when it leaves an even count of out-of-place middle steps:
+            // then the tape can alias the output. Otherwise a tape that can alias loses it.
+            const bool joins =
+                p + 2 < np || (!butterfly_wants_reload(ip / 2, poet::vector_register_count()) &&
+                               (dif_tape_step_count(np, sched_st) - 2 - n_ip) % 2 == 1);
+            if (joins && sched_st[p] == dif_fuse::plain &&
                 butterfly_wants_reload(ip, poet::vector_register_count()) &&
-                (N / (l1p * ip)) * ip * 2u * sizeof(T) <= kIpTileBytes)
+                (N / (l1p * ip)) * ip * 2u * sizeof(T) <= kIpTileBytes) {
                 ip_mask |= 1u << p;
+                ++n_ip;
+            }
         }
     }
     const std::size_t rowperm_n = ip_mask != 0 ? N / planned[np - 1] : 0;

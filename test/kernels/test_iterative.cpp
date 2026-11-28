@@ -166,6 +166,23 @@ TEST_CASE("iterative DIF matches the reference DFT: forced staged/first/last rad
     WARN("worst forced chain: " << worst << " ulp of max|ref| at N=" << worst_n);
 }
 
+TEST_CASE("iterative DIF matches the reference DFT: forced in-place column form at np-2",
+          "[iterative_dif]") {
+    // R = vregs / 2 is the one radix whose in-place pass runs the column form (H = R / 2). The
+    // last radix gives ido >= W and ido % W != 0, so the column loop and the masked tail both run.
+    constexpr std::size_t R = poet::vector_register_count() / 2;
+    constexpr std::size_t last = dif_wide_radices ? 25 : 11;
+    constexpr std::size_t N = 5 * R * last;
+    const dif_factor_plan plan{5, R, last};
+    // Bit 1 is the np-2 pass: the rule of build_dif_twiddle_set must put it in place.
+    REQUIRE((build_dif_twiddle_set<float>(N, &plan).ip_mask >> 1 & 1u) == 1u);
+    REQUIRE((build_dif_twiddle_set<double>(N, &plan).ip_mask >> 1 & 1u) == 1u);
+    check_iterative_vs_reference<float, true>(N, &plan);
+    check_iterative_vs_reference<float, false>(N, &plan);
+    check_iterative_vs_reference<double, true>(N, &plan);
+    check_iterative_vs_reference<double, false>(N, &plan);
+}
+
 TEST_CASE("the two-factor first-pass table fires on the L1D footprint",
           "[iterative_dif][twiddles]") {
     // 4*N*sizeof(T) + table against 3/4 of L1D. 64 points (2.8 KiB) stay flat on any host;

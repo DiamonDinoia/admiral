@@ -323,6 +323,59 @@ void dif_pass_body(CC ccre, CC ccim, CH chre, CH chim,
                 };
                 sweep(std::bool_constant<false>{});
                 a = sweep(std::bool_constant<true>{});
+            } else if constexpr (kSplitCols && !dif_butterfly_wants_reload<IP / 2>) {
+                // The sums stay in registers for the even half. The stage-twiddled differences go
+                // to rows n + H and reload for the odd half: 3H loads and 3H stores per column.
+                constexpr std::size_t H = IP / 2;
+                auto ip_col = [chre, chim, obase, twre, twim, idz, ido,
+                               eso](std::size_t aa) ADM_LAMBDA_ALWAYS_INLINE {
+                    T* const re = chre + (obase + aa * eso);
+                    T* const im = chim + (obase + aa * eso);
+                    batch hr[H], hi[H];
+                    poet::static_for<0, H>([&](const auto n) ADM_LAMBDA_ALWAYS_INLINE {
+                        const batch ar = batch::load_unaligned(re + idz * n);
+                        const batch ai = batch::load_unaligned(im + idz * n);
+                        const batch br = batch::load_unaligned(re + idz * (n + H));
+                        const batch bi = batch::load_unaligned(im + idz * (n + H));
+                        hr[n] = ar + br;
+                        hi[n] = ai + bi;
+                        const auto [fr, fi] =
+                            apply_stage_twiddle<T, IP, n, batch>(ar - br, ai - bi);
+                        fr.store_unaligned(re + idz * (n + H));
+                        fi.store_unaligned(im + idz * (n + H));
+                    });
+                    const T* const wre = twre + aa;
+                    const T* const wim = twim + aa;
+                    // MSVC 19.44 cannot fold the reference-captured ODD (P2280): it reads odd.
+                    auto half = [&](auto ODD) ADM_LAMBDA_ALWAYS_INLINE {
+                        constexpr std::size_t odd = ODD;
+                        pow2_dif_butterfly<T, H, batch>(
+                            hr, hi, [&](auto Kc, batch yr, batch yi) ADM_LAMBDA_ALWAYS_INLINE {
+                                constexpr std::size_t k = 2u * Kc + odd, slot = odd * H + Kc;
+                                if constexpr (k > 0u) {
+                                    const batch owr = batch::load_unaligned(wre + (k - 1u) * ido);
+                                    const batch owi = batch::load_unaligned(wim + (k - 1u) * ido);
+                                    tw_store_unaligned(re + idz * slot, im + idz * slot, owr, owi,
+                                                       yr, yi);
+                                } else {
+                                    yr.store_unaligned(re);
+                                    yi.store_unaligned(im);
+                                }
+                            });
+                    };
+                    half(std::bool_constant<false>{});
+                    poet::static_for<0, H>([&](const auto n) ADM_LAMBDA_ALWAYS_INLINE {
+                        hr[n] = batch::load_unaligned(re + idz * (n + H));
+                        hi[n] = batch::load_unaligned(im + idz * (n + H));
+                    });
+                    half(std::bool_constant<true>{});
+                };
+                // The amain precondition: one buffer and one stride. Otherwise do_batch runs.
+                if (ccre == chre && ccim == chim && esi == eso) {
+                    a = ido - ido % W;
+                    for (std::size_t ah = 0; ah < a; ah += W)
+                        ip_col(ah);
+                }
             } else if constexpr (kSplitCols) {
                 constexpr std::size_t H = IP / 2;
                 auto ip_combine = [&](std::size_t aa) ADM_LAMBDA_ALWAYS_INLINE {
